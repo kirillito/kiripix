@@ -1,6 +1,6 @@
 # Kiripix — Pixel Asset Studio
 
-Spec v0.2, 2026-11-01. Status: reviewed with the owner; the basis for the repo's first milestone.
+Spec v0.3, 2026-11-02. Status: reviewed with the owner; M0 is done, and M1 is split into tickets in `backlog/`.
 
 The vocabulary is defined in [GLOSSARY.md](../GLOSSARY.md), and the decisions behind this spec are recorded in
 [docs/adr/](adr/). Where they disagree with this spec, fix the spec.
@@ -237,6 +237,9 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines. | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag |
 | **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, M5+). Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
 | **export** | Writes the Godot scene (see §9). | — | Export target set; Project checks (see below) |
+
+**palette reads `layers`, not `masks`**: its upstream is the Plate and the Layers, so a Mask edit never rebuilds the
+palette mapping. `place` reads both `palette` and `masks`.
 
 **Walkable** depends only on the `solid` Mask and the body's footprint, so changing `[body]` re-derives it cheaply.
 Reachability lives only in `reach`.
@@ -562,7 +565,9 @@ built the same way.
 
 **Status board:** all assets by kind and stage, filtered by "needs me" (input or review), "stale" and "failing".
 
-**Front end:** TypeScript and Vite, with canvas rendering. Framework: Svelte or plain TypeScript, decided at M0.
+**Front end:** React with TypeScript and Vite, with canvas rendering (the owner's decision, 2026-11-02; ADR 0007).
+The canvas widgets are plain TypeScript classes that React components mount through a `ref`, so hover and brush
+updates never go through React state.
 
 ## 12. Tech stack
 
@@ -580,6 +585,7 @@ built the same way.
 | 3D | Blender 5.2 LTS (pinned at M0, see docs/versions.md; found through config or PATH), run headless: `blender -b -P kiripix/blender/<script>.py -- <args>`, with arguments and results as JSON files |
 | Templates | Jinja2 for prompts |
 | Storage | git LFS for PNG and GLB (`src/`, `pinned/`, `out/`) |
+| UI | React, TypeScript and Vite; canvas widgets in plain TypeScript |
 | Tests | pytest with golden images (pixel-exact diff); Playwright for a few UI flows; Blender tests marked and skipped when Blender is missing |
 
 ## 13. Code layout
@@ -618,6 +624,8 @@ logic of its own.
 
 **M1: a room, end to end (the vertical slice).** Room recipe with an imported source:
 - brief, fit, masks (flood plus brush plus SAM 2, with pinning and `needs-review`), palette, place, reach and export;
+  `layers` is a pass-through until M2 (the Plate is the fit image, with no foreground Layers), so M1 rooms rebuild
+  from `layers` down when the real Stage lands;
 - `set`, `decide`, `override`, `undo`, `redo` and `accept`, with the Decision journal;
 - the Manifest with ownership, `--force`, `--adopt` and the ID freeze;
 - `serve` with REST, SSE progress, Probes and the SAM 2 embedding cache;
@@ -663,11 +671,18 @@ IDs with aliases.
 ## 16. Open decisions
 
 1. The game's internal resolution and tile size (the Toronto RPG's own decision, set in `kiripix.toml`).
-2. The UI framework: Svelte or plain TypeScript (M0).
+2. ~~The UI framework~~: decided 2026-11-02, React with TypeScript and Vite (ADR 0007).
 3. The outline method for 3D renders: inverted hull, Freestyle or a post-process edge pass (M3, by test).
 4. Image-to-3D: which local Runner fits 8 GB well enough, or none (M3).
 5. Which API provider comes first (M4).
 6. Licence for Kiripix itself, if it's ever published.
+
+## Changes since v0.2
+
+- The UI is React with TypeScript and Vite (open decision 2 closed; ADR 0007).
+- `palette` reads `layers`, not `masks`, so Mask edits don't rebuild it.
+- In M1, `layers` is a pass-through; the real Stage is M2.
+- M1 is split into tickets: [backlog/0010](../backlog/0010-m1-room-end-to-end.md) and its children.
 
 ## Changes since v0.1
 
