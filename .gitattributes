@@ -1,0 +1,10 @@
+# Golden images are binary: keep them in git LFS.
+tests/golden/**/*.png filter=lfs diff=lfs merge=lfs -text
+
+# Text stays LF everywhere, so hashes and golden palettes match across machines.
+*.py text eol=lf
+*.toml text eol=lf
+*.gpl text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+uv.lock text eol=lf

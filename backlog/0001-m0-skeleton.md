@@ -1,5 +1,5 @@
 ---
-status: ready-for-agent
+status: split
 milestone: M0
 type: spec
 ---

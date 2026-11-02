@@ -145,7 +145,7 @@ foreground = { derived = true }
 [export.godot]
 project = "C:/Workspace/toronto-rpg"
 root = "res://kiripix"         # everything Kiripix writes goes under here, Manifest included
-version = "4.x"                # pin at M0
+version = "4.7"                # pinned at M0: Godot 4.7 (4.7.2-stable); see docs/versions.md
 
 [providers]
 default = "import"             # import | openai | gemini | pixellab | local-sd
@@ -577,7 +577,7 @@ built the same way.
 | IDs | ULIDs for Decision journal entries |
 | Images | numpy, Pillow, OpenCV, scikit-image |
 | ML | ONNX Runtime (CUDA), PyTorch where needed |
-| 3D | Blender (pinned version, found through config or PATH), run headless: `blender -b -P kiripix/blender/<script>.py -- <args>`, with arguments and results as JSON files |
+| 3D | Blender 5.2 LTS (pinned at M0, see docs/versions.md; found through config or PATH), run headless: `blender -b -P kiripix/blender/<script>.py -- <args>`, with arguments and results as JSON files |
 | Templates | Jinja2 for prompts |
 | Storage | git LFS for PNG and GLB (`src/`, `pinned/`, `out/`) |
 | Tests | pytest with golden images (pixel-exact diff); Playwright for a few UI flows; Blender tests marked and skipped when Blender is missing |

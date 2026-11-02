@@ -1,7 +1,7 @@
 # Kiripix
 
 A local pixel asset studio for Godot games. Read [GLOSSARY.md](GLOSSARY.md) and the ADRs in [docs/adr/](docs/adr/)
-before changing anything; the full design is in [docs/KIRIPIX_SPEC.md](docs/KIRIPIX_SPEC.md). (M0 expands this file.)
+before changing anything; the full design is in [docs/KIRIPIX_SPEC.md](docs/KIRIPIX_SPEC.md).
 
 ## Rules
 
@@ -10,6 +10,47 @@ before changing anything; the full design is in [docs/KIRIPIX_SPEC.md](docs/KIRI
 - **Tickets live in [backlog/](backlog/)** as Markdown files with YAML frontmatter (`status`, `milestone`, `agent`).
   There is no issue tracker.
 - Never set `KIRIPIX_TEST_OWNER` or `KIRIPIX_TEST_RECIPES` outside the test harness.
+
+## Commands to run
+
+```
+uv sync                          # the locked environment (uv.lock); never add a dependency without updating it
+uv run pytest                    # all tests; `uv run pytest tests/cli/test_graph.py` for one file
+uv run lint-imports              # the import rule
+uv run mypy                      # the type check
+uv run kiripix --help            # the CLI (alias kpx)
+```
+
+CI runs the last three of these, plus `uv sync --locked`, on Linux and Windows for every push.
+
+## Code conventions
+
+- **Use the glossary's words** in code, messages, finding codes and tests: Asset, Kind, Recipe, Stage, Decision,
+  Mask, Layer, Op, Check, Command. Not "item", "pipeline", "step" or "endpoint".
+- **Pydantic classes are named after what they describe** (`ProjectSettings`, `StageState`, `Finding`), never
+  `*Model`. In names Kiripix controls (code, fields, paths, flags), `model` means only the 3D Model; a Runner's files
+  are its weights.
+- **The import rule** (spec §13, enforced by `lint-imports`, layers in `pyproject.toml`): `ops` imports nothing else
+  from Kiripix; `checks` only `ops`; `recipes` only `runners`, `providers`, `checks` and `ops`; `core` sits on
+  `recipes`; `commands` on `core`; `cli` and `server` import only `kiripix.commands`.
+- **Every operation is a Command** in `kiripix/commands/`, declared with `@command(...)`. Adapters hold no logic.
+  Every result is the envelope `api_version`, `ok`, `data`, `findings`; every finding has a stable dotted `code` and
+  exactly one of `fix` (a command an agent can run) or `owner_action` (only the owner can do it). Exit codes: 0 ok,
+  1 error, 2 check failed, 3 needs the owner, 4 busy.
+- **Status is derived, never stored** (ADR 0005). Nothing writes status to `asset.toml` or `kiripix.toml`.
+- **Every write is atomic** (`kiripix.core.atomic`); `.jsonl` files are append-only, one object per line, LF.
+- **Data files carry `schema_version`.** A format change bumps it and adds a pure migration from N to N + 1 in
+  `kiripix/core/settings.py`. Unknown keys are an error.
+- **Ops are pure**: numpy arrays in, arrays out, no I/O. I/O lives in `core` (`kiripix.core.images`).
+
+## Tests
+
+- **CLI seam** (`tests/cli/`): run `kiripix … --json` as a subprocess in a temporary Project and check the JSON, the
+  exit code and the files. Never import internals to check them. Stage-graph tests use the test Kind `demo` from
+  `tests/fixtures/kiripix_test_recipes.py`, loaded through `KIRIPIX_TEST_RECIPES` by the harness only.
+- **Golden seam** (`tests/golden/`): Ops called directly, outputs compared pixel-exactly with PNGs in git LFS.
+  `uv run pytest tests/golden --update-golden` rewrites them; the owner reviews the images before committing.
+- A new Command needs a sample in `tests/cli/test_contract.py`, or the contract test fails.
 
 ## Subagents: cost rules
 
