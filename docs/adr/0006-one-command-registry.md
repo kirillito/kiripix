@@ -1,0 +1,17 @@
+# One Command registry, three generated adapters
+
+Every operation is defined once in core as a Command with typed input and output, and the CLI, the REST API and the
+MCP server are generated from that registry, with the same names, JSON, errors and version. Kiripix must be easy for
+AI coding agents to drive and easy to build UIs on; with three hand-written surfaces they would drift apart, and a UI
+could end up needing something an agent can't do. With one registry, the built-in UI, any other UI and an agent all
+use exactly the same surface.
+
+## Consequences
+
+- The registry carries more than JSON types: file inputs (an import PNG), image outputs and progress events, which each
+  adapter maps in its own way; CLI metadata (positional arguments, short aliases); and an MCP flag per Command
+  (exposed, hidden or owner-only), because about 60 tools would cost an agent too much context.
+- Every UI action maps to exactly one Command; continuous gestures (dragging a Marker, a brush stroke) become one
+  Command when the mouse is released.
+- One API version covers the whole tool, not one per Command.
+- Probe Commands (read-only, never recorded) exist on every surface, but are only fast through the long-running server.
