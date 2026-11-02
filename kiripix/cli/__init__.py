@@ -113,14 +113,16 @@ def _callback(command: Command[Any, Any]) -> Any:
 
 def build_app() -> typer.Typer:
     app = typer.Typer(name="kiripix", help="Kiripix: a local pixel asset studio for Godot games.",
-                      no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
+                      no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False,
+                      rich_markup_mode=None)  # plain help: agents read it, and CI must not get colour codes
     groups: dict[str, typer.Typer] = {}
     for command in REGISTRY.values():
         target = app
         if len(command.path) == 2:
             group = command.path[0]
             if group not in groups:
-                groups[group] = typer.Typer(help=command.group_summary, no_args_is_help=True)
+                groups[group] = typer.Typer(help=command.group_summary, no_args_is_help=True,
+                                            rich_markup_mode=None)
                 app.add_typer(groups[group], name=group)
             target = groups[group]
         target.command(name=command.path[-1], help=command.summary)(_callback(command))
