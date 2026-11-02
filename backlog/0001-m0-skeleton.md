@@ -1,5 +1,5 @@
 ---
-status: split
+status: done
 milestone: M0
 type: spec
 ---

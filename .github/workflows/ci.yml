@@ -13,10 +13,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.3.3  # no major tags since v8: pinned to an exact release
       - name: Install the locked environment
         run: uv sync --locked
       - name: Import rule

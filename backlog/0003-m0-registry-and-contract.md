@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 milestone: M0
 agent: core-engineer
 type: ticket
