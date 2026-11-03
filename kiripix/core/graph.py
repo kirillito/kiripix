@@ -18,7 +18,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic
+from kiripix.core import atomic, journal
 from kiripix.core.assets import HISTORY_FILE, Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.hashing import HashCache, hash_json
@@ -29,7 +29,7 @@ from kiripix.core.settings import settings_document
 from kiripix.recipes.base import Scalar, StageFailure, StageRun, StageSpec
 
 Status = Literal["todo", "stale", "done", "needs-input", "needs-review", "failed"]
-Outcome = Literal["done", "skipped", "failed", "needs-input", "cancelled"]
+Outcome = Literal["done", "skipped", "failed", "needs-input", "needs-review", "cancelled"]
 
 STAMP_FILE = ".stage.json"
 
@@ -106,6 +106,7 @@ class AssetGraph:
         self.cache = cache
         self.failures = Failures(project.state_dir, asset.id)
         self._hashes: dict[str, str] = {}
+        self._replays: dict[str, journal.Replay] = {}
         self._settings = settings_document(project.settings)
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
         if unknown:
@@ -152,6 +153,13 @@ class AssetGraph:
         result.update(overrides)
         return result
 
+    def replay(self, stage: str) -> journal.Replay:
+        """The Stage's Decision journal, replayed: its current Decisions and whether the journal diverged."""
+        if stage not in self._replays:
+            path = journal.journal_path(self.asset.dir, stage)
+            self._replays[stage] = journal.replay(journal.read_entries(path, self.project.relative(path)))
+        return self._replays[stage]
+
     def files(self, spec: StageSpec) -> dict[str, Path]:
         found: dict[str, Path] = {}
         for pattern in spec.inputs.files:
@@ -183,6 +191,7 @@ class AssetGraph:
                     "stage": spec.name,
                     "asset_params": self.asset.settings.params,
                     "params": self.params(spec),
+                    "decisions": journal.hashable(self.replay(stage)),
                     "files": {name: self.cache.file_hash(path) for name, path in self.files(spec).items()},
                     "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
                     "upstream": {name: self.input_hash(name) for name in spec.inputs.upstream},
@@ -207,6 +216,8 @@ class AssetGraph:
             when = f"until {spec.available_from}" if spec.available_from else "yet"
             return StageState(stage=stage, status="needs-input",
                               reason=f"the {self.kind.name} Stage '{stage}' is not implemented {when}")
+        if self.replay(stage).divergent:
+            return StageState(stage=stage, status="needs-review", reason=journal.DIVERGENT)
         current = self.input_hash(stage)
         failure = self.failures.get(stage, current)
         if failure is not None:
@@ -295,6 +306,7 @@ class _Runner:
             params=params,
             settings=graph.settings(spec),
             progress=report,
+            decisions=graph.replay(spec.name).current,
         )
         started = time.monotonic()
 
@@ -379,6 +391,19 @@ def run_asset(
                     message=f"{asset.id} {spec.name}: needs-input: {state.reason}",
                     position=Position(asset=asset.id, stage=spec.name),
                     owner_action=f"{asset.id} waits on the Owner: {state.reason}.",
+                )
+            )
+            exit_code = ExitCode.NEEDS_OWNER
+            break
+        if state.status == "needs-review":
+            results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="needs-review",
+                                          input_hash=graph.input_hash(spec.name), message=state.reason))
+            findings.append(
+                Finding(
+                    code="stage.needs_review",
+                    message=f"{asset.id} {spec.name}: needs-review: {state.reason}",
+                    position=Position(asset=asset.id, stage=spec.name),
+                    owner_action=f"{asset.id} {spec.name} waits on the Owner to review: {state.reason}.",
                 )
             )
             exit_code = ExitCode.NEEDS_OWNER

@@ -6,12 +6,24 @@ Its Stages are trivial and deterministic, so the stage graph can be tested befor
 - hold: writes a partial file; while the Asset folder has a `hold` file, it marks `holding` and waits. Takes the GPU
   lock, so two Assets holding at once collide.
 - fail: fails on purpose, with the message in src/fail.txt, when that file exists.
+- choose: downstream of copy only. Takes the `mark` Decision and the `level` parameter (0 to 10), and writes both to
+  out.json, so tests can see exactly what the run function was handed.
 """
 
+import json
 import time
 
 from kiripix.recipes import register_kind
-from kiripix.recipes.base import KindSpec, ParamSpec, StageFailure, StageInputs, StageRun, StageSpec, chain
+from kiripix.recipes.base import (
+    DecisionSpec,
+    KindSpec,
+    ParamSpec,
+    StageFailure,
+    StageInputs,
+    StageRun,
+    StageSpec,
+    chain,
+)
 
 
 def _copy(run: StageRun) -> None:
@@ -46,6 +58,23 @@ def _fail(run: StageRun) -> None:
     (run.output_dir / "out.txt").write_text("ok", encoding="utf-8")
 
 
+def _choose(run: StageRun) -> None:
+    current = [{"decision": d.name, "data": d.data} for d in run.decisions]
+    document = {"level": run.params["level"], "decisions": current}
+    (run.output_dir / "out.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+MARK = DecisionSpec(
+    name="mark",
+    description="Mark a place by name, with a count.",
+    entry_schema={
+        "type": "object",
+        "properties": {"label": {"type": "string"}, "count": {"type": "integer", "minimum": 0}},
+        "required": ["label"],
+        "additionalProperties": False,
+    },
+)
+
 register_kind(
     KindSpec(
         name="demo",
@@ -63,6 +92,15 @@ register_kind(
             StageSpec(name="hold", description="Wait while a hold file exists.", gpu=True, run=_hold),
             StageSpec(name="fail", description="Fail when src/fail.txt exists.",
                       inputs=StageInputs(files=["src/fail.txt"]), run=_fail),
+            StageSpec(
+                name="choose",
+                description="Write the current Decisions and the level to the output.",
+                inputs=StageInputs(upstream=["copy"]),
+                params=(ParamSpec(name="level", type="int", description="A level.", default=1, minimum=0,
+                                  maximum=10),),
+                decisions=(MARK,),
+                run=_choose,
+            ),
         ),
     )
 )

@@ -15,7 +15,7 @@ Spec §5 (the Decision journal) and §10.5. User stories 1–4 of [0010](0010-m1
 
 - `kiripix set <id> <stage> key=value...`: validates each value against the Stage's parameters in `describe`, writes
   `[stages.<stage>]` in `asset.toml` atomically, under the Asset lock.
-- `kiripix decide <id> <stage> --json '<decision>' | --file d.json`: validates the Decision against the Stage's
+- `kiripix decide <id> <stage> --decision '<json>' | --file d.json`: validates the Decision against the Stage's
   Decision schema and appends a journal entry (ULID `id`, `parent`, Decision name, data) to
   `decisions/<stage>.jsonl`, LF, one object per line.
 - `kiripix undo <id> <stage>` and `kiripix redo <id> <stage>` append `{undo: <id>}` and `{redo: <id>}` entries.

@@ -483,7 +483,7 @@ kiripix new <kind> <id> [--view top|side]   new asset from its recipe
 kiripix next <id>                           the next stage and what it needs (a command, or the owner's action)
 kiripix run <id>|--all [stage] [--force] [--rerun] [--cpu]   run stale and todo stages; --rerun also re-runs stale Runner calls
 kiripix set <id> <stage> key=value...       set stage parameters
-kiripix decide <id> <stage> --json '<decision>' | --file d.json   record a Decision (validated against the stage's schema)
+kiripix decide <id> <stage> --decision '<json>' | --file d.json   record a Decision (validated against the stage's schema)
 kiripix override <id> <stage> <png>         record an Override from a painted image
 kiripix undo <id> <stage>                   undo the stage's last Decision
 kiripix redo <id> <stage>                   redo it

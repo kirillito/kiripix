@@ -87,6 +87,17 @@ ProgressCallback = Callable[[int, int, str], None]
 
 
 @dataclass(frozen=True)
+class CurrentDecision:
+    """One of a Stage's current Decisions: the journal replayed. `image_hash` is the hash of the image a click or
+    Override was made on, when the entry recorded one."""
+
+    id: str
+    name: str
+    data: dict[str, Any]
+    image_hash: str | None = None
+
+
+@dataclass(frozen=True)
 class StageRun:
     """What core hands a Stage's run function. Outputs go into `output_dir`, which core moves into place."""
 
@@ -98,6 +109,7 @@ class StageRun:
     params: dict[str, Scalar]
     settings: dict[str, Any]
     progress: ProgressCallback
+    decisions: tuple[CurrentDecision, ...] = ()
 
 
 StageFunction = Callable[[StageRun], None]

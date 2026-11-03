@@ -35,7 +35,7 @@ One room, imported from an image made elsewhere, goes all the way into the Toron
 
 **Decisions**
 1. As the owner, I want `kiripix set <id> <stage> key=value…` to set a Stage's parameters, validated against `describe`, so that I tune a Stage without editing TOML.
-2. As the owner, I want `kiripix decide <id> <stage> --json '…'` to record a Decision validated against the Stage's Decision schema, so that every click and pick is kept and replayed.
+2. As the owner, I want `kiripix decide <id> <stage> --decision '…'` to record a Decision validated against the Stage's Decision schema, so that every click and pick is kept and replayed.
 3. As the owner, I want `undo` and `redo` to append entries rather than delete them, so that the journal is never rewritten and merges stay safe.
 4. As the owner, I want a merge that left two Decisions with the same parent to put the Stage in `needs-review`, so that the later one never wins silently.
 5. As the owner, I want `kiripix override <id> <stage> <png>` to record a hand-painted fix on a Stage's output, so that I can fix what the tool got wrong without editing generated files.

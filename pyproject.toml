@@ -6,6 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "jsonschema>=4.23",
     "numpy>=2.1",
     "pillow>=11",
     "psutil>=6",
@@ -21,9 +22,9 @@ kpx = "kiripix.cli:main"
 [dependency-groups]
 dev = [
     "import-linter>=2.1",
-    "jsonschema>=4.23",
     "mypy>=1.13",
     "pytest>=8.3",
+    "types-jsonschema",
     "types-psutil",
 ]
 

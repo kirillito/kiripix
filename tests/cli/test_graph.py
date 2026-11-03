@@ -5,7 +5,7 @@ import shutil
 
 from conftest import Kiripix, make_demo, stage_status
 
-ALL_DONE = {"copy": "done", "concat": "done", "hold": "done", "fail": "done"}
+ALL_DONE = {"copy": "done", "concat": "done", "hold": "done", "fail": "done", "choose": "done"}
 
 
 def history(project: Kiripix, name: str = "a") -> list[dict[str, object]]:
@@ -17,7 +17,8 @@ def history(project: Kiripix, name: str = "a") -> list[dict[str, object]]:
 def test_a_new_asset_is_todo(project: Kiripix) -> None:
     make_demo(project)
 
-    assert stage_status(project, "demo.a") == {"copy": "todo", "concat": "todo", "hold": "todo", "fail": "todo"}
+    assert stage_status(project, "demo.a") == {"copy": "todo", "concat": "todo", "hold": "todo", "fail": "todo",
+                                                    "choose": "todo"}
 
 
 def test_run_builds_every_stage_in_order(project: Kiripix) -> None:
@@ -27,6 +28,7 @@ def test_run_builds_every_stage_in_order(project: Kiripix) -> None:
 
     assert [(r["stage"], r["outcome"]) for r in data["results"]] == [
         ("copy", "done"), ("concat", "done"), ("hold", "done"), ("fail", "done"),
+        ("choose", "done"),
     ]
     assert (folder / "work" / "concat" / "out.txt").read_text(encoding="utf-8") == "input+extra+GIMP Palette"
     assert stage_status(project, "demo.a") == ALL_DONE
@@ -38,7 +40,7 @@ def test_run_appends_history(project: Kiripix) -> None:
 
     entries = history(project)
 
-    assert [e["stage"] for e in entries] == ["copy", "concat", "hold", "fail"]
+    assert [e["stage"] for e in entries] == ["copy", "concat", "hold", "fail", "choose"]
     concat = entries[1]
     assert concat["outcome"] == "done"
     assert concat["params"] == {"sep": "+"}
@@ -52,7 +54,7 @@ def test_a_done_stage_is_skipped(project: Kiripix) -> None:
     data = project.json("run", "demo.a")["data"]
 
     assert {r["outcome"] for r in data["results"]} == {"skipped"}
-    assert len(history(project)) == 4
+    assert len(history(project)) == 5
 
 
 def test_changing_an_input_makes_the_stage_and_everything_below_stale(project: Kiripix) -> None:
@@ -61,9 +63,10 @@ def test_changing_an_input_makes_the_stage_and_everything_below_stale(project: K
 
     (folder / "src" / "extra.txt").write_text("other", encoding="utf-8")
 
-    assert stage_status(project, "demo.a") == {"copy": "done", "concat": "stale", "hold": "stale", "fail": "stale"}
+    assert stage_status(project, "demo.a") == {"copy": "done", "concat": "stale", "hold": "stale", "fail": "stale",
+                                                    "choose": "done"}
     ran = project.json("run", "demo.a")["data"]["results"]
-    assert [r["outcome"] for r in ran] == ["skipped", "done", "done", "done"]
+    assert [r["outcome"] for r in ran] == ["skipped", "done", "done", "done", "skipped"]
     assert stage_status(project, "demo.a") == ALL_DONE
 
 
@@ -84,7 +87,8 @@ def test_a_project_setting_is_an_input(project: Kiripix) -> None:
     palette = project.cwd / "style" / "palette.gpl"
     palette.write_text(palette.read_text(encoding="utf-8") + "  1   2   3\textra\n", encoding="utf-8")
 
-    assert stage_status(project, "demo.a") == {"copy": "done", "concat": "stale", "hold": "stale", "fail": "stale"}
+    assert stage_status(project, "demo.a") == {"copy": "done", "concat": "stale", "hold": "stale", "fail": "stale",
+                                                    "choose": "done"}
 
 
 def test_a_stage_parameter_is_an_input(project: Kiripix) -> None:
@@ -185,7 +189,7 @@ def test_force_reruns_a_done_stage(project: Kiripix) -> None:
     data = project.json("run", "demo.a", "copy", "--force")["data"]
 
     assert data["results"][0]["outcome"] == "done"
-    assert len(history(project)) == 5
+    assert len(history(project)) == 6
 
 
 def test_an_unknown_stage(project: Kiripix) -> None:

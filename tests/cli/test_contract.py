@@ -15,6 +15,19 @@ def _image(project: Kiripix) -> None:
     Image.new("RGBA", (4, 4), (255, 0, 77, 255)).save(project.cwd / "in.png")  # "red" in the default palette
 
 
+_MARK = '{"decision": "mark", "data": {"label": "door"}}'
+
+
+def _decided(project: Kiripix) -> None:
+    make_demo(project)
+    project.json("decide", "demo.a", "choose", "--decision", _MARK)
+
+
+def _undone(project: Kiripix) -> None:
+    _decided(project)
+    project.json("undo", "demo.a", "choose")
+
+
 # Each sample prepares the Project, then gives the arguments of one successful call.
 SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "init": lambda p: ["init", "sub"],
@@ -24,6 +37,10 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "status": lambda p: (make_demo(p), ["status"])[1],
     "next": lambda p: (make_demo(p), ["next", "demo.a"])[1],
     "run": lambda p: (make_demo(p), ["run", "demo.a"])[1],
+    "set": lambda p: (make_demo(p), ["set", "demo.a", "concat", "sep=-"])[1],
+    "decide": lambda p: (make_demo(p), ["decide", "demo.a", "choose", "--decision", _MARK])[1],
+    "undo": lambda p: (_decided(p), ["undo", "demo.a", "choose"])[1],
+    "redo": lambda p: (_undone(p), ["redo", "demo.a", "choose"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
 }
