@@ -12,8 +12,10 @@ from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.ops import Palette, PaletteSyntaxError, parse_gpl, parse_hex
 from kiripix.ops.colour import U8
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
-def load_rgba(path: Path, shown: str) -> U8:
+
+def load_rgba(path: Path | io.BytesIO, shown: str) -> U8:
     """An image as an (H, W, 4) uint8 array. `shown` is the path as the caller gave it, for messages."""
     try:
         with Image.open(path) as image:
@@ -21,7 +23,7 @@ def load_rgba(path: Path, shown: str) -> U8:
             rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
     except FileNotFoundError:
         raise fail("image.not_found", f"no image at {shown}", owner_action=f"Check the path {shown}.") from None
-    except (UnidentifiedImageError, OSError) as error:
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         raise fail(
             "image.unreadable",
             f"{shown} is not a readable image: {error}",
@@ -29,6 +31,18 @@ def load_rgba(path: Path, shown: str) -> U8:
             position=Position(file=shown),
         ) from None
     return rgba.copy()
+
+
+def read_png(path: Path, shown: str) -> tuple[bytes, U8]:
+    """A PNG file's bytes and its pixels; any other format is refused with `image.not_png`."""
+    try:
+        data = path.read_bytes()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        raise fail("image.not_found", f"no image at {shown}", owner_action=f"Check the path {shown}.") from None
+    if not data.startswith(PNG_SIGNATURE):
+        raise fail("image.not_png", f"{shown} is not a PNG", owner_action=f"Save {shown} as a PNG.",
+                   position=Position(file=shown))
+    return data, load_rgba(io.BytesIO(data), shown)
 
 
 def save_png(path: Path, rgba: U8) -> None:

@@ -41,12 +41,14 @@ def _no_progress(event: ProgressEvent) -> None:
 
 @dataclass(frozen=True)
 class Context:
-    """What an adapter tells a Command about the call: where it runs, how it was invoked, and where progress goes."""
+    """What an adapter tells a Command about the call: where it runs, how it was invoked, where progress goes, and
+    whether the Owner is at an interactive terminal (the CLI's half of the owner-only guard, spec §10.3)."""
 
     cwd: Path
     command_line: str
     wait: float = 0.0
     progress: Callable[[ProgressEvent], None] = _no_progress
+    interactive: bool = False
 
 
 __all__ = ["API_VERSION", "Busy", "Context", "Envelope", "ExitCode", "Outcome", "ProgressEvent"]

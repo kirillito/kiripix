@@ -19,4 +19,12 @@ uv run python -c "import sys; print(sys.stdin.isatty(), sys.stdout.isatty())"
 Result: the terminal check works in all three, so owner-only Commands can be run from any of them. Check again if a
 terminal or Git for Windows is upgraded and `accept` starts refusing.
 
+**Since M1 the CLI also requires a console on Windows**, because `isatty` is true for the `NUL` device too, so stdin
+redirected from `NUL` would otherwise pass. The table above predates that. Re-check each terminal with the CLI's own
+test, which should print `True`:
+
+```
+uv run python -c "from kiripix.cli import _stdin_is_terminal; print(_stdin_is_terminal())"
+```
+
 Agents can't fill this in: an agent's shell is never interactive, which is the point of the check.

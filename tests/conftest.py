@@ -38,10 +38,13 @@ class Result:
         return [f["code"] for f in self.json["findings"]]
 
 
-def kiripix_env(test_recipes: bool = True) -> dict[str, str]:
+def kiripix_env(test_recipes: bool = True, owner: bool = False) -> dict[str, str]:
     env = dict(os.environ)
     env.pop("KIRIPIX_TEST_RECIPES", None)
+    env.pop("KIRIPIX_TEST_OWNER", None)
     env["PYTHONIOENCODING"] = "utf-8"
+    if owner:
+        env["KIRIPIX_TEST_OWNER"] = "1"
     if test_recipes:
         env["PYTHONPATH"] = os.pathsep.join([str(FIXTURES), env.get("PYTHONPATH", "")])
         env["KIRIPIX_TEST_RECIPES"] = "kiripix_test_recipes"
@@ -58,11 +61,14 @@ class Kiripix:
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd
 
-    def __call__(self, *args: str | Path, test_recipes: bool = True, timeout: float = 60) -> Result:
+    def __call__(self, *args: str | Path, test_recipes: bool = True, owner: bool = False,
+                 timeout: float = 60) -> Result:
+        """`owner=True` stands in for the Owner at a terminal, through KIRIPIX_TEST_OWNER."""
         done = subprocess.run(
             kiripix_args(*args),
             cwd=self.cwd,
-            env=kiripix_env(test_recipes),
+            env=kiripix_env(test_recipes, owner),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -109,6 +115,23 @@ def make_demo(project: Kiripix, name: str = "a", extra: str = "extra") -> Path:
     (folder / "src").mkdir()
     (folder / "src" / "input.txt").write_text("input", encoding="utf-8")
     (folder / "src" / "extra.txt").write_text(extra, encoding="utf-8")
+    return folder
+
+
+def save_image(path: Path, size: tuple[int, int] = (4, 4), colour: tuple[int, int, int, int] = (255, 0, 77, 255)) -> Path:
+    """A one-colour PNG."""
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", size, colour).save(path)
+    return path
+
+
+def make_sketch(project: Kiripix, name: str = "a") -> Path:
+    """A sketch Asset (the test Kind with image Stages) with a 4x4 input image. Returns its folder."""
+    project.json("new", "sketch", name)
+    folder = project.cwd / "assets" / "sketch" / name
+    save_image(folder / "src" / "input.png")
     return folder
 
 

@@ -1,4 +1,4 @@
-"""The Commands that change an Asset's decisions: set, decide, undo and redo."""
+"""The Commands that change an Asset's decisions: set, decide, undo, redo, override and accept."""
 
 from pathlib import Path
 from typing import Self
@@ -186,3 +186,76 @@ def redo(arguments: _StageInput, context: Context) -> Outcome[StepData]:
     asset = load_asset(project, arguments.asset)
     entry, after = editing.redo(project, asset, arguments.stage)
     return Outcome(_step(entry, after, asset.id, arguments.stage))
+
+
+# override
+
+
+class OverrideInput(_StageInput):
+    stage: str = Field(description="The Stage whose image output was painted over.")
+    png: Path = Field(description="The painted PNG, the same size as the Stage's image.")
+
+
+class OverrideData(BaseModel):
+    asset: str
+    stage: str
+    id: str
+    file: str
+    image_hash: str
+    stages: list[StageState]
+
+    def text(self) -> str:
+        return f"{self.asset} {self.stage}: recorded an Override ({self.file}); run to apply it"
+
+
+@command(
+    "override",
+    summary="Record an Override: a PNG painted over a Stage's image output, applied each time the Stage runs.",
+    input=OverrideInput,
+    output=OverrideData,
+    kind="writing",
+    mcp="hidden",
+    cli=CliMeta(positional=("asset", "stage", "png")),
+    locks=LockNeeds(asset=_asset_lock),
+)
+def override(arguments: OverrideInput, context: Context) -> Outcome[OverrideData]:
+    project = find_project(context.cwd)
+    asset = load_asset(project, arguments.asset)
+    entry, stored = editing.record_override(project, asset, arguments.stage, context.cwd / arguments.png,
+                                            str(arguments.png))
+    assert entry.image_hash is not None
+    states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
+    return Outcome(OverrideData(asset=asset.id, stage=arguments.stage, id=entry.id, file=project.relative(stored),
+                                image_hash=entry.image_hash, stages=states))
+
+
+# accept
+
+
+class AcceptData(BaseModel):
+    asset: str
+    stage: str
+    recorded: list[str]
+    stages: list[StageState]
+
+    def text(self) -> str:
+        return f"{self.asset} {self.stage}: accepted ({len(self.recorded)} journal entries)"
+
+
+@command(
+    "accept",
+    summary="Accept a needs-review Stage: re-record its Decisions against the current image (owner-only).",
+    input=_StageInput,
+    output=AcceptData,
+    kind="owner-only",
+    mcp="owner-only",
+    cli=CliMeta(positional=("asset", "stage")),
+    locks=LockNeeds(asset=_asset_lock),
+)
+def accept(arguments: _StageInput, context: Context) -> Outcome[AcceptData]:
+    project = find_project(context.cwd)
+    asset = load_asset(project, arguments.asset)
+    appended = editing.accept(project, asset, arguments.stage)
+    states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
+    return Outcome(AcceptData(asset=asset.id, stage=arguments.stage, recorded=[e.id for e in appended],
+                              stages=states))

@@ -1,7 +1,7 @@
-"""The test Kind `demo`, loaded through KIRIPIX_TEST_RECIPES. For the test harness only.
+"""The test Kinds `demo` and `sketch` (at the end), loaded through KIRIPIX_TEST_RECIPES. For the test harness only.
 
 Its Stages are trivial and deterministic, so the stage graph can be tested before any image Recipe runs:
-- copy: copies src/input.txt.
+- copy: copies src/input.txt. Its Check reports `demo.bad_text` at x=1, y=2 when the text contains "bad".
 - concat: joins copy's output, src/extra.txt and the palette's first line, with a separator parameter.
 - hold: writes a partial file; while the Asset folder has a `hold` file, it marks `holding` and waits. Takes the GPU
   lock, so two Assets holding at once collide.
@@ -11,8 +11,12 @@ Its Stages are trivial and deterministic, so the stage graph can be tested befor
 """
 
 import json
+import shutil
 import time
 
+from kiripix.checks import Finding, Position
+from kiripix.core.assets import Asset
+from kiripix.core.project_checks import register_project_check
 from kiripix.recipes import register_kind
 from kiripix.recipes.base import (
     DecisionSpec,
@@ -23,12 +27,30 @@ from kiripix.recipes.base import (
     StageRun,
     StageSpec,
     chain,
+    point_decision,
 )
 
 
 def _copy(run: StageRun) -> None:
     text = run.files["src/input.txt"].read_text(encoding="utf-8")
     (run.output_dir / "out.txt").write_text(text, encoding="utf-8")
+
+
+def _check_copy(run: StageRun) -> list[Finding]:
+    if "bad" not in (run.output_dir / "out.txt").read_text(encoding="utf-8"):
+        return []
+    return [Finding(code="demo.bad_text", message="the text says bad", position=Position(file="out.txt", x=1, y=2),
+                    fix=f"kiripix set {run.asset_id} concat sep=-")]
+
+
+@register_project_check
+def _check_demo_count(project: object, assets: list[Asset]) -> list[Finding]:
+    """The test Project check: at most one demo Asset."""
+    demos = [a.id for a in assets if a.kind == "demo"]
+    if len(demos) < 2:
+        return []
+    return [Finding(code="demo.too_many", message=f"{len(demos)} demo Assets: {', '.join(demos)}",
+                    owner_action="Remove all but one demo Asset.")]
 
 
 def _concat(run: StageRun) -> None:
@@ -81,7 +103,7 @@ register_kind(
         description="A test Kind with trivial Stages.",
         stages=chain(
             StageSpec(name="copy", description="Copy the input.", inputs=StageInputs(files=["src/input.txt"]),
-                      run=_copy),
+                      run=_copy, check=_check_copy),
             StageSpec(
                 name="concat",
                 description="Join the copy, the extra file and the palette's first line.",
@@ -101,6 +123,37 @@ register_kind(
                 decisions=(MARK,),
                 run=_choose,
             ),
+        ),
+    )
+)
+
+
+# The test Kind `sketch`: two image Stages, for Overrides and replay onto changed input.
+# - draw: copies src/input.png; its image is draw.png.
+# - trace: takes `click` Decisions on draw's image (with any Overrides of draw applied), copies the image it was
+#   handed to trace.png and writes its current Decisions to out.json.
+
+
+def _draw(run: StageRun) -> None:
+    shutil.copyfile(run.files["src/input.png"], run.output_dir / "draw.png")
+
+
+def _trace(run: StageRun) -> None:
+    shutil.copyfile(run.upstream["draw"] / "draw.png", run.output_dir / "trace.png")
+    current = [{"decision": d.name, "data": d.data} for d in run.decisions]
+    (run.output_dir / "out.json").write_text(json.dumps({"decisions": current}), encoding="utf-8")
+
+
+register_kind(
+    KindSpec(
+        name="sketch",
+        description="A test Kind with two image Stages.",
+        stages=chain(
+            StageSpec(name="draw", description="Copy the input image.", inputs=StageInputs(files=["src/input.png"]),
+                      image="draw.png", run=_draw),
+            StageSpec(name="trace", description="Copy the image it is handed and write its Decisions.",
+                      decisions=(point_decision("click", "A click on the image.", on_image=True),),
+                      image="trace.png", run=_trace),
         ),
     )
 )

@@ -3,6 +3,10 @@
 Entries are never removed or rewritten. A Decision entry carries a ULID `id`, its `parent` (the entry that came before
 it), the Decision's name and data, and, for a click or an Override, the hash of the image it was made on. `undo` and
 `redo` are entries too. The Stage's current Decisions are the journal replayed in ULID order.
+
+`accept` appends two more kinds of entry, so no status is ever stored: a Decision re-recorded against the new image
+(`replaces` names the entry it takes the place of, keeping its position), and `{accept: [ids]}`, which accepts the
+divergent entries it lists.
 """
 
 import json
@@ -20,6 +24,7 @@ from kiripix.core.errors import KiripixError
 from kiripix.recipes.base import CurrentDecision
 
 DIVERGENT = "divergent Decisions"
+OVERRIDE = "override"  # the Decision `override` records: {"png": <hash>} of a PNG in decisions/overrides/
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford's base 32: sorts like the numbers it encodes
 
 
@@ -57,18 +62,21 @@ class JournalEntry(BaseModel):
     decision: str | None = None
     data: dict[str, Any] | None = None
     image_hash: str | None = None
+    replaces: str | None = None
     undo: str | None = None
     redo: str | None = None
+    accept: list[str] | None = None
 
     @model_validator(mode="after")
     def _one_kind_of_entry(self) -> Self:
-        kinds = [self.decision is not None, self.undo is not None, self.redo is not None]
+        kinds = [self.decision is not None, self.undo is not None, self.redo is not None, self.accept is not None]
         if sum(kinds) != 1:
-            raise ValueError("an entry is a Decision, an undo or a redo, exactly one of them")
+            raise ValueError("an entry is a Decision, an undo, a redo or an accept, exactly one of them")
         if self.decision is not None and self.data is None:
             raise ValueError("a Decision entry needs 'data'")
-        if self.decision is None and (self.data is not None or self.image_hash is not None):
-            raise ValueError("only a Decision entry has 'data' and 'image_hash'")
+        if self.decision is None and (self.data is not None or self.image_hash is not None or
+                                      self.replaces is not None):
+            raise ValueError("only a Decision entry has 'data', 'image_hash' and 'replaces'")
         return self
 
     def line(self) -> dict[str, Any]:
@@ -78,12 +86,17 @@ class JournalEntry(BaseModel):
 
 @dataclass(frozen=True)
 class Replay:
-    """What a journal says now: the current Decisions in ULID order, the redo stack, and whether it diverged."""
+    """What a journal says now: the current Decisions in order, the redo stack, and the divergent entries not yet
+    accepted."""
 
     current: tuple[CurrentDecision, ...]
     undone: tuple[str, ...]
     last_id: str | None
-    divergent: bool
+    conflicts: tuple[str, ...]
+
+    @property
+    def divergent(self) -> bool:
+        return bool(self.conflicts)
 
     def next_undo(self) -> str | None:
         return self.current[-1].id if self.current else None
@@ -94,6 +107,10 @@ class Replay:
 
 def journal_path(asset_dir: Path, stage: str) -> Path:
     return asset_dir / "decisions" / f"{stage}.jsonl"
+
+
+def override_path(asset_dir: Path, png_hash: str) -> Path:
+    return asset_dir / "decisions" / "overrides" / f"{png_hash}.png"
 
 
 def read_entries(path: Path, file: str) -> list[JournalEntry]:
@@ -126,33 +143,45 @@ def replay(entries: list[JournalEntry]) -> Replay:
     """Replay entries (in ULID order) into the current Decisions.
 
     A Decision makes the redo stack empty; an undo takes a current Decision out and puts it on the redo stack; a redo
-    brings the latest one back. Entries that name nothing undoable or redoable change nothing.
+    brings the latest one back. A re-recorded Decision takes the place of the current one it replaces. Entries that
+    name nothing current, undoable or redoable change nothing. Entries sharing a parent are divergent until an accept
+    entry lists them all.
     """
     decisions: dict[str, JournalEntry] = {}
     active: set[str] = set()
+    position: dict[str, str] = {}
     undone: list[str] = []
-    seen_parents: set[str | None] = set()
-    divergent = False
+    children: dict[str | None, list[str]] = {}
+    accepted: set[str] = set()
     for entry in entries:
-        if entry.parent in seen_parents:
-            divergent = True
-        seen_parents.add(entry.parent)
+        children.setdefault(entry.parent, []).append(entry.id)
         if entry.decision is not None:
             decisions[entry.id] = entry
-            active.add(entry.id)
-            undone.clear()
+            if entry.replaces is None:
+                active.add(entry.id)
+                position[entry.id] = entry.id
+                undone.clear()
+            elif entry.replaces in active:
+                active.discard(entry.replaces)
+                active.add(entry.id)
+                position[entry.id] = position[entry.replaces]
         elif entry.undo is not None:
             if entry.undo in active:
                 active.discard(entry.undo)
                 undone.append(entry.undo)
-        elif entry.redo is not None and entry.redo in undone:
-            undone.remove(entry.redo)
-            active.add(entry.redo)
+        elif entry.redo is not None:
+            if entry.redo in undone:
+                undone.remove(entry.redo)
+                active.add(entry.redo)
+        elif entry.accept is not None:
+            accepted.update([*entry.accept, entry.id])
     current = tuple(
         CurrentDecision(i, str(decisions[i].decision), decisions[i].data or {}, decisions[i].image_hash)
-        for i in sorted(active)
+        for i in sorted(active, key=lambda i: position[i])
     )
-    return Replay(current, tuple(undone), entries[-1].id if entries else None, divergent)
+    conflicts = tuple(sorted(i for ids in children.values() if len(ids) > 1 and not accepted.issuperset(ids)
+                             for i in ids))
+    return Replay(current, tuple(undone), entries[-1].id if entries else None, conflicts)
 
 
 def hashable(view: Replay) -> list[dict[str, Any]]:

@@ -199,25 +199,25 @@ def test_an_unknown_stage(project: Kiripix) -> None:
 
 
 def test_a_stage_that_needs_input_stops_the_run_with_exit_3(project: Kiripix) -> None:
-    project.json("new", "room", "alley", "--view", "top")
+    project.json("new", "prop", "bench")
 
-    result = project.json("run", "room.alley", expect=3)
+    result = project.json("run", "prop.bench", expect=3)
 
     assert result["data"]["results"] == [{**result["data"]["results"][0], "stage": "brief", "outcome": "needs-input"}]
     finding = result["findings"][0]
     assert finding["code"] == "stage.needs_input"
-    assert finding["fix"] is None and "M1" in finding["owner_action"]
+    assert finding["fix"] is None and "M2" in finding["owner_action"]
 
 
 def test_status_filters_by_kind(project: Kiripix) -> None:
     make_demo(project)
-    project.json("new", "room", "alley", "--view", "top")
+    project.json("new", "prop", "bench")
 
-    assets = project.json("status", "--kind", "room")["data"]["assets"]
+    assets = project.json("status", "--kind", "prop")["data"]["assets"]
 
-    assert [a["asset"] for a in assets] == ["room.alley"]
+    assert [a["asset"] for a in assets] == ["prop.bench"]
     assert assets[0]["stages"][0] == {"stage": "brief", "status": "needs-input",
-                                      "reason": "the room Stage 'brief' is not implemented until M1"}
+                                      "reason": "the prop Stage 'brief' is not implemented until M2"}
 
 
 def test_status_with_an_unknown_kind(project: Kiripix) -> None:
@@ -237,15 +237,15 @@ def test_status_reports_a_broken_asset_and_still_shows_the_others(project: Kirip
 
 def test_next_returns_a_command_or_an_owner_action(project: Kiripix) -> None:
     make_demo(project)
-    project.json("new", "room", "alley", "--view", "top")
+    project.json("new", "prop", "bench")
 
     demo = project.json("next", "demo.a")["data"]
-    room = project.json("next", "room.alley")["data"]
+    prop = project.json("next", "prop.bench")["data"]
     project.json("run", "demo.a")
     finished = project.json("next", "demo.a")["data"]
 
     assert demo["stage"] == "copy" and demo["command"] == "kiripix run demo.a" and demo["owner_action"] is None
-    assert room["stage"] == "brief" and room["command"] is None and "M1" in room["owner_action"]
+    assert prop["stage"] == "brief" and prop["command"] is None and "M2" in prop["owner_action"]
     assert finished["done"] and finished["command"] is None and finished["owner_action"] is None
 
 
@@ -259,7 +259,7 @@ def test_run_all_runs_every_asset(project: Kiripix) -> None:
 
 
 def test_run_all_carries_on_past_an_asset_that_needs_the_owner(project: Kiripix) -> None:
-    project.json("new", "room", "alley", "--view", "top")
+    project.json("new", "prop", "bench")
     make_demo(project, "a")
 
     result = project.json("run", "--all", expect=3)

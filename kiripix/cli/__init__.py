@@ -29,6 +29,20 @@ def _command_line() -> str:
     return shlex.join(["kiripix", *sys.argv[1:]])
 
 
+def _stdin_is_terminal() -> bool:
+    """Whether stdin is an interactive terminal, for owner-only Commands. On Windows `isatty` is true for the NUL
+    device too, so stdin must also be a console."""
+    if sys.stdin is None or not sys.stdin.isatty():
+        return False
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    import msvcrt
+
+    mode = ctypes.c_uint32()
+    return bool(ctypes.windll.kernel32.GetConsoleMode(msvcrt.get_osfhandle(sys.stdin.fileno()), ctypes.byref(mode)))
+
+
 def _write(stream: Any, text: str) -> None:
     stream.write(text)
     stream.flush()
@@ -89,7 +103,7 @@ def _callback(command: Command[Any, Any]) -> Any:
         default=typer.Option("none", "--progress",
                              help="jsonl streams progress events on stderr."),
     ))
-    if command.kind == "writing":
+    if command.kind in ("writing", "owner-only"):
         parameters.append(inspect.Parameter(
             _WAIT, inspect.Parameter.KEYWORD_ONLY, annotation=float,
             default=typer.Option(0.0, "--wait", min=0, help="Wait up to this many seconds for a held lock."),
@@ -99,7 +113,8 @@ def _callback(command: Command[Any, Any]) -> Any:
         as_json = values.pop(_JSON)
         progress = values.pop(_PROGRESS)
         wait = values.pop(_WAIT, 0.0)
-        context = Context(cwd=Path.cwd(), command_line=_command_line(), wait=wait, progress=_progress_sink(progress))
+        context = Context(cwd=Path.cwd(), command_line=_command_line(), wait=wait, progress=_progress_sink(progress),
+                          interactive=_stdin_is_terminal())
         envelope, exit_code = invoke(command, values, context)
         _render(envelope, as_json)
         _State.exit_code = int(exit_code)

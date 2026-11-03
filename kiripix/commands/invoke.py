@@ -3,6 +3,7 @@
 Every adapter calls Commands through `invoke`, so validation, locking and errors behave the same everywhere.
 """
 
+import os
 import traceback
 from contextlib import nullcontext
 from typing import Any
@@ -44,9 +45,27 @@ def _locks(command: Command[Any, Any], arguments: BaseModel) -> list[str]:
     return names
 
 
+def _owner_refusal(command: Command[Any, Any], context: Context) -> Outcome[Any] | None:
+    """The owner-only guard (spec §10.3): a guardrail against an agent accepting its own work, not security.
+
+    `KIRIPIX_TEST_OWNER=1` stands in for the Owner in the test harness, and nowhere else.
+    """
+    if command.kind != "owner-only" or context.interactive or os.environ.get("KIRIPIX_TEST_OWNER") == "1":
+        return None
+    finding = Finding(
+        code="owner.required",
+        message=f"'kiripix {command.name}' is the Owner's own judgement, and this isn't an interactive terminal",
+        owner_action=f"Run it yourself at an interactive terminal, or in the UI: {context.command_line}",
+    )
+    return Outcome(None, [finding], ExitCode.NEEDS_OWNER)
+
+
 def invoke(command: Command[Any, Any], raw: dict[str, Any], context: Context) -> tuple[Envelope[Any], ExitCode]:
     try:
         arguments = command.input.model_validate(raw)
+        refusal = _owner_refusal(command, context)
+        if refusal is not None:
+            raise KiripixError(refusal.findings, refusal.exit_code)
         locks = _locks(command, arguments)
         guard = hold(find_project(context.cwd).state_dir, locks, context.wait, context.command_line) if locks \
             else nullcontext()

@@ -196,7 +196,9 @@ image or crop hash, the click Decisions, the parameters, and the Runner's ID wit
   against the new input hash and rebases the Overrides onto the new image hash, so the next replay is exact.
 
 **Overrides.** An Override can attach to the output of any image-producing stage. It is stored under `decisions/`,
-records the hash of the image it was painted on, and counts as a Decision of the next stage.
+records the hash of the image it was painted on, and is a Decision of the stage whose output it paints. Core paints it
+over that stage's image after the stage runs, so every stage that reads the image sees it. If the stage's own image
+(before its Overrides) has changed since the Override was painted, the stage goes to `needs-review`.
 
 **The Decision journal.** Each stage's Decisions live in an append-only `decisions/<stage>.jsonl`, one entry per line,
 LF line endings, `merge=union` in git.

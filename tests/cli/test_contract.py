@@ -8,7 +8,7 @@ import jsonschema
 import pytest
 from PIL import Image
 
-from conftest import Kiripix, make_demo
+from conftest import Kiripix, make_demo, make_sketch, save_image
 
 
 def _image(project: Kiripix) -> None:
@@ -28,6 +28,32 @@ def _undone(project: Kiripix) -> None:
     project.json("undo", "demo.a", "choose")
 
 
+def _sketched(project: Kiripix) -> None:
+    make_sketch(project)
+    project.json("run", "sketch.a")
+    save_image(project.cwd / "fix.png")
+
+
+def _room_image(project: Kiripix) -> None:
+    project.json("new", "room", "alley", "--view", "top")
+    _image(project)
+
+
+def _imported(project: Kiripix) -> str:
+    """Import in.png into room.alley (once; importing again is a no-op) and return the Variant's name."""
+    if not (project.cwd / "in.png").exists():
+        _room_image(project)
+    return str(project.json("import", "room.alley", "in.png")["data"]["variant"])
+
+
+def _in_review(project: Kiripix) -> None:
+    _sketched(project)
+    project.json("override", "sketch.a", "draw", "fix.png")
+    project.json("run", "sketch.a")
+    save_image(project.cwd / "assets" / "sketch" / "a" / "src" / "input.png", colour=(41, 173, 255, 255))
+    project.json("run", "sketch.a", expect=3)
+
+
 # Each sample prepares the Project, then gives the arguments of one successful call.
 SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "init": lambda p: ["init", "sub"],
@@ -41,6 +67,12 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "decide": lambda p: (make_demo(p), ["decide", "demo.a", "choose", "--decision", _MARK])[1],
     "undo": lambda p: (_decided(p), ["undo", "demo.a", "choose"])[1],
     "redo": lambda p: (_undone(p), ["redo", "demo.a", "choose"])[1],
+    "override": lambda p: (_sketched(p), ["override", "sketch.a", "draw", "fix.png"])[1],
+    "accept": lambda p: (_in_review(p), ["accept", "sketch.a", "draw"])[1],
+    "import": lambda p: (_room_image(p), ["import", "room.alley", "in.png"])[1],
+    "pick": lambda p: (_imported(p), ["pick", "room.alley", _imported(p)])[1],
+    "check": lambda p: (make_demo(p), ["check", "demo.a"])[1],
+    "preview": lambda p: (_sketched(p), ["preview", "sketch.a", "--stage", "draw"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
 }
@@ -72,7 +104,7 @@ def test_json_output_validates_against_the_schema(project: Kiripix, schemas: dic
                                                   name: str) -> None:
     arguments = SAMPLES[name](project)
 
-    result = project.json(*arguments)
+    result = project.json(*arguments, owner=schemas[name]["kind"] == "owner-only")
 
     assert result["api_version"] == 1 and result["ok"] is True and result["findings"] == []
     jsonschema.validate(result, schemas[name]["output"])

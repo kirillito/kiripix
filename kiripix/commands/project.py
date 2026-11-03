@@ -284,10 +284,19 @@ def next_step(arguments: NextInput, context: Context) -> Outcome[NextData]:
     graph = AssetGraph(project, asset, cache)
     data = NextData(asset=asset.id, done=True)
     for state in graph.states():
+        spec = graph.spec(state.stage)
         if state.status == "done":
-            continue
+            failed = [f for f in graph.check(spec) if f.severity == "error"]
+            if not failed:
+                continue
+            data = NextData(asset=asset.id, done=False, stage=state.stage, status=state.status,
+                            reason=failed[0].message, command=failed[0].fix, owner_action=failed[0].owner_action)
+            break
         data = NextData(asset=asset.id, done=False, stage=state.stage, status=state.status, reason=state.reason)
-        if state.status == "needs-input":
+        waiting = graph.needs_input(spec) if state.status == "needs-input" and spec.run is not None else None
+        if waiting is not None:
+            data.command, data.owner_action = waiting.command, waiting.owner_action
+        elif state.status == "needs-input":
             data.owner_action = f"{state.reason[0].upper()}{state.reason[1:]}." if state.reason else "Provide input."
         elif state.status == "needs-review":
             data.owner_action = f"Review and accept: kiripix accept {asset.id} {state.stage}"

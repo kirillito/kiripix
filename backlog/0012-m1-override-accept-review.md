@@ -14,8 +14,9 @@ Spec §5 (Replaying Decisions, Overrides) and §10.3. User stories 5–8 of [001
 ## What to build
 
 - `kiripix override <id> <stage> <png>`: stores the painted image under `decisions/` by its hash and appends a journal
-  entry referencing it, with the hash of the Stage output it was painted on. The Override counts as a Decision of the
-  next Stage, and core applies it on top of the Stage's output when that Stage runs.
+  entry referencing it, with the hash of the Stage output it was painted on. The Override is a Decision of the Stage
+  it paints, and core applies it on top of the Stage's output each time that Stage runs (spec §5, changed
+  2026-11-03: as a Decision of the next Stage, Stages reading the same image would not all have seen it).
 - Replay: with an unchanged input the Stage replays exactly and is `done`. If any current click or Override was made on
   an image whose hash differs from the current one, the Stage runs and lands in `needs-review` (derived, never stored,
   ADR 0005). Stages below a `needs-review` Stage don't build. A Pick of a deleted Variant means `needs-input`.

@@ -4,6 +4,11 @@ A Stage's input hash covers its declared files, project settings, parameters and
 so a change anywhere above it makes it stale. The hash an output was built from is stored beside the output, in
 `work/<stage>/` or `out/<stage>/`, never in a committed data file. `failed` lives only in the git-ignored
 `.kiripix/failures/`.
+
+A Stage's input image is the image of its first upstream Stage that declares one, and its clicks record that image's
+hash. An Override is a Decision of the Stage whose image it paints: core paints it over the image after the run
+function, so every Stage reading the image sees it, and records the unpainted image's hash in the stamp. A built Stage
+with any current click or Override recorded on another image than that is needs-review.
 """
 
 import json
@@ -21,17 +26,20 @@ from kiripix.checks import Finding, Position
 from kiripix.core import atomic, journal
 from kiripix.core.assets import HISTORY_FILE, Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
-from kiripix.core.hashing import HashCache, hash_json
+from kiripix.core.hashing import HashCache, hash_bytes, hash_json
+from kiripix.core.images import load_rgba, save_png
 from kiripix.core.kinds import get_kind
 from kiripix.core.locks import GPU_LOCK, asset_lock, hold
 from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
-from kiripix.recipes.base import Scalar, StageFailure, StageRun, StageSpec
+from kiripix.ops import overlay
+from kiripix.recipes.base import CurrentDecision, NeedsInput, Scalar, StageFailure, StageRun, StageSpec
 
 Status = Literal["todo", "stale", "done", "needs-input", "needs-review", "failed"]
 Outcome = Literal["done", "skipped", "failed", "needs-input", "needs-review", "cancelled"]
 
 STAMP_FILE = ".stage.json"
+REPLAYED_ON_CHANGED_IMAGE = "clicks or Overrides were replayed onto a changed image"
 
 
 class StageState(BaseModel):
@@ -202,13 +210,77 @@ class AssetGraph:
     def output_dir(self, spec: StageSpec) -> Path:
         return self.asset.dir / spec.output_root / spec.name
 
-    def built_hash(self, spec: StageSpec) -> str | None:
-        """The input hash the current output was built from, or None if there is no complete output."""
+    def input_image(self, spec: StageSpec) -> tuple[StageSpec, Path] | None:
+        """The upstream Stage whose image this Stage's clicks and Overrides are made on, and that image's path."""
+        for name in spec.inputs.upstream:
+            upstream = self.spec(name)
+            if upstream.image is not None:
+                return upstream, self.output_dir(upstream) / upstream.image
+        return None
+
+    def image_hash(self, spec: StageSpec) -> str | None:
+        """The hash of the Stage's input image as built, without Overrides; None if there is none yet."""
+        source = self.input_image(spec)
+        if source is None or not source[1].is_file():
+            return None
+        return self.cache.file_hash(source[1])
+
+    def unpainted_hash(self, spec: StageSpec) -> str | None:
+        """The hash of the Stage's image as its run function made it, before its Overrides; None if not built."""
+        value = self._stamp(spec).get("unpainted_hash")
+        return str(value) if value is not None else None
+
+    def replayed_on_other_images(self, spec: StageSpec) -> list[tuple[CurrentDecision, str]]:
+        """The current Decisions recorded on an image other than the one they apply to now, each with that image's
+        hash: a click's is the Stage's input image, an Override's is the Stage's own image before its Overrides."""
+        clicked_on, painted_on = self.image_hash(spec), self.unpainted_hash(spec)
+        moved = []
+        for decision in self.replay(spec.name).current:
+            current = painted_on if decision.name == journal.OVERRIDE else clicked_on
+            if decision.image_hash is not None and current is not None and decision.image_hash != current:
+                moved.append((decision, current))
+        return moved
+
+    def stage_run(self, spec: StageSpec, output_dir: Path,
+                  progress: Callable[[int, int, str], None] | None = None) -> StageRun:
+        """What the Stage's run, `needs_input` and `check` functions are handed."""
+        return StageRun(
+            asset_id=self.asset.id,
+            asset_dir=self.asset.dir,
+            output_dir=output_dir,
+            files=self.files(spec),
+            upstream={name: self.output_dir(self.spec(name)) for name in spec.inputs.upstream},
+            params=self.params(spec),
+            settings=self.settings(spec),
+            progress=progress or (lambda done, total, message: None),
+            decisions=self.replay(spec.name).current,
+            asset_params=dict(self.asset.settings.params),
+        )
+
+    def needs_input(self, spec: StageSpec) -> NeedsInput | None:
+        """Why the Stage can't run until the Owner acts, from its inputs alone."""
+        if spec.needs_input is None:
+            return None
+        return spec.needs_input(self.stage_run(spec, self.output_dir(spec)))
+
+    def check(self, spec: StageSpec) -> list[Finding]:
+        """The Stage's Checks on its built output; nothing when it has no output."""
+        if spec.check is None or self.built_hash(spec) is None:
+            return []
+        return spec.check(self.stage_run(spec, self.output_dir(spec)))
+
+    def _stamp(self, spec: StageSpec) -> dict[str, Any]:
+        """The stamp beside a complete output; empty when there is none."""
         try:
             stamp = json.loads((self.output_dir(spec) / STAMP_FILE).read_text(encoding="utf-8"))
-            return str(stamp["input_hash"])
-        except (OSError, ValueError, KeyError, TypeError):
-            return None
+        except (OSError, ValueError):
+            return {}
+        return stamp if isinstance(stamp, dict) else {}
+
+    def built_hash(self, spec: StageSpec) -> str | None:
+        """The input hash the current output was built from, or None if there is no complete output."""
+        value = self._stamp(spec).get("input_hash")
+        return str(value) if value is not None else None
 
     def state(self, stage: str) -> StageState:
         spec = self.spec(stage)
@@ -218,6 +290,9 @@ class AssetGraph:
                               reason=f"the {self.kind.name} Stage '{stage}' is not implemented {when}")
         if self.replay(stage).divergent:
             return StageState(stage=stage, status="needs-review", reason=journal.DIVERGENT)
+        waiting = self.needs_input(spec)
+        if waiting is not None:
+            return StageState(stage=stage, status="needs-input", reason=waiting.reason)
         current = self.input_hash(stage)
         failure = self.failures.get(stage, current)
         if failure is not None:
@@ -227,6 +302,8 @@ class AssetGraph:
             return StageState(stage=stage, status="todo")
         if built != current:
             return StageState(stage=stage, status="stale", reason="an input changed since the output was built")
+        if self.replayed_on_other_images(spec):
+            return StageState(stage=stage, status="needs-review", reason=REPLAYED_ON_CHANGED_IMAGE)
         return StageState(stage=stage, status="done")
 
     def states(self) -> list[StageState]:
@@ -284,7 +361,36 @@ class _Runner:
             entry["message"] = result.message
         atomic.append_jsonl(self.graph.asset.dir / HISTORY_FILE, entry)
 
-    def execute(self, spec: StageSpec) -> StageRunResult:
+    def _paint_overrides(self, spec: StageSpec, building: Path) -> str | None:
+        """Paint the Stage's current Overrides over the image it just built, in order. Returns the hash of the image
+        as the run function made it, which the Overrides are checked against; None for a Stage without an image."""
+        graph = self.graph
+        if spec.image is None:
+            return None
+        image_path = building / spec.image
+        unpainted = hash_bytes(image_path.read_bytes())
+        overrides = [d for d in graph.replay(spec.name).current if d.name == journal.OVERRIDE]
+        if not overrides:
+            return unpainted
+        try:
+            image = load_rgba(image_path, spec.image)
+            for override in overrides:
+                path = journal.override_path(graph.asset.dir, str(override.data["png"]))
+                painted = load_rgba(path, graph.project.relative(path))
+                if painted.shape != image.shape:
+                    raise StageFailure(
+                        f"the Override {path.name} is {painted.shape[1]}x{painted.shape[0]} but the {spec.name} "
+                        f"image is now {image.shape[1]}x{image.shape[0]}; undo it with "
+                        f"kiripix undo {graph.asset.id} {spec.name}")
+                image = overlay(image, painted)
+        except KiripixError as error:
+            raise StageFailure(error.findings[0].message) from None
+        save_png(image_path, image)
+        return unpainted
+
+    def execute(self, spec: StageSpec) -> tuple[StageRunResult, list[Finding]]:
+        """Run the Stage, paint its Overrides over its image, then run its Checks on the result; their findings come
+        back beside the result."""
         assert spec.run is not None
         graph = self.graph
         input_hash = graph.input_hash(spec.name)
@@ -292,22 +398,12 @@ class _Runner:
         final = graph.output_dir(spec)
         building = final.with_name(f".tmp-{spec.name}-{uuid.uuid4().hex[:8]}")
         building.mkdir(parents=True)
+        checked: list[Finding] = []
 
         def report(done: int, total: int, message: str) -> None:
             self.progress(ProgressEvent(event="stage_progress", stage=spec.name, done=done, total=total,
                                         message=message))
 
-        context = StageRun(
-            asset_id=graph.asset.id,
-            asset_dir=graph.asset.dir,
-            output_dir=building,
-            files=graph.files(spec),
-            upstream={name: graph.output_dir(graph.spec(name)) for name in spec.inputs.upstream},
-            params=params,
-            settings=graph.settings(spec),
-            progress=report,
-            decisions=graph.replay(spec.name).current,
-        )
         started = time.monotonic()
 
         def result(outcome: Outcome, message: str | None = None) -> StageRunResult:
@@ -315,10 +411,16 @@ class _Runner:
                                   duration_s=round(time.monotonic() - started, 3), message=message)
 
         try:
+            context = graph.stage_run(spec, building, progress=report)
             with hold(graph.project.state_dir, [GPU_LOCK] if spec.gpu else [], self.wait, self.command_line):
                 spec.run(context)
-            atomic.write_json(building / STAMP_FILE, {"stage": spec.name, "input_hash": input_hash,
-                                                      "finished": _now()})
+            unpainted = self._paint_overrides(spec, building)
+            if spec.check is not None:
+                checked = spec.check(context)
+            stamp = {"stage": spec.name, "input_hash": input_hash, "finished": _now()}
+            if unpainted is not None:
+                stamp["unpainted_hash"] = unpainted
+            atomic.write_json(building / STAMP_FILE, stamp)
             _swap_into_place(building, final)
             graph.failures.clear(spec.name)
             outcome = result("done")
@@ -336,7 +438,7 @@ class _Runner:
         if outcome.outcome == "failed":
             graph.failures.record(spec.name, input_hash, outcome.message or "failed")
         self._history(spec, params, outcome)
-        return outcome
+        return outcome, checked
 
 
 class AssetRun(BaseModel):
@@ -385,39 +487,42 @@ def run_asset(
         if state.status == "needs-input":
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="needs-input",
                                           input_hash=graph.input_hash(spec.name), message=state.reason))
+            waiting = graph.needs_input(spec) if spec.run is not None else None
+            fix = waiting.command if waiting else None
+            owner_action = None
+            if fix is None:
+                owner_action = waiting.owner_action if waiting and waiting.owner_action else \
+                    f"{asset.id} waits on the Owner: {state.reason}."
             findings.append(
                 Finding(
                     code="stage.needs_input",
                     message=f"{asset.id} {spec.name}: needs-input: {state.reason}",
                     position=Position(asset=asset.id, stage=spec.name),
-                    owner_action=f"{asset.id} waits on the Owner: {state.reason}.",
+                    fix=fix,
+                    owner_action=owner_action,
                 )
             )
-            exit_code = ExitCode.NEEDS_OWNER
+            exit_code = _worse(exit_code, ExitCode.NEEDS_OWNER)
             break
         if state.status == "needs-review":
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="needs-review",
                                           input_hash=graph.input_hash(spec.name), message=state.reason))
-            findings.append(
-                Finding(
-                    code="stage.needs_review",
-                    message=f"{asset.id} {spec.name}: needs-review: {state.reason}",
-                    position=Position(asset=asset.id, stage=spec.name),
-                    owner_action=f"{asset.id} {spec.name} waits on the Owner to review: {state.reason}.",
-                )
-            )
-            exit_code = ExitCode.NEEDS_OWNER
+            findings.append(_needs_review(asset, spec.name, state.reason))
+            exit_code = _worse(exit_code, ExitCode.NEEDS_OWNER)
             break
         if state.status == "done" and not force:
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="skipped",
                                           input_hash=graph.input_hash(spec.name)))
             continue
         progress(ProgressEvent(event="stage_start", stage=spec.name, done=index, total=len(specs)))
-        outcome = runner.execute(spec)
+        outcome, checked = runner.execute(spec)
         progress(ProgressEvent(event="stage_end", stage=spec.name, done=index + 1, total=len(specs),
                                message=outcome.outcome))
-        results.append(outcome)
+        findings.extend(checked)
+        if any(f.severity == "error" for f in checked):
+            exit_code = _worse(exit_code, ExitCode.CHECK_FAILED)
         if outcome.outcome == "failed":
+            results.append(outcome)
             findings.append(
                 Finding(
                     code="stage.failed",
@@ -426,13 +531,34 @@ def run_asset(
                     fix=f"kiripix run {asset.id} {spec.name}",
                 )
             )
-            exit_code = ExitCode.ERROR
+            exit_code = _worse(exit_code, ExitCode.ERROR)
             break
+        after = graph.state(spec.name)
+        if after.status == "needs-review":  # replayed clicks or Overrides onto a changed image
+            results.append(outcome.model_copy(update={"outcome": "needs-review", "message": after.reason}))
+            findings.append(_needs_review(asset, spec.name, after.reason))
+            exit_code = _worse(exit_code, ExitCode.NEEDS_OWNER)
+            break
+        results.append(outcome)
     cache.save()
     return AssetRun(results=results, findings=findings, exit_code=exit_code)
 
 
+def _needs_review(asset: Asset, stage: str, reason: str | None) -> Finding:
+    return Finding(
+        code="stage.needs_review",
+        message=f"{asset.id} {stage}: needs-review: {reason}",
+        position=Position(asset=asset.id, stage=stage),
+        owner_action=f"Review {asset.id} {stage} ({reason}), then accept it: kiripix accept {asset.id} {stage}",
+    )
+
+
 _SEVERITY = {ExitCode.OK: 0, ExitCode.NEEDS_OWNER: 1, ExitCode.BUSY: 2, ExitCode.CHECK_FAILED: 3, ExitCode.ERROR: 4}
+
+
+def _worse(a: ExitCode, b: ExitCode) -> ExitCode:
+    """The more serious exit code: error, then check failed, then busy, then needs the owner."""
+    return a if _SEVERITY[a] >= _SEVERITY[b] else b
 
 
 def run_all(
@@ -447,7 +573,7 @@ def run_all(
 ) -> AssetRun:
     """Run every Asset (of one Kind, if given), locking one Asset at a time. One Asset stopping doesn't stop the rest.
 
-    The exit code is the most serious one: error, then busy, then needs the owner.
+    The exit code is the most serious one (see `_worse`).
     """
     assets, findings = list_assets(project)
     exit_code = ExitCode.ERROR if findings else ExitCode.OK
@@ -467,6 +593,5 @@ def run_all(
             results.extend(run.results)
             findings.extend(run.findings)
             code = run.exit_code
-        if _SEVERITY[code] > _SEVERITY[exit_code]:
-            exit_code = code
+        exit_code = _worse(exit_code, code)
     return AssetRun(results=results, findings=findings, exit_code=exit_code)

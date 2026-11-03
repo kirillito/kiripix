@@ -1,0 +1,109 @@
+"""check, a Probe (no lock, nothing recorded), and preview, which writes only a preview image under .kiripix/."""
+
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from kiripix.commands.contract import Context, ExitCode, Outcome
+from kiripix.commands.registry import CliMeta, command
+from kiripix.core.assets import load_asset
+from kiripix.core.hashing import HashCache
+from kiripix.core.previews import write_preview
+from kiripix.core.project import find_project
+from kiripix.core.project_checks import check_all, check_asset
+
+
+class CheckInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset: str | None = Field(None, description="The Asset ID. Omit with --all.")
+    all: bool = Field(False, description="Check every Asset, then the Project checks.")
+
+    @model_validator(mode="after")
+    def _asset_or_all(self) -> Self:
+        if self.all == (self.asset is not None):
+            raise ValueError("give an Asset ID or --all, not both")
+        return self
+
+
+class CheckData(BaseModel):
+    """What was checked; the findings are in the result's `findings`."""
+
+    assets: list[str]
+    stages: list[str] = Field(description="The `<asset> <stage>` pairs whose Checks ran: those with an output.")
+    project_checks: bool
+
+    def text(self) -> str:
+        scope = "the Project" if self.project_checks else ", ".join(self.assets)
+        return f"checked {len(self.stages)} built Stage(s) of {scope}"
+
+
+@command(
+    "check",
+    summary="Run the Checks of every built Stage of an Asset, or of every Asset and the Project (--all).",
+    input=CheckInput,
+    output=CheckData,
+    kind="probe",
+    mcp="exposed",
+    cli=CliMeta(positional=("asset",)),
+)
+def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
+    project = find_project(context.cwd)
+    cache = HashCache(project.state_dir)
+    broken = False
+    if arguments.all:
+        assets, stages, findings, broken = check_all(project, cache)
+    else:
+        assert arguments.asset is not None
+        asset = load_asset(project, arguments.asset)
+        done, findings = check_asset(project, asset, cache)
+        assets, stages = [asset.id], [f"{asset.id} {s}" for s in done]
+    cache.save()
+    if broken:
+        code = ExitCode.ERROR
+    elif any(f.severity == "error" for f in findings):
+        code = ExitCode.CHECK_FAILED
+    else:
+        code = ExitCode.OK
+    return Outcome(CheckData(assets=assets, stages=stages, project_checks=arguments.all), findings, code)
+
+
+class PreviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
+    stage: str | None = Field(None, description="The Stage to preview; default is the last done Stage with an image.")
+    overlay: Literal["masks"] | None = Field(None, description="Tint each Mask over the image.")
+    zoom: int = Field(4, ge=1, le=16, description="Whole-number zoom, nearest neighbour.")
+
+
+class PreviewData(BaseModel):
+    asset: str
+    stage: str
+    path: str = Field(description="The PNG, relative to the Project.")
+    width: int
+    height: int
+    zoom: int
+    masks: list[str] = Field(description="The Masks tinted over the image, when an overlay was asked for.")
+
+    def text(self) -> str:
+        return self.path
+
+
+@command(
+    "preview",
+    summary="Write a Stage's image to .kiripix/previews/ at an integer zoom, and print its path.",
+    input=PreviewInput,
+    output=PreviewData,
+    kind="writing",
+    mcp="exposed",
+    cli=CliMeta(positional=("asset",)),
+)
+def preview(arguments: PreviewInput, context: Context) -> Outcome[PreviewData]:
+    project = find_project(context.cwd)
+    asset = load_asset(project, arguments.asset)
+    cache = HashCache(project.state_dir)
+    made = write_preview(project, asset, cache, arguments.stage, arguments.overlay, arguments.zoom)
+    cache.save()
+    return Outcome(PreviewData(asset=asset.id, stage=made.stage, path=project.relative(made.path), width=made.width,
+                               height=made.height, zoom=arguments.zoom, masks=made.masks))

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from kiripix.commands.contract import Context, Outcome
 
 CommandKind = Literal["writing", "probe", "owner-only"]
-McpExposure = Literal["exposed", "hidden", "owner-only"]
+McpExposure = Literal["exposed", "hidden", "owner-only"]  # owner-only: never an MCP tool (spec §10.3)
 
 I = TypeVar("I", bound=BaseModel)
 O = TypeVar("O", bound=BaseModel)
@@ -70,6 +70,8 @@ def command(
 
     def register(handler: Callable[[I, Context], Outcome[O]]) -> Callable[[I, Context], Outcome[O]]:
         cmd = Command(tuple(path.split()), summary, input, output, handler, kind, mcp, cli, locks, group_summary)
+        if (kind == "owner-only") != (mcp == "owner-only"):
+            raise ValueError(f"Command {cmd.name}: an owner-only Command, and only one, has mcp='owner-only'")
         if cmd.name in REGISTRY:
             raise ValueError(f"Command {cmd.name} registered twice")
         REGISTRY[cmd.name] = cmd
