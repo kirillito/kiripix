@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M1
 agent: imaging-engineer
 type: ticket
@@ -27,7 +27,7 @@ Spec §4 (importing a painted mask image), §6.1 (masks), §7 (masks) and ADR 00
 
 ## Acceptance criteria
 
-- [ ] Golden tests: a flood at a point, a brush stroke and an erase, a painted image with the `#FFFF00` import colour
+- [x] Golden tests: a flood at a point, a brush stroke and an erase, a painted image with the `#FFFF00` import colour
       split into `solid`, and a cell snap.
-- [ ] `decide` a flood, then `undo`, then `run`: the Mask is empty again.
-- [ ] An imported painted image with a stray off-colour pixel snaps it to the nearest defined colour.
+- [x] `decide` a flood, then `undo`, then `run`: the Mask is empty again.
+- [x] An imported painted image with a stray off-colour pixel snaps it to the nearest defined colour.

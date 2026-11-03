@@ -134,7 +134,8 @@ _Avoid_: validation, test
 A Check across Assets, such as Exit pairing, that belongs to no single Asset's Stages.
 
 **Command**:
-One operation of Kiripix, defined once and offered identically through the CLI, the REST API and MCP.
+One operation of Kiripix, defined once and offered identically through the CLI, the REST API and MCP. A REST-only
+transport route (files, events, cancel) is not a Command (ADR 0007).
 _Avoid_: endpoint, tool, action (for the operation itself)
 
 **Probe**:

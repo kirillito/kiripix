@@ -36,12 +36,19 @@ CI runs the last three of these, plus `uv sync --locked`, on Linux and Windows f
 - **Every operation is a Command** in `kiripix/commands/`, declared with `@command(...)`. Adapters hold no logic.
   Every result is the envelope `api_version`, `ok`, `data`, `findings`; every finding has a stable dotted `code` and
   exactly one of `fix` (a command an agent can run) or `owner_action` (only the owner can do it). Exit codes: 0 ok,
-  1 error, 2 check failed, 3 needs the owner, 4 busy.
+  1 error, 2 check failed, 3 needs the owner, 4 busy. A REST transport route (file route, event stream, cancel) and
+  the `serve`/`ui` Launchers are not Commands (ADR 0007). They change nothing in the Project and hold no logic.
+- **Long work is cancellable** (ticket 0031). Never `time.sleep` in core, a Stage or a Runner: wait on the Command's
+  cancel token instead. A loop that can take more than about a second checks the token between chunks (tiles,
+  frames, batches). A Runner passes it on to its engine (ONNX Runtime: set `RunOptions.terminate` on cancel). A
+  cancel leaves nothing half-written, because every write is atomic.
 - **Status is derived, never stored** (ADR 0005). Nothing writes status to `asset.toml` or `kiripix.toml`.
 - **Every write is atomic** (`kiripix.core.atomic`); `.jsonl` files are append-only, one object per line, LF.
 - **Data files carry `schema_version`.** A format change bumps it and adds a pure migration from N to N + 1 in
   `kiripix/core/settings.py`. Unknown keys are an error.
-- **Ops are pure**: numpy arrays in, arrays out, no I/O. I/O lives in `core` (`kiripix.core.images`).
+- **Ops are pure**: numpy arrays in, arrays out, no I/O. Core's own image I/O lives in `kiripix.core.images`. A
+  Stage in `recipes` can't import core, so it reads its inputs and writes its outputs itself (PIL), and only inside
+  the output folder core gives it. Core swaps that folder into place whole, so the Stage's writes are atomic too.
 
 ## Tests
 

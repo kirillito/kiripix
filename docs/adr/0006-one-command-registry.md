@@ -15,3 +15,5 @@ use exactly the same surface.
   Command when the mouse is released.
 - One API version covers the whole tool, not one per Command.
 - Probe Commands (read-only, never recorded) exist on every surface, but are only fast through the long-running server.
+- Amended by [0007](0007-adapter-transport-is-not-a-command.md): an adapter's transport (moving files, the event
+  stream, cancel, launching) is not a Command.

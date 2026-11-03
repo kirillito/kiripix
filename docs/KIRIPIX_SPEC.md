@@ -567,7 +567,7 @@ built the same way.
 
 **Status board:** all assets by kind and stage, filtered by "needs me" (input or review), "stale" and "failing".
 
-**Front end:** React with TypeScript and Vite, with canvas rendering (the owner's decision, 2026-11-02; ADR 0007).
+**Front end:** React with TypeScript and Vite, with canvas rendering (the owner's decision, 2026-11-02; ADR 0008).
 The canvas widgets are plain TypeScript classes that React components mount through a `ref`, so hover and brush
 updates never go through React state.
 
@@ -673,7 +673,7 @@ IDs with aliases.
 ## 16. Open decisions
 
 1. The game's internal resolution and tile size (the Toronto RPG's own decision, set in `kiripix.toml`).
-2. ~~The UI framework~~: decided 2026-11-02, React with TypeScript and Vite (ADR 0007).
+2. ~~The UI framework~~: decided 2026-11-02, React with TypeScript and Vite (ADR 0008).
 3. The outline method for 3D renders: inverted hull, Freestyle or a post-process edge pass (M3, by test).
 4. Image-to-3D: which local Runner fits 8 GB well enough, or none (M3).
 5. Which API provider comes first (M4).
@@ -681,7 +681,7 @@ IDs with aliases.
 
 ## Changes since v0.2
 
-- The UI is React with TypeScript and Vite (open decision 2 closed; ADR 0007).
+- The UI is React with TypeScript and Vite (open decision 2 closed; ADR 0008).
 - `palette` reads `layers`, not `masks`, so Mask edits don't rebuild it.
 - In M1, `layers` is a pass-through; the real Stage is M2.
 - M1 is split into tickets: [backlog/0010](../backlog/0010-m1-room-end-to-end.md) and its children.

@@ -1,0 +1,133 @@
+"""A server session: what the REST adapter needs to decide, so the adapter itself holds no logic (spec §10.3, §10.6).
+
+It holds the session token (the REST half of the owner-only guard), the table of running jobs with its refusals, the
+parsing of a request's body and `wait`, the file and upload rules, and the ready line. The adapter only turns HTTP into
+calls on a Session and its answers back into HTTP.
+"""
+
+import json
+import math
+import secrets
+import threading
+import uuid
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel
+
+import kiripix
+from kiripix.commands.contract import ProgressEvent
+from kiripix.commands.files import project_root, save_upload, served_file
+from kiripix.commands.jobs import Job
+from kiripix.commands.registry import Command
+from kiripix.core.errors import fail
+
+JobProgress = Callable[[str, str, ProgressEvent], None]  # (job id, Command name, event)
+
+
+class UploadData(BaseModel):
+    path: str
+
+
+class CancelData(BaseModel):
+    job: str
+    cancelled: bool
+
+
+def built_web(root: Path, explicit: Path | None = None) -> Path | None:
+    """The built web app: `--web`, else `web/dist` in the Project, else the one that ships with Kiripix (`web/dist` next
+    to a checkout's package, or `kiripix/web` inside an installed one). None when there is none."""
+    if explicit is not None:
+        return explicit
+    package = Path(kiripix.__file__).resolve().parent
+    for candidate in (root / "web" / "dist", package.parent / "web" / "dist", package / "web"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+class Session:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._token = secrets.token_urlsafe(24)
+        self._jobs: dict[str, Job] = {}
+        self._lock = threading.Lock()
+
+    @classmethod
+    def open(cls, cwd: Path) -> "Session":
+        """The session for the Project containing `cwd`; raises `project.not_found` outside one."""
+        return cls(project_root(cwd))
+
+    def ready(self, url: str, port: int, web: Path | None, *, with_token: bool) -> dict[str, object]:
+        line: dict[str, object] = {"event": "ready", "url": url, "port": port, "root": str(self.root),
+                                   "web": web is not None and web.is_dir()}
+        if with_token:
+            line["token"] = self._token
+        return line
+
+    def browser_url(self, url: str) -> str:
+        """Where `ui` sends the browser: the fragment gives the page the token and never leaves the browser."""
+        return f"{url}/#token={self._token}"
+
+    def _is_owner(self, given: str | None) -> bool:
+        return bool(given) and secrets.compare_digest((given or "").encode(), self._token.encode())
+
+    def start(self, command: Command[Any, Any], body: bytes, *, token: str | None, wait: str | None,
+              job_id: str | None, progress: JobProgress) -> Job:
+        """Start `command` on a job. Raises KiripixError for a body that isn't JSON, a bad `wait`, or a job id in use."""
+        help_line = f"kiripix {command.name} --help"
+        try:
+            raw: Any = json.loads(body) if body.strip() else {}
+        except ValueError as error:
+            raise fail("input.invalid", f"the request body isn't JSON: {error}", fix=help_line) from None
+        seconds = 0.0
+        if wait is not None:
+            try:
+                seconds = float(wait)
+            except ValueError:
+                seconds = math.nan
+            if not math.isfinite(seconds) or seconds < 0:
+                raise fail("input.invalid", f"wait must be a number of seconds, not '{wait}'",
+                           fix=f"kiripix {command.name} --wait 30")
+        name = job_id or uuid.uuid4().hex[:12]
+        job = Job(command, raw, id=name, cwd=self.root, wait=seconds, owner=self._is_owner(token),
+                  progress=lambda event: progress(name, command.name, event))
+        with self._lock:
+            if name in self._jobs:
+                raise fail("job.duplicate", f"a job '{name}' is already running",
+                           owner_action=f"Wait for job '{name}' to finish or cancel it, or use another job id.")
+            self._jobs[name] = job
+        job.result.add_done_callback(lambda _: self._forget(name))
+        job.start()
+        return job
+
+    def _forget(self, name: str) -> None:
+        with self._lock:
+            self._jobs.pop(name, None)
+
+    def cancel(self, job_id: str) -> CancelData:
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if job is None:
+            raise fail("job.not_found", f"no running job '{job_id}'",
+                       owner_action="Check the job id; a job is forgotten as soon as it finishes.")
+        return CancelData(job=job_id, cancelled=job.cancel())
+
+    def cancel_all(self) -> None:
+        with self._lock:
+            jobs = list(self._jobs.values())
+        for job in jobs:
+            job.cancel()
+
+    def upload(self, name: str, data: bytes) -> UploadData:
+        return UploadData(path=save_upload(self.root, name, data))
+
+    def file(self, relative: str) -> Path:
+        found = served_file(self.root, relative)
+        if found is None:
+            raise fail("file.not_found", f"no file '{relative}' in the Project", fix="kiripix status")
+        return found
+
+
+__all__ = ["CancelData", "Session", "UploadData", "built_web"]

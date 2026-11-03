@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kiripix.commands.contract import API_VERSION, Context, Envelope, Outcome
+from kiripix.commands.contract import API_VERSION, FINDING_STATUS, HTTP_STATUS, Context, Envelope, Outcome
 from kiripix.commands.registry import REGISTRY, CliMeta, CommandKind, McpExposure, command
 from kiripix.core.errors import fail
 
@@ -25,6 +25,8 @@ class CommandSchema(BaseModel):
 
 class SchemaData(BaseModel):
     api_version: int
+    http_status: dict[str, int] = Field(description="The HTTP status REST answers with, by exit code.")
+    finding_status: dict[str, int] = Field(description="Findings that name a more exact HTTP status, by code.")
     commands: dict[str, CommandSchema]
 
 
@@ -64,4 +66,5 @@ def schema(arguments: SchemaInput, context: Context) -> Outcome[SchemaData]:
         )
         for name in names
     }
-    return Outcome(SchemaData(api_version=API_VERSION, commands=commands))
+    return Outcome(SchemaData(api_version=API_VERSION, http_status={str(int(k)): v for k, v in HTTP_STATUS.items()},
+                                finding_status=FINDING_STATUS, commands=commands))

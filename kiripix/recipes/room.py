@@ -3,7 +3,9 @@
 import hashlib
 import json
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -25,7 +27,18 @@ from kiripix.recipes.base import (
     chain,
     point_decision,
 )
-from kiripix.ops import Grid, detect_grid, downscale_mode, sample_nearest
+from kiripix.ops import (
+    Grid,
+    detect_grid,
+    downscale_mode,
+    flood_region,
+    paint_stroke,
+    parse_hex,
+    sample_nearest,
+    snap_cell,
+    split_painted,
+)
+from kiripix.ops.masks import RGB
 
 # brief
 
@@ -177,6 +190,135 @@ def _layers(run: StageRun) -> None:
     (run.output_dir / "layers.json").write_text(json.dumps({"layers": []}) + "\n", encoding="utf-8")
 
 
+# masks: the Decisions replayed in order onto the Plate's size, one 1-bit PNG per painted Mask of the room's view.
+
+MASKS_STAGE = "masks"
+IMPORT_DIR = ("decisions", "imports")  # a painted image of an `import` Decision, stored here under its hash
+
+
+@dataclass(frozen=True)
+class _ViewMasks:
+    """The room's view's Masks from `[masks.<view>]`, partitioned once."""
+
+    painted: dict[str, str]  # name to colour, in the project file's order
+    derived: list[str]
+    colours: list[tuple[RGB, list[str]]]  # the defined colours in order: each painted Mask's own, then the imports
+
+
+def _view_masks(run: StageRun) -> _ViewMasks:
+    entries: dict[str, Any] = dict(run.settings["masks"][str(run.asset_params["view"])])
+    table: dict[str, list[str]] = entries.pop("import", {})
+    painted = {name: str(entry["colour"]) for name, entry in entries.items() if not entry.get("derived", False)}
+    derived = [name for name, entry in entries.items() if entry.get("derived", False)]
+    colours = [(_rgb(colour), [name]) for name, colour in painted.items()]
+    colours.extend((_rgb(colour), list(names)) for colour, names in table.items())
+    return _ViewMasks(painted, derived, colours)
+
+
+def _rgb(colour: str) -> RGB:
+    entry = parse_hex(colour).entries[0]
+    return entry.r, entry.g, entry.b
+
+
+def _masks_needs_input(run: StageRun) -> NeedsInput | None:
+    if any(d.name == "click" for d in run.decisions):
+        return NeedsInput("click Decisions are not implemented until 0020 (click-to-segment with SAM 2)",
+                          owner_action=f"Undo the clicks until then: kiripix undo {run.asset_id} {MASKS_STAGE}")
+    return None
+
+
+def _decision_mask(run: StageRun, view: _ViewMasks, name: str, decision: str) -> str:
+    if name in view.painted:
+        return name
+    undo = f"undo it with kiripix undo {run.asset_id} {MASKS_STAGE}"
+    if name in view.derived:
+        raise StageFailure(f"the {decision} Decision paints '{name}', which is derived and never painted; {undo}")
+    raise StageFailure(f"the {decision} Decision paints '{name}', which is not a painted Mask of the "
+                       f"{run.asset_params['view']} view ({', '.join(view.painted)}); {undo}")
+
+
+def _write_mask(path: Path, mask: np.ndarray) -> None:
+    """A Mask as a 1-bit PNG. The Stage's output folder is swapped into place whole by core, so the write is atomic."""
+    Image.fromarray(mask).save(path, format="PNG")
+
+
+def _masks(run: StageRun) -> None:
+    plate = _read_rgba(run.upstream["layers"] / "plate.png")
+    height, width = plate.shape[:2]
+    view = _view_masks(run)
+    masks = {name: np.zeros((height, width), dtype=np.bool_) for name in view.painted}
+    for decision in run.decisions:
+        data = decision.data
+        if decision.name == "flood":
+            name = _decision_mask(run, view, str(data["mask"]), "flood")
+            try:
+                masks[name] |= flood_region(plate, int(data["x"]), int(data["y"]))
+            except ValueError as error:
+                raise StageFailure(str(error)) from None
+        elif decision.name == "brush":
+            name = _decision_mask(run, view, str(data["mask"]), "brush")
+            masks[name] = paint_stroke(masks[name], [(int(x), int(y)) for x, y in data["points"]],
+                                       int(data["radius"]), erase=bool(data["erase"]))
+        elif decision.name == "import":
+            masks.update(_split_import(run, view, str(data["png"]), (width, height)))
+    cell = int(run.params["snap_cell"])
+    for name, mask in masks.items():
+        _write_mask(run.output_dir / f"{name}.png", snap_cell(mask, cell) if cell > 1 else mask)
+
+
+def _split_import(run: StageRun, view: _ViewMasks, png_hash: str,
+                  size: tuple[int, int]) -> dict[str, np.ndarray]:
+    """The Masks of a painted image: each Mask the colour table names is replaced by what the image paints in it."""
+    path = run.asset_dir.joinpath(*IMPORT_DIR, f"{png_hash}.png")
+    if not path.is_file():
+        raise StageFailure(f"the import Decision names {path.relative_to(run.asset_dir).as_posix()}, which is "
+                           f"missing; undo it with kiripix undo {run.asset_id} {MASKS_STAGE}")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != png_hash:
+        raise StageFailure(f"{path.name} was changed after it was imported; images named by hash are immutable")
+    image = _read_rgba(path)
+    if (image.shape[1], image.shape[0]) != size:
+        raise StageFailure(f"the imported image is {image.shape[1]}x{image.shape[0]} but the Plate is "
+                           f"{size[0]}x{size[1]}; paint it at the Plate's size")
+    try:
+        split = split_painted(image, view.colours)
+    except ValueError as error:
+        raise StageFailure(f"the imported image {path.name}: {error}") from None
+    return {name: mask for name, mask in split.items() if name in view.painted}
+
+
+def _check_masks(run: StageRun) -> list[Finding]:
+    findings = []
+    names = []
+    painted = False
+    for path in sorted(run.output_dir.glob("*.png")):
+        names.append(path.stem)
+        with Image.open(path) as image:  # opened once: its mode, and whether any pixel is set
+            mode = image.mode
+            painted = painted or bool(np.asarray(image.convert("1")).any())
+        if mode != "1":
+            findings.append(
+                Finding(
+                    code="mask.not_binary",
+                    message=f"the Mask {path.stem} is a {mode} image, not a 1-bit one",
+                    position=Position(asset=run.asset_id, stage=MASKS_STAGE, file=path.name),
+                    fix=f"kiripix run {run.asset_id} {MASKS_STAGE} --force",
+                )
+            )
+    if not painted:
+        paint = "solid" if "solid" in names else (names[0] if names else "solid")
+        findings.append(
+            Finding(
+                code="mask.none_painted",
+                severity="info",
+                message=f"no Mask is painted yet, so nothing blocks movement ({run.asset_id} masks is empty)",
+                position=Position(asset=run.asset_id, stage=MASKS_STAGE),
+                owner_action=f"Paint the {paint} Mask: flood a region, brush it, or import a painted image "
+                             f"(kiripix decide {run.asset_id} {MASKS_STAGE} --help).",
+            )
+        )
+    return findings
+
+
 ROOM = KindSpec(
     name="room",
     description="A background scene with Layers, Masks and Markers, in top or side view.",
@@ -231,36 +373,41 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="layers",
-            description="Builds the Plate and the foreground Layers (segment and inpaint, or a difference).",
-            params=(
-                ParamSpec(
-                    name="grow",
-                    type="int",
-                    description="Widen a Layer's alpha and its Plate hole where the Runner's alpha was partial, px.",
-                    default=1,
-                    minimum=0,
-                    maximum=8,
-                ),
-            ),
-            decisions=(point_decision("click", "A click on an object to lift out.", on_image=True,
-                                      layer={"type": "string"}, positive={"type": "boolean"}),),
+            # The M1 pass-through (ticket 0010): no owner input. The real Stage (M2) adds the `grow` parameter, the
+            # `click` Decision ("Clicks objects to lift out.") and the GPU.
+            description="Builds the Plate from the fit image; foreground Layers arrive in M2.",
             checks=(
                 CheckSpec(code="layers.recompose_mismatch", description="Plate and Layers recompose to the fit image."),
                 CheckSpec(code="layers.plate_hole", description="The Plate has no holes."),
             ),
-            owner_input="Clicks objects to lift out.",
-            available_from="M1",  # the pass-through; the real Stage (M2) needs the GPU
+            available_from="M1",
             image="plate.png",
             run=_layers,
         ),
         StageSpec(
             name="masks",
             description="Paints the Masks: click-to-segment, flood, polygon, brush or an imported painted image.",
+            inputs=StageInputs(settings=["masks"]),
             params=(ParamSpec(name="snap_cell", type="int", description="Snap to an N px grid; 0 is off.", default=0,
                               minimum=0),),
             decisions=(
                 point_decision("click", "A segmentation click.", on_image=True, mask={"type": "string"},
                                positive={"type": "boolean"}),
+                point_decision("flood", "Fill the region of equal colour on the Plate under this point into a Mask.",
+                               on_image=True, mask={"type": "string"}),
+                DecisionSpec(
+                    name="import",
+                    description="Take Masks from a painted image of the Plate's size, stored under "
+                                "decisions/imports/ by its hash; the nearest defined colour decides each pixel. It "
+                                "replaces each Mask its colours name, discarding earlier floods and brushes on "
+                                "those Masks; later Decisions then edit the result.",
+                    entry_schema={
+                        "type": "object",
+                        "properties": {"png": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+                        "required": ["png"],
+                        "additionalProperties": False,
+                    },
+                ),
                 DecisionSpec(
                     name="brush",
                     description="A brush stroke on one Mask, in target pixels.",
@@ -278,10 +425,16 @@ ROOM = KindSpec(
                     },
                 ),
             ),
-            checks=(CheckSpec(code="mask.not_binary", description="Every Mask is a 1-bit image."),),
+            checks=(
+                CheckSpec(code="mask.not_binary", description="Every Mask is a 1-bit image."),
+                CheckSpec(code="mask.none_painted", description="Some Mask has been painted (info)."),
+            ),
             owner_input="Clicks and brushes.",
-            gpu=True,
+            # No GPU until SAM 2 replays `click` Decisions (ticket 0020), which turns it back on.
             available_from="M1",
+            run=_masks,
+            needs_input=_masks_needs_input,
+            check=_check_masks,
         ),
         StageSpec(
             name="palette",

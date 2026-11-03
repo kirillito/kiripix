@@ -1,3 +1,3 @@
-from kiripix.cli import main
+from kiripix.launch import main
 
 main()

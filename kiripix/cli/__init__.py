@@ -7,6 +7,7 @@ exactly one JSON object on stdout. The exit code comes from the result. Uses onl
 import inspect
 import shlex
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from types import NoneType, UnionType
 from typing import Any, Literal, Union, get_args, get_origin
@@ -14,7 +15,9 @@ from typing import Any, Literal, Union, get_args, get_origin
 import typer
 from pydantic.fields import FieldInfo
 
-from kiripix.commands import REGISTRY, Command, Context, Envelope, ExitCode, Finding, ProgressEvent, invoke
+from kiripix.commands import (
+    REGISTRY, CliMeta, Command, Context, Envelope, ExitCode, Finding, Launcher, ProgressEvent, invoke,
+)
 
 _JSON = "kpx_json"
 _PROGRESS = "kpx_progress"
@@ -80,14 +83,14 @@ def _unwrap(annotation: Any) -> tuple[Any, bool]:
     return annotation, False
 
 
-def _parameter(name: str, field: FieldInfo, command: Command[Any, Any]) -> inspect.Parameter:
+def _parameter(name: str, field: FieldInfo, cli: CliMeta) -> inspect.Parameter:
     annotation, optional = _unwrap(field.annotation)
     default = ... if field.is_required() else field.default
-    if name in command.cli.positional:
+    if name in cli.positional:
         info = typer.Argument(default, help=field.description, metavar=name.upper(),
                               show_default=default is not None and default is not ...)
     else:
-        declarations = command.cli.options.get(name, (f"--{name.replace('_', '-')}",))
+        declarations = cli.options.get(name, (f"--{name.replace('_', '-')}",))
         info = typer.Option(default, *declarations, help=field.description,
                             show_default=default is not None and default is not ...)
     return inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=info,
@@ -95,7 +98,7 @@ def _parameter(name: str, field: FieldInfo, command: Command[Any, Any]) -> inspe
 
 
 def _callback(command: Command[Any, Any]) -> Any:
-    parameters = [_parameter(name, field, command) for name, field in command.input.model_fields.items()]
+    parameters = [_parameter(name, field, command.cli) for name, field in command.input.model_fields.items()]
     parameters.append(inspect.Parameter(_JSON, inspect.Parameter.KEYWORD_ONLY, annotation=bool,
                                         default=typer.Option(False, "--json", help="Print one JSON object.")))
     parameters.append(inspect.Parameter(
@@ -126,7 +129,20 @@ def _callback(command: Command[Any, Any]) -> Any:
     return callback
 
 
-def build_app() -> typer.Typer:
+def _launcher_callback(launcher: Launcher) -> Any:
+    parameters = [_parameter(name, field, CliMeta()) for name, field in launcher.input.model_fields.items()]
+
+    def callback(**values: Any) -> None:
+        _State.exit_code = int(launcher.run(launcher.input.model_validate(values), Path.cwd()))
+
+    callback.__signature__ = inspect.Signature(parameters)  # type: ignore[attr-defined]
+    callback.__annotations__ = {p.name: p.annotation for p in parameters}
+    callback.__name__ = launcher.name
+    callback.__doc__ = launcher.summary
+    return callback
+
+
+def build_app(launchers: Sequence[Launcher] = ()) -> typer.Typer:
     app = typer.Typer(name="kiripix", help="Kiripix: a local pixel asset studio for Godot games.",
                       no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False,
                       rich_markup_mode=None)  # plain help: agents read it, and CI must not get colour codes
@@ -141,6 +157,8 @@ def build_app() -> typer.Typer:
                 app.add_typer(groups[group], name=group)
             target = groups[group]
         target.command(name=command.path[-1], help=command.summary)(_callback(command))
+    for launcher in launchers:
+        app.command(name=launcher.name, help=launcher.summary)(_launcher_callback(launcher))
     return app
 
 
@@ -153,12 +171,12 @@ def _usage_error(error: typer.TyperException) -> int:
     return int(ExitCode.ERROR)
 
 
-def main() -> None:
+def main(launchers: Sequence[Launcher] = ()) -> None:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure:
             reconfigure(encoding="utf-8")
-    app = build_app()
+    app = build_app(launchers)
     try:
         result = app(prog_name="kiripix", standalone_mode=False)
     except typer.Abort:

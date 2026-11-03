@@ -14,6 +14,7 @@ from kiripix.ops.colour import (
     srgb_to_oklab,
 )
 from kiripix.ops.compose import overlay
+from kiripix.ops.masks import flood_region, paint_stroke, snap_cell, split_painted
 from kiripix.ops.palette import Palette, PaletteEntry, PaletteSyntaxError, format_gpl, parse_gpl, parse_hex
 from kiripix.ops.resample import (
     Grid,
@@ -38,17 +39,21 @@ __all__ = [
     "conformance",
     "detect_grid",
     "downscale_mode",
+    "flood_region",
     "format_gpl",
     "has_partial_alpha",
     "mask_to_source",
     "mask_to_target",
     "nearest_index",
     "overlay",
+    "paint_stroke",
     "parse_gpl",
     "parse_hex",
     "point_to_target",
     "quantize",
     "sample_nearest",
+    "snap_cell",
+    "split_painted",
     "srgb_to_oklab",
     "target_centre",
     "upscale",

@@ -52,6 +52,14 @@ def _owner_refusal(command: Command[Any, Any], context: Context) -> Outcome[Any]
     """
     if command.kind != "owner-only" or context.interactive or os.environ.get("KIRIPIX_TEST_OWNER") == "1":
         return None
+    if context.via == "rest":
+        finding = Finding(
+            code="owner.required",
+            message=f"'{command.name}' is the Owner's own judgement, and this request has no valid session token",
+            owner_action="Do it in the UI that `kiripix ui` opened, or run it yourself at an interactive terminal: "
+                         f"{context.command_line}",
+        )
+        return Outcome(None, [finding], ExitCode.NEEDS_OWNER)
     finding = Finding(
         code="owner.required",
         message=f"'kiripix {command.name}' is the Owner's own judgement, and this isn't an interactive terminal",

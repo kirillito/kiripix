@@ -201,7 +201,7 @@ def test_preview_overlay_masks_without_masks_says_to_run(project: Kiripix) -> No
 
 
 def test_preview_overlay_masks_tints_each_mask_over_the_image(project: Kiripix) -> None:
-    """Built Masks arrive with ticket 0016; until then the output of a `masks` Stage is put in place by hand."""
+    """The tint on a hand-placed `masks` output; test_masks.py does it with the built Stage (ticket 0016)."""
     _picked_source(project)
     masks = project.cwd / "assets" / "room" / "alley" / "work" / "masks"
     masks.mkdir(parents=True)

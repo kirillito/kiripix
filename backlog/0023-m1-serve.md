@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M1
 agent: core-engineer
 type: ticket
@@ -29,6 +29,18 @@ Spec §10.1, §10.3, §10.6 and ADR 0006. User story 28 of [0010](0010-m1-room-e
 
 ## Acceptance criteria
 
-- [ ] For every Command in the contract test, the REST response for the same input equals the CLI's `--json`.
-- [ ] `accept` over REST without the token is refused with the owner-only finding; with it, it succeeds.
-- [ ] A `run` of the `demo` Kind's `hold` Stage streams progress over SSE and stops cleanly on cancel.
+- [x] For every Command in the contract test, the REST response for the same input equals the CLI's `--json`.
+- [x] `accept` over REST without the token is refused with the owner-only finding; with it, it succeeds.
+- [x] A `run` of the `demo` Kind's `hold` Stage streams progress over SSE and stops cleanly on cancel.
+
+## Notes
+
+- **Where the built web app is looked for**, in this order: `--web <dir>`; `web/dist` in the Project; `web/dist` next
+  to the `kiripix` package (a checkout); `kiripix/web` inside the package (an installed one). Installed-package support
+  also needs packaging: the build must copy `web/dist` into `kiripix/web` (hatch `force-include` or similar). That is
+  not done here.
+- **HTTP status**: `schema` documents `http_status` (by exit code) and `finding_status` (findings with a more exact
+  status: `job.not_found` and `file.not_found` are 404, `job.duplicate` is 409).
+- **File route**: serves Project files except `.git/` and `.kiripix/`, apart from `.kiripix/previews/`.
+- **Adapter logic** (the token, the job table, body and `wait` parsing, the file and upload rules, the ready line) lives
+  in `kiripix.commands.Session`; `kiripix.server` only translates HTTP and binds the socket.

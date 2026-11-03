@@ -8,30 +8,21 @@ import jsonschema
 import pytest
 from PIL import Image
 
-from conftest import Kiripix, make_demo, make_sketch, save_image
+from conftest import MARK, Kiripix, in_review, make_demo, sketched
 
 
 def _image(project: Kiripix) -> None:
     Image.new("RGBA", (4, 4), (255, 0, 77, 255)).save(project.cwd / "in.png")  # "red" in the default palette
 
 
-_MARK = '{"decision": "mark", "data": {"label": "door"}}'
-
-
 def _decided(project: Kiripix) -> None:
     make_demo(project)
-    project.json("decide", "demo.a", "choose", "--decision", _MARK)
+    project.json("decide", "demo.a", "choose", "--decision", MARK)
 
 
 def _undone(project: Kiripix) -> None:
     _decided(project)
     project.json("undo", "demo.a", "choose")
-
-
-def _sketched(project: Kiripix) -> None:
-    make_sketch(project)
-    project.json("run", "sketch.a")
-    save_image(project.cwd / "fix.png")
 
 
 def _room_image(project: Kiripix) -> None:
@@ -46,14 +37,6 @@ def _imported(project: Kiripix) -> str:
     return str(project.json("import", "room.alley", "in.png")["data"]["variant"])
 
 
-def _in_review(project: Kiripix) -> None:
-    _sketched(project)
-    project.json("override", "sketch.a", "draw", "fix.png")
-    project.json("run", "sketch.a")
-    save_image(project.cwd / "assets" / "sketch" / "a" / "src" / "input.png", colour=(41, 173, 255, 255))
-    project.json("run", "sketch.a", expect=3)
-
-
 # Each sample prepares the Project, then gives the arguments of one successful call.
 SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "init": lambda p: ["init", "sub"],
@@ -64,15 +47,16 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "next": lambda p: (make_demo(p), ["next", "demo.a"])[1],
     "run": lambda p: (make_demo(p), ["run", "demo.a"])[1],
     "set": lambda p: (make_demo(p), ["set", "demo.a", "concat", "sep=-"])[1],
-    "decide": lambda p: (make_demo(p), ["decide", "demo.a", "choose", "--decision", _MARK])[1],
+    "decide": lambda p: (make_demo(p), ["decide", "demo.a", "choose", "--decision", MARK])[1],
     "undo": lambda p: (_decided(p), ["undo", "demo.a", "choose"])[1],
     "redo": lambda p: (_undone(p), ["redo", "demo.a", "choose"])[1],
-    "override": lambda p: (_sketched(p), ["override", "sketch.a", "draw", "fix.png"])[1],
-    "accept": lambda p: (_in_review(p), ["accept", "sketch.a", "draw"])[1],
+    "override": lambda p: (sketched(p), ["override", "sketch.a", "draw", "fix.png"])[1],
+    "accept": lambda p: (in_review(p), ["accept", "sketch.a", "draw"])[1],
     "import": lambda p: (_room_image(p), ["import", "room.alley", "in.png"])[1],
     "pick": lambda p: (_imported(p), ["pick", "room.alley", _imported(p)])[1],
     "check": lambda p: (make_demo(p), ["check", "demo.a"])[1],
-    "preview": lambda p: (_sketched(p), ["preview", "sketch.a", "--stage", "draw"])[1],
+    "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw"])[1],
+    "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
 }

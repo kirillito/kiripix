@@ -139,3 +139,22 @@ def stage_status(project: Kiripix, asset: str) -> dict[str, str]:
     data = project.json("status")["data"]
     row = next(a for a in data["assets"] if a["asset"] == asset)
     return {s["stage"]: s["status"] for s in row["stages"]}
+
+
+MARK = '{"decision": "mark", "data": {"label": "door"}}'  # a valid `mark` Decision of the demo Kind
+
+
+def sketched(project: Kiripix) -> None:
+    """A sketch Asset that has run once, and a painted fix.png to override it with."""
+    make_sketch(project)
+    project.json("run", "sketch.a")
+    save_image(project.cwd / "fix.png")
+
+
+def in_review(project: Kiripix) -> None:
+    """sketch.a's draw Stage waiting for the Owner's accept."""
+    sketched(project)
+    project.json("override", "sketch.a", "draw", "fix.png")
+    project.json("run", "sketch.a")
+    save_image(project.cwd / "assets" / "sketch" / "a" / "src" / "input.png", colour=(41, 173, 255, 255))
+    project.json("run", "sketch.a", expect=3)

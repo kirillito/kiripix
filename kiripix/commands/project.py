@@ -283,10 +283,13 @@ def next_step(arguments: NextInput, context: Context) -> Outcome[NextData]:
     cache = HashCache(project.state_dir)
     graph = AssetGraph(project, asset, cache)
     data = NextData(asset=asset.id, done=True)
+    advice: list[Finding] = []  # info findings of done Stages: carried along, never a reason to stop
     for state in graph.states():
         spec = graph.spec(state.stage)
         if state.status == "done":
-            failed = [f for f in graph.check(spec) if f.severity == "error"]
+            found = graph.check(spec)
+            advice.extend(f for f in found if f.severity == "info")
+            failed = [f for f in found if f.severity == "error"]
             if not failed:
                 continue
             data = NextData(asset=asset.id, done=False, stage=state.stage, status=state.status,
@@ -304,7 +307,7 @@ def next_step(arguments: NextInput, context: Context) -> Outcome[NextData]:
             data.command = f"kiripix run {asset.id}"
         break
     cache.save()
-    return Outcome(data)
+    return Outcome(data, advice)
 
 
 # run
