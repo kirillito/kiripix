@@ -66,7 +66,7 @@ def test_with_no_decisions_masks_is_done_with_an_empty_solid_and_next_says_to_pa
     assert sorted(p.name for p in (folder / "work" / "masks").glob("*.png")) == ["solid.png"]  # derived are not painted
     assert "mask.none_painted" in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
-    assert advice["data"]["stage"] == "place"  # an unpainted solid is advice, never a block
+    assert advice["data"]["stage"] == "reach"  # an unpainted solid is advice, never a block
     [finding] = [f for f in advice["findings"] if f["code"] == "mask.none_painted"]
     assert finding["severity"] == "info" and finding["fix"] is None
     assert "solid" in finding["owner_action"] and "Paint" in finding["owner_action"]
@@ -80,7 +80,7 @@ def test_a_painted_mask_leaves_next_without_the_advice(project: Kiripix) -> None
 
     assert "mask.none_painted" not in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
-    assert advice["data"]["stage"] == "place" and advice["findings"] == []
+    assert advice["data"]["stage"] == "place" and advice["findings"] == []  # the flood made it stale
 
 
 # flood

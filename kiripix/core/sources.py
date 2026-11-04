@@ -43,6 +43,16 @@ def _pick_stage(graph: AssetGraph) -> StageSpec:
     return spec
 
 
+def takes_pick(graph: AssetGraph) -> bool:
+    return any(d.name == PICK.name for s in graph.kind.stages for d in s.decisions)
+
+
+def picked(graph: AssetGraph) -> str | None:
+    """The Variant the Asset's current Pick names; None without a Pick."""
+    picks = [d for d in graph.replay(_pick_stage(graph).name).current if d.name == PICK.name]
+    return str(picks[-1].data["variant"]) if picks else None
+
+
 def pick(project: Project, asset: Asset, variant: str) -> tuple[StageSpec, journal.JournalEntry]:
     """Record the Pick Decision on the Stage that takes it, the same entry `decide` would write."""
     spec = _pick_stage(AssetGraph(project, asset, HashCache(project.state_dir)))

@@ -25,3 +25,23 @@ jobs:
         run: uv run mypy
       - name: Tests
         run: uv run pytest
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install the locked environments
+        run: |
+          uv sync --locked
+          npm ci
+          npx playwright install --with-deps chromium
+        working-directory: web
+      - name: UI flows
+        run: npm run test:e2e
+        working-directory: web
+      - name: The wheel serves the built UI
+        run: uv run pytest tests/cli/test_wheel.py

@@ -6,9 +6,9 @@ and one resolution per game, and it is built to be driven equally well by you fr
 agent.
 
 > **Status: early.** Milestone 0 (the skeleton) is done and Milestone 1 (a room, end to end) is in progress. Today a
-> room goes from an imported image through `brief`, `source`, `fit` and `layers`. The later room Stages, props,
-> characters, generation, Godot export and the UI are not built yet (see [What's not built yet](#whats-not-built-yet)).
-> Everything below describes what the CLI does now.
+> room goes from an imported image through `brief`, `source`, `fit`, `layers`, `masks`, `palette` and `place`. `reach`,
+> `export`, props, characters and generation are not built yet (see [What's not built yet](#whats-not-built-yet)).
+> Everything below describes what Kiripix does now.
 
 - [Install](#install)
 - [Quick start: a room](#quick-start-a-room)
@@ -34,6 +34,17 @@ uv run kiripix --help
 The command is `kiripix`, with the short alias `kpx`. From inside the repo, prefix it with `uv run`; to use it from
 your game's asset folder, either activate the virtualenv (`.venv\Scripts\activate` on Windows,
 `source .venv/bin/activate` elsewhere) or call `.venv/Scripts/kiripix.exe` directly.
+
+The web UI is a separate build, which needs [Node](https://nodejs.org/) 22 or later (`kiripix` itself doesn't):
+
+```
+cd web
+npm ci
+npm run build
+```
+
+Then `kiripix ui`, from inside a Project, serves it and opens your browser with the session token that lets the UI
+accept reviews. A wheel made with `uv build --wheel` includes the built UI.
 
 ## Quick start: a room
 
@@ -162,6 +173,7 @@ Commands that write also take `--wait <seconds>` to wait for a lock another proc
 | `kiripix describe <kind>` | Every Stage of a Kind: parameters with types and defaults, the Decisions it accepts, its Checks, and the milestone it arrives in if not built yet. |
 | `kiripix schema [COMMAND]` | JSON Schemas of command inputs and outputs, for one command (`schema run`, `schema "op quantize"`) or all. |
 | `kiripix status [--kind KIND]` | Every Asset and the status of each of its Stages, with the reason where there is one. |
+| `kiripix show <asset>` | One Asset: its Variants and Pick, and each Stage's status, current parameters, Decisions and images. |
 
 ### Assets and Stages
 
@@ -264,11 +276,12 @@ and `out/`. Don't commit `work/` or `.kiripix/`; `init` writes a `.gitignore` an
 
 These are designed in [the spec](docs/KIRIPIX_SPEC.md) but don't exist in the CLI yet:
 
-- **Room Stages** `masks`, `palette`, `place`, `reach` and `export` report `needs-input` with "not implemented until
-  M1". `layers` is a pass-through for now: the Plate is the fit image, with no foreground Layers.
+- **Room Stages** `reach` and `export` report `needs-input` with "not implemented until M1". `layers` is a pass-through
+  for now: the Plate is the fit image, with no foreground Layers. In `masks`, `click` Decisions wait for SAM 2.
+- **The UI's** hand-written Stage screens: its masks tools, its place screen and the walk test. Today it has the status
+  board, the Stage panels, the Variant grid and the before/after view.
 - **Prop** (M2) and **character** (M3) Recipes: `new` creates them and `describe` lists their Stages, but they don't run.
-- Commands: `gen` (Providers), `export` and `manifest` (Godot), `serve`, `ui` and `mcp`, `probe`, `runners`, `cost`,
-  and `run --rerun` / `--cpu`.
+- Commands: `gen` (Providers), `export` and `manifest` (Godot), `mcp`, `runners`, `cost`, and `run --rerun` / `--cpu`.
 
 `kiripix describe <kind>` marks each unbuilt Stage with the milestone it arrives in, so it is the quickest way to
 check.

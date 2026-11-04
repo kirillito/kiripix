@@ -196,7 +196,8 @@ def serving(cwd: Path, *extra: str, temp: Path | None = None) -> Iterator[Server
 
 @pytest.fixture
 def server(project: Kiripix) -> Iterator[Server]:
-    with serving(project.cwd) as running:
+    """A server with no web app, whether or not this checkout has a built `web/dist`."""
+    with serving(project.cwd, "--web", str(project.cwd / "no_web_app")) as running:
         yield running
 
 
@@ -219,6 +220,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "mask-import": lambda a: {"asset": a[1], "png": a[2]},
     "pick": lambda a: {"asset": a[1], "variant": a[2]},
     "check": lambda a: {"asset": a[1]},
+    "show": lambda a: {"asset": a[1]},
     "preview": lambda a: {"asset": a[1], "stage": a[3]},
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
     "op quantize": lambda a: {"input": a[2], "output": a[3]},

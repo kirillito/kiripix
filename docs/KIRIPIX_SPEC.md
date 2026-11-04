@@ -481,6 +481,7 @@ kiripix init [dir]                          new project
 kiripix describe project|<kind>             Kinds, Recipes, stage parameters, Decision schemas, Checks
 kiripix schema [command]                    JSON Schemas of Command inputs and outputs
 kiripix status [--kind room]                board: every asset, its stage and state
+kiripix show <id>                           one asset: variants, the pick, each stage's parameters, decisions and images
 kiripix new <kind> <id> [--view top|side]   new asset from its recipe
 kiripix next <id>                           the next stage and what it needs (a command, or the owner's action)
 kiripix run <id>|--all [stage] [--force] [--rerun] [--cpu]   run stale and todo stages; --rerun also re-runs stale Runner calls

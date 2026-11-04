@@ -17,6 +17,7 @@ from kiripix.ops.cleanup import remove_orphans
 from kiripix.ops.compose import overlay
 from kiripix.ops.masks import flood_region, paint_stroke, snap_cell, split_painted
 from kiripix.ops.palette import Palette, PaletteEntry, PaletteSyntaxError, format_gpl, parse_gpl, parse_hex
+from kiripix.ops.reach import walkable
 from kiripix.ops.resample import (
     Grid,
     detect_grid,
@@ -59,4 +60,5 @@ __all__ = [
     "srgb_to_oklab",
     "target_centre",
     "upscale",
+    "walkable",
 ]

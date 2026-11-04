@@ -54,7 +54,7 @@ def test_a_4x_upscaled_source_fits_exactly_and_layers_passes_the_image_through(p
     assert read(folder / "work" / "layers" / "plate.png").tobytes() == fit.tobytes()
     layers = json.loads((folder / "work" / "layers" / "layers.json").read_text(encoding="utf-8"))
     assert layers == {"layers": []}
-    assert project.json("next", ROOM)["data"]["stage"] == "place"  # masks is done, empty; palette is built
+    assert project.json("next", ROOM)["data"]["stage"] == "reach"  # masks is done, empty; palette and place are built
 
 
 def test_fit_finds_the_offset_of_a_padded_source(project: Kiripix) -> None:
@@ -98,7 +98,7 @@ def test_a_size_mismatch_reports_a_fix_that_next_offers_and_that_works(project: 
     project.json("run", ROOM, expect=3)
 
     assert read(folder / "work" / "fit" / "fit.png").shape == (144, 240, 4)
-    assert project.json("next", ROOM)["data"]["stage"] == "place"  # masks is done, empty; palette is built
+    assert project.json("next", ROOM)["data"]["stage"] == "reach"  # masks is done, empty; palette and place are built
 
 
 def test_a_source_without_a_grid_suggests_downscale_and_downscale_fits_exactly(project: Kiripix) -> None:

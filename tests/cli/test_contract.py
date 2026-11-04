@@ -56,6 +56,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "mask-import": lambda p: (_room_image(p), ["mask-import", "room.alley", "in.png"])[1],
     "pick": lambda p: (_imported(p), ["pick", "room.alley", _imported(p)])[1],
     "check": lambda p: (make_demo(p), ["check", "demo.a"])[1],
+    "show": lambda p: (make_demo(p), ["show", "demo.a"])[1],
     "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw"])[1],
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],

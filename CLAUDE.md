@@ -23,6 +23,16 @@ uv run kiripix --help            # the CLI (alias kpx)
 
 CI runs the last three of these, plus `uv sync --locked`, on Linux and Windows for every push.
 
+The UI, in `web/` (Node 22 or later; `uv` and the Python tests don't need it):
+
+```
+npm ci                           # the locked environment (package-lock.json)
+npm run build                    # the type check, then web/dist
+npm run test:e2e                 # builds, then Playwright against a real `kiripix serve`
+```
+
+CI also runs these on Linux, then `uv run pytest tests/cli/test_wheel.py`, which is skipped without `web/dist`.
+
 ## Code conventions
 
 - **Use the glossary's words** in code, messages, finding codes and tests: Asset, Kind, Recipe, Stage, Decision,

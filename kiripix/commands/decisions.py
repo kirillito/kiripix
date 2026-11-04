@@ -36,7 +36,7 @@ class DecisionOut(BaseModel):
     image_hash: str | None = None
 
 
-def _current(decisions: tuple[CurrentDecision, ...]) -> list[DecisionOut]:
+def current_decisions(decisions: tuple[CurrentDecision, ...]) -> list[DecisionOut]:
     return [DecisionOut(id=d.id, name=d.name, data=d.data, image_hash=d.image_hash) for d in decisions]
 
 
@@ -131,7 +131,7 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
     document = editing.parse_decision(text, source, asset, arguments.stage)
     entry, after = editing.record_decision(project, asset, arguments.stage, document)
     return Outcome(DecideData(asset=asset.id, stage=arguments.stage, id=entry.id, parent=entry.parent,
-                              decision=document.decision, current=_current(after.current)))
+                              decision=document.decision, current=current_decisions(after.current)))
 
 
 # undo and redo
@@ -151,7 +151,7 @@ class StepData(BaseModel):
 def _step(entry: journal.JournalEntry, after: journal.Replay, asset_id: str, stage: str) -> StepData:
     target = entry.undo or entry.redo
     assert target is not None
-    return StepData(asset=asset_id, stage=stage, id=entry.id, target=target, current=_current(after.current))
+    return StepData(asset=asset_id, stage=stage, id=entry.id, target=target, current=current_decisions(after.current))
 
 
 @command(
