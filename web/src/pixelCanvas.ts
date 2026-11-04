@@ -4,11 +4,14 @@
 const MAX_ZOOM = 16;
 const BEFORE_COLOUR = "#f2c14e";
 
-function isTyping(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName);
+// A focused field takes the keys typed into it. A checkbox or a slider takes no letters, so the shortcuts still work there.
+export function isTyping(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement) return !["checkbox", "range"].includes(target.type);
+  return target instanceof HTMLElement && /^(SELECT|TEXTAREA)$/.test(target.tagName);
 }
 
-function isButton(target: EventTarget | null): boolean {
+function takesSpace(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement) return target.type === "checkbox";
   return target instanceof HTMLElement && target.tagName === "BUTTON";
 }
 
@@ -33,6 +36,7 @@ export interface CanvasTool {
   pointerDown?(pixel: CanvasPixel, frame: CanvasFrame): boolean; // true: this tool takes the gesture
   pointerMove?(pixel: CanvasPixel): void;
   pointerUp?(pixel: CanvasPixel): void;
+  hover?(pixel: CanvasPixel | null): void; // the pixel under the pointer between gestures; null when it leaves the image
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -71,6 +75,7 @@ export class PixelCanvas {
     this.element.addEventListener("pointerdown", this.onPointerDown);
     this.element.addEventListener("pointermove", this.onPointerMove);
     this.element.addEventListener("pointerup", this.onPointerUp);
+    this.element.addEventListener("pointerleave", this.onPointerLeave);
     this.element.addEventListener("wheel", this.onWheel, { passive: false });
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -297,7 +302,27 @@ export class PixelCanvas {
       this.draw();
     } else {
       this.element.style.cursor = this.spaceHeld ? "grab" : this.nearSplit(event) ? "ew-resize" : "default";
+      this.hoverAt(event);
     }
+  };
+
+  private hoverAt(event: PointerEvent | null): void {
+    const frame = this.frame();
+    const inside =
+      event &&
+      frame &&
+      !this.spaceHeld &&
+      event.offsetX >= frame.left &&
+      event.offsetY >= frame.top &&
+      event.offsetX < frame.left + frame.width * frame.zoom &&
+      event.offsetY < frame.top + frame.height * frame.zoom;
+    const pixel = inside ? this.pixelAt(event, frame) : null;
+    for (const tool of this.tools) tool.hover?.(pixel);
+    if (this.tools.some((tool) => tool.hover)) this.draw();
+  }
+
+  private readonly onPointerLeave = (): void => {
+    if (!this.gesture) this.hoverAt(null);
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
@@ -320,7 +345,7 @@ export class PixelCanvas {
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (isTyping(event.target) || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.code === "Space") {
-      if (isButton(event.target)) return; // Space presses a focused button.
+      if (takesSpace(event.target)) return; // Space presses a focused button or checkbox.
       this.spaceHeld = true;
       event.preventDefault();
     } else if (event.code === "KeyZ") {

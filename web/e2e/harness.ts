@@ -4,12 +4,22 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { test as base } from "@playwright/test";
 
 const REPOSITORY = resolve(import.meta.dirname, "..", "..");
 const WEB = join(REPOSITORY, "web", "dist");
+const FIXTURES = join(REPOSITORY, "tests", "fixtures");
+
+// The test Kinds and the fake SAM 2 that the Python tests use: no GPU and no weights. Set for the child processes only.
+function fakeRunnerEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONPATH: [FIXTURES, process.env.PYTHONPATH ?? ""].filter(Boolean).join(delimiter),
+    KIRIPIX_TEST_RECIPES: "kiripix_test_recipes",
+  };
+}
 
 function kiripixArgs(...args: string[]): string[] {
   return ["run", "--quiet", "--project", REPOSITORY, "kiripix", ...args];
@@ -59,16 +69,20 @@ export class Studio {
     private readonly server: ChildProcess,
     port: number,
     token: string,
+    private readonly env: NodeJS.ProcessEnv,
   ) {
     this.url = `http://127.0.0.1:${port}/`;
     this.home = `${this.url}#token=${token}`;
   }
 
-  static async start(): Promise<Studio> {
+  // `fakeSegmenter`: SAM 2 is the fake Runner of tests/fixtures, for the screens that segment.
+  static async start(fakeSegmenter = false): Promise<Studio> {
     const cwd = mkdtempSync(join(tmpdir(), "kiripix-e2e-"));
-    execFileSync("uv", kiripixArgs("init"), { cwd, stdio: "pipe" });
+    const env = fakeSegmenter ? fakeRunnerEnv() : process.env;
+    execFileSync("uv", kiripixArgs("init"), { cwd, stdio: "pipe", env });
     const server = spawn("uv", kiripixArgs("serve", "--port", "0", "--print-token", "--web", WEB), {
       cwd,
+      env,
       stdio: ["ignore", "pipe", "inherit"],
     });
     const ready = await new Promise<{ port: number; token: string }>((done, failed) => {
@@ -80,12 +94,12 @@ export class Studio {
       });
       server.once("exit", (code) => failed(new Error(`kiripix serve exited with ${code}`)));
     });
-    return new Studio(cwd, server, ready.port, ready.token);
+    return new Studio(cwd, server, ready.port, ready.token, env);
   }
 
   // A CLI call while the UI is open: an agent at work.
   kiripix(...args: string[]): string {
-    return execFileSync("uv", kiripixArgs(...args), { cwd: this.cwd, encoding: "utf-8" });
+    return execFileSync("uv", kiripixArgs(...args), { cwd: this.cwd, encoding: "utf-8", env: this.env });
   }
 
   json(...args: string[]): { data: Record<string, unknown> } {
@@ -94,7 +108,7 @@ export class Studio {
 
   // `run`, which exits 3 where it stops for the Owner: every room stops at a Stage that needs something.
   run(asset: string): void {
-    spawnSync("uv", kiripixArgs("run", asset, "--json"), { cwd: this.cwd, encoding: "utf-8" });
+    spawnSync("uv", kiripixArgs("run", asset, "--json"), { cwd: this.cwd, encoding: "utf-8", env: this.env });
   }
 
   importVariant(asset: string, name: string, content: Buffer): string {
@@ -145,10 +159,16 @@ export class Studio {
   }
 }
 
-export const test = base.extend<{ studio: Studio }>({
+export const test = base.extend<{ studio: Studio; segmentingStudio: Studio }>({
   // eslint-disable-next-line no-empty-pattern
   studio: async ({}, use) => {
     const studio = await Studio.start();
+    await use(studio);
+    studio.stop();
+  },
+  // eslint-disable-next-line no-empty-pattern
+  segmentingStudio: async ({}, use) => {
+    const studio = await Studio.start(true);
     await use(studio);
     studio.stop();
   },

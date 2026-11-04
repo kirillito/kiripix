@@ -17,3 +17,7 @@ use exactly the same surface.
 - Probe Commands (read-only, never recorded) exist on every surface, but are only fast through the long-running server.
 - Amended by [0007](0007-adapter-transport-is-not-a-command.md): an adapter's transport (moving files, the event
   stream, cancel, launching) is not a Command.
+- Amended by the Owner on 2026-11-04: on the masks screen, with its rebuild option on, an edit (`decide`, `undo`, `redo`
+  or `mask-import`) is followed by a `run` of the Stage, because a Decision changes the Masks only once the Stage has run.
+  The gesture still records one Decision. The `run` can be cancelled and its findings show with the edit's. It re-runs a
+  Runner only for a `click`, which asks for a new result (ADR 0002). Every other UI action stays one Command.

@@ -2,92 +2,84 @@
 
 A room's `export` Stage leaves engine-free outputs in `out/export/`: the mapped Plate, and `room.json` with its shapes and
 Markers. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
+
+The game's work is never overwritten (ADR 0003). A file is written only if the Manifest lists it and it still has the
+listed hash. `force` backs up and overwrites an owned file the game changed; `adopt` backs up and takes over a file the
+Manifest doesn't list. Every backup goes to `.kiripix/backups/<timestamp>/`, and an export plans every Asset and refuses
+before it writes anything.
 """
 
-import json
-from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 
 from kiripix.checks import Finding, Position
 from kiripix.core import atomic, cancel
-from kiripix.core.assets import Asset
+from kiripix.core.assets import Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
-from kiripix.export.godot import exported_markers, room_scene
-from kiripix.export.manifest import MANIFEST_DIR, ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
-
-EXPORT_STAGE = "export"
-_RES = "res://"
-_ROOM_FILE = "room.json"
-_ROOM_SCHEMA_VERSION = 1
-_PLATE_FILE = "plate.png"
+from kiripix.export.checks import EXPORTERS, frozen_findings, pairing_findings
+from kiripix.export.godot import room_ids, room_scene
+from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
+from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, built_dir, read_room
+from kiripix.export.target import GodotTarget, resolve_target
 
 
 @dataclass(frozen=True)
-class GodotTarget:
-    """Where an export goes: the Godot project's folder, and the export root inside it as `res://...`."""
-
-    folder: Path
-    root: str
-
-    def path(self, res: str) -> Path:
-        return self.folder / res.removeprefix(_RES)
-
-    def manifest(self, asset_id: str) -> str:
-        return f"{self.root}/{MANIFEST_DIR}/{asset_id}.json"
+class ExportOptions:
+    force: bool = False  # back up and overwrite a file of the Manifest's that the game changed
+    adopt: bool = False  # back up and take over a file the Manifest doesn't list
+    dry_run: bool = False  # write nothing
 
 
-@dataclass(frozen=True)
+@dataclass
 class ExportResult:
-    written: list[str]
-    unchanged: list[str]
+    asset: str
     manifest: str
     counter: int
+    written: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+    would_write: list[str] = field(default_factory=list)  # a dry run's `written`
+    backed_up: list[str] = field(default_factory=list)  # (would be, in a dry run)
+    changed: list[str] = field(default_factory=list)  # refused: the game changed it; `--force` takes it
+    unmanaged: list[str] = field(default_factory=list)  # refused: not the Manifest's; `--adopt` takes it
+    findings: list[Finding] = field(default_factory=list)
 
 
-def _target(project: Project) -> GodotTarget:
-    godot = project.settings.export.godot
-    if godot.project is None:
-        raise fail("export.no_target", "no Godot project to export into",
-                   owner_action="Set project under [export.godot] in kiripix.toml to the Godot project's folder.",
-                   exit_code=ExitCode.NEEDS_OWNER)
-    root = godot.root.rstrip("/")
-    parts = PurePosixPath(root.removeprefix(_RES)).parts
-    if not root.startswith(_RES) or not parts or ".." in parts:
-        raise fail("export.bad_root", f"the export root '{godot.root}' isn't a folder inside the Godot project",
-                   owner_action="Set root under [export.godot] in kiripix.toml to a folder such as res://kiripix.")
-    folder = project.root / godot.project
-    if not (folder / "project.godot").is_file():
-        raise fail("export.no_project", f"no Godot project at '{godot.project}': it has no project.godot",
-                   owner_action="Clone the game there, or fix project under [export.godot] in kiripix.toml.",
-                   exit_code=ExitCode.NEEDS_OWNER)
-    return GodotTarget(folder, root)
+@dataclass
+class _Plan:
+    asset: Asset
+    files: dict[str, bytes]
+    hashes: dict[str, str]
+    record: Manifest
+    manifest_res: str
+    manifest_path: Path
+    settled: bool
+    on_disk: dict[str, str | None]
+    backups: list[str]
+    refusals: list[Finding]
+    result: ExportResult
 
 
 def _room_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
     """The files of a room's export, by `res://` path, and the IDs they carry."""
-    built = graph.output_dir(graph.spec(EXPORT_STAGE))
-    room = json.loads((built / _ROOM_FILE).read_text(encoding="utf-8"))
-    if room.get("schema_version") != _ROOM_SCHEMA_VERSION:
-        raise fail("export.room_invalid", f"{graph.asset.id}'s {_ROOM_FILE} has schema_version "
-                   f"{room.get('schema_version')}; this Kiripix reads {_ROOM_SCHEMA_VERSION}",
-                   fix=f"kiripix run {graph.asset.id} {EXPORT_STAGE} --force")
+    room = read_room(graph)
     name = graph.asset.id.split(".", 1)[1]
     folder = f"{target.root}/{graph.kind.name}/{name}"
-    plate = f"{folder}/{_PLATE_FILE}"
+    plate = f"{folder}/{PLATE_FILE}"
     files = {
         f"{folder}/{name}.tscn": room_scene(room, name, plate).encode("utf-8"),
-        plate: (built / _PLATE_FILE).read_bytes(),
+        plate: (built_dir(graph) / PLATE_FILE).read_bytes(),
     }
-    ids = ExportedIds(markers=sorted(str(marker["id"]) for marker in exported_markers(room)), layers=["plate"],
-                      masks=sorted(room["collision"]))
-    return files, ids
+    return files, room_ids(room)
 
 
-_FILES_BY_KIND = {"room": _room_files}
+_FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget], tuple[dict[str, bytes], ExportedIds]]] = {
+    "room": _room_files}
 
 
 def _hashes(files: dict[str, bytes]) -> dict[str, str]:
@@ -116,31 +108,36 @@ def _file_hash(path: Path) -> str | None:
         return None
 
 
-def _conflict(res: str, current: str | None, wanted: str, manifest: Manifest | None) -> Finding | None:
+def _conflict(res: str, current: str | None, wanted: str, manifest: Manifest | None, asset: str) -> Finding | None:
     """Why a file already there can't be overwritten, or None. The Manifest must list it (ADR 0003), with its hash, or as
-    what a stopped export was writing or replacing."""
+    what a stopped export was writing or replacing. Overwriting the game's edits is the Owner's call, so each finding is
+    an `owner_action` naming the flag."""
     if current is None:
         return None
-    keep = f"Move what you need from {res} into a scene of the game that instances it, then delete {res} and export again."
     recorded = manifest.files.get(res) if manifest is not None else None
     if recorded is None:
         return Finding(code="export.file_unmanaged", message=f"{res} is already there, and the Manifest doesn't list it",
-                       position=Position(file=res), owner_action=keep)
+                       position=Position(asset=asset, file=res),
+                       owner_action=f"To take it over, run: kiripix export {asset} --adopt. The file is backed up to "
+                                    f".kiripix/backups/ first. Otherwise move it out of the way.")
     replacing = manifest.replacing if manifest is not None and manifest.replacing else {}
     if current in (recorded, wanted, replacing.get(res)):
         return None
     return Finding(code="export.file_changed", message=f"{res} was changed since Kiripix exported it",
-                   position=Position(file=res), owner_action=keep)
+                   position=Position(asset=asset, file=res),
+                   owner_action=f"To overwrite your changes, run: kiripix export {asset} --force. The file is backed up "
+                                f"to .kiripix/backups/ first. Otherwise move what you need into a scene of the game that "
+                                f"instances {res}.")
 
 
-def export_asset(project: Project, asset: Asset, cache: HashCache) -> ExportResult:
-    """Write the Asset's files and its Manifest into the Godot project, or refuse before writing anything. The caller
-    holds the project and Asset locks. The Manifest goes first, listing the new hashes and what they replace, and again
-    once the files are written; so a stop at any point leaves only files a second run accepts as its own."""
+def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget, options: ExportOptions) -> _Plan:
+    """What exporting the Asset would do, or the refusal why not. Writes nothing."""
     if asset.kind not in _FILES_BY_KIND:
         raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms can",
                    fix="kiripix describe project")
-    target = _target(project)
+    frozen = frozen_findings(project, asset, cache)
+    if frozen:
+        raise KiripixError(frozen, ExitCode.CHECK_FAILED)
     graph = _refuse_unless_ready(project, asset, cache)
     files, ids = _FILES_BY_KIND[asset.kind](graph, target)
     hashes = _hashes(files)
@@ -148,25 +145,110 @@ def export_asset(project: Project, asset: Asset, cache: HashCache) -> ExportResu
     manifest_path = target.path(manifest_res)
     manifest = read_manifest(manifest_path, manifest_res)
     on_disk = {res: _file_hash(target.path(res)) for res in files}
-    conflicts = [found for res in files if (found := _conflict(res, on_disk[res], hashes[res], manifest))]
-    if conflicts:
-        raise KiripixError(conflicts, ExitCode.NEEDS_OWNER)
-    unchanged = [res for res in files if on_disk[res] == hashes[res]]
-    written = [res for res in files if on_disk[res] != hashes[res]]
-    settled = manifest is not None and manifest.files == hashes and manifest.ids == ids and not manifest.replacing
+    refusals: list[Finding] = []
+    backups: list[str] = []
+    changed: list[str] = []
+    unmanaged: list[str] = []
+    for res in files:
+        found = _conflict(res, on_disk[res], hashes[res], manifest, asset.id)
+        if found is None:
+            continue
+        taken = options.adopt if found.code == "export.file_unmanaged" else options.force
+        if not taken:
+            refusals.append(found)
+            (unmanaged if found.code == "export.file_unmanaged" else changed).append(res)
+        elif on_disk[res] != hashes[res]:
+            backups.append(res)
     same_files = manifest is not None and manifest.files == hashes
     counter = (manifest.counter if manifest is not None else 0) + (0 if same_files else 1)
     record = Manifest(kiripix_version=kiripix_version(), asset=asset.id, exported=True, counter=counter, ids=ids,
                       files=hashes)
-    if not settled and written:
-        replaced = {res: before for res in written if (before := on_disk[res]) is not None}
-        write_manifest(manifest_path, record.model_copy(update={"replacing": replaced}))
+    settled = manifest is not None and same_files and manifest.ids == ids and not manifest.replacing
+    result = ExportResult(asset.id, manifest_res, counter, changed=changed, unmanaged=unmanaged)
+    result.unchanged = [res for res in files if on_disk[res] == hashes[res]]
+    if options.dry_run:
+        pending = [res for res in files if on_disk[res] != hashes[res] and res not in changed + unmanaged]
+        result.would_write, result.backed_up = pending + ([] if settled else [manifest_res]), backups
+    return _Plan(asset, files, hashes, record, manifest_res, manifest_path, settled, on_disk, backups, refusals, result)
+
+
+def _backup_folder(project: Project) -> Path:
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    root = project.state_dir / "backups"
+    folder = root / stamp
+    number = 1
+    while folder.exists():
+        number += 1
+        folder = root / f"{stamp}-{number}"
+    return folder
+
+
+def _apply(plan: _Plan, target: GodotTarget, backup: Path) -> None:
+    """Back up what is taken over, then write. The Manifest goes first, listing the new hashes and what they replace, and
+    again once the files are written; so a stop at any point leaves only files a second run accepts as its own."""
+    for res in plan.backups:
+        cancel.check()
+        atomic.write_bytes(backup / (target.folder.resolve().name or "godot") / res.removeprefix("res://"),
+                           target.path(res).read_bytes())
+    written = [res for res in plan.files if plan.on_disk[res] != plan.hashes[res]]
+    if not plan.settled and written:
+        replaced = {res: before for res in written if (before := plan.on_disk[res]) is not None}
+        write_manifest(plan.manifest_path, plan.record.model_copy(update={"replacing": replaced}))
     for res in written:
         cancel.check()
-        atomic.write_bytes(target.path(res), files[res])
-    if not settled:
-        write_manifest(manifest_path, record)
-    return ExportResult(written, unchanged, manifest_res, counter)
+        atomic.write_bytes(target.path(res), plan.files[res])
+    if not plan.settled:
+        write_manifest(plan.manifest_path, plan.record)
+    plan.result.written, plan.result.backed_up = written, plan.backups
+
+
+def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache, options: ExportOptions) -> tuple[list[ExportResult], list[Finding]]:
+    """Export `assets`, or every Asset with an exporter when None (`--all`). The caller holds the project and Asset locks.
+
+    Every Asset is planned before any file is written: one refusal (an Asset not built, a frozen ID, a file the game
+    owns) stops them all with nothing changed. With `--all`, Exit pairing must hold or nothing is exported; for one
+    Asset it is only a warning. Returns the results and the findings of the call."""
+    for asset in assets or []:
+        if asset.kind not in _FILES_BY_KIND:
+            raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms can",
+                       fix="kiripix describe project")
+    target = resolve_target(project)
+    every, broken = list_assets(project)
+    if broken and assets is None:
+        raise KiripixError(broken)
+    warnings: list[Finding] = []
+    if assets is None:
+        assets = [asset for asset in every if asset.kind in EXPORTERS]
+        errors = pairing_findings(project, every)
+        if errors:
+            raise KiripixError(errors, ExitCode.CHECK_FAILED)
+    else:
+        warnings = pairing_findings(project, every, only=assets[0].id, severity="warning") if len(assets) == 1 else []
+    plans: list[_Plan] = []
+    refused: list[Finding] = []
+    code = ExitCode.ERROR
+    for asset in assets:
+        cancel.check()
+        try:
+            plans.append(_plan(project, asset, cache, target, options))
+        except KiripixError as error:
+            refused.extend(error.findings)
+            code = max(code, error.exit_code)
+    if refused:
+        raise KiripixError(refused, code)
+    findings = list(warnings)
+    if options.dry_run:
+        for plan in plans:
+            # a refusal is only a warning in a dry run: it stops nothing, and says what the real export would need
+            findings.extend(f.model_copy(update={"severity": "warning"}) for f in plan.refusals)
+    else:
+        refusals = [finding for plan in plans for finding in plan.refusals]
+        if refusals:
+            raise KiripixError(refusals, ExitCode.NEEDS_OWNER)
+        backup = _backup_folder(project)
+        for plan in plans:
+            _apply(plan, target, backup)
+    return [plan.result for plan in plans], findings
 
 
 def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
@@ -175,7 +257,7 @@ def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
     if asset.kind not in _FILES_BY_KIND:
         return False
     try:
-        target = _target(project)
+        target = resolve_target(project)
         manifest_res = target.manifest(asset.id)
         manifest = read_manifest(target.path(manifest_res), manifest_res)
     except KiripixError:
@@ -186,4 +268,18 @@ def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
     return manifest.files != _hashes(files) or bool(manifest.replacing)
 
 
-__all__ = ["EXPORT_STAGE", "ExportResult", "export_asset", "export_pending"]
+def export_command(project: Project, asset: Asset, cache: HashCache) -> str | None:
+    """The Command that brings the game up to date, once every Stage is done and it is behind; else None. A `done` export
+    Stage only means its outputs are built: this is what tells that from being in the game. Derived, never stored."""
+    if asset.kind not in _FILES_BY_KIND:
+        return None
+    command = f"kiripix export {asset.id}"
+    try:
+        built = all(state.status == "done" for state in AssetGraph(project, asset, cache).states())
+        return command if built and export_pending(project, asset, cache) else None
+    except KiripixError:
+        return command  # `export` says what's wrong
+
+
+__all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "export_assets", "export_command",
+           "export_pending", "frozen_findings", "pairing_findings"]

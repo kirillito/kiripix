@@ -1,0 +1,18 @@
+# The agent acceptance test
+
+Spec §14, ticket 0028. An agent with no project knowledge takes a room from `import` to `export` using only the
+`kiripix` tool. A real run costs money, so CI and a plain `uv run pytest` never start one. They do run the harness's own
+tests, including the scripted dry run, which is free.
+
+```
+uv run python -m tests.acceptance.run                 # the real run: claude -p, claude-haiku-5-5, 200k fresh tokens
+uv run python -m tests.acceptance.run --dry-run       # a scripted agent that follows `next`; free, writes no report
+```
+
+Flags: `--agent-version`, `--budget` (fresh tokens, that is in + out + cache written, across all resumes), `--max-usd`
+(`--max-budget-usd` of each `claude` call), `--milestone`, `--report` (write a report for a dry run too), `--keep`.
+A real run writes `docs/acceptance/<date>-<milestone>.md` (a second run that day gets `-2`). The harness itself is
+tested without a model by `uv run pytest tests/acceptance` (the dry run, the isolation, the stream parser).
+
+How the agent is held to the tool, how the stand-in owner works and what counts as a pass are in the docstrings of
+`tests/acceptance/claude_agent.py` and `harness.py`. The owner's Decisions are `tests/acceptance/fixtures/owner.json`.

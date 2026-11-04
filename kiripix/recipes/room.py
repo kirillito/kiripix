@@ -817,7 +817,8 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="source",
-            description="Generated Variants or an imported image; the Owner picks one as the Source.",
+            description="Generated Variants or an imported image. The Owner chooses the Source between several; a lone "
+                        "Variant is picked by the Command `next` names, which needs no judgement.",
             inputs=StageInputs(files=["src/*.png"]),
             decisions=(PICK,),
             checks=(CheckSpec(code="source.not_picked", description="A Source has been picked."),),

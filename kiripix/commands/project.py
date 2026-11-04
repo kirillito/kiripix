@@ -5,16 +5,17 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from kiripix.checks import Finding
+from kiripix.checks import Finding, Position
 from kiripix.commands.contract import Context, ExitCode, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
+from kiripix.core import cancel
 from kiripix.core.assets import create_asset, is_asset_id, list_assets, load_asset
 from kiripix.core.errors import KiripixError
 from kiripix.core.graph import AssetGraph, StageRunResult, StageState, run_all, run_asset
 from kiripix.core.hashing import HashCache
 from kiripix.core.kinds import all_kinds, get_kind
 from kiripix.core.project import find_project, init_project
-from kiripix.export import EXPORT_STAGE, export_pending
+from kiripix.export import EXPORT_STAGE, export_command, export_pending
 from kiripix.recipes.base import CheckSpec, DecisionSpec, KindSpec, ParamSpec, StageInputs
 
 
@@ -194,6 +195,8 @@ class AssetStatus(BaseModel):
     asset: str
     kind: str
     stages: list[StageState]
+    export_command: str | None = Field(
+        None, description="While every Stage is done and the game doesn't have what is built: the Command that exports it.")
 
 
 class StatusData(BaseModel):
@@ -209,6 +212,8 @@ class StatusData(BaseModel):
             for stage in asset.stages:
                 reason = f"  ({stage.reason})" if stage.reason else ""
                 lines.append(f"    {stage.stage:<10} {stage.status}{reason}")
+            if asset.export_command:
+                lines.append(f"    built, but not in the game yet: {asset.export_command}")
         return "\n".join(lines)
 
 
@@ -235,7 +240,8 @@ def status(arguments: StatusInput, context: Context) -> Outcome[StatusData]:
         except KiripixError as error:
             findings.extend(error.findings)
             continue
-        rows.append(AssetStatus(asset=asset.id, kind=asset.kind, stages=states))
+        rows.append(AssetStatus(asset=asset.id, kind=asset.kind, stages=states,
+                                export_command=export_command(project, asset, cache)))
     cache.save()
     return Outcome(
         StatusData(project=project.settings.project.name, assets=rows),
@@ -374,4 +380,13 @@ def run(arguments: RunInput, context: Context) -> Outcome[RunData]:
                            progress=context.progress, wait=context.wait, command_line=context.command_line,
                            rerun=arguments.rerun, cpu=arguments.cpu)
     findings: list[Finding] = result.findings
+    if result.exit_code == ExitCode.OK:
+        for asset_id in sorted({r.asset for r in result.results}):
+            cancel.check()
+            if wanted := export_command(project, load_asset(project, asset_id), cache):
+                findings.append(Finding(
+                    code="export.pending", severity="info",
+                    message=f"{asset_id} is built, but the game doesn't have it yet: `run` writes nothing into the game",
+                    position=Position(asset=asset_id, stage=EXPORT_STAGE),
+                    fix=wanted))
     return Outcome(RunData(results=result.results), findings, result.exit_code)

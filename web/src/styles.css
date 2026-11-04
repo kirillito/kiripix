@@ -446,3 +446,40 @@ kbd {
   border-radius: 2px;
   padding: 0 4px;
 }
+
+.mask-form {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.mask-form.over {
+  outline: 2px dashed var(--muted);
+}
+
+.mask-form .tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mask-form .tools button kbd {
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.mask-form .tools button[aria-pressed="true"] {
+  border-color: #ffffff;
+}
+
+.mask-form .param input[type="number"],
+.mask-form .param input[type="range"] {
+  width: 100%;
+}
+
+.swatch {
+  border-radius: 2px;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}

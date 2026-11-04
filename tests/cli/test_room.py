@@ -160,6 +160,15 @@ def test_next_gives_the_pick_command_for_one_variant_and_an_owner_action_for_sev
     assert f"kiripix pick {ROOM}" in several["owner_action"]
 
 
+def test_describe_agrees_with_next_that_a_lone_variant_is_picked_by_its_command(project: Kiripix) -> None:
+    stages = project.json("describe", "room")["data"]["kinds"][0]["stages"]
+
+    [source] = [stage for stage in stages if stage["name"] == "source"]
+
+    assert "between several" in source["description"] and "lone Variant" in source["description"]
+    assert "`next` names" in source["description"]
+
+
 def test_a_pick_of_a_deleted_variant_needs_input_with_that_reason(project: Kiripix) -> None:
     folder = make_room(project)
     name = variant(project)

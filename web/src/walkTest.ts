@@ -3,7 +3,7 @@
 // Foreground Layers would be drawn over it here by their y-sort lines; a room has none until M2.
 
 import type { Body } from "./api";
-import type { CanvasFrame, CanvasTool } from "./pixelCanvas";
+import { isTyping, type CanvasFrame, type CanvasTool } from "./pixelCanvas";
 
 const PIXELS_PER_SECOND = 90;
 const BODY_COLOUR = "#ffffff";
@@ -103,7 +103,7 @@ export class WalkTest implements CanvasTool {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!(event.key in KEYS) || event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
+    if (isTyping(event.target) || (event.target instanceof HTMLInputElement && event.target.type === "range")) return; // a slider's arrows
     event.preventDefault();
     if (event.shiftKey) {
       if (!event.repeat) this.dash(...KEYS[event.key]);

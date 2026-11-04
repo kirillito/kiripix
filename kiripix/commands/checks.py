@@ -11,6 +11,7 @@ from kiripix.core.hashing import HashCache
 from kiripix.core.previews import write_preview
 from kiripix.core.project import find_project
 from kiripix.core.project_checks import check_all, check_asset
+from kiripix.export import frozen_findings
 
 
 class CheckInput(BaseModel):
@@ -57,6 +58,7 @@ def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
         assert arguments.asset is not None
         asset = load_asset(project, arguments.asset)
         done, findings = check_asset(project, asset, cache)
+        findings += frozen_findings(project, asset, cache)  # the Exporter's: it reads the game's Manifest
         assets, stages = [asset.id], [f"{asset.id} {s}" for s in done]
     cache.save()
     if broken:

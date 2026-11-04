@@ -1,0 +1,10 @@
+{
+  "asset": "room.alley",
+  "note": "The stand-in owner's Decisions. An entry with when_stage is applied only when `kiripix next` is waiting at that Stage; the others are applied together, in order, the first time the Project waits on the owner at a Stage with no entry of its own. `pick: imported` picks the Variant the harness imported.",
+  "decisions": [
+    {"when_stage": "source", "pick": "imported"},
+    {"stage": "masks", "decision": "brush", "data": {"mask": "solid", "erase": false, "radius": 7, "points": [[7, 0], [7, 31]]}},
+    {"stage": "place", "decision": "marker", "data": {"id": "spawn.main", "type": "spawn", "x": 30, "y": 16}},
+    {"stage": "place", "decision": "marker", "data": {"id": "sign.notice", "type": "interactable", "x": 40, "y": 20}}
+  ]
+}

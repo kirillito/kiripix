@@ -232,7 +232,7 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | Stage | What it does | Owner input | Checks |
 |---|---|---|---|
 | **brief** | Size in px or tiles, view, mood, exits and their sides, notes. Renders the generation prompt from the kind's template and the style bible. | Writes the brief | Size is a whole number of tiles |
-| **source** | Generates N variants with a Provider (through `gen`), or **imports** an image made elsewhere (a first-class path: the owner may keep using an external image tool). | Picks one | Has a picked source |
+| **source** | Generates N variants with a Provider (through `gen`), or **imports** an image made elsewhere (a first-class path: the owner may keep using an external image tool). | Picks between several (an agent may pick a lone variant) | Has a picked source |
 | **fit** | Detects the source's pixel grid, or downscales with a mode filter to the target size. Records the Grid transform. Palette-free. | Tunes the grid, with a before/after view | Exact size |
 | **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial (default 1 px, 0 allowed). | Clicks objects to lift out | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
 | **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2), flood by colour region, polygon, brush, or import of a painted image; optional snap to an N px cell grid. | Clicks and brushes | Every Mask binary |
@@ -420,7 +420,8 @@ Each Command declares:
   costs an agent context.
 
 Every UI action maps to exactly one Command. Continuous gestures (dragging a Marker, a brush stroke) become one Command
-when the mouse is released, not one per mouse-move.
+when the mouse is released, not one per mouse-move. One exception: on the masks screen, with its rebuild option on, an
+edit is followed by a `run` of the Stage (ADR 0006).
 
 ### 10.2 The contract
 
@@ -559,7 +560,8 @@ built the same way.
 - Checks run live in the panel. Clicking a finding jumps to its position on the canvas.
 - A `needs-review` stage opens with a before/after of the replayed result, and Accept is its primary action.
 - Every action is one Command: a click is one `decide`, and a drag or brush stroke is one `decide` or `override` when
-  the mouse is released. `Ctrl+Z` and `Ctrl+Shift+Z` are `undo` and `redo`.
+  the mouse is released. `Ctrl+Z` and `Ctrl+Shift+Z` are `undo` and `redo`. On the masks screen, with its rebuild option
+  on, an edit is followed by a cancellable `run` of the Stage, so that it shows on the canvas (ADR 0006).
 - Hover feedback (click-to-segment previews) uses Probes, which record nothing.
 - Stage panels are rendered from `describe`: parameter-only stages need no front-end code. The stages that matter most
   (masks, layers, place, the walk test, the frame strip) still need hand-written canvas widgets.

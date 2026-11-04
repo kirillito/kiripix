@@ -437,3 +437,63 @@ def test_next_points_at_export_until_the_game_has_what_is_built(project: Kiripix
     place(project, "spawn.main", "spawn", at=(31, 16))
     project.json("run", ROOM)
     assert project.json("next", ROOM)["data"]["command"] == f"kiripix export {ROOM}"
+
+
+# a built room isn't an exported one
+
+
+def says_export(project: Kiripix) -> dict[str, bool]:
+    """Whether `run`, `status` and `show` each name `kiripix export`, as JSON and as the text an agent reads."""
+    command = f"kiripix export {ROOM}"
+    run = project.json("run", ROOM)
+    ran = project("run", ROOM)
+    [row] = project.json("status")["data"]["assets"]
+    return {
+        "run": [f["fix"] for f in findings(run, "export.pending")] == [command],
+        "status": row["export_command"] == command,
+        "show": project.json("show", ROOM)["data"]["export_command"] == command,
+        "run text": command in ran.stdout + ran.stderr,  # a finding's text goes to stderr
+        "status text": command in project("status").stdout,
+        "show text": command in project("show", ROOM).stdout,
+    }
+
+
+def test_a_built_room_names_export_until_the_game_has_it_and_again_after_an_edit(project: Kiripix) -> None:
+    exportable_room(project)
+
+    assert all(says_export(project).values()), says_export(project)
+
+    project.json("export", ROOM)
+    assert not any(says_export(project).values()), says_export(project)
+
+    place(project, "spawn.main", "spawn", at=(31, 16))
+    project.json("run", ROOM)
+    assert all(says_export(project).values()), says_export(project)
+
+
+def test_a_built_room_is_still_a_clean_run(project: Kiripix) -> None:
+    exportable_room(project)
+
+    result = project.json("run", ROOM)  # exit 0, and only advice
+
+    [finding] = findings(result, "export.pending")
+    assert finding["severity"] == "info" and finding["owner_action"] is None
+    assert finding["position"] == {**finding["position"], "asset": ROOM, "stage": "export"}
+
+
+def test_a_room_not_fully_built_does_not_name_export(project: Kiripix) -> None:
+    walled_room(project)  # no Spawn: `reach` waits on the Owner
+
+    result = project.json("run", ROOM, expect=3)
+    [row] = project.json("status")["data"]["assets"]
+
+    assert not findings(result, "export.pending") and row["export_command"] is None
+    assert project.json("show", ROOM)["data"]["export_command"] is None
+
+
+def test_a_kind_with_no_exporter_never_names_export(project: Kiripix) -> None:
+    project.json("new", "prop", "bench")
+
+    [row] = project.json("status")["data"]["assets"]
+
+    assert row["export_command"] is None

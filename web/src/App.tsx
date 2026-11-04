@@ -25,7 +25,8 @@ import {
   VariantGrid,
   type Filter,
 } from "./components";
-import type { PixelCanvas } from "./pixelCanvas";
+import { isTyping, type PixelCanvas } from "./pixelCanvas";
+import { MASKS_STAGE, MasksPanel } from "./maskScreen";
 import { PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
@@ -71,9 +72,11 @@ export function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [notice, setNotice] = useState<Finding[]>([]);
   const [job, setJob] = useState<string | null>(null);
+  const [rebuilding, setRebuilding] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
   const [gameFrame, setGameFrame] = useState(false);
+  const [rebuild, setRebuild] = useState(true);
   const [, setRefocus] = useState(0); // one more render, to run the focus effect when a finding is on this Stage
   const canvas = useRef<PixelCanvas>(null);
 
@@ -172,10 +175,12 @@ export function App() {
   const detail = show?.stages.find((entry) => entry.stage === current);
   const isSource = description?.decisions.some((decision) => decision.name === PICK) ?? false;
   const isPlace = description?.decisions.some((decision) => decision.name === PLACE_DECISION) ?? false;
+  const isMasks =
+    current === MASKS_STAGE && (description?.decisions.some((decision) => decision.name === "brush") ?? false);
   const isReach = current === REACH_STAGE && show?.kind === "room";
 
-  // Each user action is one Command; its findings show until the next action. They go one at a time, in the order they
-  // were made: a Run straight after a `set` must see that `set`, not find its lock held.
+  // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
+  // go one at a time, in the order they were made: a Run straight after a `set` must see that `set`, not find its lock held.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const perform = useCallback(
     <T,>(action: () => Promise<Envelope<T>>): Promise<void> => {
@@ -210,6 +215,35 @@ export function App() {
     },
     [asset, current, perform],
   );
+  // A Mask edit shows once the Stage has run again, so with "rebuild" on the same action runs it, as a refresh would.
+  // Only a `click` asks for a Runner's result, hence `rerun` for it alone: no other edit may re-run a pinned call (ADR 0002).
+  // It can be cancelled, but it doesn't make the screen busy: the queue keeps quick strokes in order, and none is dropped.
+  const rebuilt = useCallback(
+    async <T,>(result: Envelope<T>, rerun = false): Promise<Envelope<unknown>> => {
+      if (!isMasks || !rebuild || !result.ok) return result;
+      const id = crypto.randomUUID();
+      setRebuilding(id);
+      try {
+        const ran = await call("run", { asset, stage: current, rerun }, id);
+        return { ...ran, findings: [...result.findings, ...ran.findings] };
+      } finally {
+        setRebuilding(null);
+        setProgress(null);
+      }
+    },
+    [asset, current, isMasks, rebuild],
+  );
+  const decideMask = useCallback(
+    (name: string, data: Record<string, unknown>) => {
+      const decision = JSON.stringify({ decision: name, data });
+      void perform(async () => rebuilt(await call("decide", { asset, stage: current, decision }), name === "click"));
+    },
+    [asset, current, perform, rebuilt],
+  );
+  const importMask = useCallback(
+    (file: File) => void perform(async () => rebuilt(await callWithFile("mask-import", { asset }, "png", file))),
+    [asset, perform, rebuilt],
+  );
   const pick = useCallback(
     (variant: string) => {
       if (!busy) void perform(() => call("pick", { asset, variant }));
@@ -221,9 +255,9 @@ export function App() {
   };
   const step = useCallback(
     (command: "undo" | "redo") => {
-      if (!busy) void perform(() => call(command, { asset, stage: current }));
+      if (!busy) void perform(async () => rebuilt(await call(command, { asset, stage: current })));
     },
-    [asset, busy, current, perform],
+    [asset, busy, current, perform, rebuilt],
   );
 
   // The job exists once it reaches the front of the queue, and only then can it be cancelled.
@@ -236,6 +270,16 @@ export function App() {
     setJob(null);
     setProgress(null);
   };
+  // A stale or new Runner call is re-run only when the Owner says so (ADR 0002): `next` names it, and this button is that.
+  const rerun = async () => {
+    const id = crypto.randomUUID();
+    await perform(() => {
+      setJob(id);
+      return call("run", { asset, stage: current, rerun: true }, id);
+    });
+    setJob(null);
+    setProgress(null);
+  };
   const accept = () => void perform(() => call("accept", { asset, stage: current }));
 
   const names = show?.stages.map((entry) => entry.stage) ?? [];
@@ -244,8 +288,7 @@ export function App() {
   const variants = show?.variants;
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      const typing = event.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName);
-      if (typing) return;
+      if (isTyping(event.target)) return;
       if ((event.ctrlKey || event.metaKey) && event.code === "KeyZ" && description?.decisions.length) {
         event.preventDefault();
         step(event.shiftKey ? "redo" : "undo");
@@ -285,13 +328,18 @@ export function App() {
   const after = image ? fileUrl(image, imageVersion) : null;
   const before = detail?.image && detail.input_image ? fileUrl(detail.input_image, imageVersion) : null;
 
-  const primary = job ? (
-    <button className="primary" data-testid="cancel" onClick={() => void cancelJob(job)}>
+  const cancellable = job ?? rebuilding;
+  const primary = cancellable ? (
+    <button className="primary" data-testid="cancel" onClick={() => void cancelJob(cancellable)}>
       Cancel
     </button>
   ) : detail?.status === "needs-review" ? (
     <button className="primary" data-testid="accept" onClick={accept}>
       Accept ▶
+    </button>
+  ) : next?.stage === detail?.stage && next?.command?.includes("--rerun") ? (
+    <button className="primary" data-testid="rerun" onClick={() => void rerun()}>
+      Re-run the Runner ▶
     </button>
   ) : detail && description?.implemented && detail.status !== "done" && detail.status !== "needs-input" ? (
     <button className="primary" data-testid="run" onClick={() => void run()}>
@@ -352,6 +400,20 @@ export function App() {
                 status={data.status}
                 decide={decideMarker}
                 disabled={busy}
+              />
+            )}
+            {isMasks && (
+              <MasksPanel
+                key={asset}
+                canvas={canvas}
+                asset={asset ?? ""}
+                detail={detail}
+                imageVersion={imageVersion}
+                disabled={busy}
+                rebuild={rebuild}
+                onRebuild={setRebuild}
+                decide={decideMask}
+                importPng={importMask}
               />
             )}
             {isReach && (

@@ -13,6 +13,7 @@ from kiripix.core.assets import load_asset
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project, find_project
+from kiripix.export import export_command
 from kiripix.recipes.base import Scalar
 
 
@@ -53,6 +54,8 @@ class ShowData(BaseModel):
     variants: list[VariantOut]
     picked: str | None
     stages: list[StageDetail]
+    export_command: str | None = Field(
+        None, description="While every Stage is done and the game doesn't have what is built: the Command that exports it.")
 
     def text(self) -> str:
         lines = [f"{self.asset} ({self.kind})"]
@@ -60,6 +63,8 @@ class ShowData(BaseModel):
         for stage in self.stages:
             params = ", ".join(f"{k}={v}" for k, v in stage.params.items())
             lines.append(f"  {stage.stage:<10} {stage.status}" + (f"  {params}" if params else ""))
+        if self.export_command:
+            lines.append(f"  built, but not in the game yet: {self.export_command}")
         return "\n".join(lines)
 
 
@@ -110,6 +115,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         variants=[VariantOut(name=name, file=project.relative(path)) for name, path in variants.items()],
         picked=sources.picked(graph) if takes_variants else None,
         stages=stages,
+        export_command=export_command(project, asset, cache),
     )
     cache.save()
     return Outcome(data)

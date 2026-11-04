@@ -46,7 +46,8 @@ A Stage's ordered, append-only record of Decisions, including undos and redos.
 Recorded human input that a Stage replays: a Pick, segmentation clicks, an Override, marker positions.
 
 **Pick**:
-The Decision choosing one Variant as an Asset's Source.
+The Decision choosing one Variant as an Asset's Source. The Owner chooses between several; an agent may record it when
+there is only one, which needs no judgement.
 
 **Override**:
 A recorded hand edit painted onto a Stage's image output, tied to the exact image it was painted on.
