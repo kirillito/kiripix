@@ -118,6 +118,9 @@ class StageRun:
     progress: ProgressCallback
     decisions: tuple[CurrentDecision, ...] = ()
     asset_params: dict[str, Scalar] = field(default_factory=dict)
+    # Raises if the Command was cancelled. Call it between chunks of work (tiles, frames, batches); `progress` calls it
+    # too. A Stage never catches what it raises.
+    check_cancel: Callable[[], None] = lambda: None
 
 
 StageFunction = Callable[[StageRun], None]

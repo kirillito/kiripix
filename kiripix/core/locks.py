@@ -17,6 +17,7 @@ import psutil
 from pydantic import BaseModel, ValidationError
 
 from kiripix.checks import Finding
+from kiripix.core import cancel
 from kiripix.core.errors import ExitCode, KiripixError
 
 PROJECT_LOCK = "project"
@@ -140,7 +141,7 @@ def _acquire(directory: Path, lock: str, wait: float, command_line: str) -> Path
                     # Being written right now, or unreadable: report what we know.
                     current = holder.model_copy(update={"pid": 0, "host": "unknown", "command": "unknown"})
                 raise _busy(current, command_line) from None
-            time.sleep(_POLL_SECONDS)
+            cancel.sleep(_POLL_SECONDS)
             continue
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(holder.model_dump()))

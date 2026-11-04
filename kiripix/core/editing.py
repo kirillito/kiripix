@@ -1,5 +1,5 @@
-"""Changing an Asset's decisions: `set` writes Stage parameters; `decide`, `override`, `undo`, `redo` and `accept`
-append to the journal.
+"""Changing an Asset's decisions: `set` writes Stage parameters; `decide`, `override`, `mask-import`, `undo`, `redo` and
+`accept` append to the journal.
 
 The caller holds the Asset lock. Everything is validated before anything is written, so a refused call changes nothing.
 """
@@ -19,9 +19,13 @@ from kiripix.core.errors import KiripixError, fail
 from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.images import load_rgba, read_png
+from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
 from kiripix.core.settings import save_settings
 from kiripix.recipes.base import ParamSpec, Scalar, StageSpec
+from kiripix.recipes.room import IMPORT_DIR, MASKS_STAGE
+
+MASK_IMPORT = "import"  # the masks Stage's Decision for a painted image: {"png": <hash>} of a PNG in IMPORT_DIR
 
 
 def _graph(project: Project, asset: Asset) -> AssetGraph:
@@ -236,6 +240,31 @@ def record_override(project: Project, asset: Asset, stage: str, png: Path, shown
         atomic.write_bytes(stored, data)
     path, before = _read(project, asset, stage)
     entry = _append(path, before, decision=journal.OVERRIDE, data={"png": png_hash}, image_hash=unpainted)
+    return entry, stored
+
+
+def record_mask_import(project: Project, asset: Asset, png: Path, shown: str) -> tuple[journal.JournalEntry, Path]:
+    """Store a painted mask image under `decisions/imports/` by its hash, and journal the `import` Decision of the
+    masks Stage naming it. A second import of the same image stores nothing new. The Stage checks the image's size and
+    colours when it runs.
+
+    Returns the entry and the stored PNG.
+    """
+    spec = get_kind(asset.kind).stage(MASKS_STAGE)
+    if spec is None or not any(d.name == MASK_IMPORT for d in spec.decisions):
+        raise fail("mask_import.no_masks_stage", f"a {asset.kind} has no '{MASKS_STAGE}' Stage to import Masks into",
+                   position=Position(asset=asset.id), fix=f"kiripix describe {asset.kind}")
+    data, _ = read_png(png, shown)
+    png_hash = hash_bytes(data)
+    document = DecisionDocument(decision=MASK_IMPORT, data={"png": png_hash})
+    findings = _entry_findings(spec, asset, document)
+    if findings:
+        raise KiripixError(findings)
+    stored = asset.dir.joinpath(*IMPORT_DIR, f"{png_hash}.png")
+    if not stored.exists():
+        atomic.write_bytes(stored, data)
+    path, before = _read(project, asset, MASKS_STAGE)
+    entry = _append(path, before, decision=document.decision, data=document.data)
     return entry, stored
 
 

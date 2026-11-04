@@ -13,6 +13,7 @@ from kiripix.ops.colour import (
     quantize,
     srgb_to_oklab,
 )
+from kiripix.ops.cleanup import remove_orphans
 from kiripix.ops.compose import overlay
 from kiripix.ops.masks import flood_region, paint_stroke, snap_cell, split_painted
 from kiripix.ops.palette import Palette, PaletteEntry, PaletteSyntaxError, format_gpl, parse_gpl, parse_hex
@@ -51,6 +52,7 @@ __all__ = [
     "parse_hex",
     "point_to_target",
     "quantize",
+    "remove_orphans",
     "sample_nearest",
     "snap_cell",
     "split_painted",

@@ -12,15 +12,16 @@ from kiripix.commands.invoke import invoke
 from kiripix.commands.jobs import Job, call_line, error_envelope
 from kiripix.commands.launcher import Launcher
 from kiripix.commands.registry import REGISTRY, CliMeta, Command
-from kiripix.commands.session import CancelData, Session, UploadData, built_web
+from kiripix.commands.session import INPUT_PART, CancelData, Part, Session, built_web
 from kiripix.commands.watch import ProjectWatch
 from kiripix.core.errors import KiripixError
 
 __all__ = [
     "API_VERSION",
     "CancelData",
+    "INPUT_PART",
+    "Part",
     "Session",
-    "UploadData",
     "built_web",
     "REGISTRY",
     "CliMeta",

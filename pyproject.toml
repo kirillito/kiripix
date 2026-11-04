@@ -12,6 +12,7 @@ dependencies = [
     "pillow>=11",
     "psutil>=6",
     "pydantic>=2.9",
+    "python-multipart>=0.0.33",
     "tomli-w>=1.1",
     "typer>=0.15",
     "uvicorn>=0.54.0",

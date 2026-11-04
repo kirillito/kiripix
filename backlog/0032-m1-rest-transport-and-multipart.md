@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M1
 agent: core-engineer
 type: ticket
@@ -25,7 +25,15 @@ depends_on: [0023-m1-serve.md]
 
 ## Acceptance criteria
 
-- [ ] `override` over REST with the PNG as a multipart part equals the CLI's `--json` for the same file. Afterwards
+- [x] `override` over REST with the PNG as a multipart part equals the CLI's `--json` for the same file. Afterwards
       nothing is left in the temporary folder or in `.kiripix/uploads/`.
-- [ ] `POST /api/upload` is gone (404).
-- [ ] `schema --json` lists the three transport routes with their statuses.
+- [x] `POST /api/upload` is gone (404).
+- [x] `schema --json` lists the three transport routes with their statuses.
+
+## Notes
+
+- **The multipart form**: an `input` part with the rest of the input as JSON, and one part per file input, named after
+  its field. The registry's `files=(...)` marks file inputs, and `schema` lists them per Command (`files`).
+- **The temporary folder** is `kiripix-files-*` in the system temp folder, deleted when the job's result is set (before
+  the response is sent), or at once if the request is refused.
+- Adds the dependency `python-multipart`, which Starlette needs to read a form.

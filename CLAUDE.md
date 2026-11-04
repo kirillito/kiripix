@@ -39,8 +39,8 @@ CI runs the last three of these, plus `uv sync --locked`, on Linux and Windows f
   1 error, 2 check failed, 3 needs the owner, 4 busy. A REST transport route (file route, event stream, cancel) and
   the `serve`/`ui` Launchers are not Commands (ADR 0007). They change nothing in the Project and hold no logic.
 - **Long work is cancellable** (ticket 0031). Never `time.sleep` in core, a Stage or a Runner: wait on the Command's
-  cancel token instead. A loop that can take more than about a second checks the token between chunks (tiles,
-  frames, batches). A Runner passes it on to its engine (ONNX Runtime: set `RunOptions.terminate` on cancel). A
+  cancel token instead (`kiripix.core.cancel.sleep`). A loop that can take more than about a second checks the token
+  between chunks (tiles, frames, batches): `run.check_cancel()` in a Stage, `cancel.check()` in core. A Runner passes it on to its engine (ONNX Runtime: set `RunOptions.terminate` on cancel). A
   cancel leaves nothing half-written, because every write is atomic.
 - **Status is derived, never stored** (ADR 0005). Nothing writes status to `asset.toml` or `kiripix.toml`.
 - **Every write is atomic** (`kiripix.core.atomic`); `.jsonl` files are append-only, one object per line, LF.

@@ -487,6 +487,7 @@ kiripix run <id>|--all [stage] [--force] [--rerun] [--cpu]   run stale and todo 
 kiripix set <id> <stage> key=value...       set stage parameters
 kiripix decide <id> <stage> --decision '<json>' | --file d.json   record a Decision (validated against the stage's schema)
 kiripix override <id> <stage> <png>         record an Override from a painted image
+kiripix mask-import <id> <png>              import a painted mask image (the masks Stage's import Decision)
 kiripix undo <id> <stage>                   undo the stage's last Decision
 kiripix redo <id> <stage>                   redo it
 kiripix accept <id> <stage>                 confirm a needs-review stage (owner-only)

@@ -45,6 +45,7 @@ class Command(Generic[I, O]):
     cli: CliMeta = CliMeta()
     locks: LockNeeds = LockNeeds()
     group_summary: str | None = None
+    files: tuple[str, ...] = ()  # input fields that are files: over REST, multipart parts of the request
 
     @property
     def name(self) -> str:
@@ -65,11 +66,15 @@ def command(
     cli: CliMeta = CliMeta(),
     locks: LockNeeds = LockNeeds(),
     group_summary: str | None = None,
+    files: tuple[str, ...] = (),
 ) -> Callable[[Callable[[I, Context], Outcome[O]]], Callable[[I, Context], Outcome[O]]]:
     """Register the decorated handler as the Command `path` (`"op quantize"` for a grouped Command)."""
 
     def register(handler: Callable[[I, Context], Outcome[O]]) -> Callable[[I, Context], Outcome[O]]:
-        cmd = Command(tuple(path.split()), summary, input, output, handler, kind, mcp, cli, locks, group_summary)
+        cmd = Command(tuple(path.split()), summary, input, output, handler, kind, mcp, cli, locks, group_summary,
+                      files)
+        if unknown := set(files) - set(input.model_fields):
+            raise ValueError(f"Command {cmd.name}: file inputs {sorted(unknown)} aren't input fields")
         if (kind == "owner-only") != (mcp == "owner-only"):
             raise ValueError(f"Command {cmd.name}: an owner-only Command, and only one, has mcp='owner-only'")
         if cmd.name in REGISTRY:

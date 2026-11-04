@@ -2,10 +2,11 @@
 every decision (the token, jobs, parsing, files) is made by `kiripix.commands.Session`.
 
 Every Command is `POST /api/<command path>` (`/api/run`, `/api/op/quantize`) with its input as the JSON body, and answers
-with the result envelope, the same bytes `--json` prints. The HTTP status comes from the exit code and the finding
+with the result envelope, the same bytes `--json` prints. A Command with file inputs also takes a multipart body: an
+`input` part with the JSON, and one part per file input, named after its field (ADR 0007). The HTTP status comes from the exit code and the finding
 (`http_status`; `schema` documents it).
-Around the Commands: progress and "changed" events over SSE, a cancel route, uploads, a route that serves Project
-files, and the built `web/` app when there is one. Uses only `kiripix.commands`.
+Around the Commands, the transport routes `schema` lists: progress and "changed" events over SSE, a cancel route and a
+route that serves Project files; and the built `web/` app when there is one. Uses only `kiripix.commands`.
 """
 
 import asyncio
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -26,10 +29,11 @@ from kiripix.commands import (
     CancelData,
     Envelope,
     ExitCode,
+    Finding,
     KiripixError,
     ProgressEvent,
+    Part,
     ProjectWatch,
-    UploadData,
     error_envelope,
     Session,
     http_status,
@@ -94,6 +98,25 @@ def _refused(error: KiripixError) -> Response:
     return _respond(error_envelope(error.findings), error.exit_code)
 
 
+async def _body(request: Request) -> bytes | list[Part]:
+    """The request's JSON body, or the parts of a multipart one."""
+    if not request.headers.get("content-type", "").startswith("multipart/form-data"):
+        return await request.body()
+    parts = []
+    try:
+        async with request.form() as form:
+            for name, value in form.multi_items():
+                if isinstance(value, UploadFile):
+                    parts.append(Part(name, await value.read(), value.filename or ""))
+                else:
+                    parts.append(Part(name, value.encode("utf-8")))
+    except HTTPException as error:  # Starlette's answer to a malformed multipart body
+        finding = Finding(code="input.invalid", message=f"the multipart body can't be read: {error.detail}",
+                          fix="kiripix schema")
+        raise KiripixError([finding], ExitCode.ERROR) from None
+    return parts
+
+
 def create_app(session: Session, web: Path | None = None) -> FastAPI:
     hub = Hub()
     watch = ProjectWatch(session.root, lambda paths: hub.publish("changed", {"count": len(paths), "paths": paths[:200]}))
@@ -118,7 +141,7 @@ def create_app(session: Session, web: Path | None = None) -> FastAPI:
     def command_route(command: Command[Any, Any]) -> Callable[[Request], Awaitable[Response]]:
         async def call(request: Request) -> Response:
             try:
-                job = session.start(command, await request.body(), token=request.headers.get(TOKEN_HEADER),
+                job = session.start(command, await _body(request), token=request.headers.get(TOKEN_HEADER),
                                     wait=request.query_params.get("wait"), job_id=request.headers.get(JOB_HEADER),
                                     progress=progress)
             except KiripixError as error:
@@ -168,14 +191,6 @@ def create_app(session: Session, web: Path | None = None) -> FastAPI:
     async def cancel(job_id: str) -> Response:
         try:
             return _respond(Envelope[CancelData](ok=True, data=session.cancel(job_id)), ExitCode.OK)
-        except KiripixError as error:
-            return _refused(error)
-
-    @app.post("/api/upload")
-    async def upload(request: Request, name: str = "upload") -> Response:
-        try:
-            return _respond(Envelope[UploadData](ok=True, data=session.upload(name, await request.body())),
-                            ExitCode.OK)
         except KiripixError as error:
             return _refused(error)
 

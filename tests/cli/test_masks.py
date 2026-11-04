@@ -46,14 +46,10 @@ def decide(project: Kiripix, decision: str, data: dict[str, Any], expect: int = 
                         expect=expect)
 
 
-def store_import(folder: Path, image: np.ndarray) -> str:
-    """Put a painted image where an `import` Decision finds it; returns its hash."""
-    path = folder / "decisions" / "imports" / "painted.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(image, "RGBA").save(path)
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    path.replace(path.with_name(f"{digest}.png"))
-    return digest
+def mask_import(project: Kiripix, image: np.ndarray, name: str = "painted.png", expect: int = 0) -> dict[str, Any]:
+    """Save a painted image in the Project and import it with `mask-import`."""
+    Image.fromarray(image, "RGBA").save(project.cwd / name)
+    return project.json("mask-import", ROOM, name, expect=expect)
 
 
 # no Decisions
@@ -70,7 +66,7 @@ def test_with_no_decisions_masks_is_done_with_an_empty_solid_and_next_says_to_pa
     assert sorted(p.name for p in (folder / "work" / "masks").glob("*.png")) == ["solid.png"]  # derived are not painted
     assert "mask.none_painted" in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
-    assert advice["data"]["stage"] == "palette"  # an unpainted solid is advice, never a block
+    assert advice["data"]["stage"] == "place"  # an unpainted solid is advice, never a block
     [finding] = [f for f in advice["findings"] if f["code"] == "mask.none_painted"]
     assert finding["severity"] == "info" and finding["fix"] is None
     assert "solid" in finding["owner_action"] and "Paint" in finding["owner_action"]
@@ -84,7 +80,7 @@ def test_a_painted_mask_leaves_next_without_the_advice(project: Kiripix) -> None
 
     assert "mask.none_painted" not in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
-    assert advice["data"]["stage"] == "palette" and advice["findings"] == []
+    assert advice["data"]["stage"] == "place" and advice["findings"] == []
 
 
 # flood
@@ -206,8 +202,7 @@ def painted_image() -> np.ndarray:
 
 def test_an_imported_painted_image_snaps_a_stray_pixel_to_the_nearest_defined_colour(project: Kiripix) -> None:
     folder = built_room(project)
-    digest = store_import(folder, painted_image())
-    decide(project, "import", {"png": digest})
+    mask_import(project, painted_image())
 
     project.json("run", ROOM, "masks")
 
@@ -217,10 +212,66 @@ def test_an_imported_painted_image_snaps_a_stray_pixel_to_the_nearest_defined_co
     assert (read_mask(folder) == expected).all()  # both strays are set: snapped, not dropped or left as holes
 
 
-def test_an_import_of_the_wrong_size_or_missing_file_fails_the_stage(project: Kiripix) -> None:
+def test_mask_import_stores_the_image_by_its_hash_and_records_the_import_decision(project: Kiripix) -> None:
     folder = built_room(project)
-    digest = store_import(folder, np.zeros((8, 8, 4), dtype=np.uint8))
-    decide(project, "import", {"png": digest})
+
+    data = mask_import(project, painted_image())["data"]
+
+    digest = hashlib.sha256((project.cwd / "painted.png").read_bytes()).hexdigest()
+    assert data["file"] == f"assets/room/alley/decisions/imports/{digest}.png"
+    assert (project.cwd / data["file"]).read_bytes() == (project.cwd / "painted.png").read_bytes()
+    assert data["stage"] == "masks" and {s["stage"]: s["status"] for s in data["stages"]}["masks"] == "stale"
+    entries = (folder / "decisions" / "masks.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(entries[-1])["decision"] == "import" and json.loads(entries[-1])["data"] == {"png": digest}
+
+
+def test_undo_of_a_mask_import_empties_the_masks_again(project: Kiripix) -> None:
+    folder = built_room(project)
+    mask_import(project, painted_image())
+    project.json("run", ROOM, "masks")
+    assert read_mask(folder).any()
+
+    project.json("undo", ROOM, "masks")
+    project.json("run", ROOM, "masks")
+
+    assert not read_mask(folder).any()
+
+
+def test_importing_the_same_image_twice_stores_one_png(project: Kiripix) -> None:
+    folder = built_room(project)
+
+    first = mask_import(project, painted_image(), "one.png")["data"]
+    second = mask_import(project, painted_image(), "two.png")["data"]
+
+    assert first["file"] == second["file"] and first["id"] != second["id"]
+    assert len(list((folder / "decisions" / "imports").iterdir())) == 1
+    assert len((folder / "decisions" / "masks.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_mask_import_refuses_a_file_that_is_not_a_png(project: Kiripix) -> None:
+    folder = built_room(project)
+    (project.cwd / "painted.png").write_text("not an image", encoding="utf-8")
+
+    result = project.json("mask-import", ROOM, "painted.png", expect=1)
+
+    assert [f["code"] for f in result["findings"]] == ["image.not_png"]
+    assert not (folder / "decisions" / "imports").exists() and not (folder / "decisions" / "masks.jsonl").exists()
+
+
+def test_mask_import_refuses_an_asset_without_a_masks_stage(project: Kiripix) -> None:
+    project.json("new", "prop", "bench")
+    Image.fromarray(painted_image(), "RGBA").save(project.cwd / "painted.png")
+
+    result = project.json("mask-import", "prop.bench", "painted.png", expect=1)
+
+    [finding] = result["findings"]
+    assert finding["code"] == "mask_import.no_masks_stage" and finding["fix"] == "kiripix describe prop"
+    assert not (project.cwd / "assets" / "prop" / "bench" / "decisions" / "imports").exists()
+
+
+def test_an_import_of_the_wrong_size_or_missing_file_fails_the_stage(project: Kiripix) -> None:
+    built_room(project)
+    mask_import(project, np.zeros((8, 8, 4), dtype=np.uint8))
 
     result = project.json("run", ROOM, "masks", expect=1)
 
@@ -232,10 +283,10 @@ def test_an_import_of_the_wrong_size_or_missing_file_fails_the_stage(project: Ki
 
 
 def test_an_import_with_partial_alpha_fails_the_stage(project: Kiripix) -> None:
-    folder = built_room(project)
+    built_room(project)
     image = painted_image()
     image[0, 0] = (255, 0, 0, 128)
-    decide(project, "import", {"png": store_import(folder, image)})
+    mask_import(project, image)
 
     result = project.json("run", ROOM, "masks", expect=1)
 
@@ -244,7 +295,7 @@ def test_an_import_with_partial_alpha_fails_the_stage(project: Kiripix) -> None:
 
 def test_a_brush_after_an_import_edits_the_imported_mask(project: Kiripix) -> None:
     folder = built_room(project)
-    decide(project, "import", {"png": store_import(folder, painted_image())})
+    mask_import(project, painted_image())
     decide(project, "brush", {"mask": "solid", "erase": True, "radius": 0, "points": [[5, 5], [6, 5]]})
 
     project.json("run", ROOM, "masks")

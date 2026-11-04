@@ -1,4 +1,4 @@
-"""The Commands that change an Asset's decisions: set, decide, undo, redo, override and accept."""
+"""The Commands that change an Asset's decisions: set, decide, undo, redo, override, mask-import and accept."""
 
 from pathlib import Path
 from typing import Self
@@ -217,6 +217,7 @@ class OverrideData(BaseModel):
     mcp="hidden",
     cli=CliMeta(positional=("asset", "stage", "png")),
     locks=LockNeeds(asset=_asset_lock),
+    files=("png",),
 )
 def override(arguments: OverrideInput, context: Context) -> Outcome[OverrideData]:
     project = find_project(context.cwd)
@@ -227,6 +228,45 @@ def override(arguments: OverrideInput, context: Context) -> Outcome[OverrideData
     states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
     return Outcome(OverrideData(asset=asset.id, stage=arguments.stage, id=entry.id, file=project.relative(stored),
                                 image_hash=entry.image_hash, stages=states))
+
+
+# mask-import
+
+
+class MaskImportInput(_Input):
+    asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
+    png: Path = Field(description="The painted PNG, the Plate's size, in the Masks' colours from `describe`.")
+
+
+class MaskImportData(BaseModel):
+    asset: str
+    stage: str
+    id: str
+    file: str
+    stages: list[StageState]
+
+    def text(self) -> str:
+        return f"{self.asset} {self.stage}: recorded an import of {self.file}; run to split it into Masks"
+
+
+@command(
+    "mask-import",
+    summary="Import a painted mask image: store it by its hash and record the masks Stage's import Decision.",
+    input=MaskImportInput,
+    output=MaskImportData,
+    kind="writing",
+    mcp="hidden",
+    cli=CliMeta(positional=("asset", "png")),
+    locks=LockNeeds(asset=_asset_lock),
+    files=("png",),
+)
+def mask_import(arguments: MaskImportInput, context: Context) -> Outcome[MaskImportData]:
+    project = find_project(context.cwd)
+    asset = load_asset(project, arguments.asset)
+    entry, stored = editing.record_mask_import(project, asset, context.cwd / arguments.png, str(arguments.png))
+    states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
+    return Outcome(MaskImportData(asset=asset.id, stage=editing.MASKS_STAGE, id=entry.id,
+                                  file=project.relative(stored), stages=states))
 
 
 # accept

@@ -4,7 +4,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kiripix.commands.contract import API_VERSION, FINDING_STATUS, HTTP_STATUS, Context, Envelope, Outcome
+from kiripix.commands.contract import (
+    API_VERSION, FINDING_STATUS, HTTP_STATUS, TRANSPORT, Context, Envelope, Outcome, TransportRoute,
+)
 from kiripix.commands.registry import REGISTRY, CliMeta, CommandKind, McpExposure, command
 from kiripix.core.errors import fail
 
@@ -21,12 +23,16 @@ class CommandSchema(BaseModel):
     mcp: McpExposure
     input: dict[str, Any]
     output: dict[str, Any]
+    files: list[str] = Field(description="Input fields that are files. Over REST each is a multipart part named after "
+                                         "the field, beside an `input` part with the rest of the input as JSON; a "
+                                         "JSON body with a path in the Project works too.")
 
 
 class SchemaData(BaseModel):
     api_version: int
     http_status: dict[str, int] = Field(description="The HTTP status REST answers with, by exit code.")
     finding_status: dict[str, int] = Field(description="Findings that name a more exact HTTP status, by code.")
+    transport: list[TransportRoute] = Field(description="The REST routes that carry Commands but aren't Commands.")
     commands: dict[str, CommandSchema]
 
 
@@ -63,8 +69,9 @@ def schema(arguments: SchemaInput, context: Context) -> Outcome[SchemaData]:
             mcp=REGISTRY[name].mcp,
             input=REGISTRY[name].input.model_json_schema(),
             output=_envelope(REGISTRY[name].output).model_json_schema(),
+            files=list(REGISTRY[name].files),
         )
         for name in names
     }
     return Outcome(SchemaData(api_version=API_VERSION, http_status={str(int(k)): v for k, v in HTTP_STATUS.items()},
-                                finding_status=FINDING_STATUS, commands=commands))
+                                finding_status=FINDING_STATUS, transport=TRANSPORT, commands=commands))

@@ -52,6 +52,7 @@ class ImportData(BaseModel):
     mcp="hidden",
     cli=CliMeta(positional=("asset", "file")),
     locks=LockNeeds(asset=_asset_lock),
+    files=("file",),
 )
 def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportData]:
     project = find_project(context.cwd)

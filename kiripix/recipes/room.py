@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from kiripix.checks import Finding, Position
+from kiripix.checks import Finding, Position, check_conformance
 from kiripix.recipes.base import (
     FIT_PARAMS,
     PALETTE_PARAMS,
@@ -28,12 +28,17 @@ from kiripix.recipes.base import (
     point_decision,
 )
 from kiripix.ops import (
+    BayerSize,
     Grid,
+    conformance,
     detect_grid,
     downscale_mode,
     flood_region,
     paint_stroke,
+    parse_gpl,
     parse_hex,
+    quantize,
+    remove_orphans,
     sample_nearest,
     snap_cell,
     split_painted,
@@ -319,6 +324,51 @@ def _check_masks(run: StageRun) -> list[Finding]:
     return findings
 
 
+# palette: the whole composite mapped once to the palette (ADR 0004), then orphan pixels removed. In M1 the Plate is the
+# whole room and there are no foreground Layers; from M2 each Layer is this image cut by its alpha.
+
+_BAYER: dict[str, BayerSize] = {"none": 0, "bayer2": 2, "bayer4": 4, "bayer8": 8}
+
+
+def _palette_rgb(run: StageRun) -> np.ndarray:
+    path: Path = run.settings["palette"]
+    try:
+        palette = parse_gpl(path.read_text(encoding="utf-8")) if path.suffix.lower() == ".gpl" else parse_hex(
+            path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:  # PaletteSyntaxError is a ValueError
+        raise StageFailure(f"can't read the palette {path.name}: {error}") from None
+    if not palette.entries:
+        raise StageFailure(f"the palette {path.name} has no colours")
+    return palette.rgb()
+
+
+def _palette(run: StageRun) -> None:
+    plate = _read_rgba(run.upstream["layers"] / "plate.png")
+    palette = _palette_rgb(run)
+    run.check_cancel()
+    try:
+        mapped = quantize(plate, palette, _BAYER[str(run.params["dither"])], float(run.params["strength"]))
+    except ValueError as error:
+        raise StageFailure(f"the Plate can't be mapped: {error}") from None
+    run.check_cancel()
+    _write_rgba(run.output_dir / "palette.png", remove_orphans(mapped, int(run.params["orphan_size"])))
+
+
+def _check_palette(run: StageRun) -> list[Finding]:
+    # layers.recompose_mismatch: with no foreground Layers (all there is in M1) the Plate is the whole image and
+    # recomposes trivially; it is checked from M2, when the Layers exist.
+    try:
+        palette = _palette_rgb(run)
+    except StageFailure:
+        return []  # the palette's own Checks report it
+    report = conformance(_read_rgba(run.output_dir / "palette.png"), palette)
+    findings = check_conformance(report, "palette.png", fix=f"kiripix run {run.asset_id} palette --force")
+    for finding in findings:
+        assert finding.position is not None
+        finding.position.asset, finding.position.stage = run.asset_id, "palette"
+    return findings
+
+
 ROOM = KindSpec(
     name="room",
     description="A background scene with Layers, Masks and Markers, in top or side view.",
@@ -447,6 +497,9 @@ ROOM = KindSpec(
             ),
             owner_input="Tunes the sliders.",
             available_from="M1",
+            image="palette.png",
+            run=_palette,
+            check=_check_palette,
         ),
         StageSpec(
             name="place",

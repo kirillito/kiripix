@@ -3,9 +3,10 @@
 import json
 import os
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
+
+from kiripix.core import cancel
 
 
 def _replace(source: Path, target: Path) -> None:
@@ -17,7 +18,7 @@ def _replace(source: Path, target: Path) -> None:
         except PermissionError:
             if attempt == 19:
                 raise
-            time.sleep(0.05)
+            cancel.sleep(0.05)
 
 
 def write_bytes(path: Path, data: bytes) -> None:

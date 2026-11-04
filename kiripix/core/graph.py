@@ -23,7 +23,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic, journal
+from kiripix.core import atomic, cancel, journal
 from kiripix.core.assets import HISTORY_FILE, Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.hashing import HashCache, hash_bytes, hash_json
@@ -253,6 +253,7 @@ class AssetGraph:
             params=self.params(spec),
             settings=self.settings(spec),
             progress=progress or (lambda done, total, message: None),
+            check_cancel=cancel.check,
             decisions=self.replay(spec.name).current,
             asset_params=dict(self.asset.settings.params),
         )
@@ -318,7 +319,7 @@ def _rename(source: Path, target: Path) -> None:
         except PermissionError:
             if attempt == 19:
                 raise
-            time.sleep(0.05)
+            cancel.sleep(0.05)
 
 
 def _swap_into_place(built: Path, final: Path) -> None:
@@ -403,6 +404,7 @@ class _Runner:
         def report(done: int, total: int, message: str) -> None:
             self.progress(ProgressEvent(event="stage_progress", stage=spec.name, done=done, total=total,
                                         message=message))
+            cancel.check()
 
         started = time.monotonic()
 
@@ -414,6 +416,7 @@ class _Runner:
             context = graph.stage_run(spec, building, progress=report)
             with hold(graph.project.state_dir, [GPU_LOCK] if spec.gpu else [], self.wait, self.command_line):
                 spec.run(context)
+            cancel.check()
             unpainted = self._paint_overrides(spec, building)
             if spec.check is not None:
                 checked = spec.check(context)
@@ -424,7 +427,7 @@ class _Runner:
             _swap_into_place(building, final)
             graph.failures.clear(spec.name)
             outcome = result("done")
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, cancel.Cancelled):
             self._history(spec, params, result("cancelled", "cancelled by the user"))
             raise
         except KiripixError:
@@ -483,6 +486,7 @@ def run_asset(
     findings: list[Finding] = []
     exit_code = ExitCode.OK
     for index, spec in enumerate(specs):
+        cancel.check()
         state = graph.state(spec.name)
         if state.status == "needs-input":
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="needs-input",
@@ -581,6 +585,7 @@ def run_all(
     for asset in assets:
         if kind is not None and asset.kind != kind:
             continue
+        cancel.check()
         progress(ProgressEvent(event="asset_start", stage=None, message=asset.id))
         try:
             with hold(project.state_dir, [asset_lock(asset.id)], wait, command_line):

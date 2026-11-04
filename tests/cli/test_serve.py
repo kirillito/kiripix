@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from typing import IO, Any
 import psutil
 import pytest
 
-from conftest import MARK, Kiripix, in_review, kiripix_args, kiripix_env, make_demo, make_sketch, save_image
+from conftest import MARK, Kiripix, in_review, kiripix_args, kiripix_env, make_demo, make_sketch, save_image, sketched
 from test_contract import SAMPLES
 from test_locks import start_holding, wait_for
 
@@ -104,12 +105,16 @@ class EventStream:
 class Server:
     """`kiripix serve --port 0 --print-token` in a folder."""
 
-    def __init__(self, cwd: Path, *extra: str) -> None:
+    def __init__(self, cwd: Path, *extra: str, temp: Path | None = None) -> None:
+        """`temp` is the server's temporary folder, so a test can see what it leaves there."""
         self._errors: IO[bytes] = tempfile.TemporaryFile()
+        env = kiripix_env()
+        if temp is not None:
+            env.update({"TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)})
         self.process = subprocess.Popen(
             kiripix_args("serve", "--port", "0", "--print-token", *extra),
             cwd=cwd,
-            env=kiripix_env(),
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=self._errors,
@@ -129,12 +134,16 @@ class Server:
         self.token = str(self.ready["token"])
 
     def call(self, path: str, body: object = None, *, token: str | None = None, method: str = "POST",
-             headers: dict[str, str] | None = None, raw: bytes | None = None) -> Reply:
+             headers: dict[str, str] | None = None, raw: bytes | None = None,
+             parts: list[tuple[str, str | None, bytes]] | None = None) -> Reply:
+        """`parts` sends a multipart body instead: (name, file name or None for a plain field, content)."""
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=60)
         sent = dict(headers or {})
         if token is not None:
             sent[TOKEN] = token
         payload = raw if raw is not None else None if body is None else json.dumps(body).encode()
+        if parts is not None:
+            payload, sent["Content-Type"] = _multipart(parts)
         try:
             connection.request(method, path, body=payload, headers=sent)
             response = connection.getresponse()
@@ -165,9 +174,20 @@ class Server:
         self._errors.close()
 
 
+def _multipart(parts: list[tuple[str, str | None, bytes]]) -> tuple[bytes, str]:
+    boundary = uuid.uuid4().hex
+    body = b""
+    for name, filename, content in parts:
+        disposition = f'form-data; name="{name}"' + ("" if filename is None else f'; filename="{filename}"')
+        kind = "application/json" if filename is None else "application/octet-stream"
+        body += f"--{boundary}\r\nContent-Disposition: {disposition}\r\nContent-Type: {kind}\r\n\r\n".encode()
+        body += content + b"\r\n"
+    return body + f"--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}"
+
+
 @contextmanager
-def serving(cwd: Path, *extra: str) -> Iterator[Server]:
-    server = Server(cwd, *extra)
+def serving(cwd: Path, *extra: str, temp: Path | None = None) -> Iterator[Server]:
+    server = Server(cwd, *extra, temp=temp)
     try:
         yield server
     finally:
@@ -196,6 +216,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "override": lambda a: {"asset": a[1], "stage": a[2], "png": a[3]},
     "accept": lambda a: {"asset": a[1], "stage": a[2]},
     "import": lambda a: {"asset": a[1], "file": a[2]},
+    "mask-import": lambda a: {"asset": a[1], "png": a[2]},
     "pick": lambda a: {"asset": a[1], "variant": a[2]},
     "check": lambda a: {"asset": a[1]},
     "preview": lambda a: {"asset": a[1], "stage": a[3]},
@@ -415,14 +436,17 @@ def test_cancel_stops_a_run_cleanly(project: Kiripix, server: Server) -> None:
             "event": "stage_start", "stage": "hold", "done": 2, "total": 5, "message": None})
         wait_for(folder / "holding")
 
+        cancelled_at = time.monotonic()
         cancel = server.call("/api/jobs/j/cancel")
         caller.join(timeout=30)
+        stopped_after = time.monotonic() - cancelled_at
         end = stream.wait_for(lambda e: e.name == "job_end")
     finally:
         (folder / "hold").unlink(missing_ok=True)
         stream.close()
 
     assert cancel.status == 200 and cancel.json["data"] == {"job": "j", "cancelled": True}
+    assert stopped_after < 1.5, "the Stage stopped at its next chunk, not at the backstop"
     [reply] = replies
     assert reply.status == 400 and reply.codes == ["run.cancelled"] and reply.json["ok"] is False
     assert end.data["exit_code"] == 1
@@ -432,6 +456,31 @@ def test_cancel_stops_a_run_cleanly(project: Kiripix, server: Server) -> None:
     assert not [p for p in folder.rglob(".tmp-*")]
     # Nothing is half-done, and the server carries on: the same run now finishes.
     assert server.call("/api/run", {"asset": "demo.a"}).json["ok"] is True
+
+
+def test_cancel_stops_a_run_waiting_for_a_lock(project: Kiripix, server: Server) -> None:
+    make_demo(project)
+    holder, folder = start_holding(project)  # another process holds demo.a, and keeps holding it
+    replies: list[Reply] = []
+    caller = threading.Thread(target=lambda: replies.append(
+        server.call("/api/run?wait=60", {"asset": "demo.a"}, headers={"X-Kiripix-Job": "w"})))
+    try:
+        caller.start()
+        time.sleep(0.5)  # the request is now polling the held lock
+        cancelled_at = time.monotonic()
+        cancel = server.call("/api/jobs/w/cancel")
+        caller.join(timeout=30)
+        stopped_after = time.monotonic() - cancelled_at
+    finally:
+        (folder / "hold").unlink(missing_ok=True)
+        holder.communicate(timeout=60)
+
+    assert cancel.json["data"] == {"job": "w", "cancelled": True}
+    assert stopped_after < 1.0
+    [reply] = replies
+    assert reply.status == 400 and reply.codes == ["run.cancelled"]
+    assert not list((project.cwd / ".kiripix" / "locks").glob("*.lock"))
+    assert not [p for p in folder.rglob(".tmp-*")]
 
 
 def test_cancelling_an_unknown_job_is_404(server: Server) -> None:
@@ -523,33 +572,91 @@ def test_the_file_route_stays_inside_the_project(project: Kiripix, server: Serve
         assert reply.status == 404 and reply.codes == ["file.not_found"], path
 
 
-def test_an_upload_becomes_a_path_a_command_can_take(project: Kiripix, server: Server) -> None:
-    folder = make_sketch(project)
-    project.json("run", "sketch.a")
-    painted = save_image(project.cwd.parent / "painted.png", colour=(41, 173, 255, 255))
-
-    uploaded = server.call("/api/upload?name=fix.png", raw=painted.read_bytes())
-
-    path = uploaded.json["data"]["path"]
-    assert uploaded.status == 200 and path.startswith(".kiripix/uploads/") and path.endswith("-fix.png")
-    assert (project.cwd / path).read_bytes() == painted.read_bytes()
-    overridden = server.call("/api/override", {"asset": "sketch.a", "stage": "draw", "png": path})
-    assert overridden.status == 200 and overridden.json["ok"] is True
-    assert "override" in (folder / "history.jsonl").read_text(encoding="utf-8") or list(folder.rglob("*.jsonl"))
+# The Commands with file inputs, and those inputs. Over REST each is a multipart part of the Command's own request.
+FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file"], "mask-import": ["png"]}
 
 
-def test_an_upload_cannot_choose_its_folder(project: Kiripix, server: Server) -> None:
-    uploaded = server.call("/api/upload?name=..%2F..%2Fkiripix.toml", raw=b"x")
+def test_every_file_input_has_a_multipart_test(server: Server) -> None:
+    commands = server.call("/api/schema", {}).json["data"]["commands"]
 
-    assert uploaded.json["data"]["path"].startswith(".kiripix/uploads/")
-    assert "/" not in uploaded.json["data"]["path"].removeprefix(".kiripix/uploads/")
-    assert "schema_version" in (project.cwd / "kiripix.toml").read_text(encoding="utf-8")
+    assert {name: c["files"] for name, c in commands.items() if c["files"]} == FILE_INPUTS
 
 
-def test_an_empty_upload_is_refused(server: Server) -> None:
-    reply = server.call("/api/upload?name=a.png", raw=b"")
+def _as_parts(project: Kiripix, name: str, body: dict[str, Any]) -> list[tuple[str, str | None, bytes]]:
+    """The body with each file input moved out of the JSON into a part of its own, read from the Project."""
+    files = {field: body.pop(field) for field in FILE_INPUTS[name]}
+    parts: list[tuple[str, str | None, bytes]] = [("input", None, json.dumps(body).encode())]
+    return parts + [(field, Path(path).name, (project.cwd / path).read_bytes()) for field, path in files.items()]
 
-    assert reply.status == 400 and reply.codes == ["upload.empty"]
+
+@pytest.mark.parametrize("name", sorted(FILE_INPUTS))
+def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, tmp_path_factory: pytest.TempPathFactory,
+                                                              name: str) -> None:
+    arguments = SAMPLES[name](project)
+    twin = tmp_path_factory.mktemp("twin") / "project"
+    shutil.copytree(project.cwd, twin)
+    temp = tmp_path_factory.mktemp("server_temp")
+
+    expected = project.json(*arguments)
+    with serving(twin, temp=temp) as running:
+        reply = running.call("/api/" + name, parts=_as_parts(project, name, BODIES[name](arguments)))
+        left = list(temp.iterdir())
+
+    roots = [str(project.cwd), str(twin), str(project.cwd.resolve()), str(twin.resolve())]
+    assert reply.status == 200 and reply.headers["x-kiripix-exit-code"] == "0"
+    assert _normal(reply.json, roots) == _normal(expected, roots)
+    assert left == [], "the file inputs' temporary folder is deleted when the Command ends"
+    assert not (twin / ".kiripix" / "uploads").exists()
+
+
+def test_a_refused_file_input_leaves_nothing_behind(project: Kiripix, tmp_path_factory: pytest.TempPathFactory) -> None:
+    make_sketch(project)  # never run, so there is no output to paint over
+    temp = tmp_path_factory.mktemp("server_temp")
+    painted = save_image(project.cwd.parent / "painted.png").read_bytes()
+
+    with serving(project.cwd, temp=temp) as running:
+        reply = running.call("/api/override", parts=[
+            ("input", None, json.dumps({"asset": "sketch.a", "stage": "draw"}).encode()), ("png", "fix.png", painted)])
+        left = list(temp.iterdir())
+
+    assert reply.status == 400 and reply.codes == ["override.no_output"]
+    assert left == []
+
+
+def test_only_a_file_input_can_be_a_file_part(project: Kiripix, server: Server) -> None:
+    sketched(project)
+    painted = (project.cwd / "fix.png").read_bytes()
+    body = json.dumps({"asset": "sketch.a", "stage": "draw"}).encode()
+
+    stranger = server.call("/api/override", parts=[("input", None, body), ("stage", "x.png", painted)])
+    empty = server.call("/api/override", parts=[("input", None, body), ("png", "fix.png", b"")])
+    elsewhere = server.call("/api/run", parts=[("input", None, b'{"asset": "sketch.a"}'), ("png", "fix.png", painted)])
+
+    for reply in (stranger, empty, elsewhere):
+        assert reply.status == 400 and reply.codes == ["input.invalid"]
+    assert "'stage' isn't a file input of 'override' (its file inputs: png)" in stranger.json["findings"][0]["message"]
+
+
+def test_a_path_in_the_project_still_works_as_json(project: Kiripix, server: Server) -> None:
+    sketched(project)
+
+    reply = server.call("/api/override", {"asset": "sketch.a", "stage": "draw", "png": "fix.png"})
+
+    assert reply.status == 200 and reply.json["ok"] is True
+
+
+def test_the_upload_route_is_gone(server: Server) -> None:
+    assert server.call("/api/upload?name=a.png", raw=b"x").status == 404
+
+
+def test_schema_lists_the_transport_routes(server: Server) -> None:
+    transport = server.call("/api/schema", {"command": "run"}).json["data"]["transport"]
+
+    routes = {(r["method"], r["path"]): r for r in transport}
+    assert set(routes) == {("GET", "/files/{path}"), ("GET", "/api/events"), ("POST", "/api/jobs/{job}/cancel")}
+    assert set(routes["GET", "/files/{path}"]["statuses"]) == {"200", "404"}
+    assert set(routes["POST", "/api/jobs/{job}/cancel"]["statuses"]) == {"200", "404"}
+    assert all(r["purpose"] for r in transport)
 
 
 # The folder watch

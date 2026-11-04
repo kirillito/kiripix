@@ -211,7 +211,8 @@ def test_describe_a_kind_gives_parameters_decisions_and_checks(kpx: Kiripix) -> 
     assert "palette.off_palette" in [c["code"] for c in palette["checks"]]
     assert stages["source"]["decisions"][0]["name"] == "pick"
     assert stages["source"]["decisions"][0]["entry_schema"]["required"] == ["variant"]
-    assert not palette["implemented"] and palette["available_from"] == "M1"
+    assert palette["implemented"] and palette["available_from"] == "M1"
+    assert not stages["place"]["implemented"]
 
 
 def test_describe_an_unknown_kind(kpx: Kiripix) -> None:

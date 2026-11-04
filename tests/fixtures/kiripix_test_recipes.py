@@ -3,8 +3,8 @@
 Its Stages are trivial and deterministic, so the stage graph can be tested before any image Recipe runs:
 - copy: copies src/input.txt. Its Check reports `demo.bad_text` at x=1, y=2 when the text contains "bad".
 - concat: joins copy's output, src/extra.txt and the palette's first line, with a separator parameter.
-- hold: writes a partial file; while the Asset folder has a `hold` file, it marks `holding` and waits. Takes the GPU
-  lock, so two Assets holding at once collide.
+- hold: writes a partial file; while the Asset folder has a `hold` file, it marks `holding` and waits in chunks,
+  checking the cancel token between them. Takes the GPU lock, so two Assets holding at once collide.
 - fail: fails on purpose, with the message in src/fail.txt, when that file exists.
 - choose: downstream of copy only. Takes the `mark` Decision and the `level` parameter (0 to 10), and writes both to
   out.json, so tests can see exactly what the run function was handed.
@@ -67,7 +67,8 @@ def _hold(run: StageRun) -> None:
     if hold.exists():
         (run.asset_dir / "holding").write_text("", encoding="utf-8")
         while hold.exists():
-            time.sleep(0.05)
+            run.check_cancel()
+            time.sleep(0.05)  # stands in for one chunk of work
         (run.asset_dir / "holding").unlink()
     run.progress(1, 1, "held")
     (run.output_dir / "out.txt").write_text("held", encoding="utf-8")

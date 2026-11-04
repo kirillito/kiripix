@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 from kiripix.checks import Finding, Position
 from kiripix.commands.contract import Context, Envelope, Outcome
 from kiripix.commands.registry import Command
+from kiripix.core import cancel
 from kiripix.core.errors import ExitCode, KiripixError
 from kiripix.core.locks import GPU_LOCK, PROJECT_LOCK, asset_lock, hold
 from kiripix.core.project import find_project
@@ -75,15 +76,16 @@ def invoke(command: Command[Any, Any], raw: dict[str, Any], context: Context) ->
         if refusal is not None:
             raise KiripixError(refusal.findings, refusal.exit_code)
         locks = _locks(command, arguments)
-        guard = hold(find_project(context.cwd).state_dir, locks, context.wait, context.command_line) if locks \
-            else nullcontext()
-        with guard:
-            outcome: Outcome[Any] = command.handler(arguments, context)
+        with cancel.scope(context.cancel):
+            guard = hold(find_project(context.cwd).state_dir, locks, context.wait, context.command_line) if locks \
+                else nullcontext()
+            with guard:
+                outcome: Outcome[Any] = command.handler(arguments, context)
     except ValidationError as error:
         outcome = Outcome(None, _input_findings(error, command), ExitCode.ERROR)
     except KiripixError as error:
         outcome = Outcome(error.data, error.findings, error.exit_code)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, cancel.Cancelled):
         cancelled = Finding(
             code="run.cancelled",
             message="cancelled; no output was left half-written",

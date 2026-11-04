@@ -1,8 +1,10 @@
 """Running a Command as a cancellable job, for the long-running adapters (the server).
 
-The CLI calls `invoke` on its main thread, where Ctrl+C raises KeyboardInterrupt. A server has no Ctrl+C, so a Job runs
-`invoke` on a thread of its own and cancels it by raising that same KeyboardInterrupt in the thread. Core then stops it
-exactly as it stops for Ctrl+C: atomic writes leave nothing half-done, and the run is recorded as cancelled.
+A server has no Ctrl+C, so a Job runs `invoke` on a thread of its own and cancels it by setting the Command's cancel
+token, which every wait in core and every checkpoint sees at once (`kiripix.core.cancel`). Core then stops exactly as it
+stops for Ctrl+C: atomic writes leave nothing half-done, and the run is recorded as cancelled. Code with no checkpoint
+(a long native call) gets the backstop: if the Command is still running a moment later, a KeyboardInterrupt is raised
+in its thread, which CPython delivers at the next bytecode.
 """
 
 import ctypes
@@ -17,6 +19,8 @@ from kiripix.checks import Finding
 from kiripix.commands.contract import Context, Envelope, ExitCode, ProgressEvent
 from kiripix.commands.invoke import invoke
 from kiripix.commands.registry import Command
+
+_BACKSTOP_SECONDS = 2.0
 
 
 def error_envelope(findings: list[Finding]) -> Envelope[Any]:
@@ -93,8 +97,16 @@ class Job:
     def cancel(self) -> bool:
         """Stop the Command as Ctrl+C would. False when it had already finished."""
         with self._lock:
-            ident = self._thread.ident
-            if self._finished or ident is None:
+            if self._finished or self._thread.ident is None:
                 return False
-            _raise_in(ident, KeyboardInterrupt)
-            return True
+            self._context.cancel.cancel()
+        backstop = threading.Timer(_BACKSTOP_SECONDS, self._interrupt)
+        backstop.daemon = True
+        backstop.start()
+        return True
+
+    def _interrupt(self) -> None:
+        with self._lock:
+            ident = self._thread.ident
+            if not self._finished and ident is not None:
+                _raise_in(ident, KeyboardInterrupt)

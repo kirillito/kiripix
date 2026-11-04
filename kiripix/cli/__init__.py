@@ -6,6 +6,7 @@ exactly one JSON object on stdout. The exit code comes from the result. Uses onl
 
 import inspect
 import shlex
+import signal
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -118,7 +119,7 @@ def _callback(command: Command[Any, Any]) -> Any:
         wait = values.pop(_WAIT, 0.0)
         context = Context(cwd=Path.cwd(), command_line=_command_line(), wait=wait, progress=_progress_sink(progress),
                           interactive=_stdin_is_terminal())
-        envelope, exit_code = invoke(command, values, context)
+        envelope, exit_code = _invoke_cancellable(command, values, context)
         _render(envelope, as_json)
         _State.exit_code = int(exit_code)
 
@@ -127,6 +128,20 @@ def _callback(command: Command[Any, Any]) -> Any:
     callback.__name__ = command.path[-1]
     callback.__doc__ = command.summary
     return callback
+
+
+def _invoke_cancellable(command: Command[Any, Any], values: dict[str, Any], context: Context) -> Any:
+    """`invoke`, with Ctrl+C setting the cancel token as well as raising KeyboardInterrupt on this thread."""
+
+    def interrupted(signum: int, frame: Any) -> None:
+        context.cancel.cancel()
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGINT, interrupted)
+    try:
+        return invoke(command, values, context)
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 def _launcher_callback(launcher: Launcher) -> Any:

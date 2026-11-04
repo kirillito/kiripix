@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M1
 agent: core-engineer
 type: ticket
@@ -33,6 +33,12 @@ table). No Command writes that file. Today the tests place it by hand and then `
 
 ## Acceptance criteria
 
-- [ ] Importing a painted PNG and then `run` gives the split Masks; `undo` removes the Decision and `run` empties them.
-- [ ] Importing the same file twice stores one PNG under `decisions/imports/`.
-- [ ] A non-PNG file, and an Asset without a `masks` Stage, are refused with a finding and exit code 1.
+- [x] Importing a painted PNG and then `run` gives the split Masks; `undo` removes the Decision and `run` empties them.
+- [x] Importing the same file twice stores one PNG under `decisions/imports/`.
+- [x] A non-PNG file, and an Asset without a `masks` Stage, are refused with a finding and exit code 1.
+
+## Notes
+
+- **The name**: `kiripix mask-import <id> <png>`, a Command of its own like `override`. It records the `import`
+  Decision of the Kind's `masks` Stage; a Kind without one is refused with `mask_import.no_masks_stage`.
+- The PNG's size and colours are checked by the Stage when it runs, as before.
