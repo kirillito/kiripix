@@ -16,7 +16,10 @@ sidecars are ignored.
   adding IDs is fine; renaming or removing one is refused. Before the first export, IDs can be renamed freely.
 - Files of a deleted Asset are removed only by an explicit `export --prune`, under the same hash rule and backup.
 - The Manifest is one file per Asset, so unrelated Assets never conflict in git. Same-Asset conflicts are resolved by a
-  `kiripix manifest merge` driver (higher counter plus one), which export checks for and offers to install in each
-  clone; `kiripix manifest repair` is the fallback, for example after a conflict on GitHub, which never runs the driver.
+  `kiripix manifest merge` driver: the higher counter plus one, the union of the IDs, our `files` with theirs recorded in
+  `replacing`, so the next export accepts either. Export checks for the driver in each clone, and its finding's `fix` is
+  `kiripix manifest install`, which puts `.gitattributes` under `<root>/manifest/` and sets the local git config.
+  `kiripix manifest repair` is the fallback for a Manifest with conflict markers, for example after a conflict on
+  GitHub, which never runs the driver.
 - Each Asset entry carries a counter that goes up when its exported hash changes; the Manifest carries a schema version
   and the Kiripix version that wrote it.

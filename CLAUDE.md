@@ -55,7 +55,9 @@ CI also runs these on Linux, then `uv run pytest tests/cli/test_wheel.py`, which
 - **Status is derived, never stored** (ADR 0005). Nothing writes status to `asset.toml` or `kiripix.toml`.
 - **Every write is atomic** (`kiripix.core.atomic`); `.jsonl` files are append-only, one object per line, LF.
 - **Data files carry `schema_version`.** A format change bumps it and adds a pure migration from N to N + 1 in
-  `kiripix/core/settings.py`. Unknown keys are an error.
+  `kiripix/core/settings.py`. Unknown keys are an error. A Stage's rebuilt output, such as `room.json`, is refused when
+  it's old, and the finding names the rebuild. Through M3 the owner has no production rooms, so any format change may be
+  refused the same way instead of migrated.
 - **Ops are pure**: numpy arrays in, arrays out, no I/O. Core's own image I/O lives in `kiripix.core.images`. A
   Stage in `recipes` can't import core, so it reads its inputs and writes its outputs itself (PIL), and only inside
   the output folder core gives it. Core swaps that folder into place whole, so the Stage's writes are atomic too.

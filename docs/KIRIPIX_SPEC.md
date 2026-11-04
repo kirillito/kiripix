@@ -1,6 +1,6 @@
 # Kiripix — Pixel Asset Studio
 
-Spec v0.3, 2026-11-02. Status: reviewed with the owner; M0 is done, and M1 is split into tickets in `backlog/`.
+Spec v0.4, 2026-11-04. Status: reviewed with the owner; M0 and M1 are done, and M2 is split into tickets in `backlog/`.
 
 The vocabulary is defined in [GLOSSARY.md](../GLOSSARY.md), and the decisions behind this spec are recorded in
 [docs/adr/](adr/). Where they disagree with this spec, fix the spec.
@@ -26,7 +26,8 @@ layers, and the layers get stacked back into a scene.
 
 1. **Cheaper.** Pixel work moves out of LLM conversations and into deterministic code and direct clicking. A Claude
    session calls one command instead of writing a script every ticket.
-2. **Faster.** Most assets go from source to Godot in minutes. The owner's time goes to choosing and clicking.
+2. **Faster.** Most assets go from source to Godot in minutes. The owner's time goes to choosing and clicking. Each
+   milestone gate records the time per room, and each milestone looks for what would cut it.
 3. **Consistent.** One palette, one resolution and one style bible per project, enforced by checks, not by memory.
 4. **Repeatable.** Every asset can be rebuilt from its committed files: sources, recorded decisions and pinned Runner
    and Provider results (ADR 0002).
@@ -113,7 +114,9 @@ my-game-assets/
 
 **Committed:** `src/`, `decisions/`, `pinned/`, `out/`, `asset.toml` and `history.jsonl`. **Not committed:** `work/`
 and `.kiripix/`. Python dependencies are locked in `uv.lock`, because deterministic ops are bit-exact only on the same
-numpy and OpenCV versions.
+library versions. Data files the owner's work lives in have migrations; a Stage's rebuilt output, such as `room.json`,
+is refused when it's old, and the finding names the rebuild. Through M3 there are no production rooms, so any format
+change may be refused the same way instead of migrated.
 
 ### kiripix.toml (example)
 
@@ -234,10 +237,10 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | **brief** | Size in px or tiles, view, mood, exits and their sides, notes. Renders the generation prompt from the kind's template and the style bible. | Writes the brief | Size is a whole number of tiles |
 | **source** | Generates N variants with a Provider (through `gen`), or **imports** an image made elsewhere (a first-class path: the owner may keep using an external image tool). | Picks between several (an agent may pick a lone variant) | Has a picked source |
 | **fit** | Detects the source's pixel grid, or downscales with a mode filter to the target size. Records the Grid transform. Palette-free. | Tunes the grid, with a before/after view | Exact size |
-| **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial (default 1 px, 0 allowed). | Clicks objects to lift out | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
-| **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2), flood by colour region, polygon, brush, or import of a painted image; optional snap to an N px cell grid. | Clicks and brushes | Every Mask binary |
+| **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. On path (a) the owner names a Layer with one click in a region of the difference; unclicked regions stay in the Plate. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial: a target pixel whose Source cell is partly covered by the Runner's Mask or has alpha strictly between 0 and 255 (default 1 px, 0 allowed). With no Decisions the Stage is `done`, and the Plate is the fit image. | Clicks objects to lift out; trims a rim with a brush on the Layer's alpha | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
+| **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2), flood by colour region within an OKLab tolerance of the clicked pixel, brush, a wall along the room's chosen edges, or import of a painted image; optional snap to an N px cell grid. A polygon tool isn't built yet. | Clicks and brushes | Every Mask binary |
 | **palette** | Maps the whole composite once to the palette in OKLab (strict, or with optional ordered dithering) and removes orphan pixels. Each foreground Layer is that mapped image cut by its alpha; the Plate is the same image with only its inpainted areas mapped separately. | Tunes 2–3 sliders, with a before/after view | Every pixel on the palette; Plate + Layers still recompose exactly |
-| **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines. | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag |
+| **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines. | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag; a sloped line sorts at its mean y, with a warning if its ends differ by more than half a tile |
 | **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, M5+). Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
 | **export** | Writes the Godot scene (see §9). | — | Export target set; Project checks (see below) |
 
@@ -246,6 +249,10 @@ palette mapping. `place` reads both `palette` and `masks`.
 
 **Walkable** depends only on the `solid` and `pit` Masks and the body's footprint, so changing `[body]` re-derives it
 cheaply. Reachability lives only in `reach`. A dash crosses a `pit` and never `solid`.
+
+**A room's edges need a wall.** Walkable already keeps the footprint inside the room, so the walk test stops at an edge,
+but the exported scene collides only with `solid`. The `border` Decision paints `solid` along the chosen sides, and an
+info finding names an open edge. A side can stay open on purpose.
 
 **A foreground Layer belongs to its room.** It is painted into that room's art and isn't reused; its collision comes
 from the room's `solid` Mask and its draw order from its y-sort line. A reusable object is a Prop. ("Promote to Prop"
@@ -268,14 +275,14 @@ A standalone, reusable object for scenes: benches, signs, lamps, bins.
 |---|---|
 | **brief** | Size, viewing angle (top-down 3/4 or side), notes. |
 | **source** | Generated on a flat chroma background, or imported. |
-| **cutout** | Chroma key (exact, for flat backgrounds) or matting (BiRefNet) on the full-size source. |
+| **cutout** | Chroma key (exact, for flat backgrounds; a finding points to matting when it removes almost nothing or leaves a fringe) or matting (BiRefNet) on the full-size source. |
 | **fit** | Grid snap or downscale, as for rooms; the alpha goes to the target grid by majority vote, so it is binary (pixel art has no partial alpha). |
 | **palette** | Palette mapping and orphan cleanup, as for rooms. |
 | **finish** | Optional 1 px outline in a chosen palette colour. |
-| **footprint** | The base's collision shape and the y-sort origin; optional foreground split (a lamp's head drawn over the player). |
+| **footprint** | The base's collision shape and the y-sort origin. A foreground split is deferred: y-sort at the origin handles a lamp's head, and only arch-like props would need one. |
 | **export** | `Sprite2D` scene with collision and origin. |
 
-Checks: binary alpha, palette, size within limits, and an origin is set.
+Checks: binary alpha, palette, exactly the brief's size and no larger than the project's resolution, and an origin is set.
 
 ### 6.3 Character (3D to pixel)
 
@@ -359,10 +366,10 @@ review, so a swap can never change an exported asset silently.
 
 | Use | First choice | Fallback (no ML) |
 |---|---|---|
-| Click-to-segment | SAM 2 (small or base) | Colour flood plus GrabCut (OpenCV) |
+| Click-to-segment | SAM 2 (small or base) | Colour flood plus GrabCut (OpenCV, not a dependency yet) |
 | Background matting | BiRefNet | Chroma key |
 | Depth (parallax, normals) | Depth Anything V2 (the small model; check licences of larger ones) | Manual depth planes |
-| Inpainting (plate holes) | LaMa | OpenCV Telea or PatchMatch for small holes; an edit API for large ones |
+| Inpainting (plate holes) | LaMa | OpenCV Telea or PatchMatch for small holes (OpenCV isn't a dependency yet); an edit API for large ones |
 | Image-to-3D (optional) | Decide at M3, after testing which fit 8 GB | Bought or hand-made models |
 
 ONNX Runtime with CUDA is preferred to keep installs small, with PyTorch where a model needs it. The core works with
@@ -374,7 +381,7 @@ Kiripix writes Godot 4 text resources (`.tscn`, `.tres`) and PNGs under `export.
 
 | Asset | Godot output |
 |---|---|
-| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `LightOccluder2D` (optional); `GPUParticles2D` stubs from emitter Markers. `solid` is on collision layer 1 and `pit` is a `StaticBody2D` of its own on layer 2: the game's Body drops layer 2 from its mask while it dashes. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. |
+| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `GPUParticles2D` stubs from emitter Markers. (`LightOccluder2D` has no source for its shape yet, so it isn't in M2.) `solid` is on collision layer 1 and `pit` is a `StaticBody2D` of its own on layer 2: the game's Body drops layer 2 from its mask while it dashes. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. |
 | Prop | A scene: `Sprite2D` + `StaticBody2D` footprint, origin at the y-sort point. |
 | Character | `SpriteFrames` `.tres`, `CanvasTexture` (diffuse + normal), a scene with `AnimatedSprite2D` and its feet at the origin. |
 
@@ -395,14 +402,18 @@ over (principle 10).
 - **Conflicts with the game's edits:** a hash mismatch (someone saved the scene in the Godot editor) makes export
   refuse and name the file. `--force` backs it up to `.kiripix/backups/<timestamp>/` and overwrites it. An unmanaged
   file already at a target path needs `--adopt`, with the same backup. `--dry-run` lists the two cases separately.
-- **Deleting an asset:** its files stay until an explicit `export --prune`, under the same hash rule and backup.
+- **Deleting an asset:** no Command does this yet: it means removing the asset's folder. Its files stay in the game until
+  an explicit `export --prune`, under the same hash rule and backup. Alone, `--prune` prunes every deleted asset and
+  exports nothing; with `--all` it exports, then prunes; with an ID it prunes that deleted asset, and refuses if the asset
+  still exists.
 - **Frozen IDs:** once exported, an ID can't be renamed or removed; adding new IDs is always fine. Before the first
-  export, IDs can be renamed freely. Deleting an asset and creating one under a new ID is allowed, with a warning if
-  the old ID is still referenced.
+  export, IDs can be renamed freely. A y-sort line makes no node, so its Marker ID isn't frozen. Deleting an asset and
+  creating one under a new ID is allowed, with a warning if the old ID is still referenced.
 - **Branch merges:** when two game branches export the same asset, `kiripix manifest merge` (a git merge driver)
-  resolves it: the higher counter plus one. Export checks that the driver is configured in the clone and offers to
-  install it (`.gitattributes` alone does nothing). GitHub never runs custom drivers, so for a conflict in a pull
-  request, merge locally or run `kiripix manifest repair`.
+  resolves it: the higher counter plus one, the union of the IDs, and our `files` with theirs in `replacing`, so the next
+  export accepts either. Export checks that the driver is configured in the clone, and its finding's `fix` is `kiripix
+  manifest install` (`.gitattributes` alone does nothing). GitHub never runs custom drivers, so for a conflict in a pull
+  request, merge locally or run `kiripix manifest repair`, which handles a Manifest with conflict markers.
 
 ## 10. Commands: CLI, REST and MCP
 
@@ -469,7 +480,8 @@ The UI, an agent's CLI calls and the MCP server can all run at once. They coordi
 - **Asset locks**, held by writing Commands on that Asset. Probes never lock.
 - **The project lock**, for project-wide writes: the palette, `kiripix.toml`, and export writing the Manifest. Locks
   are always taken in a fixed order (project, then Asset), so two writers can't deadlock.
-- **The GPU lock**, held while a Runner or a Blender GPU render is loaded, because they all share 8 GB. `serve`
+- **The GPU lock**, held only while a Runner or a Blender GPU render is loaded, because they all share 8 GB, and not
+  through a Stage's rebuild that only reads pinned results (`masks` still does; ticket 0059 measures and fixes it). `serve`
   unloads its warm Runner when another process asks for the lock; the other process waits with progress events, or
   runs on the CPU with `--cpu`.
 - A lock records the process ID, the host and the start time. If that process is dead, the lock is stale and is taken
@@ -497,6 +509,7 @@ kiripix set <id> <stage> key=value...       set stage parameters
 kiripix decide <id> <stage> --decision '<json>' | --file d.json   record a Decision (validated against the stage's schema)
 kiripix override <id> <stage> <png>         record an Override from a painted image
 kiripix mask-import <id> <png>              import a painted mask image (the masks Stage's import Decision)
+kiripix plate-import <id> <png>             import a Plate image (the layers Stage's plate Decision)
 kiripix undo <id> <stage>                   undo the stage's last Decision
 kiripix redo <id> <stage>                   redo it
 kiripix accept <id> <stage>                 confirm a needs-review stage (owner-only)
@@ -507,7 +520,7 @@ kiripix check <id>|--all                    run checks (--all includes Project c
 kiripix preview <id> [--stage s] [--overlay masks]   write a preview PNG, print its path
 kiripix probe <name> <id> <args...>         run a Probe, such as segment-preview
 kiripix export [<id>|--all] [--dry-run] [--force] [--adopt] [--prune]   write to the Godot project
-kiripix manifest [merge|repair]             the git merge driver, and the manual fallback
+kiripix manifest [merge|install|repair]     the git merge driver, installing it, and the manual fallback
 kiripix op <op> <args...>                   one op directly (quantize, snap-mask, reach, ...)
 kiripix cost [--month]                      provider spend from the ledger
 kiripix runners [list|pull|rm]              local Runner management
@@ -593,7 +606,7 @@ updates never go through React state.
 | API | FastAPI (REST and SSE) |
 | MCP | The official Python MCP SDK |
 | IDs | ULIDs for Decision journal entries |
-| Images | numpy, Pillow, OpenCV, scikit-image |
+| Images | numpy and Pillow; OpenCV or scikit-image only when an Op needs one, added through `uv.lock` |
 | ML | ONNX Runtime (CUDA), PyTorch where needed |
 | 3D | Blender 5.2 LTS (pinned at M0, see docs/versions.md; found through config or PATH), run headless: `blender -b -P kiripix/blender/<script>.py -- <args>`, with arguments and results as JSON files |
 | Templates | Jinja2 for prompts |
@@ -613,14 +626,14 @@ kiripix/
   providers/   image generation adapters: import, openai, gemini, pixellab, local-sd
   recipes/     room.py, prop.py, character.py: stage definitions per kind
   blender/     bpy scripts (run inside Blender only)
-  export/      godot/ (tscn and tres writers), manifest (ownership, freeze, merge)
+  export/      godot.py (tscn and tres writers), manifest (ownership, freeze, merge)
   cli/         Typer adapter, generated from commands/
   server/      FastAPI and MCP adapters, generated from commands/; the warm Runner and the embedding cache
-web/           UI (TypeScript)
-tests/         unit/, golden/, e2e/
+web/           UI (TypeScript), with its Playwright tests in web/e2e/
+tests/         cli/, golden/, acceptance/
 ```
 
-The import rule: `ops` and `checks` import nothing from the rest; `recipes` use `ops`, `checks`, `runners` and
+The import rule: `ops` imports nothing from the rest; `checks` only `ops`; `recipes` use `ops`, `checks`, `runners` and
 `providers`; `core` sits on `recipes`; `export` on `core`; `commands` on `export`; `cli` and `server` use only
 `commands`, so no adapter can hold logic of its own.
 
@@ -640,7 +653,7 @@ The import rule: `ops` and `checks` import nothing from the rest; `recipes` use 
   `layers` is a pass-through until M2 (the Plate is the fit image, with no foreground Layers), so M1 rooms rebuild
   from `layers` down when the real Stage lands;
 - `set`, `decide`, `override`, `undo`, `redo` and `accept`, with the Decision journal;
-- the Manifest with ownership, `--force`, `--adopt` and the ID freeze;
+- the Manifest with ownership, `--force`, `--adopt` and the ID freeze; light and emitter Markers exported;
 - `serve` with REST, SSE progress, Probes and the SAM 2 embedding cache;
 - in the UI: fit, masks, palette, place and the walk test;
 - done when a real room from the Toronto game walks correctly in Godot, **and** the agent acceptance test passes.
@@ -654,7 +667,9 @@ and the tokens used are recorded at each milestone, as the measure of goal 1 ("c
 **M2: layers and props.**
 - Room layers: Plate from a difference, segment and LaMa inpaint, grow, y-sort lines.
 - The prop recipe with chroma key and BiRefNet.
-- Lights and emitters exported; `export --prune`; the Manifest merge driver.
+- Lights and emitters proven in Godot (built in M1); `export --prune`; the Manifest merge driver.
+- Time per room: click-to-segment timed and fixed, a one-action room border, flood that works on painted art, and a trial
+  of Claude doing a room's first pass. The gate records the time per room, as a second data point.
 
 **M3: characters.**
 - Blender render presets, Mixamo round trip, clips and the palette per character.
@@ -663,7 +678,11 @@ and the tokens used are recorded at each milestone, as the measure of goal 1 ("c
 
 **M4: generation and agents.**
 - Providers (one API provider plus PixelLab), prompt templates, the style bible, the cost ledger and budget.
-- The MCP adapter, with its tool selection tuned on the agent acceptance test.
+- The MCP adapter, with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
+  ([0062](../backlog/0062-m2-claude-first-pass-trial.md)).
+- If [0063](../backlog/0063-m2-multi-screen-source-trial.md) shows that extending an image works: a preprocessing tool
+  that extends a Source step by step through a Provider and aligns the pieces, before `source`. Without Provider
+  integration it would be a manual tool, so it waits for this milestone.
 
 **M5: side view.** Side-view Masks (one-way, ladder), the parallax split with depth, platform reachability.
 
@@ -691,6 +710,40 @@ IDs with aliases.
 4. Image-to-3D: which local Runner fits 8 GB well enough, or none (M3).
 5. Which API provider comes first (M4).
 6. Licence for Kiripix itself, if it's ever published.
+7. How a multi-screen room is made. The game allows them (its DEC-024), and its owner prefers one high-resolution image per
+   location over stitched parts (its ISS-016). A room's size is only the brief's width and height, so **the working
+   assumption is one room, one Source, one set of Masks**: any extending or stitching happens before `source`, and walls
+   and Masks go on the whole image after it. The limits to test on a real room:
+   - **The Source:** it must be at least the room's size, and about 2.15 Source px per target px means a free-tier image
+     of 1,376 px covers one screen. A wider room needs outpainting from an anchor image, or a higher-resolution model.
+   - **SAM 2:** its encoder stretches the whole image to 1024 x 1024, so a click gets coarser as a room gets wider. It
+     would need a crop around the click.
+   - **`fit`:** grid mode applies one grid to the whole image, so pieces whose painted pixels differ in size or alignment
+     may need `downscale`.
+   - **The rest:** canvas zoom and scrolling in the UI, collision piece count, and `reach` time.
+
+   **Order of preference (the owner, 2026-11-04):**
+   1. One screen per location, or rooms joined by Exits at natural breaks such as doors, stairs and corners. This is the
+      default, and it already works.
+   2. For the few locations that need a continuous camera: one image extended step by step, each piece generated from the
+      edge of the last, or one image from a higher-resolution model.
+   3. Independently generated images, stitched, only with a hard visual break at the join, because their horizon, perspective,
+      light and scale won't match.
+
+   **Still open:** which method in point 2 works on the game's art. The trial
+   [0063](../backlog/0063-m2-multi-screen-source-trial.md) decides. Nothing in M2 closes this off: the `border` Decision
+   takes sides.
+
+## Changes since v0.3
+
+- Time per room is measured at each gate. M2 gains a room border, a flood tolerance, click-to-segment timing and a trial of
+  a Claude first pass.
+- Rims are trimmed with a `trim` Decision, not an Override (ADR 0004), and "partial" alpha is defined for binary Runners.
+- `kiripix manifest install` and `kiripix plate-import` are new. The merge rule covers IDs and `files` (ADR 0003).
+- Lights and emitters were built in M1. The prop foreground split and `LightOccluder2D` are deferred.
+- The spec's code layout, stack and import rule now match the repo.
+- Open decision 7: multi-screen rooms, with an order of preference and a trial. A possible M4 tool extends a Source through
+  a Provider.
 
 ## Changes since v0.2
 

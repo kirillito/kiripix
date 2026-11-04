@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M1
 type: spec
 ---
@@ -122,7 +122,7 @@ CLI never forwards to a running server.
 
 **The UI is React with TypeScript and Vite** (the owner's decision, 2026-11-02, closing open decision 2 of the spec).
 Canvas widgets are plain TypeScript classes mounted by React components through a `ref`, so hover and brush updates
-never go through React state. Recorded as ADR 0007 in [0025](0025-m1-ui-shell.md).
+never go through React state. Recorded as ADR 0008 in [0025](0025-m1-ui-shell.md).
 
 ## Testing Decisions
 
