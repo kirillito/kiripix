@@ -28,6 +28,12 @@ Spec §9 and ADR 0003. docs/versions.md (Godot 4.7). User stories 23 and 24 of [
   `.import` sidecars are ignored. Without the Godot project at `export.godot.project`, export refuses.
 - Re-exporting an unchanged room writes nothing and leaves the counter alone.
 
+## Notes
+
+- **`pit`** (added by [0019](0019-m1-reach.md)) blocks walking but not a dash, so it can't simply join `solid`'s
+  collision. Walkable ∩ reachable already leaves it out of the navigation polygon. How the game's collision treats it
+  needs deciding here.
+
 ## Acceptance criteria
 
 - [ ] Golden tests for contour and simplify on a Mask with a hole.

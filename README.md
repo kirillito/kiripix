@@ -6,7 +6,7 @@ and one resolution per game, and it is built to be driven equally well by you fr
 agent.
 
 > **Status: early.** Milestone 0 (the skeleton) is done and Milestone 1 (a room, end to end) is in progress. Today a
-> room goes from an imported image through `brief`, `source`, `fit`, `layers`, `masks`, `palette` and `place`. `reach`,
+> room goes from an imported image through `brief`, `source`, `fit`, `layers`, `masks`, `palette`, `place` and `reach`.
 > `export`, props, characters and generation are not built yet (see [What's not built yet](#whats-not-built-yet)).
 > Everything below describes what Kiripix does now.
 
@@ -77,16 +77,16 @@ kiripix next room.queen_west_alley
 # room.queen_west_alley brief is todo; run: kiripix run room.queen_west_alley
 
 kiripix run room.queen_west_alley
-# brief: done
-# error brief.size_not_tiles: the brief's size 480x270 isn't a whole number of 16 px tiles
-#   fix: kiripix set room.queen_west_alley brief width=480 height=272
+# room.queen_west_alley brief: done in 0.02s
+# room.queen_west_alley source: needs-input: no Source picked
+# error stage.needs_input: room.queen_west_alley source: needs-input: no Source picked
+#   fix: kiripix import room.queen_west_alley <file>
 ```
 
-Failures come with a `fix:` line, the exact command that fixes them. Run it:
+A new room's brief is 640x368: 23 rows of 16 px tiles, which fills a 640x360 screen. To change it, use
+`kiripix set room.queen_west_alley brief width=... height=...`.
 
-```
-kiripix set room.queen_west_alley brief width=480 height=272
-```
+Failures come with a `fix:` line, the exact command that fixes them. Here, it's the next step.
 
 **4. Bring in the art and pick it.** `import` adds a PNG as a Variant, named by its hash; `pick` makes it the Source.
 
@@ -124,7 +124,7 @@ The words below are used exactly this way in every command, message and finding.
 | **Variant** / **Source** | A candidate image (imported or generated); the one you Pick becomes the Source. |
 | **Decision** | Recorded human input a Stage replays: a Pick, clicks, an Override, Marker positions. |
 | **Override** | A hand edit painted over a Stage's image, recorded and re-applied every time the Stage runs. |
-| **Mask** / **Layer** | A binary gameplay region (`solid`, `ladder`) / a visible image plane (the Plate, foreground Layers). |
+| **Mask** / **Layer** | A binary gameplay region (`solid`, `pit`, `ladder`) / a visible image plane (the Plate, foreground Layers). |
 | **Check** | A pass/fail verification with located findings. |
 | **Op** | A pure image function (quantise, flood fill), reachable directly through `kiripix op`. |
 | **Owner** | You. The one person whose Decisions and acceptances count as human judgement. An agent never is. |
@@ -181,8 +181,9 @@ Commands that write also take `--wait <seconds>` to wait for a lock another proc
 |---|---|
 | `kiripix new <kind> <name> [--view top\|side]` | Create an Asset from its Kind's Recipe. A room needs `--view`; other Kinds refuse it. |
 | `kiripix next <asset>` | The next Stage of an Asset and what it needs: a command to run, or an action only you can take. |
-| `kiripix run <asset> [STAGE] [--force]` | Run stale and todo Stages in order. With `STAGE`, run only that Stage (its upstream must be done). `--force` re-runs `done` Stages too. |
-| `kiripix run --all [--kind KIND]` | Run every Asset, locking one at a time. |
+| `kiripix run <asset> [STAGE] [--force] [--rerun] [--cpu]` | Run stale and todo Stages in order. With `STAGE`, run only that Stage (its upstream must be done). `--force` re-runs `done` Stages too. `run` never calls a Runner: `--rerun` makes the Runner calls with no pinned result, which land in `needs-review`, and `--cpu` runs them on the CPU without the GPU lock. |
+| `kiripix run --all [--kind KIND] [--rerun] [--cpu]` | Run every Asset, locking one at a time. |
+| `kiripix runners list\|pull <runner>\|rm <runner>` | The local Runners: licence, weights hash and size; download their weights now rather than on first use; delete them. For a GPU, ONNX Runtime also needs CUDA: `uv pip install "onnxruntime-gpu[cuda,cudnn]"`. Without it Runners use the CPU. |
 | `kiripix set <asset> <stage> key=value ...` | Set Stage parameters. Values are checked against the Stage's declared parameters (`describe <kind>` lists them). |
 | `kiripix check <asset>` | Run the Checks of every built Stage of an Asset and list the findings. |
 | `kiripix check --all` | Check every Asset, then the Project checks (those across Assets, such as Exit pairing). |
@@ -228,7 +229,7 @@ exactly one object on stdout, always shaped the same way:
   "api_version": 1,
   "ok": true,
   "data": { "asset": "room.queen_west_alley", "stage": "brief", "status": "done",
-            "command": "kiripix set room.queen_west_alley brief width=480 height=272", "owner_action": null, "...": "..." },
+            "command": "kiripix set room.queen_west_alley brief width=640 height=368", "owner_action": null, "...": "..." },
   "findings": []
 }
 ```
@@ -266,7 +267,7 @@ my-game-assets/
       pinned/               pinned Runner and Provider results
       work/                 deterministic Stage outputs: a cache, safe to delete
       out/                  final outputs, the exporter's input
-  .kiripix/                 hash cache, last-run failures, locks, previews (git-ignored)
+  .kiripix/                 hash cache, last-run failures, locks, previews, Runner weights (git-ignored)
 ```
 
 Commit `kiripix.toml`, `style/` and, for each Asset, `asset.toml`, `history.jsonl`, `src/`, `decisions/`, `pinned/`
@@ -276,12 +277,12 @@ and `out/`. Don't commit `work/` or `.kiripix/`; `init` writes a `.gitignore` an
 
 These are designed in [the spec](docs/KIRIPIX_SPEC.md) but don't exist in the CLI yet:
 
-- **Room Stages** `reach` and `export` report `needs-input` with "not implemented until M1". `layers` is a pass-through
-  for now: the Plate is the fit image, with no foreground Layers. In `masks`, `click` Decisions wait for SAM 2.
+- **Room Stages:** `export` reports `needs-input` with "not implemented until M1". `layers` is a pass-through for now:
+  the Plate is the fit image, with no foreground Layers. `reach` covers the top view; the side view's is M5.
 - **The UI's** hand-written Stage screens: its masks tools, its place screen and the walk test. Today it has the status
   board, the Stage panels, the Variant grid and the before/after view.
 - **Prop** (M2) and **character** (M3) Recipes: `new` creates them and `describe` lists their Stages, but they don't run.
-- Commands: `gen` (Providers), `export` and `manifest` (Godot), `mcp`, `runners`, `cost`, and `run --rerun` / `--cpu`.
+- Commands: `gen` (Providers), `export` and `manifest` (Godot), `mcp` and `cost`.
 
 `kiripix describe <kind>` marks each unbuilt Stage with the milestone it arrives in, so it is the quickest way to
 check.

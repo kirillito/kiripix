@@ -32,7 +32,7 @@ def test_check_on_a_room_with_a_bad_brief_exits_2_and_lists_the_finding_with_a_f
 
     [finding] = result["findings"]
     assert finding["code"] == "brief.size_not_tiles"
-    assert finding["fix"] == f"kiripix set {ROOM} brief width=480 height=272" and finding["owner_action"] is None
+    assert finding["fix"] == f"kiripix set {ROOM} brief width=496 height=272" and finding["owner_action"] is None
     assert finding["position"]["asset"] == ROOM and finding["position"]["stage"] == "brief"
     assert result["ok"] is False and result["data"]["stages"] == [f"{ROOM} brief"]
 

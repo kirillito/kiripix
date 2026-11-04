@@ -34,6 +34,25 @@ def test_brief_writes_the_size_view_and_mood(project: Kiripix) -> None:
     assert brief == {"width": 480, "height": 272, "view": "top", "mood": "rainy neon", "tile": 16}
 
 
+def test_the_default_brief_is_whole_tiles_and_fills_the_screen(project: Kiripix) -> None:
+    folder = make_room(project)
+
+    project.json("run", ROOM, "brief")
+
+    brief = json.loads((folder / "work" / "brief" / "brief.json").read_text(encoding="utf-8"))
+    assert (brief["width"], brief["height"]) == (640, 368)
+
+
+def test_the_fix_for_a_brief_between_whole_tiles_rounds_up_so_the_room_still_fills_the_screen(project: Kiripix) -> None:
+    make_room(project)
+    project.json("set", ROOM, "brief", "width=640", "height=360")
+
+    result = project.json("run", ROOM, "brief", expect=2)
+
+    [finding] = [f for f in result["findings"] if f["code"] == "brief.size_not_tiles"]
+    assert finding["fix"] == f"kiripix set {ROOM} brief width=640 height=368"
+
+
 def test_a_brief_that_is_not_whole_tiles_reports_size_not_tiles_with_a_fix(project: Kiripix) -> None:
     make_room(project)
     project.json("set", ROOM, "brief", "width=481", "height=272")
@@ -42,7 +61,7 @@ def test_a_brief_that_is_not_whole_tiles_reports_size_not_tiles_with_a_fix(proje
 
     finding = next(f for f in result["findings"] if f["code"] == "brief.size_not_tiles")
     assert "481" in finding["message"] and "16" in finding["message"]
-    assert finding["fix"] == f"kiripix set {ROOM} brief width=480 height=272"
+    assert finding["fix"] == f"kiripix set {ROOM} brief width=496 height=272"
     assert finding["position"]["stage"] == "brief"
     step = project.json("next", ROOM)["data"]
     assert step["stage"] == "brief" and step["command"] == finding["fix"]

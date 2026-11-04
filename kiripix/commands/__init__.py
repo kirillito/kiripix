@@ -3,7 +3,7 @@
 Uses `core` and `recipes`. The adapters (`cli`, later `server`) use only this package.
 """
 
-from kiripix.commands import project, show, decisions, sources, checks, meta, image_ops, probes  # noqa: F401, I001 - import order is the help order
+from kiripix.commands import project, show, decisions, sources, checks, meta, image_ops, probes, runners  # noqa: F401, I001 - import order is the help order
 from kiripix.checks import Finding
 from kiripix.commands.contract import (
     API_VERSION, HTTP_STATUS, Context, Envelope, ExitCode, Outcome, ProgressEvent, http_status,

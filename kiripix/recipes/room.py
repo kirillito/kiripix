@@ -16,10 +16,12 @@ from kiripix.recipes.base import (
     PALETTE_PARAMS,
     PICK,
     CheckSpec,
+    CurrentDecision,
     DecisionSpec,
     KindSpec,
     NeedsInput,
     ParamSpec,
+    RunnerCall,
     StageFailure,
     StageInputs,
     StageRun,
@@ -34,17 +36,23 @@ from kiripix.ops import (
     detect_grid,
     downscale_mode,
     flood_region,
+    mask_to_target,
+    narrowest_gaps,
     paint_stroke,
     parse_gpl,
     parse_hex,
     quantize,
+    reachable,
     remove_orphans,
     sample_nearest,
     snap_cell,
     split_painted,
+    target_centre,
     walkable,
+    walkable_islands,
 )
 from kiripix.ops.masks import RGB
+from kiripix.runners import SEGMENTER
 
 # brief
 
@@ -62,7 +70,8 @@ def _brief(run: StageRun) -> None:
 
 
 def _whole_tiles(size: int, tile: int) -> int:
-    return max(tile, round(size / tile) * tile)
+    """Rounded up, so that a room asked to fill the screen still does."""
+    return -(-size // tile) * tile
 
 
 def _check_brief(run: StageRun) -> list[Finding]:
@@ -197,9 +206,15 @@ def _layers(run: StageRun) -> None:
 
 
 # masks: the Decisions replayed in order onto the Plate's size, one 1-bit PNG per painted Mask of the room's view.
+#
+# A positive `click` segments the object under it, with the negative clicks right after it on the same Mask taking away
+# from that segmentation: that is one Runner call, and its result is added to the Mask. So a new object keeps the pinned
+# results of the earlier ones. The Runner works on the Source, capped; the clicks map to it through the Grid transform,
+# and its Mask maps back through the same transform when the Stage replays (ADR 0004).
 
 MASKS_STAGE = "masks"
 IMPORT_DIR = ("decisions", "imports")  # a painted image of an `import` Decision, stored here under its hash
+_RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
 
 
 @dataclass(frozen=True)
@@ -226,11 +241,79 @@ def _rgb(colour: str) -> RGB:
     return entry.r, entry.g, entry.b
 
 
+def _click_groups(decisions: tuple[CurrentDecision, ...]) -> list[list[CurrentDecision]]:
+    """The Decisions in order, each in a list of its own, except that a negative `click` joins the `click` before it
+    if that is on the same Mask."""
+    groups: list[list[CurrentDecision]] = []
+    for decision in decisions:
+        previous = groups[-1][-1] if groups else None
+        if decision.name == "click" and not decision.data["positive"] and previous is not None and \
+                previous.name == "click" and previous.data["mask"] == decision.data["mask"]:
+            groups[-1].append(decision)
+        else:
+            groups.append([decision])
+    return groups
+
+
+def _read_grid(run: StageRun) -> tuple[Grid, dict[str, Any]] | None:
+    """The Grid transform recorded by `fit`, and the record itself; None until `fit` is built."""
+    path = run.upstream["fit"] / "grid.json"
+    if not path.is_file():
+        return None
+    record: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return Grid.from_json(record), record
+
+
 def _masks_needs_input(run: StageRun) -> NeedsInput | None:
-    if any(d.name == "click" for d in run.decisions):
-        return NeedsInput("click Decisions are not implemented until 0020 (click-to-segment with SAM 2)",
-                          owner_action=f"Undo the clicks until then: kiripix undo {run.asset_id} {MASKS_STAGE}")
+    read = _read_grid(run)
+    undo = f"Undo it: kiripix undo {run.asset_id} {MASKS_STAGE}"
+    for group in _click_groups(run.decisions):
+        first = group[0]
+        if first.name != "click":
+            continue
+        if not first.data["positive"]:
+            return NeedsInput(f"the negative click at ({first.data['x']}, {first.data['y']}) has no positive click on "
+                              f"{first.data['mask']} right before it to take away from", owner_action=f"{undo}.")
+        for decision in group:
+            x, y = int(decision.data["x"]), int(decision.data["y"])
+            if read is not None and not (x < read[0].width and y < read[0].height):
+                return NeedsInput(f"the click at ({x}, {y}) is outside the {read[0].width}x{read[0].height} Plate",
+                                  owner_action=f"{undo}.")
     return None
+
+
+def _click_call(group: list[CurrentDecision], grid: Grid, source: Path) -> RunnerCall:
+    points = []
+    for decision in group:
+        x, y = target_centre(grid, int(decision.data["x"]), int(decision.data["y"]))
+        points.append([x, y, bool(decision.data["positive"])])
+    return RunnerCall(
+        runner=SEGMENTER,
+        image=source,
+        params={"points": points, "max_size": _RUNNER_MAX_SIZE},
+        decisions=[{"x": d.data["x"], "y": d.data["y"], "positive": d.data["positive"]} for d in group],
+    )
+
+
+def _masks_runner_calls(run: StageRun) -> list[RunnerCall]:
+    read = _read_grid(run)
+    source = run.upstream["source"] / "source.png"
+    if read is None or not source.is_file() or _masks_needs_input(run) is not None:
+        return []
+    return [_click_call(group, read[0], source) for group in _click_groups(run.decisions)
+            if group[0].name == "click"]
+
+
+def _segmented(run: StageRun, group: list[CurrentDecision]) -> np.ndarray:
+    """The pinned result of a group of clicks, on the target grid."""
+    read = _read_grid(run)
+    assert read is not None  # `fit` is upstream, and built
+    grid, record = read
+    source_width, source_height = record["source"]
+    path = run.pinned(_click_call(group, grid, run.upstream["source"] / "source.png"))
+    with Image.open(path) as image:
+        on_source = image.convert("1").resize((int(source_width), int(source_height)), Image.Resampling.NEAREST)
+    return mask_to_target(np.asarray(on_source, dtype=np.bool_), grid)
 
 
 def _decision_mask(run: StageRun, view: _ViewMasks, name: str, decision: str) -> str:
@@ -248,14 +331,22 @@ def _write_mask(path: Path, mask: np.ndarray) -> None:
     Image.fromarray(mask).save(path, format="PNG")
 
 
+def _read_mask(path: Path) -> np.ndarray:
+    with Image.open(path) as image:
+        return np.asarray(image.convert("1"), dtype=np.bool_).copy()
+
+
 def _masks(run: StageRun) -> None:
     plate = _read_rgba(run.upstream["layers"] / "plate.png")
     height, width = plate.shape[:2]
     view = _view_masks(run)
     masks = {name: np.zeros((height, width), dtype=np.bool_) for name in view.painted}
-    for decision in run.decisions:
+    for group in _click_groups(run.decisions):
+        decision = group[0]
         data = decision.data
-        if decision.name == "flood":
+        if decision.name == "click":
+            masks[_decision_mask(run, view, str(data["mask"]), "click")] |= _segmented(run, group)
+        elif decision.name == "flood":
             name = _decision_mask(run, view, str(data["mask"]), "flood")
             try:
                 masks[name] |= flood_region(plate, int(data["x"]), int(data["y"]))
@@ -423,6 +514,13 @@ def _marker_decision() -> DecisionSpec:
     )
 
 
+def _no_walking(run: StageRun) -> np.ndarray:
+    """Where the Body can't walk: `solid`, and `pit` where the project defines it."""
+    solid = _read_mask(run.upstream[MASKS_STAGE] / "solid.png")
+    pit = run.upstream[MASKS_STAGE] / "pit.png"
+    return solid | _read_mask(pit) if pit.is_file() else solid
+
+
 def _place(run: StageRun) -> None:
     markers: dict[tuple[str, str], dict[str, Any]] = {}
     for decision in run.decisions:
@@ -435,10 +533,8 @@ def _place(run: StageRun) -> None:
     if not path.is_file():
         raise StageFailure(f"walkable is derived from the 'solid' Mask, and the {run.asset_params['view']} view "
                            "doesn't define one; add it under [masks] in kiripix.toml")
-    with Image.open(path) as image:
-        solid = np.asarray(image.convert("1"), dtype=np.bool_)
     width, height = run.settings["body"]["size"]
-    _write_mask(run.output_dir / "walkable.png", walkable(solid, (int(width), int(height))))
+    _write_mask(run.output_dir / "walkable.png", walkable(_no_walking(run), (int(width), int(height))))
 
 
 def _check_place(run: StageRun) -> list[Finding]:
@@ -466,8 +562,7 @@ def _check_place(run: StageRun) -> list[Finding]:
         seen.setdefault(marker_id, marker_type)
     path = run.output_dir / "walkable.png"
     if path.is_file():
-        with Image.open(path) as image:
-            ground = np.asarray(image.convert("1"), dtype=np.bool_)
+        ground = _read_mask(path)
         for marker in markers:
             x, y = int(marker["x"]), int(marker["y"])
             inside = y < ground.shape[0] and x < ground.shape[1]
@@ -482,6 +577,132 @@ def _check_place(run: StageRun) -> list[Finding]:
                                      "ID, or edit the solid Mask under it.",
                     )
                 )
+    return findings
+
+
+# reach: the Body's flood over walkable from each Spawn and Exit (top view; the side view's platforms are M5). A Marker
+# is cut off when it isn't in the largest group of Markers that reach each other.
+
+
+def _flood_targets(place_dir: Path) -> list[dict[str, Any]]:
+    markers: list[dict[str, Any]] = json.loads((place_dir / "markers.json").read_text(encoding="utf-8"))["markers"]
+    return [marker for marker in markers if marker["type"] in _ON_WALKABLE]
+
+
+def _reach_needs_input(run: StageRun) -> NeedsInput | None:
+    view = run.asset_params["view"]
+    if view != "top":
+        reason = f"the {view} view's reachability is over platforms, which is not implemented until M5"
+        return NeedsInput(reason, owner_action=f"Wait for M5 to finish {run.asset_id}: {reason}.")
+    place_dir = run.upstream["place"]
+    if not (place_dir / "markers.json").is_file() or _flood_targets(place_dir):
+        return None
+    example = json.dumps({"decision": "marker", "data": {"id": "spawn.main", "type": "spawn", "x": 0, "y": 0}})
+    return NeedsInput("no Spawn or Exit is placed, so the Body has nowhere to start from",
+                      owner_action=f"Place a Spawn or an Exit on walkable ground: kiripix decide {run.asset_id} place "
+                                   f"--decision '{example}'")
+
+
+def _spot_in(mask: np.ndarray, marker: dict[str, Any]) -> bool:
+    x, y = int(marker["x"]), int(marker["y"])
+    return y < mask.shape[0] and x < mask.shape[1] and bool(mask[y, x])
+
+
+def _main_group(targets: list[dict[str, Any]], regions: list[np.ndarray]) -> set[int]:
+    """The indexes of the largest group of Markers that reach each other; a tie goes to the group with a Spawn, then
+    to the one with the earliest Marker. Empty when no Marker stands on walkable ground."""
+    groups = {index: {index} for index, region in enumerate(regions) if region.any()}
+    for index in list(groups):
+        for other in list(groups):
+            if groups[index] is not groups[other] and _spot_in(regions[index], targets[other]):
+                merged = groups[index] | groups[other]
+                for member in merged:
+                    groups[member] = merged
+    if not groups:
+        return set()
+
+    def rank(group: set[int]) -> tuple[int, bool, int]:
+        return len(group), any(targets[i]["type"] == "spawn" for i in group), -min(group)
+
+    return max(groups.values(), key=rank)
+
+
+def _reach(run: StageRun) -> None:
+    path = run.upstream["place"] / "walkable.png"
+    if not path.is_file():
+        raise StageFailure(f"reach floods over walkable, and the {run.asset_params['view']} view doesn't derive it; "
+                           "add walkable = { derived = true } under [masks] in kiripix.toml")
+    ground = _read_mask(path)
+    targets = _flood_targets(run.upstream["place"])
+    width, height = run.settings["body"]["size"]
+    footprint = (int(width), int(height))
+    step, dash = int(run.params["step"]), int(run.settings["body"]["dash"])
+    solid = _read_mask(run.upstream[MASKS_STAGE] / "solid.png")
+    regions: list[np.ndarray] = []
+    for marker in targets:
+        run.check_cancel()
+        # At step 1 every move can be made both ways, so a Marker another flood reached has that flood's region.
+        known = next((region for region in regions if _spot_in(region, marker)), None) if step == 1 else None
+        regions.append(known if known is not None else
+                       reachable(ground, [(int(marker["x"]), int(marker["y"]))], footprint, step, dash, solid))
+    reached = np.logical_or.reduce(regions)
+    _write_mask(run.output_dir / "reachable.png", reached)
+    run.check_cancel()
+    main = _main_group(targets, regions)
+    report = {
+        "markers": [{"id": marker["id"], "type": marker["type"], "x": marker["x"], "y": marker["y"],
+                     "on_ground": _spot_in(ground, marker), "reached": index in main}
+                    for index, marker in enumerate(targets)],
+        "main": [targets[index]["id"] for index in sorted(main)],
+        "islands": [vars(island) for island in walkable_islands(ground, reached)],
+        "gaps": [vars(gap) for gap in narrowest_gaps(_no_walking(run), footprint)],
+    }
+    (run.output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+
+def _check_reach(run: StageRun) -> list[Finding]:
+    report = json.loads((run.output_dir / "report.json").read_text(encoding="utf-8"))
+    asset = run.asset_id
+    erase = f"erase with a brush Decision (kiripix decide {asset} {MASKS_STAGE} --help)"
+    findings = []
+    for marker in report["markers"]:
+        if marker["reached"]:
+            continue
+        x, y = int(marker["x"]), int(marker["y"])
+        why = ("is not on walkable ground, so the Body can't get to it" if not marker["on_ground"]
+               else f"can't be reached from {', '.join(report['main'])}")
+        findings.append(
+            Finding(
+                code="reach.unreachable_marker",
+                message=f"the {marker['type']} '{marker['id']}' at ({x}, {y}) {why}",
+                position=Position(asset=asset, stage="reach", x=x, y=y),
+                owner_action=f"Open a way to {marker['id']} in the solid Mask: {erase}. Or move it with a new marker "
+                             "Decision of the same ID.",
+            )
+        )
+    for island in report["islands"]:
+        x, y, width, height = int(island["x"]), int(island["y"]), int(island["width"]), int(island["height"])
+        findings.append(
+            Finding(
+                code="reach.unreachable_island",
+                severity="warning",
+                message=f"walkable ground at ({x}, {y}), {width}x{height}, can't be reached from any Spawn or Exit",
+                position=Position(asset=asset, stage="reach", x=x, y=y, width=width, height=height),
+                owner_action=f"If the Body should get there, open a way in the solid Mask: {erase}. If not, paint the "
+                             "ground solid or leave it.",
+            )
+        )
+    for gap in report["gaps"]:
+        fits = "the Body fits" if gap["width"] >= gap["needed"] else "the Body doesn't fit"
+        findings.append(
+            Finding(
+                code="reach.narrow_gap",
+                severity="info",
+                message=f"a {gap['width']} px gap at ({gap['x']}, {gap['y']}): {fits}, needing {gap['needed']} px",
+                position=Position(asset=asset, stage="reach", x=int(gap["x"]), y=int(gap["y"])),
+                owner_action=f"Nothing, if that is what the room wants. To change it, edit the solid Mask: {erase}.",
+            )
+        )
     return findings
 
 
@@ -503,8 +724,8 @@ ROOM = KindSpec(
             description="Size, mood, Exits and notes; renders the generation prompt.",
             inputs=StageInputs(settings=["project.tile"]),
             params=(
-                ParamSpec(name="width", type="int", description="Width in px.", default=480, minimum=1),
-                ParamSpec(name="height", type="int", description="Height in px.", default=270, minimum=1),
+                ParamSpec(name="width", type="int", description="Width in px.", default=640, minimum=1),
+                ParamSpec(name="height", type="int", description="Height in px.", default=368, minimum=1),
                 ParamSpec(name="mood", type="str", description="Mood words for the prompt.", default=""),
             ),
             checks=(CheckSpec(code="brief.size_not_tiles", description="The size is a whole number of tiles."),),
@@ -553,12 +774,13 @@ ROOM = KindSpec(
         StageSpec(
             name="masks",
             description="Paints the Masks: click-to-segment, flood, polygon, brush or an imported painted image.",
-            inputs=StageInputs(settings=["masks"]),
+            inputs=StageInputs(upstream=["layers", "source", "fit"], settings=["masks"]),
             params=(ParamSpec(name="snap_cell", type="int", description="Snap to an N px grid; 0 is off.", default=0,
                               minimum=0),),
             decisions=(
-                point_decision("click", "A segmentation click.", on_image=True, mask={"type": "string"},
-                               positive={"type": "boolean"}),
+                point_decision("click", "A segmentation click on a Mask: a positive click adds the object under it, and "
+                               "a negative one right after it takes away from that object. Needs `run --rerun`.",
+                               on_image=True, mask={"type": "string"}, positive={"type": "boolean"}),
                 point_decision("flood", "Fill the region of equal colour on the Plate under this point into a Mask.",
                                on_image=True, mask={"type": "string"}),
                 DecisionSpec(
@@ -596,11 +818,12 @@ ROOM = KindSpec(
                 CheckSpec(code="mask.none_painted", description="Some Mask has been painted (info)."),
             ),
             owner_input="Clicks and brushes.",
-            # No GPU until SAM 2 replays `click` Decisions (ticket 0020), which turns it back on.
+            gpu=True,
             available_from="M1",
             run=_masks,
             needs_input=_masks_needs_input,
             check=_check_masks,
+            runner_calls=_masks_runner_calls,
         ),
         StageSpec(
             name="palette",
@@ -635,10 +858,18 @@ ROOM = KindSpec(
         StageSpec(
             name="reach",
             description="Reachability of every Marker for the Body's footprint.",
-            inputs=StageInputs(settings=["body"]),
-            params=(ParamSpec(name="step", type="int", description="Flood step in px.", default=4, minimum=1),),
-            checks=(CheckSpec(code="reach.unreachable_marker", description="Every Marker is reachable."),),
+            inputs=StageInputs(upstream=["place", MASKS_STAGE], settings=["body"]),
+            params=(ParamSpec(name="step", type="int", description="Flood step in px. 1 is exact; a longer one can "
+                              "miss a gap the Body fits only at one exact offset.", default=1, minimum=1),),
+            checks=(
+                CheckSpec(code="reach.unreachable_marker", description="Every Spawn and Exit is reachable."),
+                CheckSpec(code="reach.unreachable_island", description="All walkable ground is reachable (warning)."),
+                CheckSpec(code="reach.narrow_gap", description="The narrowest gaps in solid (info)."),
+            ),
             available_from="M1",
+            run=_reach,
+            needs_input=_reach_needs_input,
+            check=_check_reach,
         ),
         StageSpec(
             name="export",

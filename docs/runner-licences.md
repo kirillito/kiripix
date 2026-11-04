@@ -18,6 +18,10 @@ Kiripix's pinned calls record which Runner made each result, so those Assets can
 Notes:
 - **Depth Anything V2:** Base, Large and Giant are non-commercial; Small is Apache-2.0. Prefer Small where its quality
   is enough (M5's depth-assisted parallax split), so fewer Assets would need rebuilding before a sale.
+- **SAM 2, as Kiripix downloads it:** the upstream checkpoints are Apache-2.0, but Kiripix needs ONNX, and Meta publishes
+  none. `runners/sam2.py` pins the conversion `onnx-community/sam2.1-hiera-small-ONNX` at one commit, by each file's
+  hash. That repo (2026-11-03) states no licence of its own; a conversion of Apache-2.0 weights stays under Apache-2.0.
+  The Owner accepted this for now (2026-11-03). It isn't a lasting choice: spec §8 says how to replace a Runner.
 - **SAM 2:** the demo code's fonts (Inter, Noto Color Emoji) are SIL OFL 1.1, and a bundled `cc_torch` component is
   BSD-3-Clause. Neither affects the checkpoints, and both licences allow commercial use.
 - **LaMa:** the repo (Samsung Research, 2021) is Apache-2.0. Its README links the big-lama weights from

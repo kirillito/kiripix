@@ -120,17 +120,18 @@ numpy and OpenCV versions.
 ```toml
 [project]
 name = "toronto-rpg"
-resolution = [480, 270]        # internal resolution, pin when the game's is decided
+resolution = [640, 360]        # internal resolution
 tile = 16
 palette = "style/palette.gpl"
 
 [body]                         # the stand-in player for walkable, reachability and walk tests
 size = [12, 8]                 # feet footprint in px
-dash = 0                       # gap it can dash over, px (0: none)
+dash = 0                       # the widest pit it can dash over, px (0: none)
 
 [masks.top]                    # Masks for top-down rooms; colours are for display and import only
 solid      = { colour = "#FF0000", meaning = "blocks movement" }
-walkable   = { derived = true }   # where the body's footprint fits without touching solid
+pit        = { colour = "#0000FF", meaning = "no walking on it, but the Body can dash over it" }
+walkable   = { derived = true }   # where the body's footprint fits without touching solid or a pit
 foreground = { derived = true }   # the union of the foreground Layers' alpha
 
 [masks.top.import]             # extra colours accepted from a single painted image
@@ -234,7 +235,7 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | **source** | Generates N variants with a Provider (through `gen`), or **imports** an image made elsewhere (a first-class path: the owner may keep using an external image tool). | Picks one | Has a picked source |
 | **fit** | Detects the source's pixel grid, or downscales with a mode filter to the target size. Records the Grid transform. Palette-free. | Tunes the grid, with a before/after view | Exact size |
 | **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial (default 1 px, 0 allowed). | Clicks objects to lift out | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
-| **masks** | Paints the painted Masks (`solid` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2), flood by colour region, polygon, brush, or import of a painted image; optional snap to an N px cell grid. | Clicks and brushes | Every Mask binary |
+| **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2), flood by colour region, polygon, brush, or import of a painted image; optional snap to an N px cell grid. | Clicks and brushes | Every Mask binary |
 | **palette** | Maps the whole composite once to the palette in OKLab (strict, or with optional ordered dithering) and removes orphan pixels. Each foreground Layer is that mapped image cut by its alpha; the Plate is the same image with only its inpainted areas mapped separately. | Tunes 2–3 sliders, with a before/after view | Every pixel on the palette; Plate + Layers still recompose exactly |
 | **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines. | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag |
 | **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, M5+). Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
@@ -243,8 +244,8 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 **palette reads `layers`, not `masks`**: its upstream is the Plate and the Layers, so a Mask edit never rebuilds the
 palette mapping. `place` reads both `palette` and `masks`.
 
-**Walkable** depends only on the `solid` Mask and the body's footprint, so changing `[body]` re-derives it cheaply.
-Reachability lives only in `reach`.
+**Walkable** depends only on the `solid` and `pit` Masks and the body's footprint, so changing `[body]` re-derives it
+cheaply. Reachability lives only in `reach`. A dash crosses a `pit` and never `solid`.
 
 **A foreground Layer belongs to its room.** It is painted into that room's art and isn't reused; its collision comes
 from the room's `solid` Mask and its draw order from its y-sort line. A reusable object is a Prop. ("Promote to Prop"
@@ -279,7 +280,7 @@ Checks: binary alpha, palette, size within limits, and an origin is set.
 ### 6.3 Character (3D to pixel)
 
 Characters, NPCs and enemies are rendered from 3D, so every animation stays on-model. They are rendered at the target
-pixel size, so the recipe has no `fit`.
+pixel size (52 px tall in the Toronto RPG), so the recipe has no `fit`.
 
 **model → rig → clips → render → palette → finish → sheet → export**
 
@@ -331,7 +332,7 @@ Checks:
   - polygon simplify (Douglas–Peucker, with a pixel tolerance);
   - polygon to collision shapes;
   - navigation polygon.
-- **reach:** walkable from solid and a footprint; the footprint flood over walkable at a step size; a dash over gaps;
+- **reach:** walkable from solid and a footprint; the footprint flood over walkable at a step size; a dash over pits;
   a narrowest-gap report.
 - **compose:**
   - layer stack and recompose;
@@ -349,6 +350,12 @@ every pinned call's key). **Verify every licence at M0**; some model sizes are n
 
 Runners work on the high-resolution source, and their inputs and outputs map through the asset's Grid transform
 (ADR 0004). Inputs are capped at about 1–1.5k px, or cropped around each hole, to fit 8 GB.
+
+**The choice of model stays open.** New models appear every month, so the first choices below are only today's. A Stage
+names a Runner by ID, nothing outside the Runner's own file knows its engine, and Decisions are stored in target pixels,
+never in a model's terms. Replacing one means a new class in `runners/` and pointing the Stage at it. Every pinned call
+it made then goes to `needs-input` with "Runner input changed", and `run --rerun --all` remakes them for the Owner's
+review, so a swap can never change an exported asset silently.
 
 | Use | First choice | Fallback (no ML) |
 |---|---|---|
@@ -674,7 +681,9 @@ IDs with aliases.
 
 ## 16. Open decisions
 
-1. The game's internal resolution and tile size (the Toronto RPG's own decision, set in `kiripix.toml`).
+1. ~~The game's internal resolution and tile size~~: decided 2026-11-03, for the Toronto RPG: 640 x 360, 16 px tiles,
+   characters 52 px tall. 360 px is 22.5 tiles, so a room that fills the screen is 640 x 368. Resolution and tile are set
+   in `kiripix.toml`; character height has no setting until the character recipe (M3) adds one.
 2. ~~The UI framework~~: decided 2026-11-02, React with TypeScript and Vite (ADR 0008).
 3. The outline method for 3D renders: inverted hull, Freestyle or a post-process edge pass (M3, by test).
 4. Image-to-3D: which local Runner fits 8 GB well enough, or none (M3).
@@ -683,6 +692,9 @@ IDs with aliases.
 
 ## Changes since v0.2
 
+- A new `pit` Mask: the body can't walk on it but can dash over it, and a dash never crosses `solid`.
+- The choice of Runner model stays open (§8).
+- The game is 640 x 360 with 16 px tiles and 52 px characters (open decision 1 closed).
 - The UI is React with TypeScript and Vite (open decision 2 closed; ADR 0008).
 - `palette` reads `layers`, not `masks`, so Mask edits don't rebuild it.
 - In M1, `layers` is a pass-through; the real Stage is M2.

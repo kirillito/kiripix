@@ -8,16 +8,24 @@ Its Stages are trivial and deterministic, so the stage graph can be tested befor
 - fail: fails on purpose, with the message in src/fail.txt, when that file exists.
 - choose: downstream of copy only. Takes the `mark` Decision and the `level` parameter (0 to 10), and writes both to
   out.json, so tests can see exactly what the run function was handed.
+
+It also replaces SAM 2 with a fake Runner (at the end), so that no test ever downloads weights.
 """
 
+import hashlib
 import json
 import shutil
 import time
+from pathlib import Path
+from typing import Any
+
+import numpy as np
 
 from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
 from kiripix.core.project_checks import register_project_check
 from kiripix.recipes import register_kind
+from kiripix.runners import SEGMENTER, CheckCancel, Device, Runner, RunnerError, WeightFile, register_runner
 from kiripix.recipes.base import (
     DecisionSpec,
     KindSpec,
@@ -158,3 +166,79 @@ register_kind(
         ),
     )
 )
+
+
+# The fake Runners. Everything a test watches is in the folder the Command runs in:
+# - runner-calls.jsonl: one line per call, with the device and the parameters;
+# - runner-fails: while it exists, a call fails;
+# - hold-runner: while it exists, a call marks `runner-holding` and waits in chunks, checking the cancel token;
+# - fake-weights-v2: while it exists, the Runner's weights hash is another one, as if it had been upgraded.
+
+_WEIGHTS = Path(__file__).parent / "fake_weights.bin"
+
+
+def _fake_weight(sha256: str) -> WeightFile:
+    return WeightFile("fake_weights.bin", _WEIGHTS.as_uri(), sha256, _WEIGHTS.stat().st_size)
+
+
+class FakeSegmenter(Runner):
+    """Deterministic: the Mask is capped at `max_size` as SAM 2's is. In it, a positive click sets a square reaching an
+    eighth of the longer side around it, and a negative click clears one half that size."""
+
+    id = SEGMENTER
+    description = "A fake SAM 2 for the tests."
+    licence = "test"
+    weights = (_fake_weight(hashlib.sha256(_WEIGHTS.read_bytes()).hexdigest()),)
+
+    def __init__(self) -> None:
+        self._device: Device | None = None
+
+    @property
+    def weights_hash(self) -> str:
+        version = "v2" if Path("fake-weights-v2").exists() else "v1"
+        return hashlib.sha256(f"{version} {super().weights_hash}".encode()).hexdigest()
+
+    def load(self, directory: Path, device: Device) -> None:
+        assert (directory / "fake_weights.bin").is_file()
+        self._device = device
+
+    @property
+    def device_used(self) -> str:
+        return "cpu" if self._device == "cpu" else "cuda"
+
+    def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
+        assert self._device is not None, "called while not loaded"
+        with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
+        hold = Path("hold-runner")
+        if hold.exists():
+            Path("runner-holding").write_text("", encoding="utf-8")
+            while hold.exists():
+                check_cancel()
+                time.sleep(0.05)  # stands in for a long inference
+        if Path("runner-fails").exists():
+            raise RunnerError("the fake Runner was told to fail")
+        height, width = image.shape[:2]
+        scale = min(1.0, int(params["max_size"]) / max(width, height))
+        rows, columns = round(height * scale), round(width * scale)
+        mask = np.zeros((rows, columns), dtype=np.bool_)
+        reach = max(rows, columns) // 8
+        for x, y, positive in params["points"]:
+            cx, cy = int(x * scale), int(y * scale)
+            size = reach if positive else reach // 2
+            mask[max(cy - size, 0):cy + size + 1, max(cx - size, 0):cx + size + 1] = positive
+        return mask
+
+    def unload(self) -> None:
+        self._device = None
+
+
+class TamperedWeights(FakeSegmenter):
+    """A Runner whose download doesn't match its declared hash."""
+
+    id = "fake.tampered"
+    weights = (_fake_weight("0" * 64),)
+
+
+register_runner(FakeSegmenter())
+register_runner(TamperedWeights())

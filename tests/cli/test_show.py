@@ -21,7 +21,7 @@ def test_a_new_room_shows_its_view_its_stages_and_no_variants(project: Kiripix) 
 
     assert (data["asset"], data["kind"], data["params"]) == (ROOM, "room", {"view": "top"})
     assert data["variants"] == [] and data["picked"] is None
-    assert data["resolution"] == [480, 270]
+    assert data["resolution"] == [640, 360]
     assert [s["stage"] for s in data["stages"]][:3] == ["brief", "source", "fit"]
     assert stage(data, "source")["status"] == "needs-input" and stage(data, "source")["reason"] == "no Source picked"
     assert stage(data, "fit")["image"] is None and stage(data, "fit")["input_image"] is None

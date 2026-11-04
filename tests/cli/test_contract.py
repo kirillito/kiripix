@@ -61,6 +61,9 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
+    "runners list": lambda p: ["runners", "list"],
+    "runners pull": lambda p: ["runners", "pull", "sam2.1-small"],
+    "runners rm": lambda p: ["runners", "rm", "sam2.1-small"],
 }
 
 

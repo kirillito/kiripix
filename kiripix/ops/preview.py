@@ -14,13 +14,13 @@ TINTS: tuple[tuple[int, int, int], ...] = (
 
 
 def tint_masks(image: U8, masks: Mapping[str, npt.NDArray[np.bool_]], strength: float = 0.5) -> U8:
-    """`image` with each Mask's pixels blended towards that Mask's tint, in name order.
+    """`image` with each Mask's pixels blended towards that Mask's tint, `solid` first and then in name order.
 
-    A Mask is an (H, W) boolean array of the image's size; Mask `i` of the sorted names gets `TINTS[i % len(TINTS)]`.
-    The tint changes colour, never alpha.
+    A Mask is an (H, W) boolean array of the image's size; Mask `i` in that order gets `TINTS[i % len(TINTS)]`. The tint
+    changes colour, never alpha.
     """
     result = image.copy()
-    for index, name in enumerate(sorted(masks)):
+    for index, name in enumerate(sorted(masks, key=lambda name: (name != "solid", name))):
         mask = masks[name]
         if mask.shape != image.shape[:2]:
             raise ValueError(f"mask '{name}' is {mask.shape[1]}x{mask.shape[0]} but the image is "

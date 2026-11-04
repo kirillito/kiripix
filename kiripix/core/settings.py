@@ -27,7 +27,7 @@ class _Strict(BaseModel):
 
 class ProjectSection(_Strict):
     name: str
-    resolution: tuple[int, int] = (480, 270)
+    resolution: tuple[int, int] = (640, 360)
     tile: int = Field(16, gt=0)
     palette: str = "style/palette.gpl"
 
@@ -94,6 +94,7 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     top = MaskSet.model_validate(
         {
             "solid": {"colour": "#FF0000", "meaning": "blocks movement"},
+            "pit": {"colour": "#0000FF", "meaning": "no walking on it, but the Body can dash over it"},
             "walkable": {"derived": True},
             "foreground": {"derived": True},
             "import": {"#FFFF00": ["solid"]},

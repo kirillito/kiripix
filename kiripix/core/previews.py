@@ -46,7 +46,9 @@ def _masks(graph: AssetGraph, shape: tuple[int, ...]) -> dict[str, npt.NDArray[n
                        f"{shape[1]}x{shape[0]}",
                        fix=f"kiripix run {asset} {MASKS_STAGE} --force",
                        position=Position(asset=asset, stage=MASKS_STAGE, file=graph.project.relative(path)))
-        found[path.stem] = rgba[..., 0] > 127
+        mask = rgba[..., 0] > 127
+        if mask.any():
+            found[path.stem] = mask
     return found
 
 

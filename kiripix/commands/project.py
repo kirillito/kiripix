@@ -283,12 +283,12 @@ def next_step(arguments: NextInput, context: Context) -> Outcome[NextData]:
     cache = HashCache(project.state_dir)
     graph = AssetGraph(project, asset, cache)
     data = NextData(asset=asset.id, done=True)
-    advice: list[Finding] = []  # info findings of done Stages: carried along, never a reason to stop
+    advice: list[Finding] = []  # warnings and info findings of done Stages: carried along, never a reason to stop
     for state in graph.states():
         spec = graph.spec(state.stage)
         if state.status == "done":
             found = graph.check(spec)
-            advice.extend(f for f in found if f.severity == "info")
+            advice.extend(f for f in found if f.severity != "error")
             failed = [f for f in found if f.severity == "error"]
             if not failed:
                 continue
@@ -319,6 +319,8 @@ class RunInput(_Input):
     all: bool = Field(False, description="Run every Asset, locking one at a time.")
     kind: str | None = Field(None, description="With --all: only the Assets of this Kind.")
     force: bool = Field(False, description="Re-run even Stages that are done.")
+    rerun: bool = Field(False, description="Also make the Runner calls with no pinned result; they land in needs-review.")
+    cpu: bool = Field(False, description="Run Runners on the CPU, without the GPU lock.")
 
     @model_validator(mode="after")
     def _asset_or_all(self) -> Self:
@@ -360,11 +362,12 @@ def run(arguments: RunInput, context: Context) -> Outcome[RunData]:
         if arguments.kind is not None:
             get_kind(arguments.kind)
         result = run_all(project, cache, kind=arguments.kind, force=arguments.force, progress=context.progress,
-                         wait=context.wait, command_line=context.command_line)
+                         wait=context.wait, command_line=context.command_line, rerun=arguments.rerun, cpu=arguments.cpu)
     else:
         assert arguments.asset is not None
         asset = load_asset(project, arguments.asset)
         result = run_asset(project, asset, cache, stage=arguments.stage, force=arguments.force,
-                           progress=context.progress, wait=context.wait, command_line=context.command_line)
+                           progress=context.progress, wait=context.wait, command_line=context.command_line,
+                           rerun=arguments.rerun, cpu=arguments.cpu)
     findings: list[Finding] = result.findings
     return Outcome(RunData(results=result.results), findings, result.exit_code)

@@ -52,17 +52,18 @@ PROJECT_TEMPLATE = """schema_version = 1
 
 [project]
 name = "{name}"
-resolution = [480, 270]        # internal resolution, pin when the game's is decided
+resolution = [640, 360]        # internal resolution
 tile = 16
 palette = "style/palette.gpl"
 
 [body]                         # the stand-in player for walkable, reachability and walk tests
 size = [12, 8]                 # feet footprint in px
-dash = 0                       # gap it can dash over, px (0: none)
+dash = 0                       # the widest pit it can dash over, px (0: none)
 
 [masks.top]                    # Masks for top-down rooms; colours are for display and import only
 solid      = {{ colour = "#FF0000", meaning = "blocks movement" }}
-walkable   = {{ derived = true }}   # where the Body's footprint fits without touching solid
+pit        = {{ colour = "#0000FF", meaning = "no walking on it, but the Body can dash over it" }}
+walkable   = {{ derived = true }}   # where the Body's footprint fits without touching solid or a pit
 foreground = {{ derived = true }}   # the union of the foreground Layers' alpha
 
 [masks.top.import]             # extra colours accepted from a single painted image

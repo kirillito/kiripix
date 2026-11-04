@@ -4,6 +4,7 @@ import io
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 from PIL import Image, UnidentifiedImageError
 
 from kiripix.checks import Position, check_palette
@@ -48,6 +49,13 @@ def read_png(path: Path, shown: str) -> tuple[bytes, U8]:
 def save_png(path: Path, rgba: U8) -> None:
     buffer = io.BytesIO()
     Image.fromarray(rgba, "RGBA").save(buffer, format="PNG")
+    atomic.write_bytes(path, buffer.getvalue())
+
+
+def save_mask_png(path: Path, mask: npt.NDArray[np.bool_]) -> None:
+    """A Mask as a 1-bit PNG."""
+    buffer = io.BytesIO()
+    Image.fromarray(mask).save(buffer, format="PNG")
     atomic.write_bytes(path, buffer.getvalue())
 
 

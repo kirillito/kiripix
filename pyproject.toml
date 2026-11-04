@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.162.0",
     "jsonschema>=4.23",
     "numpy>=2.1",
+    "onnxruntime-gpu>=1.31",
     "pillow>=11",
     "psutil>=6",
     "pydantic>=2.9",
@@ -56,6 +57,10 @@ no_implicit_optional = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "onnxruntime"  # ships no type stubs
+ignore_missing_imports = true
 
 # The import rule (spec §13). Layers: a module may import the layers below it, never above.
 [tool.importlinter]

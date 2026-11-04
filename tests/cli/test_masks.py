@@ -1,5 +1,5 @@
 """The room's masks Stage (spec §6.1, ADR 0001): flood, brush and import Decisions replayed onto the Plate's size,
-one 1-bit PNG per painted Mask, with `click` held back for SAM 2 (ticket 0020)."""
+one 1-bit PNG per painted Mask. `click` Decisions are in test_runner_calls.py."""
 
 import hashlib
 import json
@@ -63,7 +63,7 @@ def test_with_no_decisions_masks_is_done_with_an_empty_solid_and_next_says_to_pa
     assert stage_status(project, ROOM)["masks"] == "done"
     solid = read_mask(folder)
     assert solid.shape == (HEIGHT, WIDTH) and not solid.any()
-    assert sorted(p.name for p in (folder / "work" / "masks").glob("*.png")) == ["solid.png"]  # derived are not painted
+    assert sorted(p.name for p in (folder / "work" / "masks").glob("*.png")) == ["pit.png", "solid.png"]  # not derived
     assert "mask.none_painted" in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
     assert advice["data"]["stage"] == "reach"  # an unpainted solid is advice, never a block
@@ -304,27 +304,20 @@ def test_a_brush_after_an_import_edits_the_imported_mask(project: Kiripix) -> No
     assert not solid[5, 5] and not solid[5, 6] and solid[4, 5] and solid[6, 5]
 
 
-# click
-
-
-def test_a_click_makes_masks_needs_input_until_ticket_0020(project: Kiripix) -> None:
-    built_room(project)
-    decide(project, "click", {"x": 30, "y": 10, "mask": "solid", "positive": True})
-
-    result = project.json("run", ROOM, "masks", expect=3)
-
-    assert result["data"]["results"][-1]["outcome"] == "needs-input"
-    assert "not implemented until 0020" in result["data"]["results"][-1]["message"]
-    assert stage_status(project, ROOM)["masks"] == "needs-input"
-    advice = project.json("next", ROOM)["data"]
-    assert advice["stage"] == "masks" and "not implemented until 0020" in advice["reason"]
-    assert f"kiripix undo {ROOM} masks" in advice["owner_action"]
-    project.json("undo", ROOM, "masks")
-    project.json("run", ROOM, "masks")
-    assert stage_status(project, ROOM)["masks"] == "done"
-
-
 # checks and preview
+
+
+def test_preview_keeps_solid_red_when_another_mask_is_painted_too(project: Kiripix) -> None:
+    built_room(project)
+    decide(project, "flood", {"x": 30, "y": 10, "mask": "solid"})
+    decide(project, "flood", {"x": 0, "y": 0, "mask": "pit"})
+    project.json("run", ROOM, "masks")
+
+    data = project.json("preview", ROOM, "--stage", "layers", "--overlay", "masks", "--zoom", "2")["data"]
+
+    assert data["masks"] == ["pit", "solid"]
+    with Image.open(project.cwd / data["path"]) as image:
+        assert image.convert("RGBA").getpixel((60, 20)) == (188, 40, 30, 255)  # the rug, half way to the red tint
 
 
 def test_a_mask_that_is_not_1_bit_is_reported_with_a_fix_that_works(project: Kiripix) -> None:
@@ -359,7 +352,7 @@ def test_preview_overlay_masks_tints_the_built_masks_over_the_plate(project: Kir
 
     data = project.json("preview", ROOM, "--stage", "layers", "--overlay", "masks", "--zoom", "2")["data"]
 
-    assert data["masks"] == ["solid"] and data["path"].endswith("room.alley.layers.masks.x2.png")
+    assert data["masks"] == ["solid"] and data["path"].endswith("room.alley.layers.masks.x2.png")  # the empty pit isn't
     with Image.open(project.cwd / data["path"]) as image:
         rgba = image.convert("RGBA")
         assert rgba.size == (WIDTH * 2, HEIGHT * 2)

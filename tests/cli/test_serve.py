@@ -27,6 +27,7 @@ import pytest
 from conftest import MARK, Kiripix, in_review, kiripix_args, kiripix_env, make_demo, make_sketch, save_image, sketched
 from test_contract import SAMPLES
 from test_locks import start_holding, wait_for
+from test_masks import ROOM, built_room, decide
 
 TOKEN = "X-Kiripix-Token"
 
@@ -225,6 +226,9 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
     "op quantize": lambda a: {"input": a[2], "output": a[3]},
     "op conformance": lambda a: {"image": a[2]},
+    "runners list": lambda a: {},
+    "runners pull": lambda a: {"runner": a[2]},
+    "runners rm": lambda a: {"runner": a[2]},
 }
 
 _VOLATILE = {"id", "parent", "started", "finished", "duration_s", "time", "at"}
@@ -458,6 +462,70 @@ def test_cancel_stops_a_run_cleanly(project: Kiripix, server: Server) -> None:
     assert not [p for p in folder.rglob(".tmp-*")]
     # Nothing is half-done, and the server carries on: the same run now finishes.
     assert server.call("/api/run", {"asset": "demo.a"}).json["ok"] is True
+
+
+def test_cancel_stops_a_runner_call_and_pins_nothing(project: Kiripix, server: Server) -> None:
+    folder = built_room(project)
+    decide(project, "click", {"x": 30, "y": 10, "mask": "solid", "positive": True})
+    hold = project.cwd / "hold-runner"
+    hold.write_text("", encoding="utf-8")
+    replies: list[Reply] = []
+    body = {"asset": ROOM, "stage": "masks", "rerun": True}
+    caller = threading.Thread(target=lambda: replies.append(server.call("/api/run", body, headers={"X-Kiripix-Job": "r"})))
+    try:
+        caller.start()
+        wait_for(project.cwd / "runner-holding")
+
+        cancelled_at = time.monotonic()
+        server.call("/api/jobs/r/cancel")
+        caller.join(timeout=30)
+        stopped_after = time.monotonic() - cancelled_at
+    finally:
+        hold.unlink(missing_ok=True)
+
+    assert stopped_after < 1.5, "the Runner stopped at its next chunk, not at the backstop"
+    [reply] = replies
+    assert reply.status == 400 and reply.codes == ["run.cancelled"]
+    assert not (folder / "pinned").exists() or not list((folder / "pinned").iterdir())
+    assert not list((project.cwd / ".kiripix" / "locks").glob("*.lock"))
+    last = json.loads((folder / "history.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert last["outcome"] == "cancelled" and last["runner"] == "sam2.1-small"
+    # Nothing is half-done, and the same call now goes through.
+    assert server.call("/api/run", body).status == 403
+
+
+def test_two_runner_calls_in_one_server_take_turns_even_on_the_cpu(project: Kiripix, server: Server) -> None:
+    built_room(project)
+    decide(project, "click", {"x": 30, "y": 10, "mask": "solid", "positive": True})
+    other = "room.yard"
+    project.json("new", "room", "yard", "--view", "top")
+    project.json("set", other, "brief", "width=48", "height=32")
+    project.json("set", other, "fit", "scale=1")
+    project.json("pick", other, str(project.json("import", other, "source.png")["data"]["variant"]))
+    project.json("run", other, expect=3)
+    project.json("decide", other, "masks", "--decision", json.dumps(
+        {"decision": "click", "data": {"x": 30, "y": 10, "mask": "solid", "positive": True}}))
+    hold = project.cwd / "hold-runner"
+    hold.write_text("", encoding="utf-8")
+    replies: list[Reply] = []
+
+    def rerun(asset: str) -> None:
+        replies.append(server.call("/api/run", {"asset": asset, "stage": "masks", "rerun": True, "cpu": True}))
+
+    callers = [threading.Thread(target=rerun, args=(asset,)) for asset in (ROOM, other)]
+    try:
+        callers[0].start()
+        wait_for(project.cwd / "runner-holding")
+        callers[1].start()
+        time.sleep(1.5)  # long enough for the second call to start, if nothing held it back
+        calls = (project.cwd / "runner-calls.jsonl").read_text(encoding="utf-8").splitlines()
+    finally:
+        hold.unlink(missing_ok=True)
+    for caller in callers:
+        caller.join(timeout=30)
+
+    assert len(calls) == 1
+    assert [reply.status for reply in replies] == [403, 403] and all(r.codes == ["stage.needs_review"] for r in replies)
 
 
 def test_cancel_stops_a_run_waiting_for_a_lock(project: Kiripix, server: Server) -> None:

@@ -105,6 +105,22 @@ class CurrentDecision:
 
 
 @dataclass(frozen=True)
+class RunnerCall:
+    """One Runner call a Stage's current Decisions need, pinned by core (ADR 0002). `image` is the input image's file,
+    `params` are handed to the Runner, and `decisions` are what the Owner decided, as they were recorded: the same
+    `decisions` under another key mean the call's input changed. Everything here is part of the key."""
+
+    runner: str
+    image: Path
+    params: dict[str, Any]
+    decisions: list[dict[str, Any]]
+
+
+def _no_pinned_results(call: RunnerCall) -> Path:
+    raise StageFailure(f"this Stage has no pinned result for {call.runner}")
+
+
+@dataclass(frozen=True)
 class StageRun:
     """What core hands a Stage's run function. Outputs go into `output_dir`, which core moves into place."""
 
@@ -121,9 +137,13 @@ class StageRun:
     # Raises if the Command was cancelled. Call it between chunks of work (tiles, frames, batches); `progress` calls it
     # too. A Stage never catches what it raises.
     check_cancel: Callable[[], None] = lambda: None
+    # The file of a call's pinned result, which core has made sure exists before the Stage runs. A Stage never calls a
+    # Runner itself: it reads what was pinned.
+    pinned: Callable[[RunnerCall], Path] = _no_pinned_results
 
 
 StageFunction = Callable[[StageRun], None]
+RunnerCallsFunction = Callable[[StageRun], "list[RunnerCall]"]
 
 
 @dataclass(frozen=True)
@@ -146,7 +166,8 @@ class StageSpec:
     A Stage without a run function is declared but not built yet; it reports needs-input with `available_from`.
     `image` names the file in its output that is its image: what the next Stage's clicks are made on, and what an
     Override paints over. `needs_input` says, from the Stage's inputs alone, why it can't run yet. `check` runs the
-    Stage's Checks on its output (`output_dir` is the built output).
+    Stage's Checks on its output (`output_dir` is the built output). `runner_calls` lists the Runner calls its current
+    Decisions need, from what is built upstream; only `run --rerun` makes one that isn't pinned yet.
     """
 
     name: str
@@ -163,6 +184,7 @@ class StageSpec:
     image: str | None = None
     needs_input: NeedsInputFunction | None = None
     check: CheckFunction | None = None
+    runner_calls: RunnerCallsFunction | None = None
 
 
 @dataclass(frozen=True)

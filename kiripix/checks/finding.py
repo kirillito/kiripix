@@ -8,7 +8,7 @@ Severity = Literal["error", "warning", "info"]
 
 
 class Position(BaseModel):
-    """Where a finding is: any of an Asset, a Stage, a file, a pixel or a field path."""
+    """Where a finding is: any of an Asset, a Stage, a file, a pixel, a box from that pixel or a field path."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -18,6 +18,8 @@ class Position(BaseModel):
     line: int | None = None
     x: int | None = None
     y: int | None = None
+    width: int | None = None
+    height: int | None = None
     field: str | None = None
 
 

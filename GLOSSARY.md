@@ -96,8 +96,13 @@ _Avoid_: layer, collision layer
 A Mask computed from other data, never painted, such as `walkable` or `foreground`.
 
 **Walkable**:
-The Derived mask of every spot where the Body's footprint fits without touching `solid`. It says nothing about
+The Derived mask of every spot where the Body's footprint fits without touching `solid` or a Pit. It says nothing about
 reachability.
+
+**Pit**:
+A painted Mask of a top-view Room that the Body can't walk on but can dash over, if its dash is at least as wide. `solid`
+stops a dash; a Pit doesn't.
+_Avoid_: gap (a way through `solid`, which the reach report measures)
 
 **Reachable**:
 Walkable ground the Body can get to from a Spawn or an Exit.

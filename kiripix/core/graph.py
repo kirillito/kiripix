@@ -9,13 +9,19 @@ A Stage's input image is the image of its first upstream Stage that declares one
 hash. An Override is a Decision of the Stage whose image it paints: core paints it over the image after the run
 function, so every Stage reading the image sees it, and records the unpainted image's hash in the stamp. A built Stage
 with any current click or Override recorded on another image than that is needs-review.
+
+A Runner call is pinned per call (ADR 0002, `kiripix.core.pinning`). `run` never makes one: a Stage whose call has no
+pinned result is needs-input, and `run --rerun` makes it. A pinned result no `accept` has listed puts the built Stage in
+needs-review. The pinned results of a Stage's current calls are part of its input hash.
 """
 
 import json
 import shutil
+import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -23,7 +29,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic, cancel, journal
+from kiripix.core import atomic, cancel, journal, pinning
 from kiripix.core.assets import HISTORY_FILE, Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.hashing import HashCache, hash_bytes, hash_json
@@ -33,13 +39,18 @@ from kiripix.core.locks import GPU_LOCK, asset_lock, hold
 from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
-from kiripix.recipes.base import CurrentDecision, NeedsInput, Scalar, StageFailure, StageRun, StageSpec
+from kiripix.recipes.base import CurrentDecision, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
+from kiripix.runners import Device, RunnerError, pull, runners, weights_dir
 
 Status = Literal["todo", "stale", "done", "needs-input", "needs-review", "failed"]
 Outcome = Literal["done", "skipped", "failed", "needs-input", "needs-review", "cancelled"]
 
 STAMP_FILE = ".stage.json"
 REPLAYED_ON_CHANGED_IMAGE = "clicks or Overrides were replayed onto a changed image"
+RUNNER_NOT_RUN = "Runner not run yet"
+RUNNER_INPUT_CHANGED = "Runner input changed"
+RUNNER_RESULT_NEW = "a Runner's new result waits for the Owner"
+RUNNER_SAME_RESULT = "the Runner ran and made the same result the Owner already accepted, so there is nothing to rebuild"
 
 
 class StageState(BaseModel):
@@ -203,9 +214,44 @@ class AssetGraph:
                     "files": {name: self.cache.file_hash(path) for name, path in self.files(spec).items()},
                     "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
                     "upstream": {name: self.input_hash(name) for name in spec.inputs.upstream},
+                    **self._pinned_for_hash(spec),
                 }
             )
         return self._hashes[stage]
+
+    def _pinned_for_hash(self, spec: StageSpec) -> dict[str, Any]:
+        calls = self.runner_calls(spec)
+        if not calls:
+            return {}
+        paths = {self.pin_key(call): self.pinned_path(call) for call in calls}
+        return {"pinned": {key: self.cache.file_hash(path) if path.is_file() else None for key, path in paths.items()}}
+
+    def forget_hashes(self) -> None:
+        """Forget the input hashes worked out so far, after a Runner call added a pinned result."""
+        self._hashes.clear()
+
+    def runner_calls(self, spec: StageSpec) -> list[RunnerCall]:
+        """The Runner calls the Stage's current Decisions need, as far as its upstream outputs are built."""
+        return spec.runner_calls(self.stage_run(spec, self.output_dir(spec))) if spec.runner_calls else []
+
+    def pin_key(self, call: RunnerCall) -> str:
+        return pinning.key(call, self.cache.file_hash(call.image))
+
+    def pinned_path(self, call: RunnerCall) -> Path:
+        return pinning.result_path(self.asset.dir, self.pin_key(call))
+
+    def missing_calls(self, spec: StageSpec) -> list[RunnerCall]:
+        """The Stage's Runner calls with no pinned result."""
+        return [call for call in self.runner_calls(spec) if not self.pinned_path(call).is_file()]
+
+    def unreviewed_pins(self, spec: StageSpec) -> list[str]:
+        """The Stage's pinned results that no `accept` has listed, each as `<key>:<hash of the result>`: so a call made
+        with other inputs, or a result that changed, is reviewed again, and one not made yet can't be accepted ahead of
+        time."""
+        accepted = self.replay(spec.name).accepted
+        paths = {self.pin_key(call): self.pinned_path(call) for call in self.runner_calls(spec)}
+        results = [f"{key}:{self.cache.file_hash(path)}" for key, path in paths.items() if path.is_file()]
+        return [result for result in results if result not in accepted]
 
     def output_dir(self, spec: StageSpec) -> Path:
         return self.asset.dir / spec.output_root / spec.name
@@ -254,15 +300,23 @@ class AssetGraph:
             settings=self.settings(spec),
             progress=progress or (lambda done, total, message: None),
             check_cancel=cancel.check,
+            pinned=self.pinned_path,
             decisions=self.replay(spec.name).current,
             asset_params=dict(self.asset.settings.params),
         )
 
     def needs_input(self, spec: StageSpec) -> NeedsInput | None:
-        """Why the Stage can't run until the Owner acts, from its inputs alone."""
-        if spec.needs_input is None:
+        """Why the Stage can't run until the Owner acts, from its inputs alone, or until its Runner calls are made."""
+        if spec.needs_input is not None:
+            waiting = spec.needs_input(self.stage_run(spec, self.output_dir(spec)))
+            if waiting is not None:
+                return waiting
+        missing = self.missing_calls(spec)
+        if not missing:
             return None
-        return spec.needs_input(self.stage_run(spec, self.output_dir(spec)))
+        changed = any(pinning.was_made_before(self.asset.dir, spec.name, call) for call in missing)
+        return NeedsInput(RUNNER_INPUT_CHANGED if changed else RUNNER_NOT_RUN,
+                          command=f"kiripix run {self.asset.id} {spec.name} --rerun")
 
     def check(self, spec: StageSpec) -> list[Finding]:
         """The Stage's Checks on its built output; nothing when it has no output."""
@@ -305,10 +359,27 @@ class AssetGraph:
             return StageState(stage=stage, status="stale", reason="an input changed since the output was built")
         if self.replayed_on_other_images(spec):
             return StageState(stage=stage, status="needs-review", reason=REPLAYED_ON_CHANGED_IMAGE)
+        if self.unreviewed_pins(spec):
+            return StageState(stage=stage, status="needs-review", reason=RUNNER_RESULT_NEW)
         return StageState(stage=stage, status="done")
 
     def states(self) -> list[StageState]:
         return [self.state(s.name) for s in self.kind.stages]
+
+
+# A server runs Commands on threads that share the registered Runners, and a --cpu call holds no GPU lock.
+_RUNNER_LOADED = threading.Lock()
+
+
+@contextmanager
+def _one_runner_loaded() -> Iterator[None]:
+    """Wait for this process's other Runner call to finish, for as long as the Command isn't cancelled."""
+    while not _RUNNER_LOADED.acquire(timeout=0.05):
+        cancel.check()
+    try:
+        yield
+    finally:
+        _RUNNER_LOADED.release()
 
 
 def _rename(source: Path, target: Path) -> None:
@@ -343,11 +414,66 @@ def _remove_leftovers(asset: Asset) -> None:
 
 
 class _Runner:
-    def __init__(self, graph: AssetGraph, progress: ProgressSink, wait: float, command_line: str) -> None:
+    def __init__(self, graph: AssetGraph, progress: ProgressSink, wait: float, command_line: str,
+                 cpu: bool = False) -> None:
         self.graph = graph
         self.progress = progress
         self.wait = wait
         self.command_line = command_line
+        self.cpu = cpu
+
+    def _gpu_lock(self) -> list[str]:
+        return [] if self.cpu else [GPU_LOCK]
+
+    def make_runner_calls(self, spec: StageSpec) -> str | None:
+        """Make the Stage's Runner calls that have no pinned result, and pin each as it finishes, so a cancel loses only
+        the call it stopped. One Runner is loaded at a time, under the GPU lock, and unloaded after use. Returns why
+        they failed, or None."""
+        graph = self.graph
+        missing = graph.missing_calls(spec)
+        device: Device = "cpu" if self.cpu else "auto"
+        try:
+            for runner_id in dict.fromkeys(call.runner for call in missing):
+                runner = runners()[runner_id]
+                directory = weights_dir(graph.project.state_dir, runner)
+                self.progress(ProgressEvent(event="runner_start", stage=spec.name, message=runner_id))
+                pull(directory, runner, cancel.check)
+                with hold(graph.project.state_dir, self._gpu_lock(), self.wait, self.command_line), _one_runner_loaded():
+                    runner.load(directory, device)
+                    try:
+                        for call in (c for c in missing if c.runner == runner_id):
+                            self._call(spec, call)
+                    finally:
+                        runner.unload()
+        except RunnerError as error:
+            return str(error)
+        finally:
+            graph.forget_hashes()
+        return None
+
+    def _call(self, spec: StageSpec, call: RunnerCall) -> None:
+        graph = self.graph
+        runner = runners()[call.runner]
+        started = time.monotonic()
+
+        def history(outcome: str, **extra: Any) -> None:
+            atomic.append_jsonl(graph.asset.dir / HISTORY_FILE, {
+                "time": _now(), "stage": spec.name, "runner": call.runner, "weights_hash": runner.weights_hash,
+                "params": call.params, "device": runner.device_used,
+                "duration_s": round(time.monotonic() - started, 3), "outcome": outcome, **extra})
+
+        cancel.check()
+        try:
+            result = runner.call(load_rgba(call.image, graph.project.relative(call.image)), call.params, cancel.check)
+            pinning.store(graph.asset.dir, spec.name, call, graph.pin_key(call), graph.cache.file_hash(call.image),
+                          result, device=runner.device_used, licence=runner.licence, time=_now())
+        except (KeyboardInterrupt, cancel.Cancelled):
+            history("cancelled")
+            raise
+        except RunnerError as error:
+            history("failed", message=str(error))
+            raise
+        history("done", key=graph.pin_key(call))
 
     def _history(self, spec: StageSpec, params: dict[str, Scalar], result: StageRunResult) -> None:
         entry: dict[str, Any] = {
@@ -414,7 +540,7 @@ class _Runner:
 
         try:
             context = graph.stage_run(spec, building, progress=report)
-            with hold(graph.project.state_dir, [GPU_LOCK] if spec.gpu else [], self.wait, self.command_line):
+            with hold(graph.project.state_dir, self._gpu_lock() if spec.gpu else [], self.wait, self.command_line):
                 spec.run(context)
             cancel.check()
             unpainted = self._paint_overrides(spec, building)
@@ -460,8 +586,13 @@ def run_asset(
     progress: ProgressSink,
     wait: float,
     command_line: str,
+    rerun: bool = False,
+    cpu: bool = False,
 ) -> AssetRun:
     """Run the Asset's stale and todo Stages in order, or one Stage; stop at the first that can't finish.
+
+    With `rerun`, a Stage's Runner calls with no pinned result are made first, so it lands in needs-review. With `cpu`,
+    Runners run on the CPU and no GPU lock is taken.
 
     The caller holds the Asset lock.
     """
@@ -481,13 +612,30 @@ def run_asset(
         specs = [spec]
     else:
         specs = list(graph.kind.stages)
-    runner = _Runner(graph, progress, wait, command_line)
+    runner = _Runner(graph, progress, wait, command_line, cpu)
     results: list[StageRunResult] = []
     findings: list[Finding] = []
     exit_code = ExitCode.OK
     for index, spec in enumerate(specs):
         cancel.check()
         state = graph.state(spec.name)
+        called = rerun and state.status == "needs-input" and state.reason in (RUNNER_NOT_RUN, RUNNER_INPUT_CHANGED)
+        if called:
+            problem = runner.make_runner_calls(spec)
+            if problem is not None:
+                results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="failed",
+                                              input_hash=graph.input_hash(spec.name), message=problem))
+                findings.append(
+                    Finding(
+                        code="stage.failed",
+                        message=f"{asset.id} {spec.name} failed: {problem}",
+                        position=Position(asset=asset.id, stage=spec.name),
+                        fix=f"kiripix run {asset.id} {spec.name} --rerun",
+                    )
+                )
+                exit_code = _worse(exit_code, ExitCode.ERROR)
+                break
+            state = graph.state(spec.name)
         if state.status == "needs-input":
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="needs-input",
                                           input_hash=graph.input_hash(spec.name), message=state.reason))
@@ -516,7 +664,8 @@ def run_asset(
             break
         if state.status == "done" and not force:
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="skipped",
-                                          input_hash=graph.input_hash(spec.name)))
+                                          input_hash=graph.input_hash(spec.name),
+                                          message=RUNNER_SAME_RESULT if called else None))
             continue
         progress(ProgressEvent(event="stage_start", stage=spec.name, done=index, total=len(specs)))
         outcome, checked = runner.execute(spec)
@@ -574,6 +723,8 @@ def run_all(
     progress: ProgressSink,
     wait: float,
     command_line: str,
+    rerun: bool = False,
+    cpu: bool = False,
 ) -> AssetRun:
     """Run every Asset (of one Kind, if given), locking one Asset at a time. One Asset stopping doesn't stop the rest.
 
@@ -590,7 +741,7 @@ def run_all(
         try:
             with hold(project.state_dir, [asset_lock(asset.id)], wait, command_line):
                 run = run_asset(project, asset, cache, stage=None, force=force, progress=progress, wait=wait,
-                                command_line=command_line)
+                                command_line=command_line, rerun=rerun, cpu=cpu)
         except KiripixError as error:
             findings.extend(error.findings)
             code = error.exit_code

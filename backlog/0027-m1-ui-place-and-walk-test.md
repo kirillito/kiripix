@@ -19,6 +19,11 @@ Spec §6.1 (Walk test) and §11. User story 32 of [0010](0010-m1-room-end-to-end
   (the `solid` Mask and the Body's footprint, read from Command outputs, never recomputed in the UI), with foreground
   Layers drawn by their y-sort lines (none in M1). Unreachable Markers from `reach` are highlighted.
 
+## Notes
+
+- **`pit`** (added by [0019](0019-m1-reach.md)) stops the Body as `solid` does, and the Body's dash crosses it. Walkable
+  already covers both, so read that rather than `solid` alone.
+
 ## Acceptance criteria
 
 - [ ] Playwright: placing a Spawn records one Decision; dragging it records one more and moves it.

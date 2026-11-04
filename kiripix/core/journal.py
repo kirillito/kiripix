@@ -6,7 +6,7 @@ it), the Decision's name and data, and, for a click or an Override, the hash of 
 
 `accept` appends two more kinds of entry, so no status is ever stored: a Decision re-recorded against the new image
 (`replaces` names the entry it takes the place of, keeping its position), and `{accept: [ids]}`, which accepts the
-divergent entries it lists.
+divergent entries and the pinned results (as `<key>:<hash of the result>`) it lists.
 """
 
 import json
@@ -86,13 +86,14 @@ class JournalEntry(BaseModel):
 
 @dataclass(frozen=True)
 class Replay:
-    """What a journal says now: the current Decisions in order, the redo stack, and the divergent entries not yet
-    accepted."""
+    """What a journal says now: the current Decisions in order, the redo stack, the divergent entries not yet accepted,
+    and everything any accept entry has listed."""
 
     current: tuple[CurrentDecision, ...]
     undone: tuple[str, ...]
     last_id: str | None
     conflicts: tuple[str, ...]
+    accepted: frozenset[str] = frozenset()
 
     @property
     def divergent(self) -> bool:
@@ -181,7 +182,7 @@ def replay(entries: list[JournalEntry]) -> Replay:
     )
     conflicts = tuple(sorted(i for ids in children.values() if len(ids) > 1 and not accepted.issuperset(ids)
                              for i in ids))
-    return Replay(current, tuple(undone), entries[-1].id if entries else None, conflicts)
+    return Replay(current, tuple(undone), entries[-1].id if entries else None, conflicts, frozenset(accepted))
 
 
 def hashable(view: Replay) -> list[dict[str, Any]]:

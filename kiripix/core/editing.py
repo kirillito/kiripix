@@ -269,8 +269,9 @@ def record_mask_import(project: Project, asset: Asset, png: Path, shown: str) ->
 
 
 def accept(project: Project, asset: Asset, stage: str) -> list[journal.JournalEntry]:
-    """Confirm a needs-review Stage: accept its divergent entries, and re-record each click and Override made on an
-    earlier image against the current one, so the next replay is exact. Returns the appended entries."""
+    """Confirm a needs-review Stage: accept its divergent entries and its new pinned results, and re-record each click
+    and Override made on an earlier image against the current one, so the next replay is exact. Returns the appended
+    entries."""
     graph = _graph(project, asset)
     spec = graph.spec(stage)
     state = graph.state(stage)
@@ -280,8 +281,9 @@ def accept(project: Project, asset: Asset, stage: str) -> list[journal.JournalEn
     path, before = _read(project, asset, stage)
     appended: list[journal.JournalEntry] = []
     last = before.last_id
-    if before.divergent:
-        appended.append(_append(path, last, accept=list(before.conflicts)))
+    accepted = [*before.conflicts, *graph.unreviewed_pins(spec)]
+    if accepted:
+        appended.append(_append(path, last, accept=accepted))
         last = appended[-1].id
     for decision, current in graph.replayed_on_other_images(spec):
         appended.append(_append(path, last, decision=decision.name, data=decision.data, image_hash=current,
