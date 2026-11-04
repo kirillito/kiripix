@@ -223,6 +223,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "check": lambda a: {"asset": a[1]},
     "show": lambda a: {"asset": a[1]},
     "preview": lambda a: {"asset": a[1], "stage": a[3]},
+    "export": lambda a: {"asset": a[1]},
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
     "op quantize": lambda a: {"input": a[2], "output": a[3]},
     "op conformance": lambda a: {"image": a[2]},

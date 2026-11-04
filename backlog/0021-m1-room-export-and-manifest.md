@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M1
 agent: godot-export
 type: ticket
@@ -31,12 +31,32 @@ Spec §9 and ADR 0003. docs/versions.md (Godot 4.7). User stories 23 and 24 of [
 ## Notes
 
 - **`pit`** (added by [0019](0019-m1-reach.md)) blocks walking but not a dash, so it can't simply join `solid`'s
-  collision. Walkable ∩ reachable already leaves it out of the navigation polygon. How the game's collision treats it
-  needs deciding here.
+  collision. Walkable ∩ reachable already leaves it out of the navigation polygon. Decided here, and confirmed by
+  the Owner on 2026-11-04: `pit` is a `StaticBody2D` of its own on collision layer 2, and `solid` is on layer 1. The game's Body collides
+  with both when it walks, and drops layer 2 from its mask while it dashes.
+- **Two steps, no Godot in the Stage.** The `export` Stage builds engine-free outputs in `out/export/` (`plate.png` and
+  `room.json`), and `kiripix export` turns them into Godot files. A Stage in `recipes` can't import the Exporter, and the
+  Stage shouldn't depend on another repo's folder.
+- **The import rule changed** (confirmed by the Owner on 2026-11-04): `kiripix.export` is now its own layer between
+  `commands` and `core`, because the Exporter needs core's atomic writes, graph and Checks. It used to be core's
+  independent sibling.
+- **`kiripix export` runs nothing.** It refuses (`export.not_ready`, naming `kiripix next`) until every Stage is done, and
+  until no Check has an error. So `export --dry-run` in [0022](0022-m1-export-ownership-and-id-freeze.md) writes nothing.
+  `next` names `kiripix export` once everything is built and the game doesn't have it yet.
+- **Collision shapes are convex pieces.** A `CollisionPolygon2D` can't have a hole, so each outline is triangulated and
+  merged into convex polygons. A `NavigationPolygon` needs the same, with whole shared edges.
+- **A stopped export can be run again.** The Manifest goes first, with the new hashes and a `replacing` map of what they
+  replace, and again without the map once the files are written. A file the Manifest doesn't list is always refused, even
+  with the very bytes export would write: that takes `--adopt` ([0022](0022-m1-export-ownership-and-id-freeze.md)).
+- **Only `solid` and `pit` become collision.** Any other painted Mask is left out of the scene.
+- **Interactables are exported** as `Marker2D`s too, so a placed ID doesn't silently vanish. Y-sort lines aren't, until
+  there are Layers to sort (M2).
+- **Not run in Godot here:** no Godot binary on this machine, so the tests check the scene's text. The real check is the
+  M1 gate ([0029](0029-m1-gate.md)).
 
 ## Acceptance criteria
 
-- [ ] Golden tests for contour and simplify on a Mask with a hole.
-- [ ] Exporting a reached room into a temporary Godot project folder writes the scene, the PNG and the Manifest, and
+- [x] Golden tests for contour and simplify on a Mask with a hole.
+- [x] Exporting a reached room into a temporary Godot project folder writes the scene, the PNG and the Manifest, and
       the scene's text has the expected nodes and IDs.
-- [ ] Editing the exported scene by hand, then exporting again, refuses and names the file.
+- [x] Editing the exported scene by hand, then exporting again, refuses and names the file.

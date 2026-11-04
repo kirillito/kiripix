@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 
 from conftest import MARK, Kiripix, in_review, make_demo, sketched
+from test_export import exportable_room
 
 
 def _image(project: Kiripix) -> None:
@@ -58,6 +59,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "check": lambda p: (make_demo(p), ["check", "demo.a"])[1],
     "show": lambda p: (make_demo(p), ["show", "demo.a"])[1],
     "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw"])[1],
+    "export": lambda p: (exportable_room(p), ["export", "room.alley"])[1],
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],

@@ -1,5 +1,8 @@
 """show, a Probe: one Asset as a UI needs it, with what `status` leaves out. Nothing here writes to the Project."""
 
+from pathlib import Path
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
@@ -7,9 +10,9 @@ from kiripix.commands.decisions import DecisionOut, current_decisions
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core import sources
 from kiripix.core.assets import load_asset
-from kiripix.core.graph import AssetGraph, Status
+from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
-from kiripix.core.project import find_project
+from kiripix.core.project import Project, find_project
 from kiripix.recipes.base import Scalar
 
 
@@ -32,6 +35,13 @@ class StageDetail(BaseModel):
     decisions: list[DecisionOut]
     image: str | None = Field(description="The Stage's built image, relative to the Project.")
     input_image: str | None = Field(description="The built image this Stage is made from, relative to the Project.")
+    outputs: list[str] = Field(description="The files of the Stage's built output, relative to the Project.")
+    markers: list[dict[str, Any]] = Field(description="The Markers its Decisions place, whether built yet or not.")
+
+
+class BodyOut(BaseModel):
+    size: tuple[int, int] = Field(description="The Body's footprint in px: width and height.")
+    dash: int = Field(description="The widest pit it can dash over, in px.")
 
 
 class ShowData(BaseModel):
@@ -39,6 +49,7 @@ class ShowData(BaseModel):
     kind: str
     params: dict[str, Scalar] = Field(description="The Asset's own parameters, such as a room's view.")
     resolution: tuple[int, int] = Field(description="The game's internal resolution, from kiripix.toml.")
+    body: BodyOut = Field(description="The stand-in player, from kiripix.toml.")
     variants: list[VariantOut]
     picked: str | None
     stages: list[StageDetail]
@@ -50,6 +61,12 @@ class ShowData(BaseModel):
             params = ", ".join(f"{k}={v}" for k, v in stage.params.items())
             lines.append(f"  {stage.stage:<10} {stage.status}" + (f"  {params}" if params else ""))
         return "\n".join(lines)
+
+
+def _outputs(project: Project, folder: Path) -> list[str]:
+    if not (folder / STAMP_FILE).is_file():
+        return []
+    return [project.relative(path) for path in sorted(folder.iterdir()) if path.is_file() and path.name != STAMP_FILE]
 
 
 @command(
@@ -79,6 +96,8 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
             decisions=current_decisions(graph.replay(state.stage).current),
             image=project.relative(image) if image is not None and image.is_file() else None,
             input_image=project.relative(source[1]) if source is not None and source[1].is_file() else None,
+            outputs=_outputs(project, graph.output_dir(spec)),
+            markers=spec.markers(graph.replay(state.stage).current) if spec.markers is not None else [],
         ))
     takes_variants = sources.takes_pick(graph)
     variants = sources.variants(asset) if takes_variants else {}
@@ -87,6 +106,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         kind=asset.kind,
         params=dict(asset.settings.params),
         resolution=project.settings.project.resolution,
+        body=BodyOut(size=project.settings.body.size, dash=project.settings.body.dash),
         variants=[VariantOut(name=name, file=project.relative(path)) for name, path in variants.items()],
         picked=sources.picked(graph) if takes_variants else None,
         stages=stages,

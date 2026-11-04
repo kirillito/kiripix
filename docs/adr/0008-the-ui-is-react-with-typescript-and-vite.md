@@ -13,7 +13,8 @@ gives us no more, and plain TypeScript would leave us writing and keeping our ow
 - The UI is a build step, with its own dependencies locked in `web/package-lock.json`. `uv sync` and the Python tests
   don't need Node.
 - `web/` is built only on the REST Commands and transport routes. Its types describe their results, and it has no
-  logic of its own: what a Stage needs, how it is checked and what comes next all come from Commands.
+  logic of its own: what a Stage needs, how it is checked and what comes next all come from Commands. One exception, the
+  Owner's decision of 2026-11-04: the walk test's dash repeats where `ops.reach` lands a dash (ticket 0027).
 - A canvas widget owns its pixels and its gesture state, and tells React only about finished gestures, each of which
   is one Command (spec §10.1).
 - The wheel carries the built app as `kiripix/web`, so an installed Kiripix needs no Node.

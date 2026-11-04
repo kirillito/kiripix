@@ -17,19 +17,17 @@ needs-review. The pinned results of a Stage's current calls are part of its inpu
 
 import json
 import shutil
-import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ContextManager, Literal
 
 from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic, cancel, journal, pinning
+from kiripix.core import atomic, cancel, journal, pinning, warm
 from kiripix.core.assets import HISTORY_FILE, Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.hashing import HashCache, hash_bytes, hash_json
@@ -79,6 +77,11 @@ class ProgressEvent(BaseModel):
 
 
 ProgressSink = Callable[[ProgressEvent], None]
+
+
+def gpu_wait_notice(progress: ProgressSink, stage: str | None = None) -> Callable[[str], None]:
+    """What `hold` tells when it waits for a warm Runner to unload, as a progress event."""
+    return lambda message: progress(ProgressEvent(event="gpu_wait", stage=stage, message=message))
 
 
 def _now() -> str:
@@ -367,21 +370,6 @@ class AssetGraph:
         return [self.state(s.name) for s in self.kind.stages]
 
 
-# A server runs Commands on threads that share the registered Runners, and a --cpu call holds no GPU lock.
-_RUNNER_LOADED = threading.Lock()
-
-
-@contextmanager
-def _one_runner_loaded() -> Iterator[None]:
-    """Wait for this process's other Runner call to finish, for as long as the Command isn't cancelled."""
-    while not _RUNNER_LOADED.acquire(timeout=0.05):
-        cancel.check()
-    try:
-        yield
-    finally:
-        _RUNNER_LOADED.release()
-
-
 def _rename(source: Path, target: Path) -> None:
     for attempt in range(20):
         try:
@@ -425,6 +413,10 @@ class _Runner:
     def _gpu_lock(self) -> list[str]:
         return [] if self.cpu else [GPU_LOCK]
 
+    def _hold_gpu(self, stage: str, needed: bool = True) -> ContextManager[None]:
+        return hold(self.graph.project.state_dir, self._gpu_lock() if needed else [], self.wait, self.command_line,
+                    on_wait=gpu_wait_notice(self.progress, stage))
+
     def make_runner_calls(self, spec: StageSpec) -> str | None:
         """Make the Stage's Runner calls that have no pinned result, and pin each as it finishes, so a cancel loses only
         the call it stopped. One Runner is loaded at a time, under the GPU lock, and unloaded after use. Returns why
@@ -438,7 +430,7 @@ class _Runner:
                 directory = weights_dir(graph.project.state_dir, runner)
                 self.progress(ProgressEvent(event="runner_start", stage=spec.name, message=runner_id))
                 pull(directory, runner, cancel.check)
-                with hold(graph.project.state_dir, self._gpu_lock(), self.wait, self.command_line), _one_runner_loaded():
+                with self._hold_gpu(spec.name), warm.one_runner_loaded():
                     runner.load(directory, device)
                     try:
                         for call in (c for c in missing if c.runner == runner_id):
@@ -540,7 +532,7 @@ class _Runner:
 
         try:
             context = graph.stage_run(spec, building, progress=report)
-            with hold(graph.project.state_dir, self._gpu_lock() if spec.gpu else [], self.wait, self.command_line):
+            with self._hold_gpu(spec.name, spec.gpu):
                 spec.run(context)
             cancel.check()
             unpainted = self._paint_overrides(spec, building)

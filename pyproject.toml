@@ -67,12 +67,13 @@ ignore_missing_imports = true
 root_package = "kiripix"
 
 [[tool.importlinter.contracts]]
-name = "Layers: adapters, commands, core, recipes, runners and providers, checks, ops"
+name = "Layers: adapters, commands, export, core, recipes, runners and providers, checks, ops"
 type = "layers"
 layers = [
     "kiripix.cli | kiripix.server",
     "kiripix.commands",
-    "kiripix.core | kiripix.export",
+    "kiripix.export",
+    "kiripix.core",
     "kiripix.recipes",
     "kiripix.runners | kiripix.providers",
     "kiripix.checks",

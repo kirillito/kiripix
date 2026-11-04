@@ -22,12 +22,14 @@ from kiripix.commands.contract import ProgressEvent
 from kiripix.commands.files import FileInputs, project_root, served_file
 from kiripix.commands.jobs import Job
 from kiripix.commands.registry import Command
+from kiripix.core import warm
 from kiripix.core.errors import fail
 
 JobProgress = Callable[[str, str, ProgressEvent], None]  # (job id, Command name, event)
 
 
 INPUT_PART = "input"  # the multipart part with the input's other fields, as JSON
+DEFAULT_WARM_IDLE = warm.DEFAULT_IDLE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -57,16 +59,18 @@ def built_web(root: Path, explicit: Path | None = None) -> Path | None:
 
 
 class Session:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, warm_idle: float) -> None:
         self.root = root
+        warm.set_idle_seconds(warm_idle)
         self._token = secrets.token_urlsafe(24)
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
     @classmethod
-    def open(cls, cwd: Path) -> "Session":
-        """The session for the Project containing `cwd`; raises `project.not_found` outside one."""
-        return cls(project_root(cwd))
+    def open(cls, cwd: Path, warm_idle: float) -> "Session":
+        """The session for the Project containing `cwd`; raises `project.not_found` outside one. `warm_idle` is how long
+        a warm Runner stays loaded unused, in seconds."""
+        return cls(project_root(cwd), warm_idle)
 
     def ready(self, url: str, port: int, web: Path | None, *, with_token: bool) -> dict[str, object]:
         line: dict[str, object] = {"event": "ready", "url": url, "port": port, "root": str(self.root),
@@ -144,11 +148,13 @@ class Session:
                        owner_action="Check the job id; a job is forgotten as soon as it finishes.")
         return CancelData(job=job_id, cancelled=job.cancel())
 
-    def cancel_all(self) -> None:
+    def close(self) -> None:
+        """When the server stops: cancel what is running, and let go of the warm Runner and its GPU lock."""
         with self._lock:
             jobs = list(self._jobs.values())
         for job in jobs:
             job.cancel()
+        warm.shut_down()
 
     def file(self, relative: str) -> Path:
         found = served_file(self.root, relative)

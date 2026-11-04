@@ -45,6 +45,13 @@ export interface StageDetail extends StageState {
   decisions: { id: string; name: string; data: Record<string, unknown> }[];
   image: string | null;
   input_image: string | null;
+  outputs: string[];
+  markers: Record<string, unknown>[];
+}
+
+export interface Body {
+  size: [number, number];
+  dash: number;
 }
 
 export interface ShowData {
@@ -52,6 +59,7 @@ export interface ShowData {
   kind: string;
   params: Record<string, Scalar>;
   resolution: [number, number];
+  body: Body;
   variants: { name: string; file: string }[];
   picked: string | null;
   stages: StageDetail[];

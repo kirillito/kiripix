@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from kiripix.runners.base import CheckCancel, Device, Runner, RunnerError, WeightFile
+from kiripix.runners.base import CheckCancel, Device, EmbeddingRunner, RunnerError, WeightFile
 
 _SIZE = 1024
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -66,7 +66,7 @@ def _run(session: Any, feeds: dict[str, np.ndarray], check_cancel: CheckCancel) 
     return result
 
 
-class Sam2(Runner):
+class Sam2(EmbeddingRunner):
     id = "sam2.1-small"
     description = "SAM 2.1 (hiera small): click-to-segment."
     licence = "Apache-2.0"
@@ -102,7 +102,7 @@ class Sam2(Runner):
     def device_used(self) -> str:
         return "cuda" if self._encoder is not None and CUDA in self._encoder.get_providers() else "cpu"
 
-    def _embeddings(self, image: np.ndarray, check_cancel: CheckCancel) -> dict[str, np.ndarray]:
+    def embed(self, image: np.ndarray, check_cancel: CheckCancel) -> dict[str, np.ndarray]:
         key = image.tobytes()
         if self._embedded is not None and self._embedded[0] == key:
             return self._embedded[1]
@@ -114,14 +114,15 @@ class Sam2(Runner):
         self._embedded = (key, embeddings)
         return embeddings
 
-    def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
+    def decode(self, embedding: dict[str, np.ndarray], size: tuple[int, int], params: dict[str, Any],
+               check_cancel: CheckCancel) -> np.ndarray:
         """`params`: `points`, each [x, y, positive] in the image's pixels; `max_size`, the cap on the Mask's size."""
-        height, width = image.shape[:2]
+        height, width = size
         points = params["points"]
         coordinates = np.array([[x * _SIZE / width, y * _SIZE / height] for x, y, _ in points], dtype=np.float32)
         labels = np.array([1 if positive else 0 for _, _, positive in points], dtype=np.int64)
         feeds = {
-            **self._embeddings(image, check_cancel),
+            **embedding,
             "input_points": coordinates[None, None],
             "input_labels": labels[None, None],
             "input_boxes": np.zeros((1, 0, 4), dtype=np.float32),

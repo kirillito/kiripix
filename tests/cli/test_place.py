@@ -30,7 +30,7 @@ def place(project: Kiripix, marker_id: str, marker_type: str, at: tuple[int, int
 
 
 def built_place(project: Kiripix, expect: int = 3) -> dict[str, Any]:
-    """Run down to `place`; the run stops at `reach` with no Spawn or Exit, or else at `export`, not built yet."""
+    """Run down to `place`; the run stops at `reach` with no Spawn or Exit, or else at `export`, with no target."""
     return project.json("run", ROOM, expect=expect)
 
 

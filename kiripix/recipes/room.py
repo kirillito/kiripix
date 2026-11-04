@@ -16,12 +16,14 @@ from kiripix.recipes.base import (
     PALETTE_PARAMS,
     PICK,
     CheckSpec,
+    ClickPoint,
     CurrentDecision,
     DecisionSpec,
     KindSpec,
     NeedsInput,
     ParamSpec,
     RunnerCall,
+    SegmentHooks,
     StageFailure,
     StageInputs,
     StageRun,
@@ -32,12 +34,15 @@ from kiripix.recipes.base import (
 from kiripix.ops import (
     BayerSize,
     Grid,
+    collision_shapes,
     conformance,
+    contours,
     detect_grid,
     downscale_mode,
     flood_region,
     mask_to_target,
     narrowest_gaps,
+    navigation_polygon,
     paint_stroke,
     parse_gpl,
     parse_hex,
@@ -45,6 +50,7 @@ from kiripix.ops import (
     reachable,
     remove_orphans,
     sample_nearest,
+    simplify,
     snap_cell,
     split_painted,
     target_centre,
@@ -282,15 +288,17 @@ def _masks_needs_input(run: StageRun) -> NeedsInput | None:
     return None
 
 
+def _click_params(clicks: list[ClickPoint], grid: Grid) -> dict[str, Any]:
+    points = [[*target_centre(grid, x, y), positive] for x, y, positive in clicks]
+    return {"points": points, "max_size": _RUNNER_MAX_SIZE}
+
+
 def _click_call(group: list[CurrentDecision], grid: Grid, source: Path) -> RunnerCall:
-    points = []
-    for decision in group:
-        x, y = target_centre(grid, int(decision.data["x"]), int(decision.data["y"]))
-        points.append([x, y, bool(decision.data["positive"])])
+    clicks = [(int(d.data["x"]), int(d.data["y"]), bool(d.data["positive"])) for d in group]
     return RunnerCall(
         runner=SEGMENTER,
         image=source,
-        params={"points": points, "max_size": _RUNNER_MAX_SIZE},
+        params=_click_params(clicks, grid),
         decisions=[{"x": d.data["x"], "y": d.data["y"], "positive": d.data["positive"]} for d in group],
     )
 
@@ -308,12 +316,34 @@ def _segmented(run: StageRun, group: list[CurrentDecision]) -> np.ndarray:
     """The pinned result of a group of clicks, on the target grid."""
     read = _read_grid(run)
     assert read is not None  # `fit` is upstream, and built
+    path = run.pinned(_click_call(group, read[0], run.upstream["source"] / "source.png"))
+    with Image.open(path) as image:
+        return _runner_mask_to_target(image, read)
+
+
+def _runner_mask_to_target(mask: Image.Image, read: tuple[Grid, dict[str, Any]]) -> np.ndarray:
     grid, record = read
     source_width, source_height = record["source"]
-    path = run.pinned(_click_call(group, grid, run.upstream["source"] / "source.png"))
-    with Image.open(path) as image:
-        on_source = image.convert("1").resize((int(source_width), int(source_height)), Image.Resampling.NEAREST)
+    on_source = mask.convert("1").resize((int(source_width), int(source_height)), Image.Resampling.NEAREST)
     return mask_to_target(np.asarray(on_source, dtype=np.bool_), grid)
+
+
+def _preview_call(run: StageRun, clicks: list[ClickPoint]) -> RunnerCall | None:
+    """The call a `segment-preview` makes. Its `decisions` stay empty, since nothing was decided."""
+    read = _read_grid(run)
+    source = run.upstream["source"] / "source.png"
+    if read is None or not source.is_file():
+        return None
+    for x, y, _ in clicks:
+        if not (x < read[0].width and y < read[0].height):
+            raise StageFailure(f"the point ({x}, {y}) is outside the {read[0].width}x{read[0].height} Plate")
+    return RunnerCall(runner=SEGMENTER, image=source, params=_click_params(clicks, read[0]), decisions=[])
+
+
+def _preview_to_target(run: StageRun, mask: np.ndarray) -> np.ndarray:
+    read = _read_grid(run)
+    assert read is not None  # `_preview_call` found it
+    return _runner_mask_to_target(Image.fromarray(mask), read)
 
 
 def _decision_mask(run: StageRun, view: _ViewMasks, name: str, decision: str) -> str:
@@ -521,11 +551,15 @@ def _no_walking(run: StageRun) -> np.ndarray:
     return solid | _read_mask(pit) if pit.is_file() else solid
 
 
-def _place(run: StageRun) -> None:
+def _current_markers(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
     markers: dict[tuple[str, str], dict[str, Any]] = {}
-    for decision in run.decisions:
+    for decision in decisions:
         markers[str(decision.data["id"]), str(decision.data["type"])] = decision.data  # a move keeps its first place
-    (run.output_dir / "markers.json").write_text(json.dumps({"markers": list(markers.values())}, indent=2) + "\n",
+    return list(markers.values())
+
+
+def _place(run: StageRun) -> None:
+    (run.output_dir / "markers.json").write_text(json.dumps({"markers": _current_markers(run.decisions)}, indent=2) + "\n",
                                                  encoding="utf-8")
     if "walkable" not in _view_masks(run).derived:
         return  # the side view's reachability is over platforms (M5)
@@ -534,7 +568,10 @@ def _place(run: StageRun) -> None:
         raise StageFailure(f"walkable is derived from the 'solid' Mask, and the {run.asset_params['view']} view "
                            "doesn't define one; add it under [masks] in kiripix.toml")
     width, height = run.settings["body"]["size"]
-    _write_mask(run.output_dir / "walkable.png", walkable(_no_walking(run), (int(width), int(height))))
+    footprint = (int(width), int(height))
+    _write_mask(run.output_dir / "walkable.png", walkable(_no_walking(run), footprint))
+    # Where a dash may pass: only `solid` stops it. The walk test reads it, as `reach` works it out.
+    _write_mask(run.output_dir / "clear.png", walkable(_read_mask(path), footprint))
 
 
 def _check_place(run: StageRun) -> list[Finding]:
@@ -706,6 +743,50 @@ def _check_reach(run: StageRun) -> list[Finding]:
     return findings
 
 
+# export: what the game gets, with nothing of Godot in it: the mapped Plate, and `room.json` with the collision shapes, the
+# navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
+
+_COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
+_NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
+
+
+def _export_needs_input(run: StageRun) -> NeedsInput | None:
+    if run.settings["export.godot"].get("project"):
+        return None
+    return NeedsInput("no Godot project to export into", owner_action=_NO_TARGET)
+
+
+def _export(run: StageRun) -> None:
+    shutil.copyfile(run.upstream["palette"] / "palette.png", run.output_dir / "plate.png")
+    tolerance = float(run.params["tolerance"])
+    collision = {}
+    for name in _COLLISION_MASKS:
+        run.check_cancel()
+        path = run.upstream[MASKS_STAGE] / f"{name}.png"
+        collision[name] = collision_shapes(simplify(contours(_read_mask(path)), tolerance)) if path.is_file() else []
+    run.check_cancel()
+    ground = _read_mask(run.upstream["place"] / "walkable.png") & _read_mask(run.upstream["reach"] / "reachable.png")
+    navigation = navigation_polygon(simplify(contours(ground), tolerance))
+    markers = json.loads((run.upstream["place"] / "markers.json").read_text(encoding="utf-8"))["markers"]
+    room = {
+        "schema_version": 1,
+        "asset": run.asset_id,
+        "size": [ground.shape[1], ground.shape[0]],
+        "collision": collision,
+        "navigation": {"vertices": navigation.vertices, "polygons": navigation.polygons,
+                       "outlines": navigation.outlines},
+        "markers": markers,
+    }
+    (run.output_dir / "room.json").write_text(json.dumps(room, indent=2) + "\n", encoding="utf-8")
+
+
+def _check_export(run: StageRun) -> list[Finding]:
+    if run.settings["export.godot"].get("project"):
+        return []
+    return [Finding(code="export.no_target", message="no Godot project to export into",
+                    position=Position(asset=run.asset_id, stage="export"), owner_action=_NO_TARGET)]
+
+
 ROOM = KindSpec(
     name="room",
     description="A background scene with Layers, Masks and Markers, in top or side view.",
@@ -824,6 +905,7 @@ ROOM = KindSpec(
             needs_input=_masks_needs_input,
             check=_check_masks,
             runner_calls=_masks_runner_calls,
+            segment=SegmentHooks(call=_preview_call, to_target=_preview_to_target),
         ),
         StageSpec(
             name="palette",
@@ -854,6 +936,7 @@ ROOM = KindSpec(
             available_from="M1",
             run=_place,
             check=_check_place,
+            markers=_current_markers,
         ),
         StageSpec(
             name="reach",
@@ -873,14 +956,20 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="export",
-            description="Writes the Godot scene.",
-            inputs=StageInputs(settings=["export.godot"]),
+            description="Builds what the game gets: the mapped Plate, collision shapes, navigation polygon and Markers. "
+                        "`kiripix export` then writes them into the Godot project.",
+            inputs=StageInputs(upstream=["reach", "place", "palette", MASKS_STAGE], settings=["export.godot"]),
+            params=(ParamSpec(name="tolerance", type="float", description="How far collision and navigation outlines "
+                              "may stray from the Mask, in px. 0 keeps every corner.", default=1.0, minimum=0),),
             checks=(
                 CheckSpec(code="export.no_target", description="The export target is set."),
                 CheckSpec(code="exit.unpaired", description="Every Exit points to an Exit that points back."),
             ),
             output_root="out",
             available_from="M1",
+            run=_export,
+            needs_input=_export_needs_input,
+            check=_check_export,
         ),
     ),
 )

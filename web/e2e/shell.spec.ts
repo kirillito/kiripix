@@ -279,7 +279,7 @@ test("a parameter-only Stage's panel comes from describe, with its Checks live",
   await page.getByTestId("param-width").press("Enter");
   await page.getByTestId("run").click();
 
-  await expect(page.getByTestId("finding-brief.size_not_tiles")).toBeVisible();
+  await expect(page.getByTestId("checks").getByTestId("finding-brief.size_not_tiles")).toBeVisible();
   await page.getByTestId("param-width").fill("48");
   await page.getByTestId("param-width").press("Enter");
   await page.getByTestId("run").click();

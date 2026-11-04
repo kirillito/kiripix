@@ -25,7 +25,7 @@ from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
 from kiripix.core.project_checks import register_project_check
 from kiripix.recipes import register_kind
-from kiripix.runners import SEGMENTER, CheckCancel, Device, Runner, RunnerError, WeightFile, register_runner
+from kiripix.runners import SEGMENTER, CheckCancel, Device, EmbeddingRunner, RunnerError, WeightFile, register_runner
 from kiripix.recipes.base import (
     DecisionSpec,
     KindSpec,
@@ -172,6 +172,8 @@ register_kind(
 # - runner-calls.jsonl: one line per call, with the device and the parameters;
 # - runner-fails: while it exists, a call fails;
 # - hold-runner: while it exists, a call marks `runner-holding` and waits in chunks, checking the cancel token;
+# - runner-embeds.jsonl, runner-decodes.jsonl: one line per run of a warm Runner's two halves;
+# - hold-embed: while it exists, an `embed` marks `embed-holding` and waits in chunks, checking the cancel token;
 # - fake-weights-v2: while it exists, the Runner's weights hash is another one, as if it had been upgraded.
 
 _WEIGHTS = Path(__file__).parent / "fake_weights.bin"
@@ -181,7 +183,7 @@ def _fake_weight(sha256: str) -> WeightFile:
     return WeightFile("fake_weights.bin", _WEIGHTS.as_uri(), sha256, _WEIGHTS.stat().st_size)
 
 
-class FakeSegmenter(Runner):
+class FakeSegmenter(EmbeddingRunner):
     """Deterministic: the Mask is capped at `max_size` as SAM 2's is. In it, a positive click sets a square reaching an
     eighth of the longer side around it, and a negative click clears one half that size."""
 
@@ -218,7 +220,30 @@ class FakeSegmenter(Runner):
                 time.sleep(0.05)  # stands in for a long inference
         if Path("runner-fails").exists():
             raise RunnerError("the fake Runner was told to fail")
-        height, width = image.shape[:2]
+        return self._mask(image.shape[:2], params)
+
+    def embed(self, image: np.ndarray, check_cancel: CheckCancel) -> Any:
+        assert self._device is not None, "called while not loaded"
+        hold = Path("hold-embed")
+        if hold.exists():
+            Path("embed-holding").write_text("", encoding="utf-8")
+            while hold.exists():
+                check_cancel()
+                time.sleep(0.05)  # stands in for a long encoder run
+        with Path("runner-embeds.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"device": self._device}) + "\n")
+        return "the fake embedding"
+
+    def decode(self, embedding: Any, size: tuple[int, int], params: dict[str, Any],
+               check_cancel: CheckCancel) -> np.ndarray:
+        assert self._device is not None and embedding == "the fake embedding"
+        with Path("runner-decodes.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
+        return self._mask(size, params)
+
+    @staticmethod
+    def _mask(size: tuple[int, int], params: dict[str, Any]) -> np.ndarray:
+        height, width = size
         scale = min(1.0, int(params["max_size"]) / max(width, height))
         rows, columns = round(height * scale), round(width * scale)
         mask = np.zeros((rows, columns), dtype=np.bool_)

@@ -42,7 +42,7 @@ CI also runs these on Linux, then `uv run pytest tests/cli/test_wheel.py`, which
   are its weights.
 - **The import rule** (spec §13, enforced by `lint-imports`, layers in `pyproject.toml`): `ops` imports nothing else
   from Kiripix; `checks` only `ops`; `recipes` only `runners`, `providers`, `checks` and `ops`; `core` sits on
-  `recipes`; `commands` on `core`; `cli` and `server` import only `kiripix.commands`.
+  `recipes`; `export` on `core`; `commands` on `export`; `cli` and `server` import only `kiripix.commands`.
 - **Every operation is a Command** in `kiripix/commands/`, declared with `@command(...)`. Adapters hold no logic.
   Every result is the envelope `api_version`, `ok`, `data`, `findings`; every finding has a stable dotted `code` and
   exactly one of `fix` (a command an agent can run) or `owner_action` (only the owner can do it). Exit codes: 0 ok,

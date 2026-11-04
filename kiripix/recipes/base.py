@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from kiripix.checks import Finding
@@ -157,6 +158,17 @@ class NeedsInput:
 
 NeedsInputFunction = Callable[[StageRun], NeedsInput | None]
 CheckFunction = Callable[[StageRun], list[Finding]]
+ClickPoint = tuple[int, int, bool]  # x and y in target pixels, and whether the click is a positive one
+
+
+@dataclass(frozen=True)
+class SegmentHooks:
+    """What the `segment-preview` Probe needs from a Stage that segments. `call` is the Runner call for clicks in target
+    pixels: None until what it needs upstream is built, and StageFailure for a point off the image. `to_target` maps the
+    Runner's result back to the target grid. A preview is never recorded or pinned."""
+
+    call: Callable[[StageRun, list[ClickPoint]], RunnerCall | None]
+    to_target: Callable[[StageRun, np.ndarray], np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -185,6 +197,8 @@ class StageSpec:
     needs_input: NeedsInputFunction | None = None
     check: CheckFunction | None = None
     runner_calls: RunnerCallsFunction | None = None
+    segment: SegmentHooks | None = None
+    markers: Callable[[tuple[CurrentDecision, ...]], list[dict[str, Any]]] | None = None  # for `show`, before any build
 
 
 @dataclass(frozen=True)

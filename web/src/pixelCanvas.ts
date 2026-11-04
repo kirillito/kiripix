@@ -12,6 +12,29 @@ function isButton(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.tagName === "BUTTON";
 }
 
+export interface CanvasPixel {
+  x: number;
+  y: number;
+}
+
+// Where the image is on the canvas, in canvas pixels, and its size in its own.
+export interface CanvasFrame {
+  left: number;
+  top: number;
+  zoom: number;
+  width: number;
+  height: number;
+  element: HTMLCanvasElement;
+}
+
+// What a Stage's screen adds to the canvas: it draws over the image, and takes a gesture on it that isn't a pan.
+export interface CanvasTool {
+  draw(context: CanvasRenderingContext2D, frame: CanvasFrame): void;
+  pointerDown?(pixel: CanvasPixel, frame: CanvasFrame): boolean; // true: this tool takes the gesture
+  pointerMove?(pixel: CanvasPixel): void;
+  pointerUp?(pixel: CanvasPixel): void;
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -32,7 +55,9 @@ export class PixelCanvas {
   private panY = 0;
   private split = 0.5;
   private spaceHeld = false;
-  private gesture: "pan" | "split" | null = null;
+  private gesture: "pan" | "split" | "tool" | null = null;
+  private tools: CanvasTool[] = [];
+  private active: CanvasTool | null = null;
   private gameFrame: [number, number] | null = null;
   private focused: { x: number; y: number } | null = null;
   private centrePending = false;
@@ -79,6 +104,37 @@ export class PixelCanvas {
     if (this.centrePending && this.after) this.centre();
     this.element.dataset.loaded = this.after ? `${this.after.naturalWidth}x${this.after.naturalHeight}` : "";
     this.draw();
+  }
+
+  setTools(tools: CanvasTool[]): void {
+    this.tools = tools;
+    this.active = null;
+    this.draw();
+  }
+
+  redraw(): void {
+    this.draw();
+  }
+
+  private frame(): CanvasFrame | null {
+    if (!this.after) return null;
+    const [left, top] = this.origin();
+    return {
+      left,
+      top,
+      zoom: this.zoom,
+      width: this.after.naturalWidth,
+      height: this.after.naturalHeight,
+      element: this.element,
+    };
+  }
+
+  // The image pixel under the pointer, held inside the image.
+  private pixelAt(event: PointerEvent, frame: CanvasFrame): CanvasPixel {
+    return {
+      x: Math.min(frame.width - 1, Math.max(0, Math.floor((event.offsetX - frame.left) / frame.zoom))),
+      y: Math.min(frame.height - 1, Math.max(0, Math.floor((event.offsetY - frame.top) / frame.zoom))),
+    };
   }
 
   // A new Asset starts at the largest zoom that fits.
@@ -189,6 +245,11 @@ export class PixelCanvas {
       );
       context.lineWidth = 1;
     }
+    const frame = this.frame();
+    if (frame) {
+      this.element.dataset.origin = `${frame.left},${frame.top}`;
+      for (const tool of this.tools) tool.draw(context, frame);
+    }
   }
 
   private nearSplit(event: PointerEvent): boolean {
@@ -203,14 +264,30 @@ export class PixelCanvas {
     } else if (this.nearSplit(event)) {
       this.gesture = "split";
     } else {
-      return;
+      const frame = this.frame();
+      const inside =
+        frame &&
+        event.offsetX >= frame.left &&
+        event.offsetY >= frame.top &&
+        event.offsetX < frame.left + frame.width * frame.zoom &&
+        event.offsetY < frame.top + frame.height * frame.zoom;
+      this.active = inside
+        ? (this.tools.find((tool) => tool.pointerDown?.(this.pixelAt(event, frame), frame)) ?? null)
+        : null;
+      if (!this.active) return;
+      this.gesture = "tool";
+      this.draw();
     }
     this.element.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
-    if (this.gesture === "pan") {
+    if (this.gesture === "tool") {
+      const frame = this.frame();
+      if (frame) this.active?.pointerMove?.(this.pixelAt(event, frame));
+      this.draw();
+    } else if (this.gesture === "pan") {
       this.panX += event.movementX;
       this.panY += event.movementY;
       this.draw();
@@ -225,6 +302,12 @@ export class PixelCanvas {
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     if (this.gesture) this.element.releasePointerCapture(event.pointerId);
+    if (this.gesture === "tool") {
+      const frame = this.frame();
+      if (frame) this.active?.pointerUp?.(this.pixelAt(event, frame));
+      this.active = null;
+      this.draw();
+    }
     this.gesture = null;
   };
 

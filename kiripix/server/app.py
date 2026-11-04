@@ -130,7 +130,7 @@ def create_app(session: Session, web: Path | None = None) -> FastAPI:
         finally:
             hub.close()
             watch.stop()
-            session.cancel_all()
+            session.close()
 
     app = FastAPI(title="Kiripix", version=str(API_VERSION), lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)

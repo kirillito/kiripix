@@ -26,6 +26,7 @@ import {
   type Filter,
 } from "./components";
 import type { PixelCanvas } from "./pixelCanvas";
+import { PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
 const REFRESH_DELAY_MS = 100; // one refresh for a burst of "changed" events
@@ -170,6 +171,8 @@ export function App() {
   const description = kind ? recipes[kind]?.find((entry) => entry.name === current) : undefined;
   const detail = show?.stages.find((entry) => entry.stage === current);
   const isSource = description?.decisions.some((decision) => decision.name === PICK) ?? false;
+  const isPlace = description?.decisions.some((decision) => decision.name === PLACE_DECISION) ?? false;
+  const isReach = current === REACH_STAGE && show?.kind === "room";
 
   // Each user action is one Command; its findings show until the next action. They go one at a time, in the order they
   // were made: a Run straight after a `set` must see that `set`, not find its lock held.
@@ -200,6 +203,13 @@ export function App() {
       if (!result.ok) setRefusals((count) => count + 1); // The control goes back to the value that stands.
       return result;
     });
+  const decideMarker = useCallback(
+    (marker: Record<string, unknown>) => {
+      const decision = JSON.stringify({ decision: PLACE_DECISION, data: marker });
+      void perform(() => call("decide", { asset, stage: current, decision }));
+    },
+    [asset, current, perform],
+  );
   const pick = useCallback(
     (variant: string) => {
       if (!busy) void perform(() => call("pick", { asset, variant }));
@@ -269,7 +279,9 @@ export function App() {
   }
 
   const stageChecks = data.checks.filter((finding) => (finding.position?.stage ?? current) === current);
-  const image = detail?.image ?? detail?.input_image ?? null;
+  // Reach has no image of its own, and the Body walks on the mapped room that `place` is made on.
+  const reachImage = isReach ? show?.stages.find((entry) => entry.stage === "place")?.input_image : null;
+  const image = detail?.image ?? detail?.input_image ?? reachImage ?? null;
   const after = image ? fileUrl(image, imageVersion) : null;
   const before = detail?.image && detail.input_image ? fileUrl(detail.input_image, imageVersion) : null;
 
@@ -331,6 +343,26 @@ export function App() {
               <p className="hint" data-testid="next-hint">
                 {next.owner_action ?? <code>{next.command}</code>}
               </p>
+            )}
+            {isPlace && (
+              <PlacePanel
+                key={asset}
+                canvas={canvas}
+                detail={detail}
+                status={data.status}
+                decide={decideMarker}
+                disabled={busy}
+              />
+            )}
+            {isReach && (
+              <ReachPanel
+                key={asset}
+                canvas={canvas}
+                show={show}
+                detail={detail}
+                imageVersion={imageVersion}
+                onWalking={setGameFrame}
+              />
             )}
             <fieldset disabled={busy}>
               {description.params.map((param) => (

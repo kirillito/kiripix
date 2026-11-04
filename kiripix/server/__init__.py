@@ -13,7 +13,9 @@ from pathlib import Path
 import uvicorn
 from pydantic import BaseModel, ConfigDict, Field
 
-from kiripix.commands import ExitCode, Finding, KiripixError, Launcher, Session, built_web, error_envelope
+from kiripix.commands import (
+    DEFAULT_WARM_IDLE, ExitCode, Finding, KiripixError, Launcher, Session, built_web, error_envelope,
+)
 from kiripix.server.app import create_app
 
 DEFAULT_PORT = 8765
@@ -26,6 +28,7 @@ class ServeInput(BaseModel):
     port: int = Field(DEFAULT_PORT, ge=0, le=65535, description="The port; 0 picks a free one.")
     web: Path | None = Field(None, description="The built web app to serve. Default: web/dist in the Project, else the one shipped with Kiripix.")
     print_token: bool = Field(False, description="Include the session token in the ready line (for another UI).")
+    warm_idle: float = Field(DEFAULT_WARM_IDLE, gt=0, description="Unload a warm Runner after this many seconds unused.")
 
 
 def _emit(line: str) -> None:
@@ -41,7 +44,7 @@ def _report(findings: list[Finding]) -> ExitCode:
 
 def _serve(arguments: ServeInput, cwd: Path, open_browser: bool) -> ExitCode:
     try:
-        session = Session.open(cwd)
+        session = Session.open(cwd, arguments.warm_idle)
     except KiripixError as error:
         return _report(error.findings)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

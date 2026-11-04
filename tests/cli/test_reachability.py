@@ -58,7 +58,7 @@ def test_a_room_with_no_spawn_or_exit_needs_the_owner_to_place_one(project: Kiri
     assert advice["command"] is None and f"kiripix decide {ROOM} place" in advice["owner_action"]
 
     place(project, "spawn.main", "spawn")
-    project.json("run", ROOM, expect=3)  # stops at export, which isn't built yet
+    project.json("run", ROOM, expect=3)  # stops at export, which has no target
 
     assert stage_status(project, ROOM)["reach"] == "done"
 

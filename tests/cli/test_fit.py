@@ -158,6 +158,6 @@ def test_describe_shows_palette_below_layers_not_masks(project: Kiripix) -> None
     stages = {s["name"]: s for s in project.json("describe", "room")["data"]["kinds"][0]["stages"]}
 
     assert stages["palette"]["inputs"]["upstream"] == ["layers"]
-    assert stages["masks"]["inputs"]["upstream"] == ["layers"]
+    assert stages["masks"]["inputs"]["upstream"] == ["layers", "source", "fit"]  # its Runner works on the Source
     assert stages["fit"]["inputs"]["upstream"] == ["source", "brief"]
     assert stages["layers"]["available_from"] == "M1" and stages["layers"]["gpu"] is False

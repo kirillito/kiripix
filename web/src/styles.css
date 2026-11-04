@@ -258,6 +258,23 @@ fieldset {
   margin-right: auto;
 }
 
+.marker-form .param input:not([type="checkbox"]),
+.marker-form .param select {
+  width: 100%;
+}
+
+.marker-form > button {
+  margin-top: 8px;
+}
+
+.marker-row {
+  display: block;
+}
+
+.walk button {
+  margin-bottom: 6px;
+}
+
 .findings {
   list-style: none;
   margin: 0;

@@ -15,7 +15,8 @@ from kiripix.ops.colour import (
 )
 from kiripix.ops.cleanup import remove_orphans
 from kiripix.ops.compose import overlay
-from kiripix.ops.masks import flood_region, paint_stroke, snap_cell, split_painted
+from kiripix.ops.geometry import NavigationPolygon, Outline, collision_shapes, contours, navigation_polygon, simplify
+from kiripix.ops.masks import flood_region, mask_runs, paint_stroke, snap_cell, split_painted
 from kiripix.ops.palette import Palette, PaletteEntry, PaletteSyntaxError, format_gpl, parse_gpl, parse_hex
 from kiripix.ops.reach import Gap, Island, narrowest_gaps, reachable, walkable, walkable_islands
 from kiripix.ops.resample import (
@@ -36,21 +37,27 @@ __all__ = [
     "Gap",
     "Grid",
     "Island",
+    "NavigationPolygon",
+    "Outline",
     "Palette",
     "PaletteEntry",
     "PaletteSyntaxError",
     "bayer_matrix",
+    "collision_shapes",
     "conformance",
+    "contours",
     "detect_grid",
     "downscale_mode",
     "flood_region",
     "format_gpl",
     "has_partial_alpha",
+    "mask_runs",
     "mask_to_source",
     "mask_to_target",
     "nearest_index",
     "overlay",
     "narrowest_gaps",
+    "navigation_polygon",
     "paint_stroke",
     "parse_gpl",
     "parse_hex",
@@ -59,6 +66,7 @@ __all__ = [
     "reachable",
     "remove_orphans",
     "sample_nearest",
+    "simplify",
     "snap_cell",
     "split_painted",
     "srgb_to_oklab",

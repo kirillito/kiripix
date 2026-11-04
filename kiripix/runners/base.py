@@ -65,6 +65,23 @@ class Runner(ABC):
         return "cpu"
 
 
+class EmbeddingRunner(Runner):
+    """A Runner in two halves: `embed` is slow and depends only on the image, and `decode` is fast. So a server can keep an
+    image's embedding, and each new set of parameters on that image runs only `decode` (spec §10.6)."""
+
+    @abstractmethod
+    def embed(self, image: np.ndarray, check_cancel: CheckCancel) -> Any:
+        """The embedding of an (H, W, 4) RGBA image. Raises what `check_cancel` raises, as soon as it can."""
+
+    @abstractmethod
+    def decode(self, embedding: Any, size: tuple[int, int], params: dict[str, Any],
+               check_cancel: CheckCancel) -> np.ndarray:
+        """The result for `params`, from the embedding of an image of `size` (height, width)."""
+
+    def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
+        return self.decode(self.embed(image, check_cancel), image.shape[:2], params, check_cancel)
+
+
 _RUNNERS: dict[str, Runner] = {}
 
 

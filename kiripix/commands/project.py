@@ -14,6 +14,7 @@ from kiripix.core.graph import AssetGraph, StageRunResult, StageState, run_all, 
 from kiripix.core.hashing import HashCache
 from kiripix.core.kinds import all_kinds, get_kind
 from kiripix.core.project import find_project, init_project
+from kiripix.export import EXPORT_STAGE, export_pending
 from kiripix.recipes.base import CheckSpec, DecisionSpec, KindSpec, ParamSpec, StageInputs
 
 
@@ -306,6 +307,9 @@ def next_step(arguments: NextInput, context: Context) -> Outcome[NextData]:
         else:
             data.command = f"kiripix run {asset.id}"
         break
+    if data.done and export_pending(project, asset, cache):
+        data = NextData(asset=asset.id, done=False, stage=EXPORT_STAGE, status="done",
+                        reason="the game doesn't have what is built yet", command=f"kiripix export {asset.id}")
     cache.save()
     return Outcome(data, advice)
 

@@ -104,6 +104,9 @@ A painted Mask of a top-view Room that the Body can't walk on but can dash over,
 stops a dash; a Pit doesn't.
 _Avoid_: gap (a way through `solid`, which the reach report measures)
 
+**Clear**:
+The Derived mask of every spot where the Body's footprint touches no `solid`: where a dash may pass, over a Pit or not.
+
 **Reachable**:
 Walkable ground the Body can get to from a Spawn or an Exit.
 

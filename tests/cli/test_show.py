@@ -60,6 +60,30 @@ def test_a_built_stage_has_its_image_and_the_image_it_was_made_from(project: Kir
     assert stage(data, "brief")["input_image"] is None
 
 
+def test_a_built_stage_lists_its_output_files_and_the_body_comes_from_the_project(project: Kiripix) -> None:
+    built_room(project)
+
+    data = project.json("show", ROOM)["data"]
+
+    assert stage(data, "masks")["outputs"] == ["assets/room/alley/work/masks/pit.png",
+                                               "assets/room/alley/work/masks/solid.png"]
+    assert stage(data, "export")["outputs"] == []
+    assert data["body"] == {"size": [12, 8], "dash": 0}
+
+
+def test_markers_are_the_current_ones_with_a_move_in_the_first_place_before_any_build(project: Kiripix) -> None:
+    project.json("new", "room", "alley", "--view", "top")
+    for marker, x in (("a", 1), ("b", 2), ("a", 3)):
+        data = {"id": marker, "type": "spawn", "x": x, "y": 0}
+        project.json("decide", ROOM, "place", "--decision", json.dumps({"decision": "marker", "data": data}))
+
+    shown = project.json("show", ROOM)["data"]
+
+    assert stage(shown, "place")["markers"] == [{"id": "a", "type": "spawn", "x": 3, "y": 0},
+                                                {"id": "b", "type": "spawn", "x": 2, "y": 0}]
+    assert stage(shown, "masks")["markers"] == []
+
+
 def test_decisions_are_the_current_ones_after_an_undo(project: Kiripix) -> None:
     built_room(project)
     decide(project, "flood", {"x": 0, "y": 0, "mask": "solid"})

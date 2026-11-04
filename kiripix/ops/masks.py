@@ -134,3 +134,11 @@ def snap_cell(mask: BoolMask, cell: int) -> BoolMask:
             if int(block.sum()) * 2 >= block.size:
                 result[top:top + cell, left:left + cell] = True
     return result
+
+
+def mask_runs(mask: BoolMask) -> list[list[int]]:
+    """The Mask as rows of set pixels: [y, x, length], top-left first. A compact form to send to a UI."""
+    edges = np.diff(np.pad(mask.astype(np.int8), ((0, 0), (1, 1))), axis=1)
+    ys, starts = np.nonzero(edges == 1)
+    _, ends = np.nonzero(edges == -1)
+    return [[int(y), int(start), int(end - start)] for y, start, end in zip(ys, starts, ends)]

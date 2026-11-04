@@ -15,6 +15,7 @@ from kiripix.commands.contract import Context, Envelope, Outcome
 from kiripix.commands.registry import Command
 from kiripix.core import cancel
 from kiripix.core.errors import ExitCode, KiripixError
+from kiripix.core.graph import gpu_wait_notice
 from kiripix.core.locks import GPU_LOCK, PROJECT_LOCK, asset_lock, hold
 from kiripix.core.project import find_project
 
@@ -77,8 +78,8 @@ def invoke(command: Command[Any, Any], raw: dict[str, Any], context: Context) ->
             raise KiripixError(refusal.findings, refusal.exit_code)
         locks = _locks(command, arguments)
         with cancel.scope(context.cancel):
-            guard = hold(find_project(context.cwd).state_dir, locks, context.wait, context.command_line) if locks \
-                else nullcontext()
+            guard = hold(find_project(context.cwd).state_dir, locks, context.wait, context.command_line,
+                         on_wait=gpu_wait_notice(context.progress)) if locks else nullcontext()
             with guard:
                 outcome: Outcome[Any] = command.handler(arguments, context)
     except ValidationError as error:

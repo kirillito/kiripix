@@ -84,7 +84,7 @@ def test_a_stage_check_finding_carries_its_pixel_position(project: Kiripix) -> N
 
     assert finding["code"] == "demo.bad_text"
     assert finding["position"] == {"asset": "demo.a", "stage": "copy", "file": "out.txt", "line": None, "x": 1,
-                                   "y": 2, "field": None}
+                                   "y": 2, "width": None, "height": None, "field": None}
 
 
 def test_check_needs_an_asset_or_all(project: Kiripix) -> None:

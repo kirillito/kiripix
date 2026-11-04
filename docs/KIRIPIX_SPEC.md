@@ -374,7 +374,7 @@ Kiripix writes Godot 4 text resources (`.tscn`, `.tres`) and PNGs under `export.
 
 | Asset | Godot output |
 |---|---|
-| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `LightOccluder2D` (optional); `GPUParticles2D` stubs from emitter Markers. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. |
+| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `LightOccluder2D` (optional); `GPUParticles2D` stubs from emitter Markers. `solid` is on collision layer 1 and `pit` is a `StaticBody2D` of its own on layer 2: the game's Body drops layer 2 from its mask while it dashes. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. |
 | Prop | A scene: `Sprite2D` + `StaticBody2D` footprint, origin at the y-sort point. |
 | Character | `SpriteFrames` `.tres`, `CanvasTexture` (diffuse + normal), a scene with `AnimatedSprite2D` and its feet at the origin. |
 
@@ -619,8 +619,8 @@ tests/         unit/, golden/, e2e/
 ```
 
 The import rule: `ops` and `checks` import nothing from the rest; `recipes` use `ops`, `checks`, `runners` and
-`providers`; `commands` uses `core` and `recipes`; `cli` and `server` use only `commands`, so no adapter can hold
-logic of its own.
+`providers`; `core` sits on `recipes`; `export` on `core`; `commands` on `export`; `cli` and `server` use only
+`commands`, so no adapter can hold logic of its own.
 
 ## 14. Milestones
 

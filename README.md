@@ -6,8 +6,8 @@ and one resolution per game, and it is built to be driven equally well by you fr
 agent.
 
 > **Status: early.** Milestone 0 (the skeleton) is done and Milestone 1 (a room, end to end) is in progress. Today a
-> room goes from an imported image through `brief`, `source`, `fit`, `layers`, `masks`, `palette`, `place` and `reach`.
-> `export`, props, characters and generation are not built yet (see [What's not built yet](#whats-not-built-yet)).
+> room goes from an imported image through `brief`, `source`, `fit`, `layers`, `masks`, `palette`, `place`, `reach` and
+> `export`. Props, characters and generation are not built yet (see [What's not built yet](#whats-not-built-yet)).
 > Everything below describes what Kiripix does now.
 
 - [Install](#install)
@@ -188,6 +188,8 @@ Commands that write also take `--wait <seconds>` to wait for a lock another proc
 | `kiripix check <asset>` | Run the Checks of every built Stage of an Asset and list the findings. |
 | `kiripix check --all` | Check every Asset, then the Project checks (those across Assets, such as Exit pairing). |
 | `kiripix preview <asset> [--stage S] [--zoom N] [--overlay masks]` | Write a Stage's image to `.kiripix/previews/` at a whole-number zoom (default 4, nearest neighbour) and print its path. Defaults to the last done Stage with an image. `--overlay masks` tints each Mask over it. |
+| `kiripix export <asset>` | Write a fully built room into the Godot project at `export.godot.project`: its scene, its Plate and its Manifest. It refuses a file that was changed since it was exported, or that the Manifest doesn't list. |
+| `kiripix probe segment-preview <asset> <x,y> [<x,y,neg> ...]` | The Mask those clicks would make, with nothing recorded or pinned. Fast only through `kiripix serve`, which keeps SAM 2 warm. |
 
 ### Sources
 
@@ -277,12 +279,14 @@ and `out/`. Don't commit `work/` or `.kiripix/`; `init` writes a `.gitignore` an
 
 These are designed in [the spec](docs/KIRIPIX_SPEC.md) but don't exist in the CLI yet:
 
-- **Room Stages:** `export` reports `needs-input` with "not implemented until M1". `layers` is a pass-through for now:
-  the Plate is the fit image, with no foreground Layers. `reach` covers the top view; the side view's is M5.
-- **The UI's** hand-written Stage screens: its masks tools, its place screen and the walk test. Today it has the status
-  board, the Stage panels, the Variant grid and the before/after view.
+- **Room Stages:** `layers` is a pass-through for now: the Plate is the fit image, with no foreground Layers. `reach`
+  covers the top view; the side view's is M5.
+- **`export`** writes a room's scene, Plate and Manifest, and refuses a file that changed. Its `--force`, `--adopt`,
+  `--dry-run`, `--all` and `--prune`, and the ID freeze and Exit pairing, aren't built yet.
+- **The UI's** masks tools. Today it has the status board, the Stage panels, the Variant grid, the before/after view, the
+  place screen and the walk test.
 - **Prop** (M2) and **character** (M3) Recipes: `new` creates them and `describe` lists their Stages, but they don't run.
-- Commands: `gen` (Providers), `export` and `manifest` (Godot), `mcp` and `cost`.
+- Commands: `gen` (Providers), `manifest` (Godot), `mcp` and `cost`.
 
 `kiripix describe <kind>` marks each unbuilt Stage with the milestone it arrives in, so it is the quickest way to
 check.
