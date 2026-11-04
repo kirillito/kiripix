@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M1
 agent: imaging-engineer
 type: ticket
@@ -22,6 +22,6 @@ Spec §6.1 (palette) and §7 (colour, cleanup). User story 16 of [0010](0010-m1-
 
 ## Acceptance criteria
 
-- [ ] Golden tests for orphan removal at sizes 0, 1 and 4.
-- [ ] A fit room runs through `palette` with every pixel on the palette, and `check` reports nothing.
-- [ ] A `decide` on `masks` leaves `palette` `done`.
+- [x] Golden tests for orphan removal at sizes 0, 1 and 4.
+- [x] A fit room runs through `palette` with every pixel on the palette, and `check` reports nothing.
+- [x] A `decide` on `masks` leaves `palette` `done`.
