@@ -9,6 +9,7 @@ else pays for it.
 import contextlib
 import gc
 import io
+import shutil
 import threading
 from collections.abc import Sequence
 from pathlib import Path
@@ -81,6 +82,7 @@ class Sam2(EmbeddingRunner):
         self._encoder: Any = None
         self._decoder: Any = None
         self._embedded: tuple[bytes, dict[str, np.ndarray]] | None = None  # the last image, so more clicks don't re-encode
+        self._gpu_unused = False
 
     def load(self, directory: Path, device: Device) -> None:
         try:
@@ -97,10 +99,18 @@ class Sam2(EmbeddingRunner):
         except Exception as error:  # noqa: BLE001 - ONNX Runtime's own errors derive directly from Exception
             self.unload()
             raise RunnerError(f"can't load SAM 2 from {directory}: {error}") from None
+        # The session falls back quietly when CUDA's libraries are missing, even if the provider is listed as available.
+        self._gpu_unused = device != "cpu" and self.device_used == "cpu" and shutil.which("nvidia-smi") is not None
 
     @property
     def device_used(self) -> str:
         return "cuda" if self._encoder is not None and CUDA in self._encoder.get_providers() else "cpu"
+
+    @property
+    def gpu_unused(self) -> str | None:
+        if not self._gpu_unused:
+            return None
+        return "SAM 2 ran on the CPU, though this machine has an NVIDIA GPU: ONNX Runtime can't load its CUDA libraries"
 
     def embed(self, image: np.ndarray, check_cancel: CheckCancel) -> dict[str, np.ndarray]:
         key = image.tobytes()

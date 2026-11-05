@@ -21,7 +21,8 @@ uv run mypy                      # the type check
 uv run kiripix --help            # the CLI (alias kpx)
 ```
 
-CI runs the last three of these, plus `uv sync --locked`, on Linux and Windows for every push.
+CI runs the last three of these, plus `uv sync --locked --no-group cuda`, on Linux and Windows for every push. Plain `uv sync`
+keeps the `cuda` group, the libraries a Runner needs for the GPU.
 
 The UI, in `web/` (Node 22 or later; `uv` and the Python tests don't need it):
 

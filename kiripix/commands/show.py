@@ -89,7 +89,8 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
     cache = HashCache(project.state_dir)
     graph = AssetGraph(project, asset, cache)
     stages = []
-    for state in graph.states():
+    states = graph.states()
+    for state in states:
         spec = graph.spec(state.stage)
         image = graph.output_dir(spec) / spec.image if spec.image is not None else None
         source = graph.input_image(spec)
@@ -115,7 +116,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         variants=[VariantOut(name=name, file=project.relative(path)) for name, path in variants.items()],
         picked=sources.picked(graph) if takes_variants else None,
         stages=stages,
-        export_command=export_command(project, asset, cache),
+        export_command=export_command(project, asset, cache, states),
     )
     cache.save()
     return Outcome(data)

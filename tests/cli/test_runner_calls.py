@@ -470,6 +470,30 @@ def test_describe_says_masks_uses_the_gpu(kpx: Kiripix) -> None:
     assert next(s for s in room["stages"] if s["name"] == "masks")["gpu"]
 
 
+# a GPU left unused
+
+
+def test_a_runner_that_fell_back_to_the_cpu_says_so_once_with_the_fix(project: Kiripix) -> None:
+    built_room(project)
+    click(project, 10, 8)
+    click(project, 38, 24)
+    (project.cwd / "runner-no-gpu").write_text("", encoding="utf-8")
+
+    [finding] = findings(rerun(project), "runner.gpu_unused")
+
+    assert finding["severity"] == "warning" and finding["fix"] == "uv sync" and "GPU" in finding["message"]
+
+
+def test_a_runner_on_the_gpu_or_asked_for_the_cpu_says_nothing(project: Kiripix) -> None:
+    built_room(project)
+    click(project, 10, 8)
+    assert findings(rerun(project), "runner.gpu_unused") == []
+
+    click(project, 38, 24)
+    (project.cwd / "runner-no-gpu").write_text("", encoding="utf-8")
+    assert findings(rerun(project, "--cpu"), "runner.gpu_unused") == []
+
+
 # kiripix runners
 
 

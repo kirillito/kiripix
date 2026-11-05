@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ContextManager, Literal
 
+import numpy as np
 from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
@@ -38,7 +39,7 @@ from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
 from kiripix.recipes.base import CurrentDecision, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
-from kiripix.runners import Device, RunnerError, pull, runners, weights_dir
+from kiripix.runners import Device, EmbeddingRunner, RunnerError, pull, runners, weights_dir
 
 Status = Literal["todo", "stale", "done", "needs-input", "needs-review", "failed"]
 Outcome = Literal["done", "skipped", "failed", "needs-input", "needs-review", "cancelled"]
@@ -128,6 +129,7 @@ class AssetGraph:
         self.cache = cache
         self.failures = Failures(project.state_dir, asset.id)
         self._hashes: dict[str, str] = {}
+        self._image_hashes: dict[Path, str] = {}  # for `pin_key`, which a pass over a room's Stages asks hundreds of times
         self._replays: dict[str, journal.Replay] = {}
         self._settings = settings_document(project.settings)
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
@@ -230,15 +232,18 @@ class AssetGraph:
         return {"pinned": {key: self.cache.file_hash(path) if path.is_file() else None for key, path in paths.items()}}
 
     def forget_hashes(self) -> None:
-        """Forget the input hashes worked out so far, after a Runner call added a pinned result."""
+        """Forget the hashes worked out so far, after a Runner call added a pinned result or a Stage rebuilt its image."""
         self._hashes.clear()
+        self._image_hashes.clear()
 
     def runner_calls(self, spec: StageSpec) -> list[RunnerCall]:
         """The Runner calls the Stage's current Decisions need, as far as its upstream outputs are built."""
         return spec.runner_calls(self.stage_run(spec, self.output_dir(spec))) if spec.runner_calls else []
 
     def pin_key(self, call: RunnerCall) -> str:
-        return pinning.key(call, self.cache.file_hash(call.image))
+        if call.image not in self._image_hashes:
+            self._image_hashes[call.image] = self.cache.file_hash(call.image)
+        return pinning.key(call, self._image_hashes[call.image])
 
     def pinned_path(self, call: RunnerCall) -> Path:
         return pinning.result_path(self.asset.dir, self.pin_key(call))
@@ -403,12 +408,14 @@ def _remove_leftovers(asset: Asset) -> None:
 
 class _Runner:
     def __init__(self, graph: AssetGraph, progress: ProgressSink, wait: float, command_line: str,
-                 cpu: bool = False) -> None:
+                 cpu: bool = False, keep_warm: bool = False) -> None:
         self.graph = graph
         self.progress = progress
         self.wait = wait
         self.command_line = command_line
         self.cpu = cpu
+        self.keep_warm = keep_warm
+        self.gpu_unused: str | None = None  # a call just made left the GPU unused, and why
 
     def _gpu_lock(self) -> list[str]:
         return [] if self.cpu else [GPU_LOCK]
@@ -419,8 +426,8 @@ class _Runner:
 
     def make_runner_calls(self, spec: StageSpec) -> str | None:
         """Make the Stage's Runner calls that have no pinned result, and pin each as it finishes, so a cancel loses only
-        the call it stopped. One Runner is loaded at a time, under the GPU lock, and unloaded after use. Returns why
-        they failed, or None."""
+        the call it stopped. One Runner is loaded at a time, under the GPU lock, and unloaded after use, except that
+        `serve` makes them on its warm Runner while it can have the lock. Returns why they failed, or None."""
         graph = self.graph
         missing = graph.missing_calls(spec)
         device: Device = "cpu" if self.cpu else "auto"
@@ -430,10 +437,15 @@ class _Runner:
                 directory = weights_dir(graph.project.state_dir, runner)
                 self.progress(ProgressEvent(event="runner_start", stage=spec.name, message=runner_id))
                 pull(directory, runner, cancel.check)
+                calls = [c for c in missing if c.runner == runner_id]
+                if self.keep_warm and not self.cpu and isinstance(runner, EmbeddingRunner):
+                    calls = self._warm_calls(spec, calls)
+                if not calls:
+                    continue
                 with self._hold_gpu(spec.name), warm.one_runner_loaded():
                     runner.load(directory, device)
                     try:
-                        for call in (c for c in missing if c.runner == runner_id):
+                        for call in calls:
                             self._call(spec, call)
                     finally:
                         runner.unload()
@@ -443,22 +455,46 @@ class _Runner:
             graph.forget_hashes()
         return None
 
-    def _call(self, spec: StageSpec, call: RunnerCall) -> None:
+    def _warm_calls(self, spec: StageSpec, calls: list[RunnerCall]) -> list[RunnerCall]:
+        """Make the calls on the warm Runner. Returns those it couldn't because the GPU lock is busy: the cold path waits
+        for it as `--wait` says, and asks another process's warm Runner to let go."""
+        for index, call in enumerate(calls):
+            try:
+                self._call(spec, call, on_warm=True)
+            except KiripixError as error:
+                if error.exit_code != ExitCode.BUSY:
+                    raise
+                return calls[index:]
+        return []
+
+    def _call(self, spec: StageSpec, call: RunnerCall, on_warm: bool = False) -> None:
         graph = self.graph
         runner = runners()[call.runner]
         started = time.monotonic()
+        device_used = runner.device_used
 
         def history(outcome: str, **extra: Any) -> None:
             atomic.append_jsonl(graph.asset.dir / HISTORY_FILE, {
                 "time": _now(), "stage": spec.name, "runner": call.runner, "weights_hash": runner.weights_hash,
-                "params": call.params, "device": runner.device_used,
+                "params": call.params, "device": device_used,
                 "duration_s": round(time.monotonic() - started, 3), "outcome": outcome, **extra})
+
+        def read_image() -> np.ndarray:
+            return load_rgba(call.image, graph.project.relative(call.image))
 
         cancel.check()
         try:
-            result = runner.call(load_rgba(call.image, graph.project.relative(call.image)), call.params, cancel.check)
+            if on_warm:
+                assert isinstance(runner, EmbeddingRunner)
+                result, _, device_used = warm.warm_call(runner, graph.project.state_dir, "auto",
+                                                        graph.cache.file_hash(call.image), read_image, call.params,
+                                                        self.command_line)
+            else:
+                result = runner.call(read_image(), call.params, cancel.check)
+                device_used = runner.device_used
+            self.gpu_unused = runner.gpu_unused or self.gpu_unused
             pinning.store(graph.asset.dir, spec.name, call, graph.pin_key(call), graph.cache.file_hash(call.image),
-                          result, device=runner.device_used, licence=runner.licence, time=_now())
+                          result, device=device_used, licence=runner.licence, time=_now())
         except (KeyboardInterrupt, cancel.Cancelled):
             history("cancelled")
             raise
@@ -543,6 +579,7 @@ class _Runner:
                 stamp["unpainted_hash"] = unpainted
             atomic.write_json(building / STAMP_FILE, stamp)
             _swap_into_place(building, final)
+            graph.forget_hashes()
             graph.failures.clear(spec.name)
             outcome = result("done")
         except (KeyboardInterrupt, cancel.Cancelled):
@@ -580,11 +617,12 @@ def run_asset(
     command_line: str,
     rerun: bool = False,
     cpu: bool = False,
+    keep_warm: bool = False,
 ) -> AssetRun:
     """Run the Asset's stale and todo Stages in order, or one Stage; stop at the first that can't finish.
 
     With `rerun`, a Stage's Runner calls with no pinned result are made first, so it lands in needs-review. With `cpu`,
-    Runners run on the CPU and no GPU lock is taken.
+    Runners run on the CPU and no GPU lock is taken. With `keep_warm`, in `serve`, those calls use its warm Runner.
 
     The caller holds the Asset lock.
     """
@@ -604,7 +642,7 @@ def run_asset(
         specs = [spec]
     else:
         specs = list(graph.kind.stages)
-    runner = _Runner(graph, progress, wait, command_line, cpu)
+    runner = _Runner(graph, progress, wait, command_line, cpu, keep_warm)
     results: list[StageRunResult] = []
     findings: list[Finding] = []
     exit_code = ExitCode.OK
@@ -614,6 +652,10 @@ def run_asset(
         called = rerun and state.status == "needs-input" and state.reason in (RUNNER_NOT_RUN, RUNNER_INPUT_CHANGED)
         if called:
             problem = runner.make_runner_calls(spec)
+            if runner.gpu_unused is not None:
+                findings.append(Finding(code="runner.gpu_unused", severity="warning", message=runner.gpu_unused,
+                                        position=Position(asset=asset.id, stage=spec.name), fix="uv sync"))
+                runner.gpu_unused = None
             if problem is not None:
                 results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="failed",
                                               input_hash=graph.input_hash(spec.name), message=problem))
@@ -717,6 +759,7 @@ def run_all(
     command_line: str,
     rerun: bool = False,
     cpu: bool = False,
+    keep_warm: bool = False,
 ) -> AssetRun:
     """Run every Asset (of one Kind, if given), locking one Asset at a time. One Asset stopping doesn't stop the rest.
 
@@ -733,7 +776,7 @@ def run_all(
         try:
             with hold(project.state_dir, [asset_lock(asset.id)], wait, command_line):
                 run = run_asset(project, asset, cache, stage=None, force=force, progress=progress, wait=wait,
-                                command_line=command_line, rerun=rerun, cpu=cpu)
+                                command_line=command_line, rerun=rerun, cpu=cpu, keep_warm=keep_warm)
         except KiripixError as error:
             findings.extend(error.findings)
             code = error.exit_code

@@ -481,7 +481,7 @@ The UI, an agent's CLI calls and the MCP server can all run at once. They coordi
 - **The project lock**, for project-wide writes: the palette, `kiripix.toml`, and export writing the Manifest. Locks
   are always taken in a fixed order (project, then Asset), so two writers can't deadlock.
 - **The GPU lock**, held only while a Runner or a Blender GPU render is loaded, because they all share 8 GB, and not
-  through a Stage's rebuild that only reads pinned results (`masks` still does; ticket 0059 measures and fixes it). `serve`
+  through a Stage's rebuild that only reads pinned results. `serve`
   unloads its warm Runner when another process asks for the lock; the other process waits with progress events, or
   runs on the CPU with `--cpu`.
 - A lock records the process ID, the host and the start time. If that process is dead, the lock is stale and is taken
@@ -535,8 +535,9 @@ Every writing command takes `--wait <seconds>`; long commands take `--progress=j
 
 **REST** is served by `kiripix serve`, one route per Command. Probes are fast only here: the server caches SAM 2's
 image embedding by image hash, so a hover runs only the cheap decoder, and it keeps the last Runner warm until an idle
-timeout or until another process asks for the GPU lock. That is the only exception to "unload after use", and it
-applies only to the long-running server.
+timeout or until another process asks for the GPU lock. A `run --rerun` through the server uses the same warm Runner and
+embeddings, unless it asks for `--cpu`. That is the only exception to "unload after use", and it applies only to the
+long-running server.
 
 **MCP** (`kiripix mcp`, stdio) exposes only the Commands tagged for it, at first `status`, `describe`, `next`, `run`,
 `set`, `decide`, `check`, `preview`, `export`, `op`, `gen`, `pick`, `cost`.

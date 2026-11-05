@@ -174,6 +174,7 @@ register_kind(
 # - hold-runner: while it exists, a call marks `runner-holding` and waits in chunks, checking the cancel token;
 # - runner-embeds.jsonl, runner-decodes.jsonl: one line per run of a warm Runner's two halves;
 # - hold-embed: while it exists, an `embed` marks `embed-holding` and waits in chunks, checking the cancel token;
+# - runner-no-gpu: while it exists, a Runner not asked for the CPU says it left the GPU unused;
 # - fake-weights-v2: while it exists, the Runner's weights hash is another one, as if it had been upgraded.
 
 _WEIGHTS = Path(__file__).parent / "fake_weights.bin"
@@ -208,6 +209,10 @@ class FakeSegmenter(EmbeddingRunner):
     def device_used(self) -> str:
         return "cpu" if self._device == "cpu" else "cuda"
 
+    @property
+    def gpu_unused(self) -> str | None:
+        return "the fake GPU went unused" if self._device != "cpu" and Path("runner-no-gpu").exists() else None
+
     def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
         assert self._device is not None, "called while not loaded"
         with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
@@ -239,6 +244,8 @@ class FakeSegmenter(EmbeddingRunner):
         assert self._device is not None and embedding == "the fake embedding"
         with Path("runner-decodes.jsonl").open("a", encoding="utf-8") as calls:
             calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
+        if Path("runner-fails").exists():
+            raise RunnerError("the fake Runner was told to fail")
         return self._mask(size, params)
 
     @staticmethod

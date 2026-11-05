@@ -18,7 +18,7 @@ from kiripix.checks import Finding, Position
 from kiripix.core import atomic, cancel
 from kiripix.core.assets import Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
-from kiripix.core.graph import AssetGraph
+from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
@@ -268,14 +268,15 @@ def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
     return manifest.files != _hashes(files) or bool(manifest.replacing)
 
 
-def export_command(project: Project, asset: Asset, cache: HashCache) -> str | None:
+def export_command(project: Project, asset: Asset, cache: HashCache, states: list[StageState] | None = None) -> str | None:
     """The Command that brings the game up to date, once every Stage is done and it is behind; else None. A `done` export
-    Stage only means its outputs are built: this is what tells that from being in the game. Derived, never stored."""
+    Stage only means its outputs are built: this is what tells that from being in the game. Derived, never stored. A caller
+    that has just worked out the Asset's `states` passes them, since that is most of the cost of a refresh."""
     if asset.kind not in _FILES_BY_KIND:
         return None
     command = f"kiripix export {asset.id}"
     try:
-        built = all(state.status == "done" for state in AssetGraph(project, asset, cache).states())
+        built = all(state.status == "done" for state in states or AssetGraph(project, asset, cache).states())
         return command if built and export_pending(project, asset, cache) else None
     except KiripixError:
         return command  # `export` says what's wrong

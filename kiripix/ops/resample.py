@@ -192,13 +192,14 @@ def mask_to_target(mask: BoolMask, grid: Grid) -> BoolMask:
     if mask.dtype != np.bool_ or mask.ndim != 2:
         raise ValueError("a Mask is a 2-D boolean array")
     index_x, index_y = _cell_index(grid.edges_x(), mask.shape[1]), _cell_index(grid.edges_y(), mask.shape[0])
-    cell = index_y[:, None] * grid.width + index_x[None, :]
-    inside = (index_y[:, None] >= 0) & (index_x[None, :] >= 0)
-    cells = grid.width * grid.height
-    set_pixels = np.bincount(cell[inside & mask], minlength=cells)
-    sizes = np.bincount(cell[inside], minlength=cells)
-    result: BoolMask = (set_pixels * 2 >= sizes).reshape(grid.height, grid.width) & (sizes > 0).reshape(
-        grid.height, grid.width)
+    rows, columns = np.nonzero(mask)  # a room replays this for every click, so it never touches the clear pixels
+    cell_x, cell_y = index_x[columns], index_y[rows]
+    inside = (cell_x >= 0) & (cell_y >= 0)
+    set_pixels = np.bincount(cell_y[inside] * grid.width + cell_x[inside],
+                             minlength=grid.width * grid.height).reshape(grid.height, grid.width)
+    sizes = np.outer(np.bincount(index_y[index_y >= 0], minlength=grid.height),
+                     np.bincount(index_x[index_x >= 0], minlength=grid.width))
+    result: BoolMask = (set_pixels * 2 >= sizes) & (sizes > 0)
     return result
 
 
