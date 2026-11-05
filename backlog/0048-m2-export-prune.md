@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: godot-export
 type: ticket
@@ -24,9 +24,9 @@ Spec §9 (Deleting an asset) and ADR 0003. Story 15 of [0037](0037-m2-layers-and
 
 ## Acceptance criteria
 
-- [ ] Delete an exported Asset's folder, then prune: its files and Manifest are gone, and another Asset's are untouched.
-- [ ] Without `--prune`, the files stay.
-- [ ] An edited file refuses with nothing removed; `--force` leaves it in `.kiripix/backups/<timestamp>/`.
-- [ ] `--dry-run` removes nothing, and lists both cases.
-- [ ] A file not in the Manifest, beside the pruned files, is left alone.
-- [ ] `tests/cli/test_contract.py` still passes with the changed output.
+- [x] Delete an exported Asset's folder, then prune: its files and Manifest are gone, and another Asset's are untouched.
+- [x] Without `--prune`, the files stay.
+- [x] An edited file refuses with nothing removed; `--force` leaves it in `.kiripix/backups/<timestamp>/`.
+- [x] `--dry-run` removes nothing, and lists both cases.
+- [x] A file not in the Manifest, beside the pruned files, is left alone.
+- [x] `tests/cli/test_contract.py` still passes with the changed output.

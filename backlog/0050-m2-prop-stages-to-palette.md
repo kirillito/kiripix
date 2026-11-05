@@ -33,3 +33,6 @@ Spec §6.2, §7 (cleanup, resample) and ADR 0004. Stories 11 and 12 of [0037](00
 - [ ] Swapping the fake matter for one with another ID gives "Runner input changed".
 - [ ] Every room test passes unchanged, and an existing room's input hashes don't change from the move.
 - [ ] `next` gives a command or an owner action at every prop Stage.
+- [ ] A manual (not CI) check of the real matting Runner ([0041](0041-m2-matting-runner.md)) on a real prop Source,
+      through `cutout` with `run --rerun`, on the Owner's GPU and with `--cpu`, recorded here as 0020's was: time cold
+      and warm, VRAM above idle and peak, the GPU-vs-CPU alpha difference, edge quality, and a cancel mid-call.

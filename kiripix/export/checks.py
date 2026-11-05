@@ -125,6 +125,17 @@ def pairing_findings(project: Project, assets: list[Asset], *, only: str | None 
     return found
 
 
+def exits_naming(project: Project, assets: list[Asset], gone: set[str]) -> list[Finding]:
+    """A warning for every Exit of `assets` that still leads to one of the Assets in `gone` (being pruned)."""
+    rooms = _exits(project, assets)
+    return [Finding(
+        code="export.exit_to_pruned", severity="warning",
+        message=f"{room} {exit_id} still leads to {exit_['target_room']}, which was pruned from the game",
+        position=Position(asset=room, stage="place"),
+        owner_action=f"Point {room} {exit_id} at another room, or remove it, so the game's door doesn't lead nowhere.")
+        for room in sorted(rooms) for exit_id, exit_ in sorted(rooms[room].items()) if exit_["target_room"] in gone]
+
+
 @register_project_check
 def _project_check(project: Project, assets: list[Asset]) -> list[Finding]:
     found: list[Finding] = []

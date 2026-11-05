@@ -108,6 +108,27 @@ test("a brush stroke records exactly one Decision, and Ctrl+Z removes it from th
   await expect.poll(async () => (await counts(page)).solid).toBeGreaterThan(20);
 });
 
+test("a long stroke stamps each pixel of its path once, so a frame's cost doesn't grow with the stroke", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.keyboard.press("b");
+  const canvas = page.getByTestId("canvas");
+  const radius = Number(await canvas.getAttribute("data-radius"));
+
+  const start = await pixel(page, 2, 8);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let x = 3; x <= 45; x++) {
+    const at = await pixel(page, x, 8);
+    await page.mouse.move(at.x, at.y);
+  }
+  await expect(canvas).toHaveAttribute("data-stroke-stamps", String((2 * radius + 1) * 44));
+  await page.mouse.up();
+
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  expect((decisions(studio)[0].data.points as number[][]).length).toBe(44);
+});
+
 test("hovering over an object previews its Mask and writes nothing to decisions/", async ({ page, segmentingStudio: studio }) => {
   builtRoom(studio);
   await open(page, studio);

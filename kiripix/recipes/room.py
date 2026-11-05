@@ -15,6 +15,7 @@ from kiripix.recipes.base import (
     FIT_PARAMS,
     PALETTE_PARAMS,
     PICK,
+    PLATE,
     CheckSpec,
     ClickPoint,
     CurrentDecision,
@@ -218,6 +219,7 @@ def _layers(run: StageRun) -> None:
 # results of the earlier ones. The Runner works on the Source, capped; the clicks map to it through the Grid transform,
 # and its Mask maps back through the same transform when the Stage replays (ADR 0004).
 
+LAYERS_STAGE = "layers"
 MASKS_STAGE = "masks"
 IMPORT_DIR = ("decisions", "imports")  # a painted image of an `import` Decision, stored here under its hash
 _RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
@@ -845,6 +847,7 @@ ROOM = KindSpec(
             # The M1 pass-through (ticket 0010): no owner input. The real Stage (M2) adds the `grow` parameter, the
             # `click` Decision ("Clicks objects to lift out.") and the GPU.
             description="Builds the Plate from the fit image; foreground Layers arrive in M2.",
+            decisions=(PLATE,),
             checks=(
                 CheckSpec(code="layers.recompose_mismatch", description="Plate and Layers recompose to the fit image."),
                 CheckSpec(code="layers.plate_hole", description="The Plate has no holes."),

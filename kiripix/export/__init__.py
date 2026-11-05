@@ -22,9 +22,10 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
-from kiripix.export.checks import EXPORTERS, frozen_findings, pairing_findings
+from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, pairing_findings
 from kiripix.export.godot import room_ids, room_scene
 from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
+from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
 from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, built_dir, read_room
 from kiripix.export.target import GodotTarget, resolve_target
 
@@ -202,17 +203,59 @@ def _apply(plan: _Plan, target: GodotTarget, backup: Path) -> None:
     plan.result.written, plan.result.backed_up = written, plan.backups
 
 
-def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache, options: ExportOptions) -> tuple[list[ExportResult], list[Finding]]:
+@dataclass
+class ExportRun:
+    results: list[ExportResult]
+    pruned: list[PruneResult]
+    findings: list[Finding]
+
+
+def prune_assets(project: Project, only: str | None, options: ExportOptions) -> ExportRun:
+    """Prune every deleted Asset's files and Manifest, or just `only`'s (which must not exist). Exports nothing. The caller
+    holds the project lock. Planned in full before anything is removed: one changed file refuses them all."""
+    target = resolve_target(project)
+    return _commit(project, target, [], plan_prune(project, target, only, options.force), options, [])
+
+
+def _commit(project: Project, target: GodotTarget, plans: list[_Plan], prunes: list[PrunePlan], options: ExportOptions,
+            warnings: list[Finding]) -> ExportRun:
+    """Apply what was planned, or in a dry run only say what would be done. Exports first, then prunes."""
+    findings = list(warnings)
+    if prunes:
+        every = list_assets(project)[0]
+        findings.extend(exits_naming(project, every, {doomed.asset for doomed in prunes}))
+    refusals = [finding for plan in plans for finding in plan.refusals]
+    refusals += [finding for doomed in prunes for finding in doomed.refusals]
+    if options.dry_run:
+        # a refusal is only a warning in a dry run: it stops nothing, and says what the real export would need
+        findings.extend(f.model_copy(update={"severity": "warning"}) for f in refusals)
+        for doomed in prunes:
+            preview(doomed)
+    else:
+        if refusals:
+            raise KiripixError(refusals, ExitCode.NEEDS_OWNER)
+        backup = _backup_folder(project)
+        for plan in plans:
+            _apply(plan, target, backup)
+        for prune in prunes:
+            apply_prune(prune, target, backup)
+    return ExportRun([plan.result for plan in plans], [doomed.result for doomed in prunes], findings)
+
+
+def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache, options: ExportOptions,
+                  prune: bool = False) -> ExportRun:
     """Export `assets`, or every Asset with an exporter when None (`--all`). The caller holds the project and Asset locks.
 
     Every Asset is planned before any file is written: one refusal (an Asset not built, a frozen ID, a file the game
     owns) stops them all with nothing changed. With `--all`, Exit pairing must hold or nothing is exported; for one
-    Asset it is only a warning. Returns the results and the findings of the call."""
+    Asset it is only a warning. With `prune` (only with `--all`) the deleted Assets' files are planned too, and removed
+    after the exports are written. Returns the results and the findings of the call."""
     for asset in assets or []:
         if asset.kind not in _FILES_BY_KIND:
             raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms can",
                        fix="kiripix describe project")
     target = resolve_target(project)
+    prunes = plan_prune(project, target, None, options.force) if prune else []
     every, broken = list_assets(project)
     if broken and assets is None:
         raise KiripixError(broken)
@@ -236,19 +279,7 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
             code = max(code, error.exit_code)
     if refused:
         raise KiripixError(refused, code)
-    findings = list(warnings)
-    if options.dry_run:
-        for plan in plans:
-            # a refusal is only a warning in a dry run: it stops nothing, and says what the real export would need
-            findings.extend(f.model_copy(update={"severity": "warning"}) for f in plan.refusals)
-    else:
-        refusals = [finding for plan in plans for finding in plan.refusals]
-        if refusals:
-            raise KiripixError(refusals, ExitCode.NEEDS_OWNER)
-        backup = _backup_folder(project)
-        for plan in plans:
-            _apply(plan, target, backup)
-    return [plan.result for plan in plans], findings
+    return _commit(project, target, plans, prunes, options, warnings)
 
 
 def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
@@ -281,5 +312,5 @@ def export_command(project: Project, asset: Asset, cache: HashCache) -> str | No
         return command  # `export` says what's wrong
 
 
-__all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "export_assets", "export_command",
-           "export_pending", "frozen_findings", "pairing_findings"]
+__all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "ExportRun", "PruneResult", "export_assets",
+           "export_command", "export_pending", "frozen_findings", "pairing_findings", "prune_assets"]

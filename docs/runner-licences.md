@@ -28,6 +28,12 @@ Notes:
   `huggingface.co/smartywu/big-lama`, which is tagged Apache-2.0, but the upstream repo never states the weights'
   licence itself. Big-lama is trained on Places2; a third-party packaging asks for Places2 attribution. Treat it as
   usable with attribution, and record the weights' hash when M2 pins it.
+- **BiRefNet, as Kiripix downloads it:** `runners/birefnet.py` (ticket 0041) pins the ONNX conversion
+  `onnx-community/BiRefNet-ONNX` at commit `534d3c82d3bb8b2f0867db6dfbc3a525b8e42f67`: the fp32 `onnx/model.onnx`
+  (972,666,916 bytes, sha256 `58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c`, checked by downloading
+  it 2026-11-04). That repo's card is tagged MIT, like `ZhengPeng7/BiRefNet` it was converted from; it states no licence
+  text of its own. Only this full-size model is used, not the `lite` one or the fp16 file. Like SAM 2's conversion, it
+  is not a lasting choice (spec §8). The Owner accepted this (2026-11-04).
 - **BiRefNet:** a Hugging Face discussion asked for an explicit statement that MIT covers the weights; the model card is
   tagged MIT and nothing says otherwise.
 

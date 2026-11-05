@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: ui-engineer
 type: ticket
@@ -24,6 +24,6 @@ Stamp only the new part of the stroke onto an offscreen canvas at target resolut
 
 ## Acceptance criteria
 
-- [ ] A frame's cost during a stroke doesn't grow with the stroke's length.
-- [ ] A stroke still records one brush Decision on release, with the same points as before.
-- [ ] The Playwright mask tests still pass.
+- [x] A frame's cost during a stroke doesn't grow with the stroke's length.
+- [x] A stroke still records one brush Decision on release, with the same points as before.
+- [x] The Playwright mask tests still pass.

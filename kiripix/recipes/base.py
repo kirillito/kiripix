@@ -196,6 +196,10 @@ class StageSpec:
     image: str | None = None
     needs_input: NeedsInputFunction | None = None
     check: CheckFunction | None = None
+    # Runs after core paints the Stage's Overrides over its image and before its Checks, on the same output folder
+    # (`output_dir`), so it sees the image as painted and its Checks see what it wrote. The image's unpainted hash and
+    # the Stage's input hash don't depend on it. A Stage without it behaves as before.
+    after_overrides: StageFunction | None = None
     runner_calls: RunnerCallsFunction | None = None
     segment: SegmentHooks | None = None
     markers: Callable[[tuple[CurrentDecision, ...]], list[dict[str, Any]]] | None = None  # for `show`, before any build
@@ -249,6 +253,18 @@ PICK = DecisionSpec(
         "type": "object",
         "properties": {"variant": {"type": "string"}},
         "required": ["variant"],
+        "additionalProperties": False,
+    },
+)
+
+PLATE = DecisionSpec(
+    name="plate",
+    description="Take the Plate from an image of the Asset's size, stored under decisions/imports/ by its hash; "
+                "`plate-import` records it.",
+    entry_schema={
+        "type": "object",
+        "properties": {"png": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "required": ["png"],
         "additionalProperties": False,
     },
 )

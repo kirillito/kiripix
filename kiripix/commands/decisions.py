@@ -1,4 +1,4 @@
-"""The Commands that change an Asset's decisions: set, decide, undo, redo, override, mask-import and accept."""
+"""The Commands that change an Asset's decisions: set, decide, undo, redo, override, mask-import, plate-import and accept."""
 
 from pathlib import Path
 from typing import Self
@@ -267,6 +267,45 @@ def mask_import(arguments: MaskImportInput, context: Context) -> Outcome[MaskImp
     states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
     return Outcome(MaskImportData(asset=asset.id, stage=editing.MASKS_STAGE, id=entry.id,
                                   file=project.relative(stored), stages=states))
+
+
+# plate-import
+
+
+class PlateImportInput(_Input):
+    asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
+    png: Path = Field(description="The Plate image, the Asset's size.")
+
+
+class PlateImportData(BaseModel):
+    asset: str
+    stage: str
+    id: str
+    file: str
+    stages: list[StageState]
+
+    def text(self) -> str:
+        return f"{self.asset} {self.stage}: recorded a Plate image {self.file}; run to apply it"
+
+
+@command(
+    "plate-import",
+    summary="Import a Plate image: store it by its hash and record the layers Stage's plate Decision.",
+    input=PlateImportInput,
+    output=PlateImportData,
+    kind="writing",
+    mcp="hidden",
+    cli=CliMeta(positional=("asset", "png")),
+    locks=LockNeeds(asset=_asset_lock),
+    files=("png",),
+)
+def plate_import(arguments: PlateImportInput, context: Context) -> Outcome[PlateImportData]:
+    project = find_project(context.cwd)
+    asset = load_asset(project, arguments.asset)
+    entry, stored = editing.record_plate_import(project, asset, context.cwd / arguments.png, str(arguments.png))
+    states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
+    return Outcome(PlateImportData(asset=asset.id, stage=editing.LAYERS_STAGE, id=entry.id,
+                                   file=project.relative(stored), stages=states))
 
 
 # accept

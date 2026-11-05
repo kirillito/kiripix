@@ -508,8 +508,8 @@ class _Runner:
         return unpainted
 
     def execute(self, spec: StageSpec) -> tuple[StageRunResult, list[Finding]]:
-        """Run the Stage, paint its Overrides over its image, then run its Checks on the result; their findings come
-        back beside the result."""
+        """Run the Stage, paint its Overrides over its image, run its `after_overrides` hook, then run its Checks on
+        the result; their findings come back beside the result."""
         assert spec.run is not None
         graph = self.graph
         input_hash = graph.input_hash(spec.name)
@@ -536,6 +536,9 @@ class _Runner:
                 spec.run(context)
             cancel.check()
             unpainted = self._paint_overrides(spec, building)
+            if spec.after_overrides is not None:
+                spec.after_overrides(context)
+                cancel.check()
             if spec.check is not None:
                 checked = spec.check(context)
             stamp = {"stage": spec.name, "input_hash": input_hash, "finished": _now()}

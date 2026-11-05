@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: core-engineer
 type: ticket
@@ -27,9 +27,14 @@ The `plate` Decision's schema and its use are [0044](0044-m2-plate-from-differen
 The `segment-preview` Probe needs no change for the layers screen: it finds the first Stage with a `segment` hook, and that
 hook needs only `fit` and `source`, which are built before either Stage.
 
+## Settled (Owner, 2026-11-04)
+
+- The room's `layers` Stage declares the `plate` Decision now, though nothing reads it until 0044.
+- The test Kind `layered` showing in `describe` when test recipes are on is fine (D16).
+
 ## Acceptance criteria
 
-- [ ] On the `demo` Kind: a Stage with the hook sees its image with the Overrides painted, and its Checks see what the hook wrote.
-- [ ] `plate-import` stores the image by hash, journals one Decision, and importing the same image twice stores one file.
-- [ ] `plate-import` on a Kind without the Stage exits 1 with a finding that has a `fix`, and writes nothing.
-- [ ] A sample in `tests/cli/test_contract.py`.
+- [x] On the `demo` Kind: a Stage with the hook sees its image with the Overrides painted, and its Checks see what the hook wrote.
+- [x] `plate-import` stores the image by hash, journals one Decision, and importing the same image twice stores one file.
+- [x] `plate-import` on a Kind without the Stage exits 1 with a finding that has a `fix`, and writes nothing.
+- [x] A sample in `tests/cli/test_contract.py`.

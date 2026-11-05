@@ -6,17 +6,14 @@ three candidate masks as 256 x 256 logits with a score each. The best one is sca
 else pays for it.
 """
 
-import contextlib
 import gc
-import io
-import threading
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PIL import Image
 
+from kiripix.runners import ort
 from kiripix.runners.base import CheckCancel, Device, EmbeddingRunner, RunnerError, WeightFile
 
 _SIZE = 1024
@@ -26,44 +23,10 @@ _FILES = "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/
          "a7df49d8de14b9d2e4504d1687b0d568f905fd8d/onnx/"
 _ENCODER = "vision_encoder.onnx"
 _DECODER = "prompt_encoder_mask_decoder.onnx"
-CUDA = "CUDAExecutionProvider"
-CPU = "CPUExecutionProvider"
-_ERRORS_ONLY = 3  # ONNX Runtime warns about how this export places and scatters on every load
 
 
 def _weight(name: str, sha256: str, size: int) -> WeightFile:
     return WeightFile(name, _FILES + name, sha256, size)
-
-
-def _run(session: Any, feeds: dict[str, np.ndarray], check_cancel: CheckCancel) -> Sequence[np.ndarray]:
-    """One inference that a cancel can stop. It runs on a thread of its own, because Python delivers Ctrl+C only to a
-    main thread that is running bytecode. On a cancel, `RunOptions.terminate` stops the inference, and what
-    `check_cancel` raised carries on from here once it has."""
-    import onnxruntime
-
-    options = onnxruntime.RunOptions()
-    outcome: dict[str, Any] = {}
-
-    def work() -> None:
-        try:
-            outcome["result"] = session.run(None, feeds, options)
-        except Exception as error:  # noqa: BLE001 - handed to the waiting thread
-            outcome["error"] = error
-
-    thread = threading.Thread(target=work, name="runner-inference", daemon=True)
-    thread.start()
-    try:
-        while thread.is_alive():
-            thread.join(0.05)
-            check_cancel()
-    except BaseException:
-        options.terminate = True
-        thread.join()
-        raise
-    if "error" in outcome:
-        raise RunnerError(f"SAM 2 failed: {outcome['error']}")
-    result: Sequence[np.ndarray] = outcome["result"]
-    return result
 
 
 class Sam2(EmbeddingRunner):
@@ -86,12 +49,7 @@ class Sam2(EmbeddingRunner):
         try:
             import onnxruntime
 
-            if device != "cpu" and hasattr(onnxruntime, "preload_dlls"):
-                with contextlib.redirect_stdout(io.StringIO()):  # it prints what it can't find, and stdout is the JSON
-                    onnxruntime.preload_dlls()
-            usable = onnxruntime.get_available_providers()
-            providers = [CUDA, CPU] if device != "cpu" and CUDA in usable else [CPU]
-            onnxruntime.set_default_logger_severity(_ERRORS_ONLY)
+            providers = ort.providers(device)
             self._encoder = onnxruntime.InferenceSession(str(directory / _ENCODER), providers=providers)
             self._decoder = onnxruntime.InferenceSession(str(directory / _DECODER), providers=providers)
         except Exception as error:  # noqa: BLE001 - ONNX Runtime's own errors derive directly from Exception
@@ -100,7 +58,7 @@ class Sam2(EmbeddingRunner):
 
     @property
     def device_used(self) -> str:
-        return "cuda" if self._encoder is not None and CUDA in self._encoder.get_providers() else "cpu"
+        return "cuda" if self._encoder is not None and ort.CUDA in self._encoder.get_providers() else "cpu"
 
     def embed(self, image: np.ndarray, check_cancel: CheckCancel) -> dict[str, np.ndarray]:
         key = image.tobytes()
@@ -108,7 +66,7 @@ class Sam2(EmbeddingRunner):
             return self._embedded[1]
         squared = Image.fromarray(image[..., :3], "RGB").resize((_SIZE, _SIZE), Image.Resampling.BILINEAR)
         pixels = (np.asarray(squared, dtype=np.float32) / 255 - _MEAN) / _STD
-        outputs = _run(self._encoder, {"pixel_values": pixels.transpose(2, 0, 1)[None]}, check_cancel)
+        outputs = ort.run(self._encoder, {"pixel_values": pixels.transpose(2, 0, 1)[None]}, check_cancel, "SAM 2")
         names = [output.name for output in self._encoder.get_outputs()]
         embeddings = dict(zip(names, outputs))
         self._embedded = (key, embeddings)
@@ -128,7 +86,7 @@ class Sam2(EmbeddingRunner):
             "input_boxes": np.zeros((1, 0, 4), dtype=np.float32),
         }
         names = [output.name for output in self._decoder.get_outputs()]
-        outputs = dict(zip(names, _run(self._decoder, feeds, check_cancel)))
+        outputs = dict(zip(names, ort.run(self._decoder, feeds, check_cancel, "SAM 2")))
         best = int(np.argmax(outputs["iou_scores"][0, 0]))
         logits = outputs["pred_masks"][0, 0, best]
         scale = min(1.0, int(params["max_size"]) / max(width, height))

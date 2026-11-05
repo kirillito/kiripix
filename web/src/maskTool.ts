@@ -67,6 +67,10 @@ export class MaskTool implements CanvasTool {
   private overlays: Overlay[] = [];
   private preview: { image: HTMLCanvasElement; count: number; subtract: boolean } | null = null;
   private stroke: [number, number][] | null = null;
+  private strokeImage: HTMLCanvasElement | null = null;
+  private stamped = 0; // how many of the stroke's points are on strokeImage
+  private stamps = 0; // fillRects made for the stroke, and in the latest frame: what the tests count
+  private frameStamps = 0;
   private cursor: CanvasPixel | null = null;
   private shift = false;
   private asked = 0;
@@ -159,6 +163,10 @@ export class MaskTool implements CanvasTool {
   pointerDown(pixel: CanvasPixel): boolean {
     if (!this.mask) return false;
     this.clearPreview();
+    this.strokeImage = null;
+    this.stamped = 0;
+    this.stamps = 0;
+    this.frameStamps = 0;
     if (this.tool === "brush" || this.tool === "erase") this.stroke = [[pixel.x, pixel.y]];
     else this.stroke = null;
     this.cursor = pixel;
@@ -175,35 +183,54 @@ export class MaskTool implements CanvasTool {
     this.pointerMove(pixel);
     const stroke = this.stroke;
     this.stroke = null;
+    this.strokeImage = null;
     if (stroke) this.gestures.stroke(this.mask, this.tool === "erase", this.radius, stroke);
     else if (this.tool === "flood" || this.tool === "click") this.gestures.point(this.tool, this.mask, pixel, !this.shift);
   }
 
-  // The pixels of a stroke, with the gaps between two pointer events filled in.
-  private along(points: [number, number][]): [number, number][] {
+  // The pixels from the previous point to this one, with the gap between two pointer events filled in.
+  private segment(from: [number, number], point: [number, number], first: boolean): [number, number][] {
     const path: [number, number][] = [];
-    points.forEach((point, index) => {
-      const from = points[index - 1] ?? point;
-      const steps = Math.max(Math.abs(point[0] - from[0]), Math.abs(point[1] - from[1]), 1);
-      for (let step = index ? 1 : steps; step <= steps; step++) {
-        path.push([
-          Math.round(from[0] + ((point[0] - from[0]) * step) / steps),
-          Math.round(from[1] + ((point[1] - from[1]) * step) / steps),
-        ]);
-      }
-    });
+    const steps = Math.max(Math.abs(point[0] - from[0]), Math.abs(point[1] - from[1]), 1);
+    for (let step = first ? steps : 1; step <= steps; step++) {
+      path.push([
+        Math.round(from[0] + ((point[0] - from[0]) * step) / steps),
+        Math.round(from[1] + ((point[1] - from[1]) * step) / steps),
+      ]);
+    }
     return path;
   }
 
-  private disc(context: CanvasRenderingContext2D, frame: CanvasFrame, x: number, y: number): void {
+  // One row of the disc at a time, in pixels of the image: a stamp is 2r+1 fillRects whatever the stroke's length.
+  private disc(context: CanvasRenderingContext2D, x: number, y: number): number {
     const radius = this.radius;
+    let calls = 0;
     for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        if (dx * dx + dy * dy <= radius * radius) {
-          context.fillRect(frame.left + (x + dx) * frame.zoom, frame.top + (y + dy) * frame.zoom, frame.zoom, frame.zoom);
-        }
-      }
+      const half = Math.floor(Math.sqrt(radius * radius - dy * dy));
+      context.fillRect(x - half, y + dy, 2 * half + 1, 1);
+      calls++;
     }
+    return calls;
+  }
+
+  // Stamps only the points the stroke has gained since the last frame onto the stroke's own canvas, at the image's
+  // resolution; the frame then costs one drawImage.
+  private stamp(frame: CanvasFrame, stroke: [number, number][]): number {
+    if (!this.strokeImage || this.strokeImage.width !== frame.width || this.strokeImage.height !== frame.height) {
+      this.strokeImage = document.createElement("canvas");
+      this.strokeImage.width = frame.width;
+      this.strokeImage.height = frame.height;
+      this.stamped = 0;
+    }
+    const context = this.strokeImage.getContext("2d")!;
+    context.fillStyle = this.tool === "erase" ? "#ffffff" : this.colourOf(this.mask);
+    let calls = 0;
+    for (let index = this.stamped; index < stroke.length; index++) {
+      const point = stroke[index];
+      for (const [x, y] of this.segment(stroke[index - 1] ?? point, point, index === 0)) calls += this.disc(context, x, y);
+    }
+    this.stamped = stroke.length;
+    return calls;
   }
 
   draw(context: CanvasRenderingContext2D, frame: CanvasFrame): void {
@@ -221,12 +248,18 @@ export class MaskTool implements CanvasTool {
     const painting = this.tool === "brush" || this.tool === "erase";
     if (this.stroke) {
       context.globalAlpha = 0.6;
-      context.fillStyle = this.tool === "erase" ? "#ffffff" : this.colourOf(this.mask);
-      for (const [x, y] of this.along(this.stroke)) this.disc(context, frame, x, y);
+      this.frameStamps = this.stamp(frame, this.stroke);
+      this.stamps += this.frameStamps;
+      context.drawImage(this.strokeImage!, frame.left, frame.top, width, height);
     } else if (painting && this.cursor) {
       context.globalAlpha = 0.35;
       context.fillStyle = this.tool === "erase" ? "#ffffff" : this.colourOf(this.mask);
-      this.disc(context, frame, this.cursor.x, this.cursor.y);
+      const { x, y } = this.cursor;
+      const radius = this.radius;
+      for (let dy = -radius; dy <= radius; dy++) {
+        const half = Math.floor(Math.sqrt(radius * radius - dy * dy));
+        context.fillRect(frame.left + (x - half) * frame.zoom, frame.top + (y + dy) * frame.zoom, (2 * half + 1) * frame.zoom, frame.zoom);
+      }
     }
     context.globalAlpha = 1;
     if (this.cursor && !painting) {
@@ -244,6 +277,8 @@ export class MaskTool implements CanvasTool {
     data.mask = this.mask;
     data.radius = String(this.radius);
     data.opacity = String(this.opacity);
+    data.strokeStamps = String(this.stamps);
+    data.strokeFrameStamps = String(this.frameStamps);
     data.preview = String(this.preview?.count ?? 0);
   }
 }

@@ -25,11 +25,16 @@ from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
 from kiripix.core.project_checks import register_project_check
 from kiripix.recipes import register_kind
-from kiripix.runners import SEGMENTER, CheckCancel, Device, EmbeddingRunner, RunnerError, WeightFile, register_runner
+from kiripix.runners import (
+    MATTER, SEGMENTER, CheckCancel, Device, EmbeddingRunner, Runner, RunnerError, WeightFile, register_runner,
+)
+from PIL import Image
 from kiripix.recipes.base import (
+    PLATE,
     DecisionSpec,
     KindSpec,
     ParamSpec,
+    RunnerCall,
     StageFailure,
     StageInputs,
     StageRun,
@@ -168,6 +173,52 @@ register_kind(
 )
 
 
+# The test Kind `layered`: a `layers` Stage with the `after_overrides` hook (ticket 0038) and the `plate` Decision.
+# - layers: copies src/input.png to plate.png (its image).
+# - the hook, run after core paints the Overrides: writes hook.json with the pixel (0, 0) it sees in plate.png, and sets
+#   the pixel (3, 3) to blue.
+# - the Check: reports `layered.hooked`, with hook.json's corner in its message, when plate.png's pixel (3, 3) is blue.
+
+
+def _layers(run: StageRun) -> None:
+    shutil.copyfile(run.files["src/input.png"], run.output_dir / "plate.png")
+
+
+def _hook_layers(run: StageRun) -> None:
+    from PIL import Image
+
+    with Image.open(run.output_dir / "plate.png") as opened:
+        image = np.array(opened.convert("RGBA"))
+    (run.output_dir / "hook.json").write_text(json.dumps({"corner": [int(v) for v in image[0, 0]]}), encoding="utf-8")
+    image[3, 3] = (41, 173, 255, 255)
+    Image.fromarray(image, "RGBA").save(run.output_dir / "plate.png")
+
+
+def _check_layers(run: StageRun) -> list[Finding]:
+    from PIL import Image
+
+    with Image.open(run.output_dir / "plate.png") as opened:
+        blue = tuple(opened.convert("RGBA").getpixel((3, 3))) == (41, 173, 255, 255)
+    if not blue:
+        return []
+    corner = json.loads((run.output_dir / "hook.json").read_text(encoding="utf-8"))["corner"]
+    return [Finding(code="layered.hooked", message=f"the hook saw {corner} at (0, 0)", position=Position(file="plate.png"),
+                    fix="kiripix describe layered")]
+
+
+register_kind(
+    KindSpec(
+        name="layered",
+        description="A test Kind with a layers Stage: the hook after Overrides and the plate Decision.",
+        stages=chain(
+            StageSpec(name="layers", description="Copy the input image as the Plate.",
+                      inputs=StageInputs(files=["src/input.png"]), decisions=(PLATE,), image="plate.png",
+                      run=_layers, after_overrides=_hook_layers, check=_check_layers),
+        ),
+    )
+)
+
+
 # The fake Runners. Everything a test watches is in the folder the Command runs in:
 # - runner-calls.jsonl: one line per call, with the device and the parameters;
 # - runner-fails: while it exists, a call fails;
@@ -265,5 +316,74 @@ class TamperedWeights(FakeSegmenter):
     weights = (_fake_weight("0" * 64),)
 
 
+class FakeMatter(Runner):
+    """Deterministic: the RGBA image back, capped at `max_size` on its longer side, with an alpha that ramps from 0 at
+    the left column to 255 at the right one, so partial alpha reaches the result."""
+
+    id = MATTER
+    description = "A fake matting Runner for the tests."
+    licence = "test"
+    weights = (_fake_weight(hashlib.sha256(_WEIGHTS.read_bytes()).hexdigest()),)
+
+    def __init__(self) -> None:
+        self._device: Device | None = None
+
+    def load(self, directory: Path, device: Device) -> None:
+        assert (directory / "fake_weights.bin").is_file()
+        self._device = device
+
+    @property
+    def device_used(self) -> str:
+        return "cpu" if self._device == "cpu" else "cuda"
+
+    def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
+        assert self._device is not None, "called while not loaded"
+        with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
+        hold = Path("hold-runner")
+        if hold.exists():
+            Path("runner-holding").write_text("", encoding="utf-8")
+            while hold.exists():
+                check_cancel()
+                time.sleep(0.05)  # stands in for a long inference
+        if Path("runner-fails").exists():
+            raise RunnerError("the fake Runner was told to fail")
+        height, width = image.shape[:2]
+        scale = min(1.0, int(params["max_size"]) / max(width, height))
+        size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        result = np.asarray(Image.fromarray(image, "RGBA").resize(size, Image.Resampling.NEAREST)).copy()
+        result[..., 3] = np.round(np.linspace(0, 255, size[0]))[None, :].astype(np.uint8)
+        return result
+
+    def unload(self) -> None:
+        self._device = None
+
+
+# The test Kind `matte`: one Stage whose only input is a Runner call on src/input.png, to the MATTER role.
+_MATTE_PARAMS = {"max_size": 1536}
+
+
+def _matte_calls(run: StageRun) -> list[RunnerCall]:
+    return [RunnerCall(runner=MATTER, image=run.files["src/input.png"], params=dict(_MATTE_PARAMS), decisions=[])]
+
+
+def _cutout(run: StageRun) -> None:
+    [call] = _matte_calls(run)
+    shutil.copyfile(run.pinned(call), run.output_dir / "cutout.png")
+
+
+register_kind(
+    KindSpec(
+        name="matte",
+        description="A test Kind with one matting Runner call.",
+        stages=chain(
+            StageSpec(name="cutout", description="The input with the matter's alpha.",
+                      inputs=StageInputs(files=["src/input.png"]), image="cutout.png", run=_cutout,
+                      runner_calls=_matte_calls),
+        ),
+    )
+)
+
 register_runner(FakeSegmenter())
+register_runner(FakeMatter())
 register_runner(TamperedWeights())

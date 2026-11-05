@@ -219,6 +219,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "accept": lambda a: {"asset": a[1], "stage": a[2]},
     "import": lambda a: {"asset": a[1], "file": a[2]},
     "mask-import": lambda a: {"asset": a[1], "png": a[2]},
+    "plate-import": lambda a: {"asset": a[1], "png": a[2]},
     "pick": lambda a: {"asset": a[1], "variant": a[2]},
     "check": lambda a: {"asset": a[1]},
     "show": lambda a: {"asset": a[1]},
@@ -644,7 +645,8 @@ def test_the_file_route_stays_inside_the_project(project: Kiripix, server: Serve
 
 
 # The Commands with file inputs, and those inputs. Over REST each is a multipart part of the Command's own request.
-FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file"], "mask-import": ["png"]}
+FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file"], "mask-import": ["png"],
+                                     "plate-import": ["png"]}
 
 
 def test_every_file_input_has_a_multipart_test(server: Server) -> None:
