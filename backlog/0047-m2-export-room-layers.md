@@ -56,3 +56,11 @@ Spec §9 and ADR 0003. Story 14 of [0037](0037-m2-layers-and-props.md). Follows 
 - Open question: a Layer ID is `[a-z0-9_]+` and so needs no `-` rule; a node under `Foreground` or `Above` is named by the ID.
 - After review (2026-11-05): `ROOM_SCHEMA_VERSION` lives in `kiripix.recipes.room` (the export layer imports it). A test
   starts from a schema-1 `room.json`, as an M1 build left it.
+
+### Fixed after the Owner's manual run (2026-11-05)
+
+A room exported once, then rebuilt with a Layer that has neither a y-sort line nor "always above", crashed every `show` and
+`status` with `TypeError ... godot.py:113`. Working out whether the game is behind (`export_pending`) builds the scene without
+running the checks that refuse `layer.no_ysort` first. `read_room` now refuses such a Layer with `layer.no_ysort` (exit 2), so
+the status shows `kiripix export` as pending and `export` says why. Test:
+`test_an_exported_room_with_a_layer_left_unsorted_still_shows_and_its_export_is_refused`.

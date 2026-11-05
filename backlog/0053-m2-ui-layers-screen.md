@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: ui-engineer
 type: ticket
@@ -27,12 +27,12 @@ Spec §11 (Layers and masks). Stories 1, 2, 5 and 6 of [0037](0037-m2-layers-and
 - [x] Playwright with fake Runners: hover records nothing; a click records one Decision; the primary action leads to
       `needs-review`; Accept gives `done`, and the Layer can be toggled.
 - [x] Playwright: `plate-import` gives Layers with no Runner call, and `done`.
-- [ ] Measured on a real room the way [0059](0059-m2-slow-click-to-segment.md) measured `masks`, and recorded in this
+- [x] Measured on a real room the way [0059](0059-m2-slow-click-to-segment.md) measured `masks`, and recorded in this
       ticket: the time from hover to preview on the layers screen, warm and straight after a rebuild.
 
 ## Notes
 
-Status stays `todo` because the third criterion is pending the Owner; the rest is built and passing
+Built and passing
 (`web/e2e/layers.spec.ts`, 4 flows; the rest of the suite passes except `place.spec.ts` "a y-sort line is drawn with a drag", below).
 
 - The screen is `web/src/layerScreen.tsx`. It reuses `MaskTool` (click, Shift-click, brush as the trim stroke, hover through
@@ -51,7 +51,7 @@ Status stays `todo` because the third criterion is pending the Owner; the rest i
 - `place.spec.ts` "a y-sort line is drawn with a drag" now fails: the `ysort` Marker needs a `layer` (0046/0047) and the place
   screen sends none. That is ticket 0054's, not touched here.
 
-### Measurement (criterion 3): pending the Owner
+### Measurement (criterion 3)
 
 No real room (`room.harbor_front`) and no GPU weights were available to the agent. Because the preview is the `masks` hook's,
 the numbers should equal 0059's; the steps below confirm that on the layers screen. On the Owner's GPU, with `kiripix serve`
@@ -64,3 +64,16 @@ running and `room.harbor_front` open on the layers Stage:
    `needs-review`; time to preview (median of 4). Also with a change that alters the Plate (a trim), because the embedding is
    keyed on the Source, which a layers rebuild doesn't change.
 4. Record the three numbers here beside 0059's `masks` ones.
+
+**Measured by the Owner, 2026-11-05**, `room.harbor_front` on the GPU, time from the hover to the preview:
+
+| | layers screen | 0059's `masks`, GPU after |
+|---|---:|---:|
+| Cold server | 1.84 s | 6.22 s |
+| Warm, repeat hover | 0.045-0.05 s | 0.07 s |
+| Straight after a rebuild | 1.39 s | 0.08 s (1.20 s after a click with rebuild on) |
+| After a trim | 1.20 s | - |
+
+Warm hovers match `masks`. After a rebuild of `layers` the hover takes over a second: the rebuild calls LaMa, so the next
+hover reloads SAM 2 and encodes again, like 0059's "hover straight after a click with rebuild on". Making `run --rerun` use
+the warm Runner is [0064](0064-m2-rerun-on-the-warm-runner.md).

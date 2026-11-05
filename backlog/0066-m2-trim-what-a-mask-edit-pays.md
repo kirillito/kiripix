@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 milestone: M2
 agent: core-engineer
 type: ticket

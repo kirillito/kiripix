@@ -1,6 +1,8 @@
 name: CI
 
-on: [push, pull_request]
+# Run by hand only (Actions > CI > Run workflow), to save the free tier's minutes; the tests run locally.
+# Put back `[push, pull_request]` to run it on every push again.
+on: workflow_dispatch
 
 permissions:
   contents: read

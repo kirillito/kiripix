@@ -171,6 +171,23 @@ def test_with_no_layers_the_scene_has_no_foreground_and_the_plate_is_palette_png
     assert data["written"] == [] and data["counter"] == 1 and times(project) == before
 
 
+def test_an_exported_room_with_a_layer_left_unsorted_still_shows_and_its_export_is_refused(project: Kiripix) -> None:
+    """Exported, then `crate`'s above flag undone and rebuilt: `export` Stage is built with `crate` neither sorted nor
+    above. Working out whether the game is behind must not build its scene; the export refuses it and writes nothing."""
+    layered_room(project)
+    project.json("export", ROOM)
+    before = times(project)
+    project.json("undo", ROOM, "place")
+    project.json("run", ROOM, expect=2)
+
+    project.json("show", ROOM)
+    project.json("status")
+    findings = project.json("export", ROOM, expect=2)["findings"]
+
+    assert [f["code"] for f in findings if f["severity"] == "error"] == ["layer.no_ysort"]
+    assert times(project) == before
+
+
 def test_an_m1_build_is_refused_naming_the_rebuild_and_then_exports_nothing(project: Kiripix) -> None:
     """An M1 room exported, then its built room.json as M1 left it (schema 1, no `layers`): after the rebuild the export
     writes nothing and leaves the counter alone."""
