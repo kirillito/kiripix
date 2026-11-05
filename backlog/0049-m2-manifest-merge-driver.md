@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: godot-export
 type: ticket
@@ -24,10 +24,10 @@ Spec §9 (Branch merges) and ADR 0003. Story 16 of [0037](0037-m2-layers-and-pro
 
 ## Acceptance criteria
 
-- [ ] A real `git merge` in a temporary repo with the driver installed: two branches export one Asset, the Manifest merges
+- [x] A real `git merge` in a temporary repo with the driver installed: two branches export one Asset, the Manifest merges
       with no conflict, counter = higher + 1, IDs the union.
-- [ ] Without the driver, export warns with a `fix`; running it, then exporting again, gives no warning.
-- [ ] `.gitattributes` alone (no config) still warns.
-- [ ] A Manifest with committed conflict markers: `export` refuses and names `manifest repair`; after it, `export` works.
-- [ ] An unreadable side exits 1 and leaves the file unchanged.
-- [ ] Samples for each new Command in `tests/cli/test_contract.py`.
+- [x] Without the driver, export warns with a `fix`; running it, then exporting again, gives no warning.
+- [x] `.gitattributes` alone (no config) still warns.
+- [x] A Manifest with committed conflict markers: `export` refuses and names `manifest repair`; after it, `export` works.
+- [x] An unreadable side exits 1 and leaves the file unchanged.
+- [x] Samples for each new Command in `tests/cli/test_contract.py`.

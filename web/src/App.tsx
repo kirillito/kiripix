@@ -27,7 +27,10 @@ import {
 } from "./components";
 import { isTyping, type PixelCanvas } from "./pixelCanvas";
 import { MASKS_STAGE, MasksPanel } from "./maskScreen";
-import { PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
+import { ABOVE_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
+import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
+import { LAYERS_DECISION, LAYERS_STAGE, LayersPanel } from "./layerScreen";
+import { layerIdOf } from "./sortView";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
 const REFRESH_DELAY_MS = 100; // one refresh for a burst of "changed" events
@@ -77,6 +80,8 @@ export function App() {
   const [connected, setConnected] = useState(true);
   const [gameFrame, setGameFrame] = useState(false);
   const [rebuild, setRebuild] = useState(true);
+  const [layersRebuild, setLayersRebuild] = useState(false); // each rebuild is a Runner call, so it's the Owner's to ask for
+  const [focusLayer, setFocusLayer] = useState<{ layer: string; count: number } | null>(null); // a `layer.no_ysort` jump
   const [, setRefocus] = useState(0); // one more render, to run the focus effect when a finding is on this Stage
   const canvas = useRef<PixelCanvas>(null);
 
@@ -177,7 +182,10 @@ export function App() {
   const isPlace = description?.decisions.some((decision) => decision.name === PLACE_DECISION) ?? false;
   const isMasks =
     current === MASKS_STAGE && (description?.decisions.some((decision) => decision.name === "brush") ?? false);
+  const isLayers =
+    current === LAYERS_STAGE && (description?.decisions.some((decision) => decision.name === LAYERS_DECISION) ?? false);
   const isReach = current === REACH_STAGE && show?.kind === "room";
+  const isFootprint = description?.decisions.some((decision) => decision.name === FOOTPRINT_DECISION) ?? false;
 
   // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
   // go one at a time, in the order they were made: a Run straight after a `set` must see that `set`, not find its lock held.
@@ -215,12 +223,26 @@ export function App() {
     },
     [asset, current, perform],
   );
+  const decideAbove = useCallback(
+    (layer: string, above: boolean) => {
+      const decision = JSON.stringify({ decision: ABOVE_DECISION, data: { layer, above } });
+      void perform(() => call("decide", { asset, stage: current, decision }));
+    },
+    [asset, current, perform],
+  );
+  const decideFootprint = useCallback(
+    (footprint: Record<string, unknown>) => {
+      const decision = JSON.stringify({ decision: FOOTPRINT_DECISION, data: footprint });
+      void perform(() => call("decide", { asset, stage: current, decision }));
+    },
+    [asset, current, perform],
+  );
   // A Mask edit shows once the Stage has run again, so with "rebuild" on the same action runs it, as a refresh would.
   // Only a `click` asks for a Runner's result, hence `rerun` for it alone: no other edit may re-run a pinned call (ADR 0002).
   // It can be cancelled, but it doesn't make the screen busy: the queue keeps quick strokes in order, and none is dropped.
   const rebuilt = useCallback(
     async <T,>(result: Envelope<T>, rerun = false): Promise<Envelope<unknown>> => {
-      if (!isMasks || !rebuild || !result.ok) return result;
+      if (!(isMasks ? rebuild : isLayers && layersRebuild) || !result.ok) return result;
       const id = crypto.randomUUID();
       setRebuilding(id);
       try {
@@ -231,7 +253,7 @@ export function App() {
         setProgress(null);
       }
     },
-    [asset, current, isMasks, rebuild],
+    [asset, current, isMasks, isLayers, rebuild, layersRebuild],
   );
   const decideMask = useCallback(
     (name: string, data: Record<string, unknown>) => {
@@ -242,6 +264,10 @@ export function App() {
   );
   const importMask = useCallback(
     (file: File) => void perform(async () => rebuilt(await callWithFile("mask-import", { asset }, "png", file))),
+    [asset, perform, rebuilt],
+  );
+  const importPlate = useCallback(
+    (file: File) => void perform(async () => rebuilt(await callWithFile("plate-import", { asset }, "png", file))),
     [asset, perform, rebuilt],
   );
   const pick = useCallback(
@@ -305,6 +331,7 @@ export function App() {
     setAsset(assetId);
     setStage(stageName);
     setNotice([]);
+    setFocusLayer(null);
   }
 
   // Children's effects run first, so the canvas has already started on the new Stage's image when this one focuses it.
@@ -315,8 +342,11 @@ export function App() {
   });
 
   function jump(finding: Finding) {
-    const { stage: where, x, y } = finding.position ?? {};
-    if (x != null && y != null) jumpTo.current = { x, y };
+    const { stage: where, x, y, width, height } = finding.position ?? {};
+    // The canvas focuses one pixel: a box (an open edge) is focused at its middle.
+    if (x != null && y != null) jumpTo.current = { x: x + Math.floor((width ?? 1) / 2), y: y + Math.floor((height ?? 1) / 2) };
+    const layer = finding.code === "layer.no_ysort" ? layerIdOf(finding.position?.file ?? "") : undefined;
+    if (layer) setFocusLayer((before) => ({ layer, count: (before?.count ?? 0) + 1 }));
     if (where && where !== current) setStage(where);
     else setRefocus((count) => count + 1);
   }
@@ -396,9 +426,22 @@ export function App() {
               <PlacePanel
                 key={asset}
                 canvas={canvas}
+                show={show}
                 detail={detail}
                 status={data.status}
+                imageVersion={imageVersion}
+                focusLayer={focusLayer}
                 decide={decideMarker}
+                decideAbove={decideAbove}
+                disabled={busy}
+              />
+            )}
+            {isFootprint && (
+              <FootprintPanel
+                key={asset}
+                canvas={canvas}
+                detail={detail}
+                decide={decideFootprint}
                 disabled={busy}
               />
             )}
@@ -408,12 +451,28 @@ export function App() {
                 canvas={canvas}
                 asset={asset ?? ""}
                 detail={detail}
+                decisions={description.decisions}
                 imageVersion={imageVersion}
                 disabled={busy}
                 rebuild={rebuild}
                 onRebuild={setRebuild}
                 decide={decideMask}
                 importPng={importMask}
+              />
+            )}
+            {isLayers && (
+              <LayersPanel
+                key={asset}
+                canvas={canvas}
+                asset={asset ?? ""}
+                detail={detail}
+                decisions={description.decisions}
+                imageVersion={imageVersion}
+                disabled={busy}
+                rebuild={layersRebuild}
+                onRebuild={setLayersRebuild}
+                decide={decideMask}
+                importPlate={importPlate}
               />
             )}
             {isReach && (

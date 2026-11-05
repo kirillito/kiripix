@@ -2,7 +2,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
-import { art, expect, test, type Studio } from "./harness";
+import { art, expect, layeredRoom, test, type Studio } from "./harness";
 
 const ROOM = "room.alley";
 
@@ -145,15 +145,16 @@ test("an Exit's dropdowns offer the target rooms and their Exits, and a light ha
   });
 });
 
-test("a y-sort line is drawn with a drag, in one Decision", async ({ page, studio }) => {
-  walledRoom(studio, 8);
+test("a y-sort line is drawn with a drag, in one Decision that names its Layer", async ({ page, studio }) => {
+  layeredRoom(studio);
   await open(page, studio, "place");
   await page.getByTestId("marker-type").selectOption("ysort");
+  await page.getByTestId("marker-layer").selectOption("lamp");
 
   await dragPixel(page, [20, 10], [40, 12]);
 
   await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
-  expect(markers(studio)).toEqual([{ id: "ysort.1", type: "ysort", x: 20, y: 10, x2: 40, y2: 12 }]);
+  expect(markers(studio)).toEqual([{ id: "ysort.1", type: "ysort", x: 20, y: 10, x2: 40, y2: 12, layer: "lamp" }]);
 });
 
 test("in the walk test, the Body stops at a solid edge", async ({ page, studio }) => {

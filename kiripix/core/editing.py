@@ -23,7 +23,8 @@ from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
 from kiripix.core.settings import save_settings
 from kiripix.recipes.base import ParamSpec, Scalar, StageSpec
-from kiripix.recipes.room import IMPORT_DIR, LAYERS_STAGE, MASKS_STAGE
+from kiripix.recipes.common import IMPORT_DIR
+from kiripix.recipes.room import LAYERS_STAGE, MASKS_STAGE
 
 MASK_IMPORT = "import"  # the masks Stage's Decision for a painted image: {"png": <hash>} of a PNG in IMPORT_DIR
 PLATE_DECISION = "plate"  # the layers Stage's Decision for a Plate image: {"png": <hash>} of a PNG in IMPORT_DIR

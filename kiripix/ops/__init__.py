@@ -13,7 +13,8 @@ from kiripix.ops.colour import (
     quantize,
     srgb_to_oklab,
 )
-from kiripix.ops.cleanup import remove_orphans
+from kiripix.ops.chroma import chroma_key, key_fringe
+from kiripix.ops.cleanup import add_outline, remove_orphans
 from kiripix.ops.compose import overlay
 from kiripix.ops.geometry import NavigationPolygon, Outline, collision_shapes, contours, navigation_polygon, simplify
 from kiripix.ops.layers import (
@@ -24,11 +25,12 @@ from kiripix.ops.layers import (
     partial_cells,
     recompose,
 )
-from kiripix.ops.masks import flood_region, mask_runs, paint_stroke, snap_cell, split_painted
+from kiripix.ops.masks import SIDES, flood_region, mask_runs, open_edges, paint_stroke, snap_cell, split_painted, wall_off
 from kiripix.ops.palette import Palette, PaletteEntry, PaletteSyntaxError, format_gpl, parse_gpl, parse_hex
 from kiripix.ops.reach import Gap, Island, narrowest_gaps, reachable, walkable, walkable_islands
 from kiripix.ops.resample import (
     Grid,
+    alpha_by_vote,
     detect_grid,
     downscale_mode,
     mask_to_source,
@@ -50,7 +52,10 @@ __all__ = [
     "Palette",
     "PaletteEntry",
     "PaletteSyntaxError",
+    "add_outline",
+    "alpha_by_vote",
     "bayer_matrix",
+    "chroma_key",
     "collision_shapes",
     "conformance",
     "connected_regions",
@@ -62,6 +67,7 @@ __all__ = [
     "format_gpl",
     "grow_where_partial",
     "has_partial_alpha",
+    "key_fringe",
     "mask_from_difference",
     "mask_runs",
     "mask_to_source",
@@ -70,6 +76,8 @@ __all__ = [
     "overlay",
     "narrowest_gaps",
     "navigation_polygon",
+    "SIDES",
+    "open_edges",
     "paint_stroke",
     "parse_gpl",
     "parse_hex",
@@ -87,5 +95,6 @@ __all__ = [
     "target_centre",
     "upscale",
     "walkable",
+    "wall_off",
     "walkable_islands",
 ]

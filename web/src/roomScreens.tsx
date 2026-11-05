@@ -1,10 +1,11 @@
 // The room's hand-written screens (spec §11): place, with its Marker form, and reach, with the walk test.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { call, fileUrl, type ShowData, type StageDetail, type StatusData } from "./api";
+import { call, fileUrl, type ShowData, type SortPosition, type StageDetail, type StatusData } from "./api";
 import { isDrawnFromTwoPoints, MarkerTool, type Marker } from "./markerTool";
 import type { CanvasPixel, PixelCanvas } from "./pixelCanvas";
-import { loadMask, WalkTest } from "./walkTest";
+import { LayerHighlight, layerFiles, loadImage } from "./sortView";
+import { loadMask, WalkTest, type SortedLayers } from "./walkTest";
 
 const TYPES = ["spawn", "exit", "interactable", "light", "emitter", "ysort"] as const;
 const LABELS: Record<string, string> = {
@@ -17,6 +18,7 @@ const LABELS: Record<string, string> = {
 };
 
 export const PLACE_DECISION = "marker";
+export const ABOVE_DECISION = "above";
 export const REACH_STAGE = "reach";
 const PLACE_STAGE = "place";
 
@@ -31,6 +33,13 @@ interface Fields {
 
 const DEFAULTS: Fields = { target_room: "", target_exit: "", colour: "#ffffff", radius: 32, energy: 1, name: "emitter" };
 
+function sortText(entry: SortPosition | undefined): string {
+  if (!entry) return "no y-sort line yet";
+  if (entry.above) return "always above the Body";
+  if (entry.y === null) return "no y-sort line yet";
+  return `sorts at y ${entry.y}`;
+}
+
 function markersOf(detail: StageDetail | undefined): Marker[] {
   return (detail?.markers ?? []) as Marker[];
 }
@@ -42,7 +51,8 @@ function freeId(type: string, markers: Marker[]): string {
   }
 }
 
-function ownFields(type: string, fields: Fields): Record<string, unknown> {
+function ownFields(type: string, fields: Fields, layer: string): Record<string, unknown> {
+  if (type === "ysort") return { layer };
   if (type === "exit") return { target_room: fields.target_room, target_exit: fields.target_exit };
   if (type === "light") return { colour: fields.colour, radius: fields.radius, energy: fields.energy };
   if (type === "emitter") return { name: fields.name };
@@ -51,12 +61,16 @@ function ownFields(type: string, fields: Fields): Record<string, unknown> {
 
 export function PlacePanel(props: {
   canvas: RefObject<PixelCanvas | null>;
+  show: ShowData;
   detail: StageDetail;
   status: StatusData | null;
+  imageVersion: number;
+  focusLayer: { layer: string; count: number } | null;
   decide: (marker: Record<string, unknown>) => void;
+  decideAbove: (layer: string, above: boolean) => void;
   disabled: boolean;
 }) {
-  const { canvas, detail, status, decide, disabled } = props;
+  const { canvas, show, detail, status, imageVersion, focusLayer, decide, decideAbove, disabled } = props;
   const markers = markersOf(detail);
   const [type, setType] = useState<string>(TYPES[0]);
   const [typedId, setTypedId] = useState<string | null>(null);
@@ -65,31 +79,51 @@ export function PlacePanel(props: {
   const selected = markers.find((marker) => marker.id === selectedId) ?? null;
   const [exits, setExits] = useState<string[]>([]);
   const id = typedId ?? freeId(type, markers);
+  const files = layerFiles(show);
+  const layerIds = [...files.keys()];
+  const [chosenLayer, setChosenLayer] = useState<string | null>(null);
+  const layer = chosenLayer !== null && files.has(chosenLayer) ? chosenLayer : (layerIds[0] ?? "");
+  const sorts = detail.sort ?? [];
 
-  const form = useRef({ type, id, fields, decide, disabled, markers });
-  form.current = { type, id, fields, decide, disabled, markers };
+  const form = useRef({ type, id, fields, layer, decide, disabled, markers });
+  form.current = { type, id, fields, layer, decide, disabled, markers };
   const tool = useRef<MarkerTool | null>(null);
+  const highlight = useRef(new LayerHighlight());
 
   function choose(marker: Marker) {
     setSelectedId(marker.id);
     setType(marker.type);
     setTypedId(marker.id);
     setFields((before) => ({ ...before, ...(marker as unknown as Partial<Fields>) }));
+    if (typeof marker.layer === "string") setChosenLayer(marker.layer);
   }
+
+  // A `layer.no_ysort` finding jumps here: the Layer is chosen, and shown while its line is drawn.
+  const jumpedLayer = focusLayer?.layer;
+  const jumpCount = focusLayer?.count;
+  useEffect(() => {
+    if (jumpedLayer) {
+      setChosenLayer(jumpedLayer);
+      setType("ysort");
+      setTypedId(null);
+      setSelectedId(null);
+    }
+  }, [jumpedLayer, jumpCount]);
 
   useEffect(() => {
     const placing = new MarkerTool({
       place(start: CanvasPixel, end: CanvasPixel) {
-        const { type: chosen, id: name, fields: own, decide: record, disabled: off } = form.current;
+        const { type: chosen, id: name, fields: own, layer: sorted, decide: record, disabled: off } = form.current;
         const line = isDrawnFromTwoPoints(chosen);
         if (off || (line && start.x === end.x && start.y === end.y)) return;
+        if (chosen === "ysort" && !sorted) return; // a line sorts a Layer, and the room has none yet
         record({
           id: name,
           type: chosen,
           x: start.x,
           y: start.y,
           ...(line ? { x2: end.x, y2: end.y } : {}),
-          ...ownFields(chosen, own),
+          ...ownFields(chosen, own, sorted),
         });
         setTypedId(null);
         setSelectedId(null);
@@ -101,9 +135,30 @@ export function PlacePanel(props: {
       select: choose,
     });
     tool.current = placing;
-    canvas.current?.setTools([placing]);
+    canvas.current?.setTools([highlight.current, placing]);
     return () => canvas.current?.setTools([]);
   }, [canvas]);
+
+  // The Layer shown while its line is drawn: its own pixels, as the Stage built them.
+  const shownFile = type === "ysort" ? (files.get(layer) ?? null) : null;
+  useEffect(() => {
+    let current = true;
+    if (!shownFile) {
+      highlight.current.show(null, null);
+      canvas.current?.redraw();
+      return;
+    }
+    loadImage(fileUrl(shownFile, imageVersion))
+      .then((image) => {
+        if (!current) return;
+        highlight.current.show(layer, image);
+        canvas.current?.redraw();
+      })
+      .catch(() => undefined); // Rebuilt while it was read; the next refresh reads it again.
+    return () => {
+      current = false;
+    };
+  }, [canvas, shownFile, layer, imageVersion]);
 
   // Every refresh brings a new `detail`, so a drag that was refused goes back to where the Marker is.
   useEffect(() => {
@@ -165,6 +220,26 @@ export function PlacePanel(props: {
           onChange={(event) => setTypedId(event.target.value)}
         />
       </div>
+      {type === "ysort" &&
+        (layerIds.length === 0 ? (
+          <p className="hint" data-testid="no-layers">
+            The room has no Layer yet to sort: lift one on the layers screen.
+          </p>
+        ) : (
+          <div className="param">
+            <label htmlFor="marker-layer">Layer</label>
+            <select
+              id="marker-layer"
+              data-testid="marker-layer"
+              value={layer}
+              onChange={(event) => setChosenLayer(event.target.value)}
+            >
+              {layerIds.map((name) => (
+                <option key={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+        ))}
       {type === "exit" && (
         <>
           <div className="param">
@@ -261,7 +336,7 @@ export function PlacePanel(props: {
               x,
               y,
               ...(x2 !== undefined ? { x2, y2 } : {}),
-              ...ownFields(selected.type, fields),
+              ...ownFields(selected.type, fields, String(selected.layer ?? layer)),
             });
           }}
         >
@@ -280,11 +355,49 @@ export function PlacePanel(props: {
                 data-testid={`marker-${marker.id}`}
                 onClick={() => choose(marker)}
               >
-                {marker.id} ({marker.x}, {marker.y})
-              </button>
+                {marker.id} ({marker.x}, {marker.y}){typeof marker.layer === "string" ? ` for ${marker.layer}` : ""}
+  </button>
             ))}
         </section>
       ))}
+      {layerIds.length > 0 && (
+        <section data-testid="sort-layers">
+          <h2>Layers</h2>
+          <ul className="layer-list">
+            {layerIds.map((name) => {
+              const entry = sorts.find((one) => one.layer === name);
+              return (
+                <li key={name}>
+                  <button
+                    data-testid={`sort-layer-${name}`}
+                    aria-pressed={layer === name}
+                    onClick={() => {
+                      setChosenLayer(name);
+                      setType("ysort");
+                      setTypedId(null);
+                      setSelectedId(null);
+                    }}
+                  >
+                    {name}
+                  </button>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      data-testid={`above-${name}`}
+                      checked={entry?.above ?? false}
+                      onChange={(event) => decideAbove(name, event.target.checked)}
+                    />
+                    always above
+                  </label>
+                  <span className="hint" data-testid={`sort-${name}`}>
+                    {sortText(entry)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </fieldset>
   );
 }
@@ -310,6 +423,36 @@ export function ReachPanel(props: {
   const walkable = place?.outputs.find((path) => path.endsWith("/walkable.png"));
   const clear = place?.outputs.find((path) => path.endsWith("/clear.png"));
   const tool = useRef(new MarkerTool(null));
+  const sorted = useRef<SortedLayers>({ layers: [] });
+
+  // The Layers the walk test draws over the Body, and where each sorts: `place`'s `sort`, and the Layers' own files.
+  const files = layerFiles(show);
+  // A string, so the effect below reloads the images only when a sort position or a file changes, not on every new `show`.
+  const sortKey = JSON.stringify([place?.sort ?? [], [...files]]);
+  useEffect(() => {
+    let current = true;
+    const [positions, found] = JSON.parse(sortKey) as [SortPosition[], [string, string][]];
+    const paths = new Map(found);
+    void Promise.all(
+      positions
+        .filter((entry) => paths.has(entry.layer) && (entry.above || entry.y !== null))
+        .map(async (entry) => ({
+          id: entry.layer,
+          image: await loadImage(fileUrl(paths.get(entry.layer)!, imageVersion)),
+          above: entry.above,
+          y: entry.y,
+        })),
+    )
+      .then((layers) => {
+        if (!current) return;
+        sorted.current.layers = layers;
+        canvas.current?.redraw();
+      })
+      .catch(() => undefined); // Rebuilt while it was read; the next refresh reads it again.
+    return () => {
+      current = false;
+    };
+  }, [canvas, sortKey, imageVersion]);
 
   useEffect(() => {
     let current = true;
@@ -353,7 +496,7 @@ export function ReachPanel(props: {
         const x = start?.x ?? Math.floor(ground.width / 2);
         const y = start?.y ?? Math.floor(ground.height / 2);
         const body = { size: [bodyWidth, bodyHeight] as [number, number], dash };
-        walk = new WalkTest(ground, open, body, x, y, () => canvas.current?.redraw());
+        walk = new WalkTest(ground, open, body, x, y, () => canvas.current?.redraw(), sorted.current);
         canvas.current?.setTools([tool.current, walk]);
       },
     );

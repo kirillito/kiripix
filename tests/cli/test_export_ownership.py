@@ -292,7 +292,8 @@ def test_two_rooms_whose_exits_point_at_each_other_pass_check_all(project: Kirip
 
     result = project.json("check", "--all")
 
-    assert result["findings"] == [] and result["data"]["project_checks"] is True
+    assert [f for f in result["findings"] if f["code"] != "masks.open_edge"] == []  # info: an edge left open
+    assert result["data"]["project_checks"] is True
 
 
 def test_removing_one_sides_exit_fails_check_all_and_a_single_export_only_warns(project: Kiripix) -> None:
@@ -398,7 +399,7 @@ def test_once_every_room_is_exported_next_is_done_and_check_all_passes(project: 
     project.json("export", "--all")
 
     assert project.json("next", ROOM)["data"]["done"] and project.json("next", STREET)["data"]["done"]
-    assert project.json("check", "--all")["findings"] == []
+    assert [f for f in project.json("check", "--all")["findings"] if f["code"] != "masks.open_edge"] == []
 
 
 def test_the_new_results_validate_against_the_schema(project: Kiripix) -> None:

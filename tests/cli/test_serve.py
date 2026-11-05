@@ -231,6 +231,9 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "runners list": lambda a: {},
     "runners pull": lambda a: {"runner": a[2]},
     "runners rm": lambda a: {"runner": a[2]},
+    "manifest merge": lambda a: {"base": a[2], "ours": a[3], "theirs": a[4]},
+    "manifest install": lambda a: {},
+    "manifest repair": lambda a: {},
 }
 
 _VOLATILE = {"id", "parent", "started", "finished", "duration_s", "time", "at"}
@@ -527,7 +530,8 @@ def test_two_runner_calls_in_one_server_take_turns_even_on_the_cpu(project: Kiri
         caller.join(timeout=30)
 
     assert len(calls) == 1
-    assert [reply.status for reply in replies] == [403, 403] and all(r.codes == ["stage.needs_review"] for r in replies)
+    assert [reply.status for reply in replies] == [403, 403]
+    assert all([c for c in r.codes if c != "masks.open_edge"] == ["stage.needs_review"] for r in replies)  # info
 
 
 def test_cancel_stops_a_run_waiting_for_a_lock(project: Kiripix, server: Server) -> None:

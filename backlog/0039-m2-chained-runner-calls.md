@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: ml-engineer
 type: ticket
@@ -31,9 +31,9 @@ make the segmentation and stop at "Runner not run yet". `was_made_before`
 
 ## Acceptance criteria
 
-- [ ] With fake Runners: one `run --rerun` on a Stage with a chained call makes both calls and lands in `needs-review`, and
+- [x] With fake Runners: one `run --rerun` on a Stage with a chained call makes both calls and lands in `needs-review`, and
       `accept` gives `done`.
-- [ ] A cancel between the two keeps the first pinned, and the next `--rerun` makes only the second.
-- [ ] Changing what the first call returns changes the second call's key, so it goes to "Runner input changed".
-- [ ] A plain `run` after deleting `work/` calls no Runner.
-- [ ] The existing `tests/cli/test_runner_calls.py` still passes unchanged.
+- [x] A cancel between the two keeps the first pinned, and the next `--rerun` makes only the second.
+- [x] Changing what the first call returns changes the second call's key, so it goes to "Runner input changed".
+- [x] A plain `run` after deleting `work/` calls no Runner.
+- [x] The existing `tests/cli/test_runner_calls.py` still passes unchanged.

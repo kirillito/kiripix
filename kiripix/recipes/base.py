@@ -73,6 +73,19 @@ class CheckSpec(BaseModel):
     description: str
 
 
+class SortPosition(BaseModel):
+    """A foreground Layer's sort position (spec §9; D3 in ticket 0037): the one number the walk test and the Exporter read,
+    never work out again. The Body sorts below the Layer while its y is under `y`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    layer: str
+    above: bool  # always above the Body; `marker` and `y` are then None
+    marker: str | None  # the ID of the y-sort line that sorts the Layer
+    y: int | None  # the line's mean y, rounded half up; None while the Layer has neither line nor flag
+    slope: int  # how far the line's ends differ in y, in px
+
+
 class StageInputs(BaseModel):
     """What a Stage's input hash covers.
 
@@ -205,6 +218,8 @@ class StageSpec:
     runner_calls: RunnerCallsFunction | None = None
     segment: SegmentHooks | None = None
     markers: Callable[[tuple[CurrentDecision, ...]], list[dict[str, Any]]] | None = None  # for `show`, before any build
+    # Each Layer's sort position, from the Decisions alone, for `show` (the Exporter and the walk test read the built file).
+    sort: Callable[[tuple[CurrentDecision, ...]], list[SortPosition]] | None = None
 
 
 @dataclass(frozen=True)

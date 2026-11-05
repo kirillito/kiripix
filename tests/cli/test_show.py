@@ -65,7 +65,8 @@ def test_a_built_stage_lists_its_output_files_and_the_body_comes_from_the_projec
 
     data = project.json("show", ROOM)["data"]
 
-    assert stage(data, "masks")["outputs"] == ["assets/room/alley/work/masks/pit.png",
+    assert stage(data, "masks")["outputs"] == ["assets/room/alley/work/masks/floods.json",
+                                               "assets/room/alley/work/masks/pit.png",
                                                "assets/room/alley/work/masks/solid.png"]
     assert stage(data, "export")["outputs"] == []
     assert data["body"] == {"size": [12, 8], "dash": 0}

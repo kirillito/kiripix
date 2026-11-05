@@ -53,7 +53,7 @@ def test_a_4x_upscaled_source_fits_exactly_and_layers_passes_the_image_through(p
                     "offset_y": 0, "width": 480, "height": 272}
     assert read(folder / "work" / "layers" / "plate.png").tobytes() == fit.tobytes()
     layers = json.loads((folder / "work" / "layers" / "layers.json").read_text(encoding="utf-8"))
-    assert layers == {"layers": []}
+    assert layers == {"schema_version": 1, "layers": []}
     assert project.json("next", ROOM)["data"]["stage"] == "reach"  # masks is done, empty; palette and place are built
 
 
@@ -160,4 +160,4 @@ def test_describe_shows_palette_below_layers_not_masks(project: Kiripix) -> None
     assert stages["palette"]["inputs"]["upstream"] == ["layers"]
     assert stages["masks"]["inputs"]["upstream"] == ["layers", "source", "fit"]  # its Runner works on the Source
     assert stages["fit"]["inputs"]["upstream"] == ["source", "brief"]
-    assert stages["layers"]["available_from"] == "M1" and stages["layers"]["gpu"] is False
+    assert stages["layers"]["available_from"] == "M1" and stages["layers"]["gpu"]  # it makes Runner calls

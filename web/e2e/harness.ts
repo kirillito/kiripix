@@ -175,3 +175,22 @@ export const test = base.extend<{ studio: Studio; segmentingStudio: Studio }>({
 });
 
 export { expect } from "@playwright/test";
+
+// A 48 x 32 room built down to `place`, with two Layers lifted from a Plate image (no Runner call): `crate`, a block at x 20 to 27
+// and y 10 to 17, and `lamp`, a block at x 30 to 35 and y 4 to 9. Nothing is placed yet, so neither Layer has a y-sort line.
+export function layeredRoom(studio: Studio): string {
+  const id = studio.room();
+  const ground = (x: number): [number, number, number, number] => (Math.floor(x / 2) < 24 ? [255, 0, 77, 255] : [29, 43, 83, 255]);
+  const crate = (x: number, y: number) => x >= 40 && x < 56 && y >= 20 && y < 36;
+  const lamp = (x: number, y: number) => x >= 60 && x < 72 && y >= 8 && y < 20;
+  studio.kiripix("pick", id, studio.importVariant(id, "a.png", png(96, 64, (x, y) => (crate(x, y) ? [255, 255, 255, 255] : lamp(x, y) ? [255, 163, 0, 255] : ground(x)))));
+  studio.run(id);
+  studio.write("plate.png", png(96, 64, (x) => ground(x)));
+  studio.kiripix("plate-import", id, "incoming/plate.png");
+  for (const [layer, x, y] of [["crate", 24, 14], ["lamp", 32, 6]] as const) {
+    const data = { x, y, layer, positive: true };
+    studio.kiripix("decide", id, "layers", "--decision", JSON.stringify({ decision: "click", data }));
+  }
+  studio.run(id);
+  return id;
+}

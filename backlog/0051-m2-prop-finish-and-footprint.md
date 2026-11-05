@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -24,8 +24,14 @@ Spec §6.2, §7 (cleanup). Stories 12 and 13 of [0037](0037-m2-layers-and-props.
 
 ## Acceptance criteria
 
-- [ ] Golden test for the outline, on an edge-touching shape.
-- [ ] With `outline` on, every pixel is still on the palette and alpha still binary.
-- [ ] No footprint: `next` names the Owner's action. After `decide`, `run` gives `done`, and moving the origin rebuilds only
+- [x] Golden test for the outline, on an edge-touching shape.
+- [x] With `outline` on, every pixel is still on the palette and alpha still binary.
+- [x] No footprint: `next` names the Owner's action. After `decide`, `run` gives `done`, and moving the origin rebuilds only
       from `footprint` down.
-- [ ] A bad palette index fails with a message that gives the valid range.
+- [x] A bad palette index fails with a message that gives the valid range.
+
+## Notes (2026-11-04)
+
+- `add_outline(rgba, colour)` is in `kiripix/ops/cleanup.py`; golden `add_outline.png` (in `tests/golden/test_chroma.py`).
+- `finish` writes `finish.png` and runs the palette conformance Check on it. `footprint` takes the latest `footprint` Decision and writes
+  `footprint.json` and `sprite.png`. Besides `prop.no_origin`, it has `prop.origin_outside` and `prop.footprint_too_small` (owner actions).

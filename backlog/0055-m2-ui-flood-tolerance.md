@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: ui-engineer
 type: ticket
@@ -19,6 +19,6 @@ The UI half of [0036](0036-m2-flood-does-nothing-on-a-painted-plate.md). Follows
 
 ## Acceptance criteria
 
-- [ ] Playwright: a flood at the slider's value records one Decision with that `tolerance`.
-- [ ] Playwright: moving the slider alone records nothing.
-- [ ] Playwright: a flood on a one-pixel region shows the finding.
+- [x] Playwright: a flood at the slider's value records one Decision with that `tolerance`.
+- [x] Playwright: moving the slider alone records nothing.
+- [x] Playwright: a flood on a one-pixel region shows the finding.

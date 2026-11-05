@@ -80,7 +80,8 @@ def test_a_painted_mask_leaves_next_without_the_advice(project: Kiripix) -> None
 
     assert "mask.none_painted" not in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
-    assert advice["data"]["stage"] == "place" and advice["findings"] == []  # the flood made it stale
+    assert advice["data"]["stage"] == "place"  # the flood made it stale
+    assert "mask.none_painted" not in [f["code"] for f in advice["findings"]]
 
 
 # flood
@@ -103,6 +104,55 @@ def test_a_flood_fills_the_region_under_the_point_and_undo_empties_the_mask_agai
 
     assert stage_status(project, ROOM)["masks"] == "done"
     assert not read_mask(folder).any()
+
+
+def shaded_plate() -> np.ndarray:
+    """The plate with every pixel nudged by a fixed jitter, as a downscaled painting is: no two neighbours are equal."""
+    image = plate()
+    jitter = (np.arange(HEIGHT * WIDTH).reshape(HEIGHT, WIDTH) * 7 % 5).astype(np.uint8)
+    image[..., :3] += jitter[..., None]
+    return image
+
+
+def painted_room(project: Kiripix) -> Path:
+    built_room(project)
+    Image.fromarray(shaded_plate(), "RGBA").save(project.cwd / "painted.png")
+    data: dict[str, Any] = project.json("import", ROOM, "painted.png")["data"]
+    project.json("pick", ROOM, str(data["variant"]))
+    project.json("run", ROOM, expect=3)
+    return project.cwd / "assets" / "room" / "alley"
+
+
+def test_a_flood_with_a_tolerance_fills_a_painted_region_and_one_without_warns(project: Kiripix) -> None:
+    folder = painted_room(project)
+    decide(project, "flood", {"x": 30, "y": 10, "mask": "solid"})  # no tolerance: exact colour, as before
+
+    result = project.json("run", ROOM, "masks")
+
+    assert read_mask(folder).sum() < 4
+    [finding] = [f for f in result["findings"] if f["code"] == "mask.flood_filled_almost_nothing"]
+    assert finding["severity"] == "warning" and finding["owner_action"] and finding["fix"] is None
+    assert (finding["position"]["x"], finding["position"]["y"]) == (30, 10)
+
+    project.json("undo", ROOM, "masks")
+    decide(project, "flood", {"x": 30, "y": 10, "mask": "solid", "tolerance": 0.04})
+    result = project.json("run", ROOM, "masks")
+
+    expected = np.zeros((HEIGHT, WIDTH), dtype=np.bool_)
+    expected[8:14, 24:36] = True
+    assert (read_mask(folder) == expected).all()
+    assert "mask.flood_filled_almost_nothing" not in [f["code"] for f in result["findings"]]
+
+
+def test_the_flood_tolerance_is_optional_bounded_and_described(project: Kiripix) -> None:
+    built_room(project)
+
+    decide(project, "flood", {"x": 1, "y": 1, "mask": "solid"})
+    decide(project, "flood", {"x": 1, "y": 1, "mask": "solid", "tolerance": 0.3}, expect=1)
+    decide(project, "flood", {"x": 1, "y": 1, "mask": "solid", "tolerance": -0.1}, expect=1)
+
+    text = json.dumps(project.json("describe", "room"))
+    assert "tolerance" in text and "0.2" in text
 
 
 def test_a_flood_records_the_plate_it_was_made_on_and_a_changed_plate_needs_review(project: Kiripix) -> None:
@@ -186,6 +236,106 @@ def test_snap_cell_applies_the_cell_grid_to_every_mask(project: Kiripix) -> None
     project.json("run", ROOM, "masks")
     expected[0:8, 0:8] = True  # a disc of radius 4 is 45 of the cell's 64 pixels: the whole cell is set
     assert (read_mask(folder) == expected).all()
+
+
+# border
+
+
+def border(project: Kiripix, sides: list[str], **fields: Any) -> dict[str, Any]:
+    return decide(project, "border", {"mask": "solid", "sides": sides, **fields})
+
+
+def edge_findings(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The `masks.open_edge` findings by the side each names (the message starts `the <side> edge`)."""
+    return {f["message"].split()[1]: f for f in result["findings"] if f["code"] == "masks.open_edge"}
+
+
+def test_a_border_of_all_four_sides_walls_off_the_room_and_undo_removes_it(project: Kiripix) -> None:
+    folder = built_room(project)
+    border(project, ["top", "right", "bottom", "left"])
+
+    result = project.json("run", ROOM, "masks")
+
+    solid = read_mask(folder)
+    expected = np.ones((HEIGHT, WIDTH), dtype=np.bool_)
+    expected[2:-2, 2:-2] = False  # the default thickness is 2
+    assert (solid == expected).all()
+    assert edge_findings(result) == {}
+
+    project.json("undo", ROOM, "masks")
+    project.json("run", ROOM, "masks")
+    assert not read_mask(folder).any()
+
+
+def test_a_border_of_two_sides_leaves_the_others_open_and_the_finding_gives_the_exact_command(project: Kiripix) -> None:
+    folder = built_room(project)
+    border(project, ["left", "right"], thickness=3)
+
+    result = project.json("run", ROOM, "masks")
+
+    solid = read_mask(folder)
+    assert solid[:, :3].all() and solid[:, -3:].all() and not solid[:, 3:-3].any()
+    open_sides = edge_findings(result)
+    assert list(open_sides) == ["top", "bottom"]
+    top = open_sides["top"]
+    assert top["severity"] == "info" and top["owner_action"] is None
+    assert (top["position"]["x"], top["position"]["y"], top["position"]["width"], top["position"]["height"]) ==         (3, 0, WIDTH - 6, 1)
+    assert open_sides["bottom"]["position"]["y"] == HEIGHT - 1
+    # Running the fix walls off that side.
+    fix = top["fix"]
+    assert fix.startswith(f"kiripix decide {ROOM} masks --decision ")
+    command = json.loads(fix.split("--decision ", 1)[1].strip("'"))
+    assert command == {"decision": "border", "data": {"mask": "solid", "sides": ["top"]}}
+    decide(project, command["decision"], command["data"])
+    result = project.json("run", ROOM, "masks")
+    assert list(edge_findings(result)) == ["bottom"]
+
+
+def test_a_later_brush_erase_opens_a_gap_in_the_border(project: Kiripix) -> None:
+    folder = built_room(project)
+    border(project, ["top", "right", "bottom", "left"])
+    decide(project, "brush", {"mask": "solid", "erase": True, "radius": 0, "points": [[0, 10], [3, 10]]})
+
+    result = project.json("run", ROOM, "masks")
+
+    solid = read_mask(folder)
+    assert not solid[10, :4].any() and solid[9, 0] and solid[11, 1]
+    assert list(edge_findings(result)) == ["left"]
+    assert edge_findings(result)["left"]["position"]["y"] == 10
+
+
+def test_a_thickness_larger_than_the_room_fills_it(project: Kiripix) -> None:
+    folder = built_room(project)
+    border(project, ["top"], thickness=500)
+
+    project.json("run", ROOM, "masks")
+
+    assert read_mask(folder).all()
+
+
+def test_a_changed_plate_does_not_send_a_border_only_masks_to_needs_review(project: Kiripix) -> None:
+    built_room(project)
+    entry = border(project, ["top", "bottom", "left", "right"])["data"]
+    project.json("run", ROOM, "masks")
+    assert entry["current"][0]["image_hash"] is None
+
+    repainted = plate()
+    repainted[0:4, 40:48] = RUG
+    Image.fromarray(repainted, "RGBA").save(project.cwd / "source2.png")
+    data: dict[str, Any] = project.json("import", ROOM, "source2.png")["data"]
+    project.json("pick", ROOM, str(data["variant"]))
+    project.json("run", ROOM, expect=3)
+
+    assert stage_status(project, ROOM)["masks"] == "done"
+
+
+def test_the_border_decision_is_validated_and_described(project: Kiripix) -> None:
+    built_room(project)
+
+    assert decide(project, "border", {"mask": "solid", "sides": ["middle"]}, expect=1)["findings"][0]["code"] ==         "decision.invalid"
+    assert decide(project, "border", {"mask": "solid", "sides": []}, expect=1)["findings"][0]["code"] ==         "decision.invalid"
+    text = json.dumps(project.json("describe", "room")["data"])
+    assert "border" in text and "thickness" in text and "masks.open_edge" in text
 
 
 # import

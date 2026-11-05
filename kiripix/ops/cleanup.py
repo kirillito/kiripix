@@ -65,3 +65,22 @@ def remove_orphans(rgba: U8, orphan_size: int) -> U8:
         for at in members:
             out[divmod(at, width) + (slice(0, 3),)] = rgb
     return out
+
+
+def add_outline(rgba: U8, colour: tuple[int, int, int]) -> U8:
+    """Give every transparent pixel that touches an opaque one along an edge (4-adjacent) the colour `colour`, opaque.
+
+    The outline is clipped at the canvas: nothing grows beyond it, so a shape that touches the edge has no outline there.
+    Opaque pixels are not changed; a pixel counts as opaque from alpha 1, and a transparent one is alpha 0.
+    """
+    if rgba.ndim != 3 or rgba.shape[2] != 4:
+        raise ValueError("expected an (H, W, 4) RGBA image")
+    opaque = rgba[..., 3] > 0
+    near = np.zeros_like(opaque)
+    near[1:, :] |= opaque[:-1, :]
+    near[:-1, :] |= opaque[1:, :]
+    near[:, 1:] |= opaque[:, :-1]
+    near[:, :-1] |= opaque[:, 1:]
+    out = rgba.copy()
+    out[near & ~opaque] = (*colour, 255)
+    return out

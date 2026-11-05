@@ -11,6 +11,8 @@ export interface Position {
   x: number | null;
   y: number | null;
   field: string | null;
+  width?: number | null; // a box: x, y, width, height
+  height?: number | null;
 }
 
 export interface Finding {
@@ -40,7 +42,17 @@ export interface StatusData {
   assets: { asset: string; kind: string; stages: StageState[] }[];
 }
 
+// Where a Layer sorts against the Body, as `place`'s Decisions give it: `y` is None when it is always above (or has no line).
+export interface SortPosition {
+  layer: string;
+  above: boolean;
+  marker: string | null;
+  y: number | null;
+  slope: number;
+}
+
 export interface StageDetail extends StageState {
+  sort?: SortPosition[]; // `place` only
   params: Record<string, Scalar>;
   decisions: { id: string; name: string; data: Record<string, unknown> }[];
   image: string | null;
@@ -89,7 +101,7 @@ export interface StageDescription {
   name: string;
   description: string;
   params: ParamSpec[];
-  decisions: { name: string; description: string }[];
+  decisions: { name: string; description: string; entry_schema?: { properties?: Record<string, { minimum?: number; maximum?: number; pattern?: string }> } }[];
   checks: { code: string; description: string }[];
   owner_input: string | null;
   implemented: boolean;

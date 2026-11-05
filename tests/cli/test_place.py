@@ -7,6 +7,8 @@ from typing import Any
 import numpy as np
 from conftest import Kiripix, stage_status
 from PIL import Image
+from test_layers_stage import accept, click, lift
+from test_layers_stage import built_room as layers_room
 from test_masks import ROOM, built_room, decide
 
 # built_room's Plate is 48 x 32, with a wall on its left 16 columns. With the wall flooded into `solid` and the default
@@ -122,17 +124,18 @@ def test_each_marker_type_keeps_its_own_fields_in_the_markers_file(project: Kiri
     place(project, "crate", "interactable", (30, 20))
     place(project, "lamp", "light", (30, 8), colour="#FFCC88", radius=24, energy=1.5)
     place(project, "steam", "emitter", (32, 8), name="steam_vent")
-    place(project, "ysort.rail", "ysort", (24, 20), x2=40, y2=20)
+    place(project, "ysort.rail", "ysort", (24, 20), layer="rail", x2=40, y2=20)
 
-    built_place(project)
+    result = built_place(project, expect=2)  # the room has no Layer `rail`
 
+    assert [f["code"] for f in findings(result, "ysort.unknown_layer")] == ["ysort.unknown_layer"]
     assert markers(folder) == [
         {"id": "spawn.main", "type": "spawn", "x": 30, "y": 16},
         {"id": "exit.east", "type": "exit", "x": 40, "y": 16, "target_room": "room.street", "target_exit": "exit.west"},
         {"id": "crate", "type": "interactable", "x": 30, "y": 20},
         {"id": "lamp", "type": "light", "x": 30, "y": 8, "colour": "#FFCC88", "radius": 24, "energy": 1.5},
         {"id": "steam", "type": "emitter", "x": 32, "y": 8, "name": "steam_vent"},
-        {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "x2": 40, "y2": 20},
+        {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "layer": "rail", "x2": 40, "y2": 20},
     ]
 
 
@@ -169,6 +172,10 @@ def test_a_marker_is_refused_without_the_fields_of_its_type_or_with_those_of_ano
     assert "decision.invalid" in [f["code"] for f in place(project, "lamp", "light", colour="#FFFFFF", expect=1)[
         "findings"]]
     assert "decision.invalid" in [f["code"] for f in place(project, "ysort.a", "ysort", x2=1, expect=1)["findings"]]
+    assert "decision.invalid" in [f["code"] for f in place(project, "ysort.a", "ysort", x2=9, y2=9, expect=1)["findings"]]
+    assert "decision.invalid" in [f["code"] for f in place(project, "spawn.a", "spawn", layer="lamp", expect=1)["findings"]]
+    assert "decision.invalid" in [f["code"] for f in place(project, "ysort.a", "ysort", layer="plate", x2=9, y2=9,
+                                                           expect=1)["findings"]]
     assert "decision.invalid" in [f["code"] for f in place(project, "spawn.a", "spawn", radius=3, expect=1)["findings"]]
     assert "decision.invalid" in [f["code"] for f in place(project, "lamp", "light", colour="orange", radius=1,
                                                            energy=1, expect=1)["findings"]]
@@ -184,7 +191,10 @@ def test_describe_gives_the_marker_decision_schema_and_says_place_is_implemented
     assert stage["implemented"]
     schema = stage["decisions"][0]["entry_schema"]
     assert schema["required"] == ["id", "type", "x", "y"]
-    assert {"target_room", "target_exit", "colour", "radius", "energy", "name", "x2", "y2"} <= set(schema["properties"])
+    assert {"target_room", "target_exit", "colour", "radius", "energy", "name", "layer", "x2", "y2"} <= set(
+        schema["properties"])
+    above = next(d for d in stage["decisions"] if d["name"] == "above")
+    assert above["entry_schema"]["required"] == ["layer", "above"]
 
 
 # Checks
@@ -267,7 +277,8 @@ def test_a_clean_place_reports_nothing(project: Kiripix) -> None:
 
     result = project.json("check", ROOM)
 
-    assert result["findings"] == [] and f"{ROOM} place" in result["data"]["stages"]
+    assert {f["code"] for f in result["findings"]} <= {"masks.open_edge"}  # info: the room's other edges are open
+    assert f"{ROOM} place" in result["data"]["stages"]
 
 
 def test_a_view_that_derives_walkable_without_a_solid_mask_fails_the_stage_and_says_why(project: Kiripix) -> None:
@@ -282,3 +293,155 @@ def test_a_view_that_derives_walkable_without_a_solid_mask_fails_the_stage_and_s
 
     [failure] = findings(result, "stage.failed")
     assert failure["position"]["stage"] == "place" and "solid" in failure["message"]
+
+
+# y-sort lines and "always above" (ticket 0046, D3)
+
+
+def lamp_room(project: Kiripix) -> Path:
+    """The layers room with one Layer, `lamp`, lifted and accepted, and built down to `place`."""
+    folder = layers_room(project)
+    click(project, "lamp", 8, 8)
+    lift(project)
+    accept(project)
+    built_place(project, expect=2)  # layer.no_ysort: the Layer has no line yet
+    return folder
+
+
+def line(project: Kiripix, layer: str, y: int = 20, y2: int | None = None, marker_id: str = "ysort.lamp",
+         expect: int = 0) -> dict[str, Any]:
+    return place(project, marker_id, "ysort", (24, y), layer=layer, x2=40, y2=y if y2 is None else y2, expect=expect)
+
+
+def above(project: Kiripix, layer: str, flag: bool = True) -> dict[str, Any]:
+    return project.json("decide", ROOM, "place", "--decision",
+                        json.dumps({"decision": "above", "data": {"layer": layer, "above": flag}}))
+
+
+def sort_of(folder: Path) -> list[dict[str, Any]]:
+    value: list[dict[str, Any]] = json.loads((folder / "work" / "place" / "markers.json").read_text("utf-8"))["sort"]
+    return value
+
+
+def shown_sort(project: Kiripix) -> list[dict[str, Any]]:
+    stage = next(s for s in project.json("show", ROOM)["data"]["stages"] if s["stage"] == "place")
+    value: list[dict[str, Any]] = stage["sort"]
+    return value
+
+
+def test_a_layer_with_no_line_fails_layer_no_ysort_and_a_line_clears_it(project: Kiripix) -> None:
+    folder = lamp_room(project)
+
+    [finding] = findings(project.json("check", ROOM, expect=2), "layer.no_ysort")
+    assert finding["position"]["stage"] == "place" and "lamp" in finding["message"]
+    assert finding["fix"] is None and "lamp" in finding["owner_action"]
+    assert sort_of(folder) == [{"layer": "lamp", "above": False, "marker": None, "y": None, "slope": 0}]
+    assert shown_sort(project) == []  # nothing decided yet
+
+    line(project, "lamp")
+    built_place(project)
+
+    assert findings(project.json("check", ROOM), "layer.no_ysort") == []
+    assert sort_of(folder) == [{"layer": "lamp", "above": False, "marker": "ysort.lamp", "y": 20, "slope": 0}]
+
+
+def test_the_above_flag_clears_layer_no_ysort_and_sorts_at_none_and_false_takes_it_back(project: Kiripix) -> None:
+    folder = lamp_room(project)
+
+    above(project, "lamp")
+    built_place(project)
+
+    assert findings(project.json("check", ROOM), "layer.no_ysort") == []
+    assert sort_of(folder) == [{"layer": "lamp", "above": True, "marker": None, "y": None, "slope": 0}]
+    assert shown_sort(project) == sort_of(folder)
+
+    above(project, "lamp", False)
+    built_place(project, expect=2)
+
+    assert findings(project.json("check", ROOM, expect=2), "layer.no_ysort") != []
+    assert shown_sort(project) == []
+
+
+def test_above_wins_over_a_line_on_the_same_layer(project: Kiripix) -> None:
+    folder = lamp_room(project)
+    line(project, "lamp")
+    above(project, "lamp")
+
+    built_place(project)
+
+    assert sort_of(folder) == [{"layer": "lamp", "above": True, "marker": None, "y": None, "slope": 0}]
+
+
+def test_a_second_line_on_a_layer_sorts_nothing_and_warns(project: Kiripix) -> None:
+    folder = lamp_room(project)
+    line(project, "lamp")
+    line(project, "lamp", y=26, marker_id="ysort.lamp_low")
+    built_place(project)
+
+    assert sort_of(folder) == [{"layer": "lamp", "above": False, "marker": "ysort.lamp", "y": 20, "slope": 0}]
+    [warning] = findings(project.json("check", ROOM), "ysort.extra_line")
+    assert warning["severity"] == "warning" and "ysort.lamp_low" in warning["message"] and warning["owner_action"]
+
+
+def test_a_room_with_no_layers_passes_and_a_ysort_without_a_layer_warns_and_is_kept(project: Kiripix) -> None:
+    folder = walled_room(project)
+    place(project, "spawn.main", "spawn")
+    place(project, "ysort.rail", "ysort", (24, 20), layer="rail", x2=40, y2=20)
+    journal = folder / "decisions" / "place.jsonl"
+    entries = [json.loads(text) for text in journal.read_text("utf-8").splitlines()]
+    del entries[-1]["data"]["layer"]  # as an M1 journal has it
+    journal.write_text("".join(json.dumps(entry) + "\n" for entry in entries), "utf-8")
+
+    built_place(project)
+
+    result = project.json("check", ROOM)
+    [warning] = findings(result, "ysort.no_layer")
+    assert warning["severity"] == "warning" and warning["fix"] is None and "ysort.rail" in warning["owner_action"]
+    assert findings(result, "layer.no_ysort") == []
+    assert markers(folder)[-1] == {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "x2": 40, "y2": 20}
+    assert sort_of(folder) == []
+
+
+def test_a_sloped_line_sorts_at_its_mean_y_rounded_half_up_and_warns_past_half_a_tile(project: Kiripix) -> None:
+    folder = lamp_room(project)
+    line(project, "lamp", y=20, y2=25)  # 5 px apart: within half of the 16 px tile
+    built_place(project)
+
+    assert sort_of(folder) == [{"layer": "lamp", "above": False, "marker": "ysort.lamp", "y": 23, "slope": 5}]
+    assert findings(project.json("check", ROOM), "ysort.sloped") == []
+
+    line(project, "lamp", y=20, y2=29)  # 9 px apart
+    built_place(project)
+
+    [warning] = findings(project.json("check", ROOM), "ysort.sloped")
+    assert warning["severity"] == "warning" and "ysort.lamp" in warning["message"] and warning["owner_action"]
+    assert sort_of(folder)[0]["y"] == 25 and sort_of(folder)[0]["slope"] == 9
+    assert shown_sort(project) == sort_of(folder)
+
+
+def test_a_line_or_flag_naming_an_unknown_layer_is_its_own_finding(project: Kiripix) -> None:
+    folder = lamp_room(project)
+    line(project, "lamp")
+    line(project, "ghost", marker_id="ysort.ghost")
+    above(project, "phantom")
+    built_place(project, expect=2)
+
+    result = project.json("check", ROOM, expect=2)
+
+    unknown = findings(result, "ysort.unknown_layer")
+    assert sorted(f["message"].split("'")[1] for f in unknown) == ["ghost", "phantom"]
+    assert all(f["fix"] is None and f["owner_action"] for f in unknown)
+    assert findings(result, "layer.no_ysort") == []
+    assert [e["layer"] for e in sort_of(folder)] == ["lamp", "ghost", "phantom"]
+
+
+def test_show_gives_the_sort_position_of_each_layer_before_any_build(project: Kiripix) -> None:
+    lamp_room(project)
+
+    line(project, "lamp", y=18, y2=21)
+    above(project, "crate")
+
+    assert shown_sort(project) == [
+        {"layer": "lamp", "above": False, "marker": "ysort.lamp", "y": 20, "slope": 3},
+        {"layer": "crate", "above": True, "marker": None, "y": None, "slope": 0},
+    ]

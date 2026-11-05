@@ -1,6 +1,5 @@
 """The room Recipe (spec §6.1): brief, source, fit, layers, masks, palette, place, reach, export."""
 
-import hashlib
 import json
 import shutil
 from dataclasses import dataclass
@@ -10,7 +9,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from kiripix.checks import Finding, Position, check_conformance
+from kiripix.checks import Finding, Position
 from kiripix.recipes.base import (
     FIT_PARAMS,
     PALETTE_PARAMS,
@@ -25,6 +24,7 @@ from kiripix.recipes.base import (
     ParamSpec,
     RunnerCall,
     SegmentHooks,
+    SortPosition,
     StageFailure,
     StageInputs,
     StageRun,
@@ -33,32 +33,52 @@ from kiripix.recipes.base import (
     point_decision,
 )
 from kiripix.ops import (
-    BayerSize,
-    Grid,
     collision_shapes,
-    conformance,
     contours,
-    detect_grid,
-    downscale_mode,
     flood_region,
-    mask_to_target,
     narrowest_gaps,
+    open_edges,
     navigation_polygon,
     paint_stroke,
-    parse_gpl,
     parse_hex,
-    quantize,
     reachable,
-    remove_orphans,
-    sample_nearest,
     simplify,
     snap_cell,
     split_painted,
-    target_centre,
     walkable,
     walkable_islands,
+    wall_off,
 )
-from kiripix.ops.masks import RGB
+from kiripix.ops.masks import RGB, SIDES
+from kiripix.recipes.common import (
+    check_fit,
+    check_unchanged,
+    click_call,
+    click_groups,
+    click_params,
+    read_grid,
+    read_rgba,
+    run_fit,
+    run_source,
+    runner_mask_to_target,
+    source_needs_input,
+    stored_image,
+)
+from kiripix.recipes.layers import (
+    DECISIONS as LAYER_DECISIONS,
+    DIFFERENCE,
+    GROW,
+    check_layers,
+    needs_input as layers_needs_input,
+    run_layers,
+    runner_calls as layers_runner_calls,
+)
+from kiripix.recipes.layers import LAYER_ID, LAYERS_FILE, layer_file, read_layers
+from kiripix.recipes.room_palette import (
+    after_overrides as palette_after_overrides,
+    check_room_palette,
+    run_room_palette,
+)
 from kiripix.runners import SEGMENTER
 
 # brief
@@ -101,115 +121,14 @@ def _check_brief(run: StageRun) -> list[Finding]:
 # source: the Variants are src/<hash>.png, imported (or, from M4, generated); the Pick chooses one.
 
 
-def _variants(run: StageRun) -> dict[str, Path]:
-    return {Path(name).stem: path for name, path in run.files.items()}
-
-
-def _picked(run: StageRun) -> str | None:
-    picks = [d for d in run.decisions if d.name == PICK.name]
-    return str(picks[-1].data["variant"]) if picks else None
-
-
-def _source_needs_input(run: StageRun) -> NeedsInput | None:
-    variants = sorted(_variants(run))
-    picked = _picked(run)
-    if picked in variants:
-        return None
-    reason = "no Source picked" if picked is None else f"the picked Variant {picked} was deleted"
-    if not variants:
-        return NeedsInput(reason, command=f"kiripix import {run.asset_id} <file>")
-    if len(variants) == 1:
-        return NeedsInput(reason, command=f"kiripix pick {run.asset_id} {variants[0]}")
-    return NeedsInput(reason, owner_action=f"Pick one of the Variants {', '.join(variants)}: "
-                                           f"kiripix pick {run.asset_id} <variant>")
-
-
-def _source(run: StageRun) -> None:
-    picked = _picked(run)
-    assert picked is not None  # `_source_needs_input` holds the Stage back until there is a Pick
-    path = _variants(run)[picked]
-    if not hashlib.sha256(path.read_bytes()).hexdigest().startswith(picked):
-        raise StageFailure(f"the Variant {path.name} was changed after it was imported, and Variants are immutable; "
-                           "import the changed image as a new Variant and pick that")
-    shutil.copyfile(path, run.output_dir / "source.png")
-
-
-# fit: the Source's pixel grid (or a mode-filter downscale) down to the brief's exact size. Palette-free.
-
-
-def _read_rgba(path: Path) -> np.ndarray:
-    with Image.open(path) as image:
-        return np.asarray(image.convert("RGBA"), dtype=np.uint8).copy()
-
-
-def _write_rgba(path: Path, rgba: np.ndarray) -> None:
-    Image.fromarray(rgba, "RGBA").save(path, format="PNG")
-
-
-def _brief_size(run: StageRun) -> tuple[int, int]:
-    brief = json.loads((run.upstream["brief"] / "brief.json").read_text(encoding="utf-8"))
-    return int(brief["width"]), int(brief["height"])
+# source and fit: the shared work is in `kiripix.recipes.common`.
 
 
 def _fit(run: StageRun) -> None:
-    source = _read_rgba(run.upstream["source"] / "source.png")
-    height, width = source.shape[:2]
-    target_width, target_height = _brief_size(run)
-    mode = str(run.params["mode"])
-    scale = int(run.params["scale"])
-    if mode == "downscale":
-        try:
-            grid = Grid.to_size(width, height, target_width, target_height)
-        except ValueError:
-            raise StageFailure(f"can't downscale the {width}x{height} Source to the brief's "
-                               f"{target_width}x{target_height}: the Source is smaller") from None
-        fitted = downscale_mode(source, grid)
-    else:
-        try:
-            grid = (Grid.uniform(scale, int(run.params["offset_x"]), int(run.params["offset_y"]), width, height)
-                    if scale > 0 else detect_grid(source))
-        except ValueError as error:
-            raise StageFailure(str(error)) from None
-        fitted = sample_nearest(source, grid)
-    _write_rgba(run.output_dir / "fit.png", fitted)
-    record = {"mode": mode, "source": [width, height], **grid.to_json()}
-    (run.output_dir / "grid.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    run_fit(run, run.upstream["source"] / "source.png")
 
 
-def _check_fit(run: StageRun) -> list[Finding]:
-    grid = json.loads((run.output_dir / "grid.json").read_text(encoding="utf-8"))
-    width, height = int(grid["width"]), int(grid["height"])
-    target_width, target_height = _brief_size(run)
-    if (width, height) == (target_width, target_height):
-        return []
-    source_width, source_height = grid["source"]
-    asset = run.asset_id
-    ratio = source_width // target_width if target_width else 0
-    if source_width == ratio * target_width and source_height == ratio * target_height and ratio >= 1:
-        fix = f"kiripix set {asset} fit scale={ratio}"
-        if int(run.params["offset_x"]) or int(run.params["offset_y"]):
-            fix += " offset_x=0 offset_y=0"
-        if grid["mode"] == "grid" and int(run.params["scale"]) == ratio:  # already that: the grid isn't the problem
-            fix = f"kiripix set {asset} fit mode=downscale"
-    else:
-        fix = f"kiripix set {asset} fit mode=downscale"
-    return [
-        Finding(
-            code="fit.size_mismatch",
-            message=f"the fit image is {width}x{height}, the brief asks for {target_width}x{target_height}",
-            position=Position(asset=asset, stage="fit", field="stages.fit.scale"
-                              if grid["mode"] == "grid" else "stages.fit.mode"),
-            fix=fix,
-        )
-    ]
-
-
-# layers: a pass-through in M1. The Plate is the fit image, and there are no foreground Layers.
-
-
-def _layers(run: StageRun) -> None:
-    shutil.copyfile(run.upstream["fit"] / "fit.png", run.output_dir / "plate.png")
-    (run.output_dir / "layers.json").write_text(json.dumps({"layers": []}) + "\n", encoding="utf-8")
+# layers: the Plate and the foreground Layers, in `kiripix.recipes.layers`.
 
 
 # masks: the Decisions replayed in order onto the Plate's size, one 1-bit PNG per painted Mask of the room's view.
@@ -221,8 +140,6 @@ def _layers(run: StageRun) -> None:
 
 LAYERS_STAGE = "layers"
 MASKS_STAGE = "masks"
-IMPORT_DIR = ("decisions", "imports")  # a painted image of an `import` Decision, stored here under its hash
-_RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
 
 
 @dataclass(frozen=True)
@@ -249,33 +166,10 @@ def _rgb(colour: str) -> RGB:
     return entry.r, entry.g, entry.b
 
 
-def _click_groups(decisions: tuple[CurrentDecision, ...]) -> list[list[CurrentDecision]]:
-    """The Decisions in order, each in a list of its own, except that a negative `click` joins the `click` before it
-    if that is on the same Mask."""
-    groups: list[list[CurrentDecision]] = []
-    for decision in decisions:
-        previous = groups[-1][-1] if groups else None
-        if decision.name == "click" and not decision.data["positive"] and previous is not None and \
-                previous.name == "click" and previous.data["mask"] == decision.data["mask"]:
-            groups[-1].append(decision)
-        else:
-            groups.append([decision])
-    return groups
-
-
-def _read_grid(run: StageRun) -> tuple[Grid, dict[str, Any]] | None:
-    """The Grid transform recorded by `fit`, and the record itself; None until `fit` is built."""
-    path = run.upstream["fit"] / "grid.json"
-    if not path.is_file():
-        return None
-    record: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    return Grid.from_json(record), record
-
-
 def _masks_needs_input(run: StageRun) -> NeedsInput | None:
-    read = _read_grid(run)
+    read = read_grid(run)
     undo = f"Undo it: kiripix undo {run.asset_id} {MASKS_STAGE}"
-    for group in _click_groups(run.decisions):
+    for group in click_groups(run.decisions):
         first = group[0]
         if first.name != "click":
             continue
@@ -290,62 +184,40 @@ def _masks_needs_input(run: StageRun) -> NeedsInput | None:
     return None
 
 
-def _click_params(clicks: list[ClickPoint], grid: Grid) -> dict[str, Any]:
-    points = [[*target_centre(grid, x, y), positive] for x, y, positive in clicks]
-    return {"points": points, "max_size": _RUNNER_MAX_SIZE}
-
-
-def _click_call(group: list[CurrentDecision], grid: Grid, source: Path) -> RunnerCall:
-    clicks = [(int(d.data["x"]), int(d.data["y"]), bool(d.data["positive"])) for d in group]
-    return RunnerCall(
-        runner=SEGMENTER,
-        image=source,
-        params=_click_params(clicks, grid),
-        decisions=[{"x": d.data["x"], "y": d.data["y"], "positive": d.data["positive"]} for d in group],
-    )
-
-
 def _masks_runner_calls(run: StageRun) -> list[RunnerCall]:
-    read = _read_grid(run)
+    read = read_grid(run)
     source = run.upstream["source"] / "source.png"
     if read is None or not source.is_file() or _masks_needs_input(run) is not None:
         return []
-    return [_click_call(group, read[0], source) for group in _click_groups(run.decisions)
+    return [click_call(group, read[0], source) for group in click_groups(run.decisions)
             if group[0].name == "click"]
 
 
 def _segmented(run: StageRun, group: list[CurrentDecision]) -> np.ndarray:
     """The pinned result of a group of clicks, on the target grid."""
-    read = _read_grid(run)
+    read = read_grid(run)
     assert read is not None  # `fit` is upstream, and built
-    path = run.pinned(_click_call(group, read[0], run.upstream["source"] / "source.png"))
+    path = run.pinned(click_call(group, read[0], run.upstream["source"] / "source.png"))
     with Image.open(path) as image:
-        return _runner_mask_to_target(image, read)
-
-
-def _runner_mask_to_target(mask: Image.Image, read: tuple[Grid, dict[str, Any]]) -> np.ndarray:
-    grid, record = read
-    source_width, source_height = record["source"]
-    on_source = mask.convert("1").resize((int(source_width), int(source_height)), Image.Resampling.NEAREST)
-    return mask_to_target(np.asarray(on_source, dtype=np.bool_), grid)
+        return runner_mask_to_target(image, read)
 
 
 def _preview_call(run: StageRun, clicks: list[ClickPoint]) -> RunnerCall | None:
     """The call a `segment-preview` makes. Its `decisions` stay empty, since nothing was decided."""
-    read = _read_grid(run)
+    read = read_grid(run)
     source = run.upstream["source"] / "source.png"
     if read is None or not source.is_file():
         return None
     for x, y, _ in clicks:
         if not (x < read[0].width and y < read[0].height):
             raise StageFailure(f"the point ({x}, {y}) is outside the {read[0].width}x{read[0].height} Plate")
-    return RunnerCall(runner=SEGMENTER, image=source, params=_click_params(clicks, read[0]), decisions=[])
+    return RunnerCall(runner=SEGMENTER, image=source, params=click_params(clicks, read[0]), decisions=[])
 
 
 def _preview_to_target(run: StageRun, mask: np.ndarray) -> np.ndarray:
-    read = _read_grid(run)
+    read = read_grid(run)
     assert read is not None  # `_preview_call` found it
-    return _runner_mask_to_target(Image.fromarray(mask), read)
+    return runner_mask_to_target(Image.fromarray(mask), read)
 
 
 def _decision_mask(run: StageRun, view: _ViewMasks, name: str, decision: str) -> str:
@@ -368,12 +240,49 @@ def _read_mask(path: Path) -> np.ndarray:
         return np.asarray(image.convert("1"), dtype=np.bool_).copy()
 
 
+def _flood_decision() -> DecisionSpec:
+    """`point_decision` requires every property, and `tolerance` is optional: one left out is 0, as every flood was."""
+    spec = point_decision("flood", "Fill the region of the Plate under this point whose colour is within `tolerance` "
+                          "of the clicked pixel's (OKLab distance, 0 to 0.2; left out or 0 is exactly equal). A "
+                          "painted Plate has thousands of colours, so it needs a tolerance (0.04 is a start).",
+                          on_image=True, mask={"type": "string"})
+    schema = spec.entry_schema
+    schema["properties"]["tolerance"] = {"type": "number", "minimum": 0, "maximum": FLOOD_TOLERANCE_MAX}
+    return spec
+
+
+BORDER_THICKNESS = 2  # px: simplifying at the `export` Stage's default tolerance (1) keeps a wall of 1, and this has room
+
+
+def _border_decision() -> DecisionSpec:
+    return DecisionSpec(
+        name="border",
+        description=f"Wall off the room's edges: set a wall `thickness` px deep (default {BORDER_THICKNESS}, which "
+                    "survives the export's simplifying at its default tolerance; a thickness over a side fills it) "
+                    "along each of `sides` on a Mask, normally `solid`. It depends only on the room's size, so a "
+                    "changed Plate leaves it as it is. It replays in order, so a later brush erase opens a gap in it; "
+                    "an Exit needs none, since it stands on walkable ground inside the wall. A side left out stays "
+                    "open (`masks.open_edge` says so, as info).",
+        entry_schema={
+            "type": "object",
+            "properties": {
+                "mask": {"type": "string"},
+                "sides": {"type": "array", "items": {"enum": list(SIDES)}, "minItems": 1, "uniqueItems": True},
+                "thickness": {"type": "integer", "minimum": 1, "default": BORDER_THICKNESS},
+            },
+            "required": ["mask", "sides"],
+            "additionalProperties": False,
+        },
+    )
+
+
 def _masks(run: StageRun) -> None:
-    plate = _read_rgba(run.upstream["layers"] / "plate.png")
+    plate = read_rgba(run.upstream["layers"] / "plate.png")
     height, width = plate.shape[:2]
     view = _view_masks(run)
     masks = {name: np.zeros((height, width), dtype=np.bool_) for name in view.painted}
-    for group in _click_groups(run.decisions):
+    floods: list[dict[str, Any]] = []
+    for group in click_groups(run.decisions):
         decision = group[0]
         data = decision.data
         if decision.name == "click":
@@ -381,15 +290,23 @@ def _masks(run: StageRun) -> None:
         elif decision.name == "flood":
             name = _decision_mask(run, view, str(data["mask"]), "flood")
             try:
-                masks[name] |= flood_region(plate, int(data["x"]), int(data["y"]))
+                region = flood_region(plate, int(data["x"]), int(data["y"]), float(data.get("tolerance", 0)))
             except ValueError as error:
                 raise StageFailure(str(error)) from None
+            masks[name] |= region
+            floods.append({"mask": name, "x": int(data["x"]), "y": int(data["y"]),
+                           "tolerance": float(data.get("tolerance", 0)), "pixels": int(region.sum())})
         elif decision.name == "brush":
             name = _decision_mask(run, view, str(data["mask"]), "brush")
             masks[name] = paint_stroke(masks[name], [(int(x), int(y)) for x, y in data["points"]],
                                        int(data["radius"]), erase=bool(data["erase"]))
+        elif decision.name == "border":
+            name = _decision_mask(run, view, str(data["mask"]), "border")
+            masks[name] = wall_off(masks[name], [str(side) for side in data["sides"]],
+                                   int(data.get("thickness", BORDER_THICKNESS)))
         elif decision.name == "import":
             masks.update(_split_import(run, view, str(data["png"]), (width, height)))
+    (run.output_dir / FLOODS_FILE).write_text(json.dumps(floods, indent=1) + "\n", encoding="utf-8")
     cell = int(run.params["snap_cell"])
     for name, mask in masks.items():
         _write_mask(run.output_dir / f"{name}.png", snap_cell(mask, cell) if cell > 1 else mask)
@@ -398,13 +315,12 @@ def _masks(run: StageRun) -> None:
 def _split_import(run: StageRun, view: _ViewMasks, png_hash: str,
                   size: tuple[int, int]) -> dict[str, np.ndarray]:
     """The Masks of a painted image: each Mask the colour table names is replaced by what the image paints in it."""
-    path = run.asset_dir.joinpath(*IMPORT_DIR, f"{png_hash}.png")
+    path = stored_image(run, png_hash)
     if not path.is_file():
         raise StageFailure(f"the import Decision names {path.relative_to(run.asset_dir).as_posix()}, which is "
                            f"missing; undo it with kiripix undo {run.asset_id} {MASKS_STAGE}")
-    if hashlib.sha256(path.read_bytes()).hexdigest() != png_hash:
-        raise StageFailure(f"{path.name} was changed after it was imported; images named by hash are immutable")
-    image = _read_rgba(path)
+    check_unchanged(path, png_hash)
+    image = read_rgba(path)
     if (image.shape[1], image.shape[0]) != size:
         raise StageFailure(f"the imported image is {image.shape[1]}x{image.shape[0]} but the Plate is "
                            f"{size[0]}x{size[1]}; paint it at the Plate's size")
@@ -415,8 +331,68 @@ def _split_import(run: StageRun, view: _ViewMasks, png_hash: str,
     return {name: mask for name, mask in split.items() if name in view.painted}
 
 
-def _check_masks(run: StageRun) -> list[Finding]:
+# A flood that fills fewer pixels than this is probably a miss on painted art, which has no two equal colours.
+FLOOD_MIN_PIXELS = 16
+FLOOD_TOLERANCE_MAX = 0.2
+FLOODS_FILE = "floods.json"
+
+
+def _flood_findings(run: StageRun) -> list[Finding]:
+    path = run.output_dir / FLOODS_FILE
+    if not path.is_file():
+        return []
     findings = []
+    for flood in json.loads(path.read_text(encoding="utf-8")):
+        if flood["pixels"] >= FLOOD_MIN_PIXELS:
+            continue
+        findings.append(
+            Finding(
+                code="mask.flood_filled_almost_nothing",
+                severity="warning",
+                message=f"the flood at ({flood['x']}, {flood['y']}) into {flood['mask']} filled {flood['pixels']} px "
+                        f"at a tolerance of {flood['tolerance']:g}",
+                position=Position(asset=run.asset_id, stage=MASKS_STAGE, x=flood["x"], y=flood["y"]),
+                owner_action=f"Undo it and flood again with a `tolerance` (0 to {FLOOD_TOLERANCE_MAX:g}, in OKLab "
+                             f"distance; try 0.04) in the decision, or paint the region with the brush "
+                             f"(kiripix decide {run.asset_id} {MASKS_STAGE} --help).",
+            )
+        )
+    return findings
+
+
+def _open_edge_findings(run: StageRun) -> list[Finding]:
+    """Info: a room edge the Body can walk off, since no wall of `solid` or `pit` lies along all of it. Silent when
+    neither is painted."""
+    solid = run.output_dir / "solid.png"
+    if not solid.is_file():
+        return []
+    blocked = _read_mask(solid)
+    pit = run.output_dir / "pit.png"
+    if pit.is_file():
+        blocked = blocked | _read_mask(pit)
+    if not blocked.any():
+        return []  # nothing painted: `mask.none_painted` says so already, and four open edges would only repeat it
+    height, width = blocked.shape
+    findings = []
+    for side, (first, last) in open_edges(blocked).items():
+        along = last - first + 1
+        box = {"top": (first, 0, along, 1), "bottom": (first, height - 1, along, 1),
+               "left": (0, first, 1, along), "right": (width - 1, first, 1, along)}[side]
+        decision = {"decision": "border", "data": {"mask": "solid", "sides": [side]}}
+        findings.append(
+            Finding(
+                code="masks.open_edge",
+                severity="info",
+                message=f"the {side} edge of the room has no wall along {along} px of it, so the Body can walk off it",
+                position=Position(asset=run.asset_id, stage=MASKS_STAGE, x=box[0], y=box[1], width=box[2], height=box[3]),
+                fix=f"kiripix decide {run.asset_id} {MASKS_STAGE} --decision '{json.dumps(decision)}'",
+            )
+        )
+    return findings
+
+
+def _check_masks(run: StageRun) -> list[Finding]:
+    findings = _flood_findings(run) + _open_edge_findings(run)
     names = []
     painted = False
     for path in sorted(run.output_dir.glob("*.png")):
@@ -448,49 +424,8 @@ def _check_masks(run: StageRun) -> list[Finding]:
     return findings
 
 
-# palette: the whole composite mapped once to the palette (ADR 0004), then orphan pixels removed. In M1 the Plate is the
-# whole room and there are no foreground Layers; from M2 each Layer is this image cut by its alpha.
-
-_BAYER: dict[str, BayerSize] = {"none": 0, "bayer2": 2, "bayer4": 4, "bayer8": 8}
-
-
-def _palette_rgb(run: StageRun) -> np.ndarray:
-    path: Path = run.settings["palette"]
-    try:
-        palette = parse_gpl(path.read_text(encoding="utf-8")) if path.suffix.lower() == ".gpl" else parse_hex(
-            path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:  # PaletteSyntaxError is a ValueError
-        raise StageFailure(f"can't read the palette {path.name}: {error}") from None
-    if not palette.entries:
-        raise StageFailure(f"the palette {path.name} has no colours")
-    return palette.rgb()
-
-
-def _palette(run: StageRun) -> None:
-    plate = _read_rgba(run.upstream["layers"] / "plate.png")
-    palette = _palette_rgb(run)
-    run.check_cancel()
-    try:
-        mapped = quantize(plate, palette, _BAYER[str(run.params["dither"])], float(run.params["strength"]))
-    except ValueError as error:
-        raise StageFailure(f"the Plate can't be mapped: {error}") from None
-    run.check_cancel()
-    _write_rgba(run.output_dir / "palette.png", remove_orphans(mapped, int(run.params["orphan_size"])))
-
-
-def _check_palette(run: StageRun) -> list[Finding]:
-    # layers.recompose_mismatch: with no foreground Layers (all there is in M1) the Plate is the whole image and
-    # recomposes trivially; it is checked from M2, when the Layers exist.
-    try:
-        palette = _palette_rgb(run)
-    except StageFailure:
-        return []  # the palette's own Checks report it
-    report = conformance(_read_rgba(run.output_dir / "palette.png"), palette)
-    findings = check_conformance(report, "palette.png", fix=f"kiripix run {run.asset_id} palette --force")
-    for finding in findings:
-        assert finding.position is not None
-        finding.position.asset, finding.position.stage = run.asset_id, "palette"
-    return findings
+# palette: the whole composite mapped once to the palette (ADR 0004), then orphan pixels removed; each Layer is that image
+# cut by its alpha, after the Overrides. The work is in `kiripix.recipes.room_palette`.
 
 
 # place: the `marker` Decisions replayed into markers.json, and walkable derived from `solid` and the Body's footprint.
@@ -510,7 +445,11 @@ _MARKER_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "energy": {"type": "number", "minimum": 0},
     },
     "emitter": {"name": {"type": "string", "minLength": 1}},
-    "ysort": {"x2": {"type": "integer", "minimum": 0}, "y2": {"type": "integer", "minimum": 0}},
+    "ysort": {
+        "layer": {"type": "string", "pattern": LAYER_ID},
+        "x2": {"type": "integer", "minimum": 0},
+        "y2": {"type": "integer", "minimum": 0},
+    },
 }
 _ON_WALKABLE = ("exit", "spawn")
 
@@ -522,7 +461,7 @@ def _marker_decision() -> DecisionSpec:
         name="marker",
         description="Place a Marker at a target pixel. A Marker with the same ID and type moves it. An Exit also takes "
                     "target_room and target_exit; a light colour, radius and energy; an emitter name; and a y-sort "
-                    "line runs from (x, y) to (x2, y2).",
+                    "line runs from (x, y) to (x2, y2) and sorts the Layer it names (a sloped line sorts at its mean y).",
         entry_schema={
             "type": "object",
             "properties": {
@@ -556,13 +495,81 @@ def _no_walking(run: StageRun) -> np.ndarray:
 def _current_markers(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
     markers: dict[tuple[str, str], dict[str, Any]] = {}
     for decision in decisions:
-        markers[str(decision.data["id"]), str(decision.data["type"])] = decision.data  # a move keeps its first place
+        if decision.name == "marker":
+            markers[str(decision.data["id"]), str(decision.data["type"])] = decision.data  # a move keeps its first place
     return list(markers.values())
 
 
+def _above_decision() -> DecisionSpec:
+    return DecisionSpec(
+        name="above",
+        description="Put a Layer always above the Body (above true), or take that back (above false). A Layer that is "
+                    "always above needs no y-sort line, and its sort position is none. The latest Decision on a Layer "
+                    "counts.",
+        entry_schema={
+            "type": "object",
+            "properties": {"layer": {"type": "string", "pattern": LAYER_ID}, "above": {"type": "boolean"}},
+            "required": ["layer", "above"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def _sort_positions(decisions: tuple[CurrentDecision, ...], layers: list[str] | None = None) -> list[SortPosition]:
+    """Each Layer's sort position (see `SortPosition`): the first y-sort line placed on it, its `y` the line's mean y
+    rounded half up, `(y + y2 + 1) // 2`, unless an `above` Decision puts it always above. With `layers` (the built
+    Layers) every one is listed, in their order, with `y` None when it has neither line nor flag, then any other Layer a
+    line or flag names; without it only Layers a line or flag names are listed (`show`, before any build).
+    """
+    flags: dict[str, bool] = {}
+    for decision in decisions:
+        if decision.name == "above":
+            flags[str(decision.data["layer"])] = bool(decision.data["above"])  # the latest counts
+    lines: dict[str, dict[str, Any]] = {}
+    for marker in _current_markers(decisions):
+        if marker["type"] == "ysort" and "layer" in marker:
+            lines.setdefault(str(marker["layer"]), marker)
+    named = list(dict.fromkeys([*lines, *(layer for layer, above in flags.items() if above)]))
+    order = list(dict.fromkeys([*(layers or []), *named]))
+    positions = []
+    for layer in order:
+        line = lines.get(layer)
+        above = flags.get(layer, False)
+        if above or line is None:
+            positions.append(SortPosition(layer=layer, above=above, marker=None, y=None, slope=0))
+        else:
+            y1, y2 = int(line["y"]), int(line["y2"])
+            positions.append(SortPosition(layer=layer, above=False, marker=str(line["id"]), y=(y1 + y2 + 1) // 2,
+                                          slope=abs(y2 - y1)))
+    return positions
+
+
+def _built_layers(run: StageRun) -> list[str]:
+    layers_dir = run.upstream[LAYERS_STAGE]
+    if not (layers_dir / LAYERS_FILE).is_file():
+        return []
+    return [str(entry["id"]) for entry in read_layers(layers_dir, run.asset_id)]
+
+
+MARKERS_FILE = "markers.json"
+MARKERS_SCHEMA_VERSION = 1  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046)
+
+
+def _read_markers(place_dir: Path, asset: str) -> tuple[list[dict[str, Any]], list[SortPosition]]:
+    """The Markers and sort positions a built `markers.json` holds. An older file is refused, naming the rebuild."""
+    built = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))
+    if built.get("schema_version") != MARKERS_SCHEMA_VERSION:
+        raise StageFailure(f"{MARKERS_FILE} has schema_version {built.get('schema_version')}; this Kiripix reads "
+                           f"{MARKERS_SCHEMA_VERSION}. Rebuild it: kiripix run {asset} place --force")
+    markers: list[dict[str, Any]] = built["markers"]
+    return markers, [SortPosition.model_validate(entry) for entry in built["sort"]]
+
+
 def _place(run: StageRun) -> None:
-    (run.output_dir / "markers.json").write_text(json.dumps({"markers": _current_markers(run.decisions)}, indent=2) + "\n",
-                                                 encoding="utf-8")
+    sort = _sort_positions(run.decisions, _built_layers(run))
+    built = {"schema_version": MARKERS_SCHEMA_VERSION, "markers": _current_markers(run.decisions),
+             "sort": [position.model_dump() for position in sort]}
+    (run.output_dir / MARKERS_FILE).write_text(json.dumps(built, indent=2) + "\n", encoding="utf-8")
     if "walkable" not in _view_masks(run).derived:
         return  # the side view's reachability is over platforms (M5)
     path = run.upstream[MASKS_STAGE] / "solid.png"
@@ -576,11 +583,70 @@ def _place(run: StageRun) -> None:
     _write_mask(run.output_dir / "clear.png", walkable(_read_mask(path), footprint))
 
 
-def _check_place(run: StageRun) -> list[Finding]:
-    # layer.no_ysort: with no foreground Layers (all there is in M1) there is nothing to check; it is checked from M2.
-    markers: list[dict[str, Any]] = json.loads((run.output_dir / "markers.json").read_text(encoding="utf-8"))["markers"]
+def _check_sort(run: StageRun, markers: list[dict[str, Any]], sort: list[SortPosition]) -> list[Finding]:
     asset = run.asset_id
+    layers = _built_layers(run)
+    tile = float(run.settings["project.tile"])
     findings = []
+    lines = [m for m in markers if m["type"] == "ysort"]
+    for marker in lines:
+        at = Position(asset=asset, stage="place", x=int(marker["x"]), y=int(marker["y"]))
+        if "layer" not in marker:
+            findings.append(Finding(
+                code="ysort.no_layer",
+                severity="warning",
+                message=f"the ysort '{marker['id']}' sorts no Layer, so it does nothing",
+                position=at,
+                owner_action=f"Place {marker['id']} again with the Layer it sorts: a marker Decision of the same ID with "
+                             "a layer.",
+            ))
+        elif abs(int(marker["y2"]) - int(marker["y"])) > tile / 2:
+            findings.append(Finding(
+                code="ysort.sloped",
+                severity="warning",
+                message=f"the ysort '{marker['id']}' for {marker['layer']} has ends {abs(int(marker['y2']) - int(marker['y']))}"
+                        f" px apart in y, more than half a tile ({tile / 2:g} px); it sorts at its mean y",
+                position=at,
+                owner_action=f"Level {marker['id']} if the whole of {marker['layer']} should sort at one line, or leave it.",
+            ))
+    sorted_by = {position.layer: position.marker for position in sort}
+    for marker in lines:
+        if sorted_by.get(str(marker.get("layer"))) not in (None, marker["id"]):
+            findings.append(Finding(
+                code="ysort.extra_line",
+                severity="warning",
+                message=f"the ysort '{marker['id']}' is a second line for {marker['layer']}, and only the first line "
+                        "placed on a Layer sorts it, so it does nothing",
+                position=Position(asset=asset, stage="place", x=int(marker["x"]), y=int(marker["y"])),
+                owner_action=f"Keep one y-sort line for {marker['layer']}: undo {marker['id']} (kiripix undo {asset} "
+                             "place), or move the first line with a marker Decision of its ID.",
+            ))
+    for entry in sort:
+        layer = entry.layer
+        if layer not in layers:
+            findings.append(Finding(
+                code="ysort.unknown_layer",
+                message=f"a y-sort line or flag names the Layer '{layer}', and the room has no such Layer",
+                position=Position(asset=asset, stage="place"),
+                owner_action=f"Name a Layer the room has ({', '.join(layers) or 'none yet'}) with a new marker or above "
+                             f"Decision, or undo it (kiripix undo {asset} place).",
+            ))
+        elif entry.y is None and not entry.above:
+            example = json.dumps({"decision": "above", "data": {"layer": layer, "above": True}})
+            findings.append(Finding(
+                code="layer.no_ysort",
+                message=f"the Layer '{layer}' has no y-sort line and isn't always above",
+                position=Position(asset=asset, stage="place", file=layer_file(layer)),
+                owner_action=f"Place a ysort Marker with layer {layer}, or mark it always above: kiripix decide {asset} "
+                             f"place --decision '{example}'",
+            ))
+    return findings
+
+
+def _check_place(run: StageRun) -> list[Finding]:
+    markers, sort = _read_markers(run.output_dir, run.asset_id)
+    asset = run.asset_id
+    findings = _check_sort(run, markers, sort)
     seen: dict[str, str] = {}
 
     def position(marker: dict[str, Any]) -> Position:
@@ -624,7 +690,7 @@ def _check_place(run: StageRun) -> list[Finding]:
 
 
 def _flood_targets(place_dir: Path) -> list[dict[str, Any]]:
-    markers: list[dict[str, Any]] = json.loads((place_dir / "markers.json").read_text(encoding="utf-8"))["markers"]
+    markers: list[dict[str, Any]] = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))["markers"]
     return [marker for marker in markers if marker["type"] in _ON_WALKABLE]
 
 
@@ -634,7 +700,7 @@ def _reach_needs_input(run: StageRun) -> NeedsInput | None:
         reason = f"the {view} view's reachability is over platforms, which is not implemented until M5"
         return NeedsInput(reason, owner_action=f"Wait for M5 to finish {run.asset_id}: {reason}.")
     place_dir = run.upstream["place"]
-    if not (place_dir / "markers.json").is_file() or _flood_targets(place_dir):
+    if not (place_dir / MARKERS_FILE).is_file() or _flood_targets(place_dir):
         return None
     example = json.dumps({"decision": "marker", "data": {"id": "spawn.main", "type": "spawn", "x": 0, "y": 0}})
     return NeedsInput("no Spawn or Exit is placed, so the Body has nowhere to start from",
@@ -748,6 +814,7 @@ def _check_reach(run: StageRun) -> list[Finding]:
 # export: what the game gets, with nothing of Godot in it: the mapped Plate, and `room.json` with the collision shapes, the
 # navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
 
+ROOM_SCHEMA_VERSION = 2  # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
 _COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -759,7 +826,18 @@ def _export_needs_input(run: StageRun) -> NeedsInput | None:
 
 
 def _export(run: StageRun) -> None:
-    shutil.copyfile(run.upstream["palette"] / "palette.png", run.output_dir / "plate.png")
+    palette = run.upstream["palette"]
+    shutil.copyfile(palette / "plate.png", run.output_dir / "plate.png")  # the mapped Plate, not the composite
+    markers, sort = _read_markers(run.upstream["place"], run.asset_id)
+    sorts = {position.layer: position for position in sort}
+    layers = []
+    for entry in read_layers(palette, run.asset_id):
+        run.check_cancel()
+        shutil.copyfile(palette / str(entry["file"]), run.output_dir / str(entry["file"]))
+        position = sorts.get(str(entry["id"]))
+        above = position is not None and position.above
+        layers.append({"id": entry["id"], "file": entry["file"], "above": above,
+                       "y": None if position is None or above else position.y})
     tolerance = float(run.params["tolerance"])
     collision = {}
     for name in _COLLISION_MASKS:
@@ -769,15 +847,15 @@ def _export(run: StageRun) -> None:
     run.check_cancel()
     ground = _read_mask(run.upstream["place"] / "walkable.png") & _read_mask(run.upstream["reach"] / "reachable.png")
     navigation = navigation_polygon(simplify(contours(ground), tolerance))
-    markers = json.loads((run.upstream["place"] / "markers.json").read_text(encoding="utf-8"))["markers"]
     room = {
-        "schema_version": 1,
+        "schema_version": ROOM_SCHEMA_VERSION,
         "asset": run.asset_id,
         "size": [ground.shape[1], ground.shape[0]],
         "collision": collision,
         "navigation": {"vertices": navigation.vertices, "polygons": navigation.polygons,
                        "outlines": navigation.outlines},
         "markers": markers,
+        "layers": layers,
     }
     (run.output_dir / "room.json").write_text(json.dumps(room, indent=2) + "\n", encoding="utf-8")
 
@@ -827,8 +905,8 @@ ROOM = KindSpec(
             owner_input="Picks one Variant.",
             available_from="M1",
             image="source.png",
-            run=_source,
-            needs_input=_source_needs_input,
+            run=run_source,
+            needs_input=source_needs_input,
         ),
         StageSpec(
             name="fit",
@@ -840,21 +918,29 @@ ROOM = KindSpec(
             available_from="M1",
             image="fit.png",
             run=_fit,
-            check=_check_fit,
+            check=check_fit,
         ),
         StageSpec(
             name="layers",
-            # The M1 pass-through (ticket 0010): no owner input. The real Stage (M2) adds the `grow` parameter, the
-            # `click` Decision ("Clicks objects to lift out.") and the GPU.
-            description="Builds the Plate from the fit image; foreground Layers arrive in M2.",
-            decisions=(PLATE,),
+            description="Lifts foreground objects into named Layers and fills the Plate behind them: click an object "
+                        "(a Runner segments it, a Runner inpaints the hole, both pinned), widen with `grow`, trim a rim "
+                        "with a brush. With no Decisions it is done, and the Plate is the fit image.",
+            # `fit` first: the clicks and trims are made on its image. Not `gpu`: the Runner calls take the lock
+            # themselves (D10), and a build only reads their pinned results.
+            inputs=StageInputs(upstream=["fit", "source"]),
+            params=(GROW, DIFFERENCE),
+            decisions=LAYER_DECISIONS,
             checks=(
                 CheckSpec(code="layers.recompose_mismatch", description="Plate and Layers recompose to the fit image."),
                 CheckSpec(code="layers.plate_hole", description="The Plate has no holes."),
             ),
+            owner_input="Clicks objects to lift out; trims a rim with a brush.",
             available_from="M1",
             image="plate.png",
-            run=_layers,
+            run=run_layers,
+            needs_input=layers_needs_input,
+            check=check_layers,
+            runner_calls=layers_runner_calls,
         ),
         StageSpec(
             name="masks",
@@ -866,8 +952,8 @@ ROOM = KindSpec(
                 point_decision("click", "A segmentation click on a Mask: a positive click adds the object under it, and "
                                "a negative one right after it takes away from that object. Needs `run --rerun`.",
                                on_image=True, mask={"type": "string"}, positive={"type": "boolean"}),
-                point_decision("flood", "Fill the region of equal colour on the Plate under this point into a Mask.",
-                               on_image=True, mask={"type": "string"}),
+                _flood_decision(),
+                _border_decision(),
                 DecisionSpec(
                     name="import",
                     description="Take Masks from a painted image of the Plate's size, stored under "
@@ -901,6 +987,7 @@ ROOM = KindSpec(
             checks=(
                 CheckSpec(code="mask.not_binary", description="Every Mask is a 1-bit image."),
                 CheckSpec(code="mask.none_painted", description="Some Mask has been painted (info)."),
+                CheckSpec(code="masks.open_edge", description="No room edge is left without a wall (info)."),
             ),
             owner_input="Clicks and brushes.",
             available_from="M1",
@@ -922,24 +1009,32 @@ ROOM = KindSpec(
             owner_input="Tunes the sliders.",
             available_from="M1",
             image="palette.png",
-            run=_palette,
-            check=_check_palette,
+            run=run_room_palette,
+            after_overrides=palette_after_overrides,
+            check=check_room_palette,
         ),
         StageSpec(
             name="place",
-            description="Places Markers: Exits, Spawns, lights, emitters and y-sort lines.",
-            inputs=StageInputs(upstream=["palette", MASKS_STAGE], settings=["body", "masks"]),
-            decisions=(_marker_decision(),),
+            description="Places Markers: Exits, Spawns, lights, emitters and y-sort lines, one for each foreground Layer "
+                        "unless it is always above.",
+            inputs=StageInputs(upstream=["palette", "layers", MASKS_STAGE], settings=["body", "masks", "project.tile"]),
+            decisions=(_marker_decision(), _above_decision()),
             checks=(
                 CheckSpec(code="marker.duplicate_id", description="Marker IDs are unique."),
                 CheckSpec(code="marker.not_walkable", description="Exits and Spawns stand on walkable ground."),
                 CheckSpec(code="layer.no_ysort", description="Every foreground Layer has a y-sort line or is above."),
+                CheckSpec(code="ysort.unknown_layer", description="Every y-sort line or flag names a Layer of the room."),
+                CheckSpec(code="ysort.no_layer", description="Every y-sort line names the Layer it sorts (warning)."),
+                CheckSpec(code="ysort.sloped", description="A y-sort line's ends are within half a tile in y (warning)."),
+                CheckSpec(code="ysort.extra_line", description="A Layer has one y-sort line; a later one sorts nothing "
+                                                               "(warning)."),
             ),
             owner_input="Places Markers.",
             available_from="M1",
             run=_place,
             check=_check_place,
             markers=_current_markers,
+            sort=_sort_positions,
         ),
         StageSpec(
             name="reach",

@@ -1,6 +1,7 @@
 """The JSON contract, for every Command in the registry: `--help`, one JSON object, and output that validates against
 `schema`. A new Command without a sample here fails `test_every_command_has_a_sample`."""
 
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -9,7 +10,8 @@ import pytest
 from PIL import Image
 
 from conftest import MARK, Kiripix, in_review, make_demo, sketched
-from test_export import exportable_room
+from test_export import exportable_room, godot_project, set_target
+from test_manifest_merge import git, manifest_text, sides
 
 
 def _image(project: Kiripix) -> None:
@@ -36,6 +38,15 @@ def _imported(project: Kiripix) -> str:
     if not (project.cwd / "in.png").exists():
         _room_image(project)
     return str(project.json("import", "room.alley", "in.png")["data"]["variant"])
+
+
+def _game_repo(project: Kiripix) -> None:
+    """A Godot project that is a git repository, as the target."""
+    if shutil.which("git") is None:
+        pytest.skip("git isn't installed")
+    game = godot_project(project)
+    set_target(project)
+    git(game, "init", "-b", "main")
 
 
 # Each sample prepares the Project, then gives the arguments of one successful call.
@@ -67,6 +78,9 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "runners list": lambda p: ["runners", "list"],
     "runners pull": lambda p: ["runners", "pull", "sam2.1-small"],
     "runners rm": lambda p: ["runners", "rm", "sam2.1-small"],
+    "manifest merge": lambda p: sides(p.cwd, manifest_text(1), manifest_text(2)),
+    "manifest install": lambda p: (_game_repo(p), ["manifest", "install"])[1],
+    "manifest repair": lambda p: (godot_project(p), set_target(p), ["manifest", "repair"])[2],
 }
 
 

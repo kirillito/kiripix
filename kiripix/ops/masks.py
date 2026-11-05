@@ -21,16 +21,27 @@ def _require_mask(mask: BoolMask) -> None:
         raise ValueError("a Mask is a 2-D boolean array")
 
 
-def flood_region(rgba: U8, x: int, y: int) -> BoolMask:
-    """The 4-connected region of equal colour containing the pixel (x, y). Transparent pixels are all one colour."""
+def flood_region(rgba: U8, x: int, y: int, tolerance: float = 0.0) -> BoolMask:
+    """The 4-connected region containing the pixel (x, y) whose colour is within `tolerance` (OKLab distance) of the
+    clicked pixel's own colour, not of its neighbour's. 0 is exact equality. Transparent pixels are all one colour, at
+    any tolerance: a transparent seed floods only transparent pixels, and an opaque one never floods into them."""
     height, width = rgba.shape[:2]
     if not (0 <= x < width and 0 <= y < height):
         raise ValueError(f"the point ({x}, {y}) is outside the {width}x{height} image")
-    key = rgba.astype(np.uint32)
-    packed = key[..., 0] << 24 | key[..., 1] << 16 | key[..., 2] << 8 | key[..., 3]
-    packed = np.where(rgba[..., 3] == 0, np.uint32(0), packed)
-    wanted = packed[y, x]
-    same = packed == wanted
+    if tolerance < 0:
+        raise ValueError("the tolerance is not negative")
+    clear = rgba[..., 3] == 0
+    if tolerance == 0:
+        key = rgba.astype(np.uint32)
+        packed = key[..., 0] << 24 | key[..., 1] << 16 | key[..., 2] << 8 | key[..., 3]
+        packed = np.where(clear, np.uint32(0), packed)
+        same = packed == packed[y, x]
+    elif clear[y, x]:
+        same = clear
+    else:
+        lab = srgb_to_oklab(rgba[..., :3])
+        distance = np.sqrt(((lab - lab[y, x]) ** 2).sum(axis=-1))
+        same = (distance <= tolerance) & ~clear
     region = np.zeros((height, width), dtype=np.bool_)
     region[y, x] = True
     queue: deque[tuple[int, int]] = deque([(x, y)])
@@ -142,3 +153,47 @@ def mask_runs(mask: BoolMask) -> list[list[int]]:
     ys, starts = np.nonzero(edges == 1)
     _, ends = np.nonzero(edges == -1)
     return [[int(y), int(start), int(end - start)] for y, start, end in zip(ys, starts, ends)]
+
+
+SIDES = ("top", "right", "bottom", "left")
+
+
+def _check_sides(sides: Sequence[str]) -> None:
+    for side in sides:
+        if side not in SIDES:
+            raise ValueError(f"'{side}' is not a side; the sides are {', '.join(SIDES)}")
+
+
+def wall_off(mask: BoolMask, sides: Sequence[str], thickness: int) -> BoolMask:
+    """`mask` with a wall `thickness` pixels deep set along each of the `sides` (`top`, `right`, `bottom`, `left`).
+
+    A thickness larger than the room is clipped to it, so it fills it. The input is not changed.
+    """
+    _require_mask(mask)
+    _check_sides(sides)
+    if thickness < 1:
+        raise ValueError("a wall is at least 1 px thick")
+    result = mask.copy()
+    if "top" in sides:
+        result[:thickness, :] = True
+    if "bottom" in sides:
+        result[-thickness:, :] = True
+    if "left" in sides:
+        result[:, :thickness] = True
+    if "right" in sides:
+        result[:, -thickness:] = True
+    return result
+
+
+def open_edges(blocked: BoolMask) -> dict[str, tuple[int, int]]:
+    """The room's edges where the outermost row or column of `blocked` isn't blocked all along: for each such side (in
+    the order `top`, `right`, `bottom`, `left`), the first and last open pixel along it, as (first, last). A side that
+    is blocked all along is left out."""
+    _require_mask(blocked)
+    lines = {"top": blocked[0, :], "right": blocked[:, -1], "bottom": blocked[-1, :], "left": blocked[:, 0]}
+    result: dict[str, tuple[int, int]] = {}
+    for side in SIDES:
+        open_at = np.flatnonzero(~lines[side])
+        if len(open_at):
+            result[side] = (int(open_at[0]), int(open_at[-1]))
+    return result

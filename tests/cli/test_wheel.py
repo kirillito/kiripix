@@ -68,7 +68,7 @@ def test_ui_from_an_installed_wheel_serves_the_built_app(tmp_path: Path) -> None
         connection = http.client.HTTPConnection("127.0.0.1", int(ready["port"]), timeout=30)
         connection.request("GET", "/")
         response = connection.getresponse()
-        page = response.read().decode("utf-8")
+        page = response.read()
         connection.close()
     finally:
         for child in psutil.Process(server.pid).children(recursive=True):
@@ -81,5 +81,5 @@ def test_ui_from_an_installed_wheel_serves_the_built_app(tmp_path: Path) -> None
             server.stderr.close()
 
     assert response.status == 200
-    assert '<div id="root">' in page
-    assert page == (BUILT / "index.html").read_text(encoding="utf-8")
+    assert b'<div id="root">' in page
+    assert page == (BUILT / "index.html").read_bytes()  # bytes: a Windows checkout may have CRLF

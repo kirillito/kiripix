@@ -177,6 +177,25 @@ def downscale_mode(image: U8, grid: Grid) -> U8:
     return shaped
 
 
+def alpha_by_vote(fitted: U8, source: U8, grid: Grid) -> U8:
+    """`fitted` (one pixel per cell, as `sample_nearest` gives) with its alpha decided by majority vote of the cell.
+
+    A cell is opaque when at least half its Source pixels are (alpha from 128 up), as in `downscale_mode`; the result's
+    alpha is 0 or 255. Where the vote is opaque but the sampled pixel is clear, the colour is the cell's most common
+    one, as `downscale_mode` gives; where the vote is clear, the pixel is (0, 0, 0, 0).
+    """
+    _check_size(source, grid)
+    if fitted.shape != (grid.height, grid.width, 4):
+        raise ValueError(f"the fitted image is {fitted.shape[1]}x{fitted.shape[0]}, the grid {grid.width}x{grid.height}")
+    opaque = mask_to_target(source[..., 3] >= OPAQUE_FROM, grid)
+    result = _binarise(fitted)
+    refill = opaque & (result[..., 3] == 0)
+    if refill.any():
+        result[refill] = downscale_mode(source, grid)[refill]
+    result[~opaque] = 0
+    return result
+
+
 def upscale(image: npt.NDArray[Any], factor: int) -> npt.NDArray[Any]:
     """Each pixel repeated `factor` times along both axes: nearest neighbour, whole factors only."""
     if factor < 1:

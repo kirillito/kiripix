@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: ui-engineer
 type: ticket
@@ -20,6 +20,6 @@ Spec §6.2, §11. Stories 11–13 of [0037](0037-m2-layers-and-props.md).
 
 ## Acceptance criteria
 
-- [ ] Playwright with fake Runners: a prop goes from `import` to a `done` footprint in the UI.
-- [ ] Playwright: moving the origin records one Decision.
-- [ ] The room flows' Playwright tests still pass.
+- [x] Playwright with fake Runners: a prop goes from `import` to a `done` footprint in the UI.
+- [x] Playwright: moving the origin records one Decision.
+- [x] The room flows' Playwright tests still pass.

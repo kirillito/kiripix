@@ -46,13 +46,28 @@ def kiripix_version() -> str:
     return metadata.version("kiripix")
 
 
+def has_conflict_markers(data: bytes) -> bool:
+    """Whether git left conflict markers in `data`: a `<<<<<<<` line, and a `>>>>>>>` line after it."""
+    opened = False
+    for line in data.splitlines():
+        if line.startswith(b"<<<<<<< "):
+            opened = True
+        elif opened and line.startswith(b">>>>>>> "):
+            return True
+    return False
+
+
 def read_manifest(path: Path, shown: str) -> Manifest | None:
     """The Manifest at `path`; None when there is none. `shown` is its `res://` path, for messages."""
     try:
-        return Manifest.model_validate_json(path.read_bytes())
+        data = path.read_bytes()
+        return Manifest.model_validate_json(data)
     except FileNotFoundError:
         return None
     except (OSError, ValidationError) as error:
+        if isinstance(error, ValidationError) and has_conflict_markers(data):
+            raise fail("export.manifest_conflicted", f"the Manifest {shown} has git conflict markers in it",
+                       fix="kiripix manifest repair") from None
         raise fail("export.manifest_invalid", f"the Manifest {shown} can't be read: {error}",
                    owner_action=f"Restore {shown} from the game's git history, or upgrade Kiripix if a newer one "
                                 "wrote it.") from None

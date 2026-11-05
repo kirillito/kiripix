@@ -427,33 +427,45 @@ class _Runner:
     def make_runner_calls(self, spec: StageSpec) -> str | None:
         """Make the Stage's Runner calls that have no pinned result, and pin each as it finishes, so a cancel loses only
         the call it stopped. One Runner is loaded at a time, under the GPU lock, and unloaded after use, except that
-        `serve` makes them on its warm Runner while it can have the lock. Returns why they failed, or None."""
+        `serve` makes them on its warm Runner while it can have the lock. A call that depends on an earlier one's pinned
+        result (ticket 0039) isn't listed until that is pinned, so it goes on in rounds until the Stage lists none
+        missing; a call is never made twice in one run. Returns why they failed, or None."""
         graph = self.graph
-        missing = graph.missing_calls(spec)
         device: Device = "cpu" if self.cpu else "auto"
+        attempted: set[str] = set()
         try:
-            for runner_id in dict.fromkeys(call.runner for call in missing):
-                runner = runners()[runner_id]
-                directory = weights_dir(graph.project.state_dir, runner)
-                self.progress(ProgressEvent(event="runner_start", stage=spec.name, message=runner_id))
-                pull(directory, runner, cancel.check)
-                calls = [c for c in missing if c.runner == runner_id]
-                if self.keep_warm and not self.cpu and isinstance(runner, EmbeddingRunner):
-                    calls = self._warm_calls(spec, calls)
-                if not calls:
-                    continue
-                with self._hold_gpu(spec.name), warm.one_runner_loaded():
-                    runner.load(directory, device)
-                    try:
-                        for call in calls:
-                            self._call(spec, call)
-                    finally:
-                        runner.unload()
+            while True:
+                missing = [c for c in graph.missing_calls(spec) if graph.pin_key(c) not in attempted]
+                if not missing:
+                    break
+                attempted.update(graph.pin_key(c) for c in missing)
+                self._make_round(spec, missing, device)
+                graph.forget_hashes()  # the pinned results just made can add calls and change keys
         except RunnerError as error:
             return str(error)
         finally:
             graph.forget_hashes()
         return None
+
+    def _make_round(self, spec: StageSpec, missing: list[RunnerCall], device: Device) -> None:
+        graph = self.graph
+        for runner_id in dict.fromkeys(call.runner for call in missing):
+            runner = runners()[runner_id]
+            directory = weights_dir(graph.project.state_dir, runner)
+            self.progress(ProgressEvent(event="runner_start", stage=spec.name, message=runner_id))
+            pull(directory, runner, cancel.check)
+            calls = [c for c in missing if c.runner == runner_id]
+            if self.keep_warm and not self.cpu and isinstance(runner, EmbeddingRunner):
+                calls = self._warm_calls(spec, calls)
+            if not calls:
+                continue
+            with self._hold_gpu(spec.name), warm.one_runner_loaded():
+                runner.load(directory, device)
+                try:
+                    for call in calls:
+                        self._call(spec, call)
+                finally:
+                    runner.unload()
 
     def _warm_calls(self, spec: StageSpec, calls: list[RunnerCall]) -> list[RunnerCall]:
         """Make the calls on the warm Runner. Returns those it couldn't because the GPU lock is busy: the cold path waits

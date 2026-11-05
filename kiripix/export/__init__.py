@@ -25,6 +25,7 @@ from kiripix.core.project_checks import check_asset
 from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, pairing_findings
 from kiripix.export.godot import room_ids, room_scene
 from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
+from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
 from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
 from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, built_dir, read_room
 from kiripix.export.target import GodotTarget, resolve_target
@@ -76,6 +77,8 @@ def _room_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
         f"{folder}/{name}.tscn": room_scene(room, name, plate).encode("utf-8"),
         plate: (built_dir(graph) / PLATE_FILE).read_bytes(),
     }
+    for layer in room["layers"]:
+        files[f"{folder}/{layer['file']}"] = (built_dir(graph) / str(layer["file"])).read_bytes()
     return files, room_ids(room)
 
 
@@ -260,13 +263,15 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
     if broken and assets is None:
         raise KiripixError(broken)
     warnings: list[Finding] = []
+    if (missing := driver_finding(target)) is not None:
+        warnings.append(missing)
     if assets is None:
         assets = [asset for asset in every if asset.kind in EXPORTERS]
         errors = pairing_findings(project, every)
         if errors:
             raise KiripixError(errors, ExitCode.CHECK_FAILED)
     else:
-        warnings = pairing_findings(project, every, only=assets[0].id, severity="warning") if len(assets) == 1 else []
+        warnings += pairing_findings(project, every, only=assets[0].id, severity="warning") if len(assets) == 1 else []
     plans: list[_Plan] = []
     refused: list[Finding] = []
     code = ExitCode.ERROR
@@ -314,4 +319,5 @@ def export_command(project: Project, asset: Asset, cache: HashCache, states: lis
 
 
 __all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "ExportRun", "PruneResult", "export_assets",
-           "export_command", "export_pending", "frozen_findings", "pairing_findings", "prune_assets"]
+           "export_command", "export_pending", "frozen_findings", "install_driver", "merge_files", "pairing_findings",
+           "apply_repairs", "plan_repairs", "prune_assets", "resolve_target"]

@@ -3,13 +3,16 @@
 // hover only asks the `segment-preview` Probe, which records nothing.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { call, fileUrl, type Envelope, type StageDetail } from "./api";
+import { call, fileUrl, type Envelope, type StageDescription, type StageDetail } from "./api";
 import { MAX_RADIUS, MaskTool, MIN_RADIUS, tintOf, type MaskToolName, type PreviewRuns } from "./maskTool";
 import { isTyping, type CanvasPixel, type PixelCanvas } from "./pixelCanvas";
 import { loadMask } from "./walkTest";
 
 export const MASKS_STAGE = "masks";
 const PREVIEW_PROBE = "segment-preview";
+// Flood's tolerance (D6 of ticket 0037): the range comes from `describe`; 0.04 is the UI's starting guess.
+const TOLERANCE_DEFAULT = 0.04;
+const TOLERANCE_RANGE = { minimum: 0, maximum: 0.2 };
 
 const TOOLS: { name: MaskToolName; key: string; label: string; hint: string }[] = [
   { name: "brush", key: "b", label: "Brush", hint: "Drag to paint the Mask." },
@@ -22,6 +25,7 @@ const TOOLS: { name: MaskToolName; key: string; label: string; hint: string }[] 
     hint: "Click the object to add it; Shift-click takes away from the last one. Hover shows what a click would add.",
   },
 ];
+const SIDES = ["top", "right", "bottom", "left"] as const;
 const TOOL_KEYS = new Set(TOOLS.map((tool) => tool.key));
 
 interface Journalled {
@@ -66,6 +70,7 @@ export function MasksPanel(props: {
   canvas: RefObject<PixelCanvas | null>;
   asset: string;
   detail: StageDetail;
+  decisions: StageDescription["decisions"];
   imageVersion: number;
   disabled: boolean;
   rebuild: boolean;
@@ -80,13 +85,20 @@ export function MasksPanel(props: {
   const [opacity, setOpacity] = useState(50);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [over, setOver] = useState(false);
+  const [sides, setSides] = useState<string[]>([...SIDES]);
+  const hasBorder = props.decisions.some((entry) => entry.name === "border");
+  const range = props.decisions.find((entry) => entry.name === "flood")?.entry_schema?.properties?.tolerance;
+  const lowest = range?.minimum ?? TOLERANCE_RANGE.minimum;
+  const highest = range?.maximum ?? TOLERANCE_RANGE.maximum;
+  const [tolerance, setTolerance] = useState(TOLERANCE_DEFAULT);
+  const toleranceNow = Math.min(highest, Math.max(lowest, tolerance));
   const files = maskFiles(detail);
   const names = files.map((entry) => entry.name);
   const shown = JSON.stringify(files);
 
   // The tool's gestures read the latest props through a ref, so the tool is made once.
-  const latest = useRef({ ...props, mask, names });
-  latest.current = { ...props, mask, names };
+  const latest = useRef({ ...props, mask, names, tolerance: toleranceNow });
+  latest.current = { ...props, mask, names, tolerance: toleranceNow };
   const painter = useRef<MaskTool | null>(null);
 
   useEffect(() => {
@@ -97,10 +109,10 @@ export function MasksPanel(props: {
           if (!off) decide("brush", { mask: on, erase, radius: size, points });
         },
         point(kind, on, pixel: CanvasPixel, positive) {
-          const { disabled: off, decide, detail: stage } = latest.current;
+          const { disabled: off, decide, detail: stage, tolerance: within } = latest.current;
           if (off) return;
           if (kind === "flood") {
-            decide("flood", { x: pixel.x, y: pixel.y, mask: on });
+            decide("flood", { x: pixel.x, y: pixel.y, mask: on, tolerance: within });
           } else if (positive || lastObject(stage.decisions, on).length > 0) {
             decide("click", { x: pixel.x, y: pixel.y, mask: on, positive });
           } else {
@@ -244,6 +256,22 @@ export function MasksPanel(props: {
           })}
         </div>
       )}
+      {tool === "flood" && (
+        <div className="param">
+          <label htmlFor="mask-tolerance">Flood tolerance</label>
+          <input
+            id="mask-tolerance"
+            data-testid="mask-tolerance"
+            type="range"
+            min={lowest}
+            max={highest}
+            step={0.005}
+            value={toleranceNow}
+            onChange={(event) => setTolerance(Number(event.target.value))}
+          />
+          <output data-testid="mask-tolerance-value">{toleranceNow.toFixed(3)}</output>
+        </div>
+      )}
       <div className="param">
         <label htmlFor="mask-radius">Brush size</label>
         <input
@@ -270,6 +298,34 @@ export function MasksPanel(props: {
           onChange={(event) => setOpacity(Number(event.target.value))}
         />
       </div>
+      {hasBorder && (
+        <>
+          <h2>Edges</h2>
+          <div className="tools" role="group" aria-label="Sides to wall off">
+            {SIDES.map((side) => (
+              <label key={side} className="toggle">
+                <input
+                  type="checkbox"
+                  data-testid={`border-${side}`}
+                  checked={sides.includes(side)}
+                  onChange={(event) =>
+                    setSides((now) => SIDES.filter((one) => (one === side ? event.target.checked : now.includes(one))))
+                  }
+                />
+                {side}
+              </label>
+            ))}
+          </div>
+          <button
+            data-testid="border-wall"
+            disabled={names.length === 0 || sides.length === 0}
+            onClick={() => props.decide("border", { mask, sides })}
+          >
+            Wall off edges
+          </button>
+          <p className="hint">Paints the chosen sides of the {mask} Mask.</p>
+        </>
+      )}
       <label className="toggle">
         <input
           type="checkbox"

@@ -39,6 +39,22 @@ export interface CanvasTool {
   hover?(pixel: CanvasPixel | null): void; // the pixel under the pointer between gestures; null when it leaves the image
 }
 
+// A checkerboard under the image, so transparent pixels read as transparent: screen-sized squares, not image pixels.
+const CHECK = 8;
+function drawChecker(context: CanvasRenderingContext2D, left: number, top: number, width: number, height: number): void {
+  context.save();
+  context.beginPath();
+  context.rect(left, top, width, height);
+  context.clip();
+  context.fillStyle = "#3a3a3a";
+  context.fillRect(left, top, width, height);
+  context.fillStyle = "#4a4a4a";
+  for (let y = 0; y * CHECK < height; y++) {
+    for (let x = y % 2; x * CHECK < width; x += 2) context.fillRect(left + x * CHECK, top + y * CHECK, CHECK, CHECK);
+  }
+  context.restore();
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -218,6 +234,7 @@ export class PixelCanvas {
     const [left, top] = this.origin();
     const width = this.after.naturalWidth * this.zoom;
     const height = this.after.naturalHeight * this.zoom;
+    drawChecker(context, left, top, width, height);
     context.drawImage(this.after, left, top, width, height);
     if (this.before) {
       const edge = Math.round(width * this.split);
@@ -226,6 +243,7 @@ export class PixelCanvas {
       context.rect(left, top, edge, height);
       context.clip();
       context.clearRect(left, top, edge, height);
+      drawChecker(context, left, top, edge, height);
       context.drawImage(this.before, left, top, width, height); // A Source is larger than its fit: same frame, same place.
       context.restore();
       context.fillStyle = BEFORE_COLOUR;

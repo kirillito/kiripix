@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from kiripix.ops import flood_region, paint_stroke, snap_cell, split_painted
+from kiripix.ops import SIDES, collision_shapes, contours, simplify, flood_region, open_edges, paint_stroke, snap_cell, split_painted, wall_off
 
 EXPECTED = Path(__file__).parent / "expected"
 
@@ -67,6 +67,49 @@ def test_flood_takes_the_four_connected_region_of_equal_colour(request: pytest.F
     assert inside.sum() == 3 * 4 - 1 and not inside[4, 9] and not inside[0, 5]
     assert corner.sum() == 1 and corner[9, 15]
     assert_golden(request, as_image(wall, floor, inside, flood_region(image, 9, 4)), "mask_flood.png")
+
+
+def painted_plate() -> np.ndarray:
+    """16 x 10 of a downscaled painting: a blue wall left, a floor right, each shaded by a small fixed jitter, so no
+    two neighbours are equal."""
+    jitter = (np.arange(16 * 10).reshape(10, 16) * 7 % 9).astype(np.uint8)  # 0..8, fixed
+    image = np.full((10, 16, 4), (200, 190, 170, 255), dtype=np.uint8)
+    image[:, :6] = BLUE
+    image[..., :3] += jitter[..., None]
+    return image
+
+
+def test_flood_with_a_tolerance_fills_a_painted_region_and_zero_is_the_exact_flood(
+        request: pytest.FixtureRequest) -> None:
+    image = painted_plate()
+
+    exact = flood_region(image, 0, 0, 0.0)
+    near = flood_region(image, 0, 0, 0.04)
+    floor = flood_region(image, 10, 5, 0.04)
+
+    assert (exact == flood_region(image, 0, 0)).all() and exact.sum() < 5  # nothing is equal on painted art
+    assert near[:, :6].all() and not near[:, 6:].any()
+    assert floor[:, 6:].all() and not floor[:, :6].any()
+    assert_golden(request, as_image(exact, near, floor), "mask_flood_tolerance.png")
+
+
+def test_flood_tolerance_zero_is_the_exact_flood_on_a_flat_plate() -> None:
+    image = plate()
+
+    for point in ((0, 0), (6, 9), (8, 3), (9, 4), (15, 9)):
+        assert (flood_region(image, *point, 0.0) == flood_region(image, *point)).all()
+
+
+def test_flood_tolerance_compares_to_the_clicked_pixel_and_keeps_transparent_apart() -> None:
+    image = np.full((1, 6, 4), 255, dtype=np.uint8)
+    image[0, :, :3] = [[100, 100, 100], [104, 104, 104], [108, 108, 108], [112, 112, 112], [0, 0, 0], [0, 0, 0]]
+    image[0, 5, 3] = 0
+    near = flood_region(image, 0, 0, 0.03)  # a chain of small steps doesn't drift past the tolerance of pixel 0
+
+    assert near[0].tolist() == [True, True, True, False, False, False]
+    assert flood_region(image, 5, 0, 0.2)[0].tolist() == [False] * 5 + [True]
+    with pytest.raises(ValueError, match="tolerance"):
+        flood_region(image, 0, 0, -0.1)
 
 
 def test_flood_is_not_connected_through_a_diagonal() -> None:
@@ -222,3 +265,56 @@ def test_a_cell_of_0_or_1_changes_nothing_and_a_negative_one_is_refused() -> Non
     assert (snap_cell(mask, 0) == mask).all() and (snap_cell(mask, 1) == mask).all()
     with pytest.raises(ValueError, match="cell"):
         snap_cell(mask, -1)
+
+
+# the wall along the room's edges
+
+
+def test_a_wall_along_the_chosen_sides_and_a_thickness_larger_than_a_side(request: pytest.FixtureRequest) -> None:
+    empty = np.zeros((6, 10), dtype=np.bool_)
+
+    all_sides = wall_off(empty, list(SIDES), 1)
+    left_right = wall_off(empty, ["left", "right"], 2)
+    thick = wall_off(empty, ["top", "left"], 8)  # deeper than the 6 rows, so it fills the room
+
+    assert not empty.any()  # the input is not changed
+    assert all_sides.sum() == 2 * 10 + 2 * 4 and not all_sides[1:-1, 1:-1].any()
+    assert left_right[:, :2].all() and left_right[:, -2:].all() and left_right.sum() == 4 * 6
+    assert thick.all()
+    assert_golden(request, as_image(all_sides, left_right, thick), "mask_wall_off.png")
+
+
+def test_a_wall_keeps_what_is_already_set_and_refuses_bad_input() -> None:
+    mask = np.zeros((4, 4), dtype=np.bool_)
+    mask[2, 2] = True
+
+    assert wall_off(mask, ["top"], 1)[2, 2]
+    assert (wall_off(mask, [], 1) == mask).all()
+    with pytest.raises(ValueError, match="side"):
+        wall_off(mask, ["middle"], 1)
+    with pytest.raises(ValueError, match="thick"):
+        wall_off(mask, ["top"], 0)
+
+
+def test_open_edges_names_each_side_not_blocked_along_all_of_it() -> None:
+    blocked = wall_off(np.zeros((6, 10), dtype=np.bool_), ["left", "right"], 1)
+    blocked[0, 4] = True  # a wall at one pixel of the top doesn't wall it off
+
+    assert open_edges(blocked) == {"top": (1, 8), "bottom": (1, 8)}
+    assert open_edges(wall_off(np.zeros((6, 10), dtype=np.bool_), list(SIDES), 1)) == {}
+    assert list(open_edges(np.zeros((6, 10), dtype=np.bool_))) == ["top", "right", "bottom", "left"]
+
+
+def test_the_default_wall_survives_simplifying_at_the_export_default_tolerance() -> None:
+    """The room Recipe's default thickness is 2 and the export Stage's default tolerance is 1: every pixel of the wall
+    is still inside the collision shapes."""
+    wall = wall_off(np.zeros((23, 40), dtype=np.bool_), list(SIDES), 2)
+
+    rings = collision_shapes(simplify(contours(wall), 1.0))
+
+    area = 0.0
+    for ring in rings:
+        xs = np.array([x for x, _ in ring], dtype=float)
+        ys = np.array([y for _, y in ring], dtype=float)
+        area += abs(float(xs @ np.roll(ys, -1) - ys @ np.roll(xs, -1))) / 2
+    assert area == float(wall.sum())

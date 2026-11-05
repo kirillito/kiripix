@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: ui-engineer
 type: ticket
@@ -20,6 +20,6 @@ Spec §11. Story 18 of [0037](0037-m2-layers-and-props.md). The UI half of [0060
 
 ## Acceptance criteria
 
-- [ ] Playwright: the action records one Decision, with the chosen sides, and the wall shows on the canvas.
-- [ ] Playwright: `Ctrl+Z` removes the wall.
-- [ ] Playwright: in the walk test, the Body still stops at the room's edge.
+- [x] Playwright: the action records one Decision, with the chosen sides, and the wall shows on the canvas.
+- [x] Playwright: `Ctrl+Z` removes the wall.
+- [x] Playwright: in the walk test, the Body still stops at the room's edge.

@@ -6,10 +6,10 @@ from typing import Any
 
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
+from kiripix.recipes.room import ROOM_SCHEMA_VERSION
 
 ROOM_FILE = "room.json"
 PLATE_FILE = "plate.png"
-ROOM_SCHEMA_VERSION = 1
 EXPORT_STAGE = "export"
 
 

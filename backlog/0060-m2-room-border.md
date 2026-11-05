@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -34,9 +34,15 @@ It stays visible, undoable and replayed like any other edit, and a side can stay
 
 ## Acceptance criteria
 
-- [ ] `decide` with all four sides, then `run`: `solid` covers the edges, and the exported scene's collision has the wall.
-- [ ] With `sides` of `left` and `right` only, the top and bottom stay open and `masks.open_edge` names them.
-- [ ] `undo` removes the wall. A later brush erase opens a gap in it.
-- [ ] A changed Plate doesn't send a `border`-only `masks` to `needs-review`.
-- [ ] A golden test of the Op on a small room, including a thickness larger than a side.
-- [ ] `describe room` documents the Decision.
+- [x] `decide` with all four sides, then `run`: `solid` covers the edges, and the exported scene's collision has the wall.
+- [x] With `sides` of `left` and `right` only, the top and bottom stay open and `masks.open_edge` names them.
+- [x] `undo` removes the wall. A later brush erase opens a gap in it.
+- [x] A changed Plate doesn't send a `border`-only `masks` to `needs-review`.
+- [x] A golden test of the Op on a small room, including a thickness larger than a side.
+- [x] `describe room` documents the Decision.
+
+## Built
+
+Default `thickness` 2 (a wall of 1 also survives at tolerance 1; golden test). The export scene's collision comes from
+`solid` unchanged, so a border in `solid` is in it; the golden test checks the simplified shapes keep every wall pixel.
+`masks.open_edge` is silent while neither `solid` nor `pit` is painted (`mask.none_painted` says so already).

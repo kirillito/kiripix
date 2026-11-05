@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -24,7 +24,20 @@ Spec §6.1 (layers, path a) and §7. Story 6 of [0037](0037-m2-layers-and-props.
 
 ## Acceptance criteria
 
-- [ ] A fixture full image and plate image give the expected Layers, with no Runner call logged.
-- [ ] Noise outside an object leaves the Plate equal to the fit image there, and `layers.recompose_mismatch` passes.
-- [ ] A plate image of the wrong size is `needs-input`, and `next` says why.
-- [ ] Undoing the `plate` Decision returns to the state before it, by `run`.
+- [x] A fixture full image and plate image give the expected Layers, with no Runner call logged.
+- [x] Noise outside an object leaves the Plate equal to the fit image there, and `layers.recompose_mismatch` passes.
+- [x] A plate image of the wrong size is `needs-input`, and `next` says why.
+- [x] Undoing the `plate` Decision returns to the state before it, by `run`.
+
+## Notes
+
+- `difference` (OKLab, default 0.05, 0-1) is a new param of `layers`. The Layers Stage's input hash changes with it.
+- Click semantics on this path: a positive click takes the connected region of the target-mapped difference under it
+  (then `grow`, only where partial); a negative click right after it drops the region it is on. A click on no region is
+  `needs-input`, naming the click (and `difference`). Unclicked regions stay in the Plate.
+- With a `plate` Decision and no clicks, the Plate is the fit image. The latest `plate` Decision wins.
+- With no Runner call, the Stage lands in `done`, not `needs-review`: review waits only on a Runner's result.
+- Tests: tests/cli/test_layers_difference.py.
+- After review (2026-11-05): a click on no region of the difference is `needs-input`, and `next` names the click, not a
+  failed run. `needs_input` works the difference out for that, only when a `plate` Decision exists.
+  `layers.json` is read through one reader, which refuses an old `schema_version`.

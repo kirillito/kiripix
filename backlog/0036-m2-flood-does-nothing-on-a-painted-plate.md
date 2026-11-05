@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -36,8 +36,8 @@ export.
 
 ## Acceptance criteria
 
-- [ ] A flood on a painted Plate fills a visibly useful region: a golden test on an unflattened fixture.
-- [ ] A flood that fills almost nothing gives a finding, so the Owner isn't left guessing.
-- [ ] Existing flood Decisions replay to the same Mask.
-- [ ] `decide` a flood without `tolerance` is still accepted, and `describe room` documents the field.
-- [ ] A flood with a tolerance of 0 fills the same pixels as the old Op, in a golden test.
+- [x] A flood on a painted Plate fills a visibly useful region: a golden test on an unflattened fixture.
+- [x] A flood that fills almost nothing gives a finding, so the Owner isn't left guessing.
+- [x] Existing flood Decisions replay to the same Mask.
+- [x] `decide` a flood without `tolerance` is still accepted, and `describe room` documents the field.
+- [x] A flood with a tolerance of 0 fills the same pixels as the old Op, in a golden test.

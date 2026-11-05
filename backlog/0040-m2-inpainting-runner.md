@@ -26,8 +26,20 @@ Spec §6.1, §8, ADRs 0002 and 0004, docs/runner-licences.md. Today's choice, no
 
 ## Acceptance criteria
 
-- [ ] With the fake inpainter registered under `INPAINTER`, a test swaps in a second fake with another ID: its pinned calls
+- [x] With the fake inpainter registered under `INPAINTER`, a test swaps in a second fake with another ID: its pinned calls
       go to "Runner input changed", and `run --rerun` remakes them into `needs-review`.
-- [ ] Cancel during a long fake call: `run.cancelled`, nothing pinned.
+- [x] Cancel during a long fake call: `run.cancelled`, nothing pinned.
 - [ ] A manual (not CI) check of the real Runner on a real room, on the Owner's 8 GB GPU and with `--cpu`: time, memory and
       quality, recorded in this ticket as in [0020](0020-m1-pinned-runner-calls-sam2.md).
+
+## Done (ml-engineer, 2026-11-04)
+
+Built `runners/lama.py` (`Lama`, id `lama`, `INPAINTER` in `runners/__init__.py`), the fake `FakeInpainter` and the test
+Kind `inpaint`, `tests/cli/test_inpainter.py`, and the licence note. Weights: `Carve/LaMa-ONNX` at commit `c3c0c9e4...`,
+`lama_fp32.onnx`, sha256 `1faef530...`, 208 MB; fixed 512 x 512 input, so a crop is fitted inside the square (aspect kept,
+edge-padded), inpainted, scaled back, and only the hole's pixels are taken from the result.
+
+Manual check, not CI, 2026-11-04, CPU only: this machine has no NVIDIA GPU, so the 8 GB GPU run is still the Owner's.
+CPU: load 20 s (first, cold), one call on a 220 x 260 crop 2.9 s; the pixels outside the hole are bit-identical. Tested on
+a synthetic brick/gradient image, no real room was available in the repo: **the quality check on a real room, and the
+GPU time and VRAM, are still to do (so the third criterion stays open).**

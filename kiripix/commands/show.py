@@ -14,7 +14,7 @@ from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project, find_project
 from kiripix.export import export_command
-from kiripix.recipes.base import Scalar
+from kiripix.recipes.base import Scalar, SortPosition
 
 
 class ShowInput(BaseModel):
@@ -38,6 +38,9 @@ class StageDetail(BaseModel):
     input_image: str | None = Field(description="The built image this Stage is made from, relative to the Project.")
     outputs: list[str] = Field(description="The files of the Stage's built output, relative to the Project.")
     markers: list[dict[str, Any]] = Field(description="The Markers its Decisions place, whether built yet or not.")
+    sort: list[SortPosition] = Field(
+        description="Each Layer's sort position (layer, above, marker, y, slope), as its Decisions give it, whether built "
+                    "yet or not. A Layer with no y-sort line and not above isn't listed: `check` reports it.")
 
 
 class BodyOut(BaseModel):
@@ -104,6 +107,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
             input_image=project.relative(source[1]) if source is not None and source[1].is_file() else None,
             outputs=_outputs(project, graph.output_dir(spec)),
             markers=spec.markers(graph.replay(state.stage).current) if spec.markers is not None else [],
+            sort=spec.sort(graph.replay(state.stage).current) if spec.sort is not None else [],
         ))
     takes_variants = sources.takes_pick(graph)
     variants = sources.variants(asset) if takes_variants else {}

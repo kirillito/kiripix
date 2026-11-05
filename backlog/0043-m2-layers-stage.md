@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -39,14 +39,14 @@ Spec §6.1, §7, §8 and ADR 0004. Stories 1–5, 7 and 8 of [0037](0037-m2-laye
 
 ## Acceptance criteria
 
-- [ ] With fake Runners: a `click`, then one `run --rerun`, pins a segmentation and a fill and lands in `needs-review`;
+- [x] With fake Runners: a `click`, then one `run --rerun`, pins a segmentation and a fill and lands in `needs-review`;
       `accept` gives `done` with `plate.png`, `layer.<id>.png`, `foreground.png` and `layers.json`.
-- [ ] Plate + Layers recompose exactly to the fit image, from the output files.
-- [ ] `set layers grow=0` then `grow=2`: the alpha and the hole move together, only where partial, and fills go to "Runner
+- [x] Plate + Layers recompose exactly to the fit image, from the output files.
+- [x] `set layers grow=0` then `grow=2`: the alpha and the hole move together, only where partial, and fills go to "Runner
       input changed"; segmentation calls aren't re-run.
-- [ ] Adding a second object in another part of the room makes one new segmentation and one new fill.
-- [ ] A room built before this Stage, with floods and no layer Decisions: `layers` is stale, then `plate.png` is
+- [x] Adding a second object in another part of the room makes one new segmentation and one new fill.
+- [x] A room built before this Stage, with floods and no layer Decisions: `layers` is stale, then `plate.png` is
       byte-identical to `fit.png`, and `masks` is not `needs-review`.
-- [ ] A lift on a room with floods: `masks` goes to `needs-review` with no Runner call.
-- [ ] Swapping the fake inpainter for one with another ID gives "Runner input changed", with no other change to the Stage.
-- [ ] `plate` as a Layer ID is refused with `decision.invalid`.
+- [x] A lift on a room with floods: `masks` goes to `needs-review` with no Runner call.
+- [x] Swapping the fake inpainter for one with another ID gives "Runner input changed", with no other change to the Stage.
+- [x] `plate` as a Layer ID is refused with `decision.invalid`.

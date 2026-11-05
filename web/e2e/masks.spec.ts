@@ -286,3 +286,121 @@ test("dropping a painted Mask image imports it in one Decision, and the opacity 
   await page.getByTestId("mask-opacity").fill("20");
   await expect(page.getByTestId("canvas")).toHaveAttribute("data-opacity", "0.2");
 });
+
+test("the flood tolerance slider records its value in the flood's one Decision, and moving it records nothing", async ({
+  page,
+  segmentingStudio: studio,
+}) => {
+  builtRoom(studio);
+  await open(page, studio);
+  const before = journalFiles(studio);
+  await page.keyboard.press("f");
+  const slider = page.getByTestId("mask-tolerance");
+  await expect(slider).toHaveAttribute("max", "0.2"); // the range is describe's
+  await expect(slider).toHaveValue("0.04");
+
+  await slider.fill("0.1");
+  await slider.fill("0.07");
+  await expect(page.getByTestId("mask-tolerance-value")).toHaveText("0.070");
+  await page.waitForTimeout(300);
+  expect(journalFiles(studio)).toBe(before);
+  await expect(page.getByTestId("decision-count")).toHaveText("0 Decision(s)");
+
+  await clickPixel(page, 2, 2);
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  expect(decisions(studio)).toHaveLength(1);
+  expect(decisions(studio)[0]).toMatchObject({ name: "flood", data: { x: 2, y: 2, mask: "solid", tolerance: 0.07 } });
+
+  await page.keyboard.press("b");
+  await expect(slider).toHaveCount(0); // it belongs to the flood tool
+});
+
+test("a flood on a one-pixel region shows the finding, and clicking it jumps to the point", async ({
+  page,
+  segmentingStudio: studio,
+}) => {
+  studio.room();
+  const odd = png(96, 64, (x, y) => (x >= 20 && x < 22 && y >= 10 && y < 12 ? [0, 228, 54, 255] : [255, 0, 77, 255]));
+  studio.kiripix("pick", ROOM, studio.importVariant(ROOM, "a.png", odd));
+  studio.run(ROOM);
+  await open(page, studio);
+  await page.keyboard.press("f");
+  await page.getByTestId("mask-tolerance").fill("0");
+
+  await clickPixel(page, 10, 5);
+
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  const finding = page.getByTestId("finding-mask.flood_filled_almost_nothing").first();
+  await expect(finding).toContainText("(10, 5)");
+  await expect(page.getByTestId("canvas")).not.toHaveAttribute("data-focus", /.+/);
+  await finding.click();
+  await expect(page.getByTestId("canvas")).toHaveAttribute("data-focus", "10,5");
+});
+
+test("Wall off edges records one border Decision with the chosen sides, the wall shows, and Ctrl+Z removes it", async ({
+  page,
+  segmentingStudio: studio,
+}) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.getByTestId("border-left").uncheck();
+
+  await page.getByTestId("border-wall").click();
+
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  expect(decisions(studio)).toHaveLength(1);
+  expect(decisions(studio)[0]).toMatchObject({
+    name: "border",
+    data: { mask: "solid", sides: ["top", "right", "bottom"] },
+  });
+  // Top and bottom 48 x 2 each, right 2 x 28 between them: the left side stays open.
+  await expect.poll(async () => (await counts(page)).solid).toBe(2 * 48 * 2 + 2 * 28);
+  await page.screenshot({ path: "test-results/masks-wall-off-edges.png" });
+
+  await page.locator("h1").click();
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("decision-count")).toHaveText("0 Decision(s)");
+  expect(decisions(studio)).toHaveLength(0);
+  await expect.poll(async () => (await counts(page)).solid).toBe(0);
+});
+
+test("masks.open_edge lists each open side, and clicking it jumps to that edge", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.getByTestId("border-left").uncheck();
+  await page.getByTestId("border-right").uncheck();
+  await page.getByTestId("border-wall").click();
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+
+  const findings = page.getByTestId("finding-masks.open_edge");
+  // The decide's answer and the Stage's Checks both list them: two sides open, so each shows once or twice.
+  await expect(findings.filter({ hasText: /\(0, / }).first()).toBeVisible();
+  await expect(findings.filter({ hasText: /\(47, / }).first()).toBeVisible();
+  await expect(findings.filter({ hasText: /\((?!0,|47,)/ })).toHaveCount(0);
+  const canvas = page.getByTestId("canvas");
+  await expect(canvas).not.toHaveAttribute("data-focus", /.+/);
+  await findings.filter({ hasText: /\(47, / }).first().click();
+  await expect(canvas).toHaveAttribute("data-focus", /^47,\d+$/);
+});
+
+test("with the room walled off by the UI, the Body still stops at the room's edge in the walk test", async ({
+  page,
+  segmentingStudio: studio,
+}) => {
+  builtRoom(studio);
+  studio.kiripix("decide", ROOM, "place", "--decision", JSON.stringify({ decision: "marker", data: { id: "spawn.main", type: "spawn", x: 20, y: 16 } }));
+  await open(page, studio);
+  await page.getByTestId("border-wall").click();
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  await expect.poll(async () => (await counts(page)).solid).toBe(48 * 32 - 44 * 28);
+  studio.run(ROOM);
+
+  await page.getByTestId("stage-reach").click();
+  await page.getByTestId("walk-toggle").click();
+  await expect(page.getByTestId("canvas")).toHaveAttribute("data-body", "20,16");
+  await page.keyboard.down("ArrowLeft");
+  await expect(page.getByTestId("canvas")).toHaveAttribute("data-body", "8,16"); // the 2-pixel wall: the footprint starts at x = 2
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId("canvas")).toHaveAttribute("data-body", "8,16");
+  await page.keyboard.up("ArrowLeft");
+});

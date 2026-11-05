@@ -21,12 +21,14 @@ from typing import Any
 
 import numpy as np
 
+import kiripix.runners
 from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
 from kiripix.core.project_checks import register_project_check
 from kiripix.recipes import register_kind
+from kiripix.recipes.hole import hole_params
 from kiripix.runners import (
-    MATTER, SEGMENTER, CheckCancel, Device, EmbeddingRunner, Runner, RunnerError, WeightFile, register_runner,
+    INPAINTER, MATTER, SEGMENTER, CheckCancel, Device, EmbeddingRunner, Runner, RunnerError, WeightFile, register_runner,
 )
 from PIL import Image
 from kiripix.recipes.base import (
@@ -347,7 +349,8 @@ class FakeMatter(Runner):
         assert self._device is not None, "called while not loaded"
         with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
             calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
-        hold = Path("hold-runner")
+        # A call with a hole (the `fill` Kind) holds on its own file, so a test can stop between it and the call before.
+        hold = Path("hold-hole" if "crop" in params else "hold-runner")
         if hold.exists():
             Path("runner-holding").write_text("", encoding="utf-8")
             while hold.exists():
@@ -391,6 +394,120 @@ register_kind(
     )
 )
 
+# The test Kind `fill` (ticket 0039): two chained Runner calls on src/input.png. The first, to the SEGMENTER role, finds a
+# hole; the second, to the MATTER role, is made with that hole in its params (a crop and runs), so it isn't listed until the
+# first is pinned. Each wraps its Decisions ([{"find": []}], [{"fill": []}]) so core can tell "not run yet" from "input
+# changed". Its output is the second call's result and the hole it was made with.
+
+
+def _fill_calls(run: StageRun) -> list[RunnerCall]:
+    image = run.files["src/input.png"]
+    find = RunnerCall(runner=SEGMENTER, image=image, params={"max_size": 1536, "points": [[2.0, 2.0, True]]},
+                      decisions=[{"find": []}])
+    found = run.pinned(find)
+    if not found.is_file():
+        return [find]
+    with Image.open(found) as opened:
+        hole = hole_params(np.array(opened.convert("1")), margin=1)
+    return [find, RunnerCall(runner=MATTER, image=image, params={"max_size": 1536, **hole}, decisions=[{"fill": []}])]
+
+
+def _fill(run: StageRun) -> None:
+    _, fill = _fill_calls(run)
+    shutil.copyfile(run.pinned(fill), run.output_dir / "filled.png")
+    (run.output_dir / "hole.json").write_text(json.dumps(fill.params), encoding="utf-8")
+
+
+register_kind(
+    KindSpec(
+        name="fill",
+        description="A test Kind with two chained Runner calls: the second's hole is the first's pinned result.",
+        stages=chain(
+            StageSpec(name="filled", description="The second call's result.", inputs=StageInputs(files=["src/input.png"]),
+                      run=_fill, runner_calls=_fill_calls),
+        ),
+    )
+)
+
+class FakeInpainter(Runner):
+    """Deterministic, as the INPAINTER contract says: the crop of the image, with the hole's pixels set to the mean colour
+    of the others (opaque). A subclass with another ID stands in for a swapped Runner."""
+
+    id = INPAINTER
+    description = "A fake inpainting Runner for the tests."
+    licence = "test"
+    weights = (_fake_weight(hashlib.sha256(_WEIGHTS.read_bytes()).hexdigest()),)
+
+    def __init__(self) -> None:
+        self._device: Device | None = None
+
+    def load(self, directory: Path, device: Device) -> None:
+        assert (directory / "fake_weights.bin").is_file()
+        self._device = device
+
+    def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
+        assert self._device is not None, "called while not loaded"
+        with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"runner": self.id, "device": self._device, "params": params}) + "\n")
+        hold = Path("hold-runner")
+        if hold.exists():
+            Path("runner-holding").write_text("", encoding="utf-8")
+            while hold.exists():
+                check_cancel()
+                time.sleep(0.05)  # stands in for a long inference
+        if Path("runner-fails").exists():
+            raise RunnerError("the fake Runner was told to fail")
+        top, left, bottom, right = params["crop"]
+        result = image[top:bottom, left:right].copy()
+        hole = np.zeros(result.shape[:2], dtype=np.bool_)
+        for y, x, length in params["runs"]:
+            hole[y, x:x + length] = True
+        if hole.any():
+            result[hole] = [*np.rint(result[~hole].mean(axis=0)[:3]).astype(np.uint8), 255] if (~hole).any() else 0
+        return result
+
+    def unload(self) -> None:
+        self._device = None
+
+
+class OtherInpainter(FakeInpainter):
+    id = "fake.inpainter-b"
+
+
+# The test Kind `inpaint`: one Stage whose only input is an INPAINTER call on src/input.png, with a fixed hole. While the
+# project has an `inpainter-b` file, the call goes to OtherInpainter, as if the Runner behind the role had been replaced.
+_HOLE = {"crop": [0, 0, 4, 6], "runs": [[1, 1, 3], [2, 2, 2]]}
+
+
+def _inpaint_calls(run: StageRun) -> list[RunnerCall]:
+    runner = OtherInpainter.id if Path("inpainter-b").exists() else INPAINTER
+    return [RunnerCall(runner=runner, image=run.files["src/input.png"], params=dict(_HOLE), decisions=[])]
+
+
+def _patched(run: StageRun) -> None:
+    [call] = _inpaint_calls(run)
+    shutil.copyfile(run.pinned(call), run.output_dir / "patched.png")
+
+
+register_kind(
+    KindSpec(
+        name="inpaint",
+        description="A test Kind with one inpainting Runner call.",
+        stages=chain(
+            StageSpec(name="patched", description="The crop with the hole filled.", inputs=StageInputs(files=["src/input.png"]),
+                      image="patched.png", run=_patched, runner_calls=_inpaint_calls),
+        ),
+    )
+)
+
 register_runner(FakeSegmenter())
 register_runner(FakeMatter())
+register_runner(FakeInpainter())
+register_runner(OtherInpainter())
 register_runner(TamperedWeights())
+
+# The room's `layers` Stage reads the INPAINTER role at call time. While the project has an `inpainter-b` file, the role
+# has another Runner behind it, as if its one line had been edited (ticket 0043). Each Command is a fresh process, so the
+# file is read at import.
+if Path("inpainter-b").exists():
+    kiripix.runners.INPAINTER = OtherInpainter.id

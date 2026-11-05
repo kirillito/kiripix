@@ -1,6 +1,6 @@
 // The walk test (spec §6.1, §11): the Body walks the room with the arrow keys, on what `place` built. It reads walkable,
 // which says where its footprint fits without touching `solid` or a pit, and never works collision out for itself.
-// Foreground Layers would be drawn over it here by their y-sort lines; a room has none until M2.
+// The foreground Layers are drawn over it by their y-sort lines, from the sort positions `place` gives (ticket 0054).
 
 import type { Body } from "./api";
 import { isTyping, type CanvasFrame, type CanvasTool } from "./pixelCanvas";
@@ -40,6 +40,19 @@ function isSet(spots: MaskPixels, x: number, y: number): boolean {
   return x >= 0 && y >= 0 && x < spots.width && y < spots.height && spots.set[y * spots.width + x] === 1;
 }
 
+// A Layer's own pixels and its sort position, as `place` gives it: `y` is None for a Layer that is always above.
+export interface SortedLayer {
+  id: string;
+  image: HTMLImageElement;
+  above: boolean;
+  y: number | null;
+}
+
+// Read at every draw, so a rebuilt Layer or line shows without sending the Body back to the Spawn.
+export interface SortedLayers {
+  layers: SortedLayer[];
+}
+
 export class WalkTest implements CanvasTool {
   private readonly held = new Set<string>();
   private frameRequest = 0;
@@ -53,6 +66,7 @@ export class WalkTest implements CanvasTool {
     private x: number,
     private y: number,
     private readonly redraw: () => void,
+    private readonly sorted: SortedLayers = { layers: [] },
   ) {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -131,6 +145,12 @@ export class WalkTest implements CanvasTool {
     const top = frame.top + (this.y - Math.floor(height / 2)) * frame.zoom;
     context.strokeStyle = BODY_COLOUR;
     context.strokeRect(left - 0.5, top - 0.5, width * frame.zoom + 1, height * frame.zoom + 1);
+    // A Layer is over the Body when the Body is north of its line (smaller y), or when it is always above. The Body's
+    // position is its footprint's middle; on the line itself the Body is in front.
+    context.imageSmoothingEnabled = false;
+    const over = this.sorted.layers.filter((layer) => layer.above || (layer.y !== null && this.y < layer.y));
+    for (const { image } of over) context.drawImage(image, frame.left, frame.top, frame.width * frame.zoom, frame.height * frame.zoom);
     frame.element.dataset.body = `${this.x},${this.y}`;
+    frame.element.dataset.layersOver = over.map((layer) => layer.id).join(" ");
   }
 }
