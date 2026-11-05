@@ -903,7 +903,6 @@ ROOM = KindSpec(
                 CheckSpec(code="mask.none_painted", description="Some Mask has been painted (info)."),
             ),
             owner_input="Clicks and brushes.",
-            gpu=True,
             available_from="M1",
             run=_masks,
             needs_input=_masks_needs_input,

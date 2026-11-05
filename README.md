@@ -183,7 +183,7 @@ Commands that write also take `--wait <seconds>` to wait for a lock another proc
 | `kiripix next <asset>` | The next Stage of an Asset and what it needs: a command to run, or an action only you can take. |
 | `kiripix run <asset> [STAGE] [--force] [--rerun] [--cpu]` | Run stale and todo Stages in order. With `STAGE`, run only that Stage (its upstream must be done). `--force` re-runs `done` Stages too. `run` never calls a Runner: `--rerun` makes the Runner calls with no pinned result, which land in `needs-review`, and `--cpu` runs them on the CPU without the GPU lock. |
 | `kiripix run --all [--kind KIND] [--rerun] [--cpu]` | Run every Asset, locking one at a time. |
-| `kiripix runners list\|pull <runner>\|rm <runner>` | The local Runners: licence, weights hash and size; download their weights now rather than on first use; delete them. For a GPU, ONNX Runtime also needs CUDA: `uv pip install "onnxruntime-gpu[cuda,cudnn]"`. Without it Runners use the CPU. |
+| `kiripix runners list\|pull <runner>\|rm <runner>` | The local Runners: licence, weights hash and size; download their weights now rather than on first use; delete them. For a GPU, ONNX Runtime also needs CUDA's libraries, about 1.1 GB, which `uv sync` installs. Without them Runners use the CPU, and `run --rerun` warns with `runner.gpu_unused`. |
 | `kiripix set <asset> <stage> key=value ...` | Set Stage parameters. Values are checked against the Stage's declared parameters (`describe <kind>` lists them). |
 | `kiripix check <asset>` | Run the Checks of every built Stage of an Asset and list the findings. |
 | `kiripix check --all` | Check every Asset, then the Project checks (those across Assets, such as Exit pairing). |

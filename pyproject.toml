@@ -31,6 +31,10 @@ dev = [
     "types-jsonschema",
     "types-psutil",
 ]
+cuda = ["onnxruntime-gpu[cuda,cudnn]"]  # without these libraries Runners fall back to the CPU; CI's fake Runner needs none
+
+[tool.uv]
+default-groups = ["dev", "cuda"]  # so plain `uv sync` keeps them
 
 [build-system]
 requires = ["hatchling"]

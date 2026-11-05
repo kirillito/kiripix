@@ -5,6 +5,9 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+env:
+  UV_NO_SYNC: "1"  # keep what `uv sync` below installed: `uv run` would add the 1.1 GB `cuda` group, which the tests don't use
+
 jobs:
   test:
     strategy:
@@ -18,7 +21,7 @@ jobs:
           lfs: true
       - uses: astral-sh/setup-uv@v10.3.3  # no major tags since v8: pinned to an exact release
       - name: Install the locked environment
-        run: uv sync --locked
+        run: uv sync --locked --no-group cuda
       - name: Import rule
         run: uv run lint-imports
       - name: Type check
@@ -36,7 +39,7 @@ jobs:
           node-version: "24"
       - name: Install the locked environments
         run: |
-          uv sync --locked
+          uv sync --locked --no-group cuda
           npm ci
           npx playwright install --with-deps chromium
         working-directory: web

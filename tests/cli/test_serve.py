@@ -469,14 +469,14 @@ def test_cancel_stops_a_run_cleanly(project: Kiripix, server: Server) -> None:
 def test_cancel_stops_a_runner_call_and_pins_nothing(project: Kiripix, server: Server) -> None:
     folder = built_room(project)
     decide(project, "click", {"x": 30, "y": 10, "mask": "solid", "positive": True})
-    hold = project.cwd / "hold-runner"
+    hold = project.cwd / "hold-embed"
     hold.write_text("", encoding="utf-8")
     replies: list[Reply] = []
     body = {"asset": ROOM, "stage": "masks", "rerun": True}
     caller = threading.Thread(target=lambda: replies.append(server.call("/api/run", body, headers={"X-Kiripix-Job": "r"})))
     try:
         caller.start()
-        wait_for(project.cwd / "runner-holding")
+        wait_for(project.cwd / "embed-holding")
 
         cancelled_at = time.monotonic()
         server.call("/api/jobs/r/cancel")
@@ -489,7 +489,7 @@ def test_cancel_stops_a_runner_call_and_pins_nothing(project: Kiripix, server: S
     [reply] = replies
     assert reply.status == 400 and reply.codes == ["run.cancelled"]
     assert not (folder / "pinned").exists() or not list((folder / "pinned").iterdir())
-    assert not list((project.cwd / ".kiripix" / "locks").glob("*.lock"))
+    assert not list((project.cwd / ".kiripix" / "locks").glob("asset.*.lock"))
     last = json.loads((folder / "history.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert last["outcome"] == "cancelled" and last["runner"] == "sam2.1-small"
     # Nothing is half-done, and the same call now goes through.

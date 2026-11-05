@@ -64,6 +64,11 @@ class Runner(ABC):
         """Where the loaded Runner runs, for the history. Never part of a pinned call's key (ADR 0002)."""
         return "cpu"
 
+    @property
+    def gpu_unused(self) -> str | None:
+        """Why the loaded Runner is on the CPU although it was asked for the GPU and the machine has one, or None."""
+        return None
+
 
 class EmbeddingRunner(Runner):
     """A Runner in two halves: `embed` is slow and depends only on the image, and `decode` is fast. So a server can keep an

@@ -179,7 +179,9 @@ class StageSpec:
     `image` names the file in its output that is its image: what the next Stage's clicks are made on, and what an
     Override paints over. `needs_input` says, from the Stage's inputs alone, why it can't run yet. `check` runs the
     Stage's Checks on its output (`output_dir` is the built output). `runner_calls` lists the Runner calls its current
-    Decisions need, from what is built upstream; only `run --rerun` makes one that isn't pinned yet.
+    Decisions need, from what is built upstream; only `run --rerun` makes one that isn't pinned yet, and takes the GPU lock
+    for it. `gpu` holds that lock through the run function, for one that loads a Runner itself; one that only reads pinned
+    results must leave it off, or each rebuild makes a warm Runner unload.
     """
 
     name: str

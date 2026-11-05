@@ -4,6 +4,7 @@ folder: `runner-embeds.jsonl` and `runner-decodes.jsonl`."""
 
 import json
 import os
+import shutil
 import socket
 import threading
 import time
@@ -17,8 +18,8 @@ import pytest
 from conftest import Kiripix, make_demo, stage_status
 from PIL import Image
 from test_locks import start_holding, wait_for
-from test_masks import ROOM, built_room, plate
-from test_runner_calls import box, click, repick
+from test_masks import ROOM, built_room, plate, read_mask
+from test_runner_calls import box, click, pinned, repick
 from test_serve import Reply, Server, serving
 
 OTHER = "room.yard"
@@ -263,15 +264,59 @@ def test_a_run_on_the_cpu_while_serve_is_warm_leaves_its_lock_alone(project: Kir
     assert gpu_lock(project) is not None and preview(warm_server)["embedding"] == "cached"
 
 
-def test_a_run_rerun_through_serve_itself_gets_the_lock_too(project: Kiripix, warm_server: Server) -> None:
-    built_room(project)
-    click(project)
+def test_a_click_through_serve_after_a_hover_runs_only_the_decoder_and_stays_warm(project: Kiripix,
+                                                                                  warm_server: Server) -> None:
+    folder = built_room(project)
     preview(warm_server)
+    click(project)
 
     reply = warm_server.call("/api/run", {"asset": ROOM, "stage": "masks", "rerun": True})
 
     assert reply.status == 403 and stage_status(project, ROOM)["masks"] == "needs-review"
-    assert gpu_lock(project) is None
+    assert embeds(project) == 1 and lines(project, "runner-calls.jsonl") == 0
+    assert (read_mask(folder) == box(4, 16, 24, 36)).all()
+    still_warm(project, warm_server)
+    [entry] = [json.loads(line) for line in (folder / "history.jsonl").read_text("utf-8").splitlines() if '"runner"' in line]
+    assert entry["device"] == "cuda" and entry["outcome"] == "done"
+
+
+def test_a_click_through_serve_pins_under_the_key_the_cli_uses(project: Kiripix, warm_server: Server) -> None:
+    folder = built_room(project)
+    click(project)
+    warm_server.call("/api/run", {"asset": ROOM, "stage": "masks", "rerun": True})
+    [made_warm] = pinned(folder)
+    contents = made_warm.read_bytes()
+    shutil.rmtree(folder / "pinned")
+
+    project.json("run", ROOM, "masks", "--rerun", expect=3)
+
+    assert pinned(folder) == [made_warm] and made_warm.read_bytes() == contents
+
+
+def test_a_failed_call_through_serve_fails_the_run_and_pins_nothing(project: Kiripix, warm_server: Server) -> None:
+    folder = built_room(project)
+    click(project)
+    (project.cwd / "runner-fails").write_text("", encoding="utf-8")
+
+    reply = warm_server.call("/api/run", {"asset": ROOM, "stage": "masks", "rerun": True})
+
+    assert "stage.failed" in reply.codes and pinned(folder) == []
+    assert stage_status(project, ROOM)["masks"] == "needs-input"
+
+
+def test_a_click_through_serve_is_busy_while_another_process_holds_the_gpu(project: Kiripix, warm_server: Server) -> None:
+    folder = built_room(project)
+    click(project)
+    make_demo(project)
+    process, holder = start_holding(project)
+    try:
+        reply = warm_server.call("/api/run", {"asset": ROOM, "stage": "masks", "rerun": True})
+
+        assert reply.status == 423 and reply.json["data"]["holder"]["lock"] == "gpu"
+        assert pinned(folder) == []
+    finally:
+        (holder / "hold").unlink()
+    process.communicate(timeout=60)
 
 
 def test_a_cpu_run_through_serve_itself_unloads_the_warm_runner_it_shares(project: Kiripix, warm_server: Server) -> None:
@@ -318,6 +363,64 @@ def test_a_new_preview_does_not_take_the_lock_from_a_process_that_asked_for_it(p
 
     (locks / "gpu.request").unlink()
     assert preview(warm_server)["embedding"] == "computed"
+
+
+# a rebuild reads pinned results and loads no Runner, so it leaves the GPU lock alone (ticket 0059)
+
+
+def brush(project: Kiripix, x: int = 1) -> None:
+    project.json("decide", ROOM, "masks", "--decision", json.dumps(
+        {"decision": "brush", "data": {"mask": "solid", "erase": False, "radius": 0, "points": [[x, 1]]}}))
+
+
+def still_warm(project: Kiripix, server: Server) -> None:
+    holder = gpu_lock(project)
+    assert holder is not None and holder["warm"] is True, "the warm Runner still holds the lock"
+    assert not (project.cwd / ".kiripix" / "locks" / "gpu.request").exists(), "and nobody asked it to let go"
+    assert preview(server)["embedding"] == "cached" and embeds(project) == 1
+
+
+def test_a_rebuild_through_serve_does_not_ask_the_warm_runner_to_unload(project: Kiripix, warm_server: Server) -> None:
+    built_room(project)
+    preview(warm_server)
+    brush(project)
+
+    reply = warm_server.call("/api/run", {"asset": ROOM, "stage": "masks"})
+
+    assert reply.status == 200, reply.body
+    still_warm(project, warm_server)
+
+
+def test_a_rebuild_from_the_cli_does_not_ask_the_warm_runner_to_unload(project: Kiripix, warm_server: Server) -> None:
+    built_room(project)
+    preview(warm_server)
+    brush(project)
+
+    result = project("run", ROOM, "masks", "--json", "--progress", "jsonl")
+
+    assert result.code == 0, result.stdout + result.stderr
+    assert '"gpu_wait"' not in result.stderr
+    still_warm(project, warm_server)
+
+
+def test_a_plain_run_needs_no_gpu_lock_but_a_run_rerun_that_calls_a_runner_does(project: Kiripix) -> None:
+    built_room(project)
+    click(project)
+    project.json("run", ROOM, "masks", "--rerun", expect=3)
+    project.json("accept", ROOM, "masks", owner=True)
+    make_demo(project)
+    process, holder = start_holding(project)
+    try:
+        brush(project)
+        project.json("run", ROOM, "masks")  # replays the pinned click
+        assert lines(project, "runner-calls.jsonl") == 1
+
+        click(project, 10, 20)
+        assert project.json("run", ROOM, "masks", "--rerun", expect=4)["data"]["holder"]["lock"] == "gpu"
+        assert lines(project, "runner-calls.jsonl") == 1
+    finally:
+        (holder / "hold").unlink()
+    process.communicate(timeout=60)
 
 
 # cancel

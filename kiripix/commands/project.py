@@ -152,7 +152,7 @@ def _describe(kind: KindSpec, detail: bool) -> KindDescription:
             decisions=list(s.decisions),
             checks=list(s.checks),
             owner_input=s.owner_input,
-            gpu=s.gpu,
+            gpu=s.gpu or s.runner_calls is not None,
             implemented=s.run is not None,
             available_from=s.available_from,
         )
@@ -241,7 +241,7 @@ def status(arguments: StatusInput, context: Context) -> Outcome[StatusData]:
             findings.extend(error.findings)
             continue
         rows.append(AssetStatus(asset=asset.id, kind=asset.kind, stages=states,
-                                export_command=export_command(project, asset, cache)))
+                                export_command=export_command(project, asset, cache, states)))
     cache.save()
     return Outcome(
         StatusData(project=project.settings.project.name, assets=rows),
@@ -372,13 +372,14 @@ def run(arguments: RunInput, context: Context) -> Outcome[RunData]:
         if arguments.kind is not None:
             get_kind(arguments.kind)
         result = run_all(project, cache, kind=arguments.kind, force=arguments.force, progress=context.progress,
-                         wait=context.wait, command_line=context.command_line, rerun=arguments.rerun, cpu=arguments.cpu)
+                         wait=context.wait, command_line=context.command_line, rerun=arguments.rerun, cpu=arguments.cpu,
+                         keep_warm=context.via == "rest")
     else:
         assert arguments.asset is not None
         asset = load_asset(project, arguments.asset)
         result = run_asset(project, asset, cache, stage=arguments.stage, force=arguments.force,
                            progress=context.progress, wait=context.wait, command_line=context.command_line,
-                           rerun=arguments.rerun, cpu=arguments.cpu)
+                           rerun=arguments.rerun, cpu=arguments.cpu, keep_warm=context.via == "rest")
     findings: list[Finding] = result.findings
     if result.exit_code == ExitCode.OK:
         for asset_id in sorted({r.asset for r in result.results}):
