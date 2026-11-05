@@ -23,9 +23,15 @@ the same image, so the click runs only the decoder. The result pins exactly as b
 
 ## Acceptance criteria
 
-- [ ] A click through `serve` after a hover computes no embedding, and leaves the Runner warm.
-- [ ] The pin has the same key as one the CLI makes.
-- [ ] A failed call fails the run and pins nothing. A cancelled one pins nothing and leaves the session usable.
-- [ ] With the GPU lock held by another process, a rerun through `serve` is busy.
-- [ ] A rerun from the CLI still unloads the warm Runner of a running `serve`.
-- [ ] The numbers are measured again and recorded here.
+- [x] A click through `serve` after a hover computes no embedding, and leaves the Runner warm.
+- [x] The pin has the same key as one the CLI makes.
+- [x] A failed call fails the run and pins nothing. A cancelled one pins nothing and leaves the session usable.
+- [x] With the GPU lock held by another process, a rerun through `serve` is busy.
+- [x] A rerun from the CLI still unloads the warm Runner of a running `serve`.
+- [x] The numbers are measured again and recorded in [0066](0066-m2-trim-what-a-mask-edit-pays.md), together with that ticket's.
+
+## Changed behaviour
+
+Two tests changed, because they described the old behaviour. A rerun through `serve` now leaves the warm Runner's GPU lock held,
+where it used to release it. For the same reason, a cancelled rerun through `serve` leaves that lock too, and
+`test_cancel_stops_a_runner_call_and_pins_nothing` now checks only for Asset locks.

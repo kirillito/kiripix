@@ -21,8 +21,20 @@ the CPU, and nothing told them: `uv sync` uninstalls the CUDA libraries the READ
 
 ## Acceptance criteria
 
-- [ ] `uv sync` installs the CUDA libraries, and SAM 2 reports `device: cuda` on the Owner's machine.
-- [ ] `uv sync --locked` still passes, and CI doesn't download the libraries.
-- [ ] A CLI test: a rerun whose Runner fell back has the finding, once, with a `fix`; one that didn't, or that asked for `--cpu`,
+- [x] `uv sync` installs the CUDA libraries, and SAM 2 reports `device: cuda` on the Owner's machine.
+- [x] `uv sync --locked` still passes, and CI doesn't download the libraries. Checked locally with CI's flags and `UV_NO_SYNC`;
+      the workflow itself first runs on the next push.
+- [x] A CLI test: a rerun whose Runner fell back has the finding, once, with a `fix`; one that didn't, or that asked for `--cpu`,
       doesn't.
-- [ ] Checked by hand with the real Runner, in an environment without the libraries.
+- [x] Checked by hand with the real Runner, in an environment without the libraries.
+
+## Results
+
+With the real Runner on a copy of `room.harbor_front`, one `kiripix run --rerun` from the CLI, load included:
+
+| Environment | Device | Duration | `runner.gpu_unused` |
+|---|---|---:|---|
+| Without the libraries | `cpu` | 2.44 s | reported, with `fix: uv sync` |
+| After `uv sync` | `cuda` | 0.80 s | not reported |
+
+Not covered: the warning appears on `run --rerun` only, so a hover alone doesn't show it. Its reply does carry `device`.

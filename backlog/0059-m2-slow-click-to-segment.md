@@ -82,6 +82,9 @@ Where the time goes, in the "after" runs:
 
 ### Where the rest of the time is: proposals, none built here
 
+The Owner agreed all three. They are [0064](0064-m2-rerun-on-the-warm-runner.md), [0065](0065-m2-keep-cuda-and-report-cpu-fallback.md)
+and [0066](0066-m2-trim-what-a-mask-edit-pays.md), and 0066 records the final numbers.
+
 A click and the hover after it still take 7.0 s on the CPU and 3.9 s on the GPU.
 
 1. **Make `run --rerun` use the warm Runner in `serve`.** `make_runner_calls` still goes through `warm.one_runner_loaded`, so
