@@ -255,17 +255,61 @@ def test_a_positive_click_is_its_own_call_so_a_new_one_keeps_the_earlier_result(
     assert (read_mask(folder) == (box(2, 14, 4, 16) | box(18, 30, 32, 44))).all()
 
 
-def test_a_negative_click_refines_the_positive_before_it_in_one_call(project: Kiripix) -> None:
+def test_a_negative_click_in_the_overlap_of_two_positive_clicks_takes_it_away_and_a_later_positive_adds_it_back(
+        project: Kiripix) -> None:
     folder = built_room(project)
-    click(project, 30, 16)
-    click(project, 30, 16, positive=False)
+    click(project, 28, 16)
+    click(project, 34, 16)
+    click(project, 31, 16, positive=False)
+
+    rerun(project)
+
+    # Three calls, each a lone point: the negative click is its own call, segmented as a positive click would be.
+    assert [c["params"]["points"] for c in calls(project)] == [[[28.5, 16.5, True]], [[34.5, 16.5, True]],
+                                                                [[31.5, 16.5, True]]]
+    one, two, middle = box(10, 22, 22, 34), box(10, 22, 28, 40), box(10, 22, 25, 37)
+    assert (read_mask(folder) == ((one | two) & ~middle)).all()
+    assert not read_mask(folder)[16, 31]
+    accept(project)
+
+    click(project, 31, 16)
+    project.json("run", ROOM, "masks")  # the same call as the negative click's: pinned already
+
+    assert len(calls(project)) == 3
+    assert (read_mask(folder) == ((one | two) & ~middle) | middle).all()
+
+
+def test_a_negative_click_takes_away_from_a_flood_and_a_brush_stroke(project: Kiripix) -> None:
+    folder = built_room(project)
+    decide(project, "flood", {"x": 30, "y": 10, "mask": "solid"})  # the rug: rows 8-13, columns 24-35
+    decide(project, "brush", {"mask": "solid", "radius": 0, "points": [[40, 4], [41, 4]], "erase": False})
+    click(project, 28, 10, positive=False)  # the fake's square: rows 4-16, columns 22-34
 
     rerun(project)
 
     assert len(calls(project)) == 1
-    assert calls(project)[0]["params"]["points"] == [[30.5, 16.5, True], [30.5, 16.5, False]]
-    # The positive square reaches 6 px, and the negative one in its place 3.
-    assert (read_mask(folder) == (box(10, 22, 24, 36) & ~box(13, 19, 27, 33))).all()
+    expected = box(8, 13, 24, 35) & ~box(4, 16, 22, 34)
+    expected[4, 40] = expected[4, 41] = True
+    assert (read_mask(folder) == expected).all()
+    click(project, 40, 4, positive=False)
+    rerun(project)
+    expected[4, 40] = expected[4, 41] = False
+    expected &= ~box(0, 10, 34, 46)  # the fake's square around (40, 4), which also reaches the rug's last column
+    assert (read_mask(folder) == expected).all()
+
+
+def test_a_negative_click_at_the_pixel_of_a_positive_click_reuses_its_pinned_result(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, 30, 10)
+    rerun(project)
+    accept(project)
+
+    click(project, 30, 10, positive=False)
+    project.json("run", ROOM, "masks")
+
+    assert len(calls(project)) == 1 and len(pinned(folder)) == 1
+    assert stage_status(project, ROOM)["masks"] == "done"
+    assert not read_mask(folder).any(), "the same segment, taken away again"
 
 
 def test_undo_of_a_click_needs_no_rerun_and_redo_finds_its_pin_again(project: Kiripix) -> None:
@@ -389,21 +433,21 @@ def test_every_runner_call_is_in_the_history(project: Kiripix) -> None:
     entries = [json.loads(line) for line in (folder / "history.jsonl").read_text("utf-8").splitlines()]
     [entry] = [e for e in entries if "runner" in e]
     assert entry["runner"] == "sam2.1-small" and entry["stage"] == "masks" and entry["outcome"] == "done"
-    assert entry["params"]["points"] == [[30.5, 10.5, True]] and entry["time"] and entry["device"] == "cuda"
+    assert entry["key"] == pinned(folder)[0].stem and "params" not in entry, "the params are in pinned/<key>.json"
+    assert entry["time"] and entry["device"] == "cuda"
 
 
 # refusals
 
 
-def test_a_negative_click_with_nothing_before_it_needs_the_owner(project: Kiripix) -> None:
-    built_room(project)
+def test_a_negative_click_with_nothing_before_it_is_allowed(project: Kiripix) -> None:
+    folder = built_room(project)
     click(project, positive=False)
 
+    assert project.json("next", ROOM)["data"]["reason"] == NOT_RUN  # a Runner call is wanted, not the Owner's input
     rerun(project)
 
-    assert calls(project) == []
-    advice = project.json("next", ROOM)["data"]
-    assert "negative" in advice["reason"] and f"kiripix undo {ROOM} masks" in advice["owner_action"]
+    assert len(calls(project)) == 1 and not read_mask(folder).any()
 
 
 def test_a_click_outside_the_plate_needs_the_owner(project: Kiripix) -> None:

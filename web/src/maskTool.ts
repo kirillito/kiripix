@@ -65,6 +65,9 @@ export class MaskTool implements CanvasTool {
   opacity = 0.5;
   private names: string[] = [];
   private overlays: Overlay[] = [];
+  private pixels = new Map<string, MaskPixels>();
+  // What a Shift-hover can take away from: the Layer's own pixels, where the screen's masks aren't the thing edited.
+  taking: MaskPixels | null = null;
   private preview: { image: HTMLCanvasElement; count: number; subtract: boolean } | null = null;
   private stroke: [number, number][] | null = null;
   private strokeImage: HTMLCanvasElement | null = null;
@@ -93,6 +96,7 @@ export class MaskTool implements CanvasTool {
 
   setMasks(masks: { name: string; pixels: MaskPixels }[]): void {
     this.names = masks.map((entry) => entry.name);
+    this.pixels = new Map(masks.map((entry) => [entry.name, entry.pixels]));
     this.overlays = masks.map(({ name, pixels }, index) => {
       let count = 0;
       for (const value of pixels.set) count += value;
@@ -144,20 +148,40 @@ export class MaskTool implements CanvasTool {
     void this.gestures.preview(pixel, subtract).then((made) => {
       if (asked !== this.asked) return; // The pointer has moved on, or left.
       this.preview = made
-        ? { image: this.runsImage(made, subtract), count: made.pixels, subtract }
+        ? this.previewOf(made, subtract)
         : null;
       this.changed();
     });
   }
 
-  private runsImage(made: PreviewRuns, subtract: boolean): HTMLCanvasElement {
+  // A Shift-click takes its segment away from the current Mask or Layer, so only the part of it that is there is tinted.
+  private previewOf(made: PreviewRuns, subtract: boolean): { image: HTMLCanvasElement; count: number; subtract: boolean } {
     const canvas = document.createElement("canvas");
     canvas.width = made.width;
     canvas.height = made.height;
     const context = canvas.getContext("2d")!;
     context.fillStyle = subtract ? SUBTRACT_TINT : PREVIEW_TINT;
-    for (const [y, x, length] of made.runs) context.fillRect(x, y, length, 1);
-    return canvas;
+    if (!subtract) {
+      for (const [y, x, length] of made.runs) context.fillRect(x, y, length, 1);
+      return { image: canvas, count: made.pixels, subtract };
+    }
+    const there = this.taking ?? this.pixels.get(this.mask) ?? null;
+    let count = 0;
+    if (there && there.width === made.width && there.height === made.height) {
+      for (const [y, x, length] of made.runs) {
+        let start = -1;
+        for (let at = x; at <= x + length; at++) {
+          const on = at < x + length && there.set[y * there.width + at] === 1;
+          if (on && start < 0) start = at;
+          if (!on && start >= 0) {
+            context.fillRect(start, y, at - start, 1);
+            count += at - start;
+            start = -1;
+          }
+        }
+      }
+    }
+    return { image: canvas, count, subtract };
   }
 
   pointerDown(pixel: CanvasPixel): boolean {

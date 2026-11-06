@@ -131,15 +131,37 @@ def test_plate_and_layers_recompose_exactly_to_the_fit_image_from_the_output_fil
     assert [f["code"] for f in project.json("check", ROOM)["findings"] if f["code"].startswith("layers.")] == []
 
 
-def test_negative_clicks_refine_a_layer(project: Kiripix) -> None:
+def test_a_negative_click_takes_its_object_away_from_the_layer_and_the_plate_hole(project: Kiripix) -> None:
     folder = built_room(project)
-    click(project, "lamp", 8, 8)
-    click(project, "lamp", 8, 8, positive=False)  # the fake clears a square of half the size around it
+    click(project, "lamp", 4, 8)
+    click(project, "lamp", 10, 8)
+    click(project, "lamp", 7, 8, positive=False)  # the overlap of the two, and what its own square reaches
     lift(project)
 
     alpha = alpha_of(folder, "lamp")
-    assert not alpha[8, 8] and alpha[5, 6], "the middle was taken away, the rest stays"
+    assert alpha[8, 0] and alpha[8, 15] and not alpha[8, 7] and not alpha[8, 9]
+    assert (np.asarray(Image.open(out(folder) / "foreground.png")) == alpha).all(), "the hole follows the Layer"
     assert (recomposed(folder) == rgba(folder / "work" / "fit" / "fit.png")).all()
+    assert calls(project)[0] == 3
+
+    project.json("accept", ROOM, "layers", owner=True)
+    click(project, "lamp", 7, 8)  # added back: the same segmentation as the negative click's, pinned already
+    lift(project)
+    assert alpha_of(folder, "lamp")[8, 7] and calls(project)[0] == 3
+
+
+def test_a_negative_click_at_the_pixel_of_a_positive_one_reuses_its_pinned_result(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, "lamp", 8, 8)
+    lift(project)
+    project.json("accept", ROOM, "layers", owner=True)
+
+    click(project, "lamp", 8, 8, positive=False)
+    project.json("run", ROOM, "layers")
+
+    assert calls(project) == (1, 1), "no new Runner call"
+    assert not alpha_of(folder, "lamp").any()
+    assert not np.asarray(Image.open(out(folder) / "foreground.png")).any(), "the Plate's hole is gone too"
 
 
 # grow
@@ -344,7 +366,7 @@ def test_plate_as_a_layer_id_is_refused(project: Kiripix) -> None:
     assert click(project, "Bad Id", 8, 8, expect=1)["findings"][0]["code"] == "decision.invalid"
 
 
-def test_a_negative_click_with_no_positive_before_it_needs_the_owner(project: Kiripix) -> None:
+def test_a_negative_click_with_no_positive_click_on_its_layer_needs_the_owner(project: Kiripix) -> None:
     built_room(project)
     click(project, "lamp", 8, 8, positive=False)
 

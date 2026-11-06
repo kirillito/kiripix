@@ -28,6 +28,7 @@ dev = [
     "import-linter>=2.1",
     "mypy>=1.13",
     "pytest>=8.3",
+    "pytest-xdist>=3.8.0",
     "types-jsonschema",
     "types-psutil",
 ]

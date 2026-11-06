@@ -133,8 +133,8 @@ def _fit(run: StageRun) -> None:
 
 # masks: the Decisions replayed in order onto the Plate's size, one 1-bit PNG per painted Mask of the room's view.
 #
-# A positive `click` segments the object under it, with the negative clicks right after it on the same Mask taking away
-# from that segmentation: that is one Runner call, and its result is added to the Mask. So a new object keeps the pinned
+# A `click` segments the object under it: one Runner call, and a positive click adds its result to the Mask, a negative
+# click takes it away from the Mask (whatever put it there) at its place in the replay. So a new object keeps the pinned
 # results of the earlier ones. The Runner works on the Source, capped; the clicks map to it through the Grid transform,
 # and its Mask maps back through the same transform when the Stage replays (ADR 0004).
 
@@ -173,9 +173,6 @@ def _masks_needs_input(run: StageRun) -> NeedsInput | None:
         first = group[0]
         if first.name != "click":
             continue
-        if not first.data["positive"]:
-            return NeedsInput(f"the negative click at ({first.data['x']}, {first.data['y']}) has no positive click on "
-                              f"{first.data['mask']} right before it to take away from", owner_action=f"{undo}.")
         for decision in group:
             x, y = int(decision.data["x"]), int(decision.data["y"])
             if read is not None and not (x < read[0].width and y < read[0].height):
@@ -286,7 +283,11 @@ def _masks(run: StageRun) -> None:
         decision = group[0]
         data = decision.data
         if decision.name == "click":
-            masks[_decision_mask(run, view, str(data["mask"]), "click")] |= _segmented(run, group)
+            name = _decision_mask(run, view, str(data["mask"]), "click")
+            if data["positive"]:
+                masks[name] |= _segmented(run, group)
+            else:
+                masks[name] &= ~_segmented(run, group)
         elif decision.name == "flood":
             name = _decision_mask(run, view, str(data["mask"]), "flood")
             try:
@@ -950,7 +951,8 @@ ROOM = KindSpec(
                               minimum=0),),
             decisions=(
                 point_decision("click", "A segmentation click on a Mask: a positive click adds the object under it, and "
-                               "a negative one right after it takes away from that object. Needs `run --rerun`.",
+                               "a negative one takes the object under it away from the Mask, whichever Decision put it there (a "
+                               "later positive click, flood or brush can add it back). Needs `run --rerun`.",
                                on_image=True, mask={"type": "string"}, positive={"type": "boolean"}),
                 _flood_decision(),
                 _border_decision(),

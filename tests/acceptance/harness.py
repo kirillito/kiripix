@@ -24,12 +24,16 @@ import numpy as np
 from PIL import Image
 
 FIXTURES = Path(__file__).parent / "fixtures"
+RECIPES = "acceptance_recipes"  # FIXTURES/acceptance_recipes.py: the fake Runners and nothing else
+RECIPE_PATH = (FIXTURES, Path(__file__).resolve().parents[1] / "fixtures")  # it imports tests/fixtures' fakes
 ASSET = "room.alley"
+LAYER = "crate"  # the Layer the stand-in owner lifts (fixtures/owner.json)
 WIDTH, HEIGHT = 48, 32
 TOOL_NAMES = ("kiripix", "kpx")
 GAME_FILES = (
     "kiripix/room/alley/alley.tscn",
     "kiripix/room/alley/plate.png",
+    f"kiripix/room/alley/layer.{LAYER}.png",
     "kiripix/manifest/room.alley.json",
 )
 CARRY_ON = "Done, carry on."
@@ -125,20 +129,54 @@ def clean_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def project_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The harness's own calls on the Project (setup, `next`, the checks): the fake Runners (D16), set here and by the
+    agent's shims only. The Runners behind a Project's hashes must be the same in every call, or it goes stale."""
+    env = clean_env(base)
+    env["PYTHONPATH"] = os.pathsep.join(str(p) for p in RECIPE_PATH)
+    env["KIRIPIX_TEST_RECIPES"] = RECIPES
+    return env
+
+
 def owner_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """The stand-in owner's calls: the only place KIRIPIX_TEST_OWNER is set."""
-    env = clean_env(base)
+    env = project_env(base)
     env["KIRIPIX_TEST_OWNER"] = "1"
     return env
 
 
-def agent_env(base: Mapping[str, str] | None = None, bin_dir: Path | None = None) -> dict[str, str]:
+def agent_env(base: Mapping[str, str] | None = None, bin_dir: Path | None = None,
+              shim_dir: Path | None = None) -> dict[str, str]:
     """The agent's environment: `kiripix` on PATH, no KIRIPIX_TEST_OWNER or KIRIPIX_TEST_RECIPES, and nothing of a Claude
-    session the harness may have been started from (its messaging socket and token would be a way out of the tool)."""
+    session the harness may have been started from (its messaging socket and token would be a way out of the tool).
+
+    With `shim_dir`, that folder comes first on PATH: its `kiripix` and `kpx` give the tool the fake Runners."""
     env = {k: v for k, v in clean_env(base).items() if not k.upper().startswith(("CLAUDE", "MCP_"))}
-    env["PATH"] = str(bin_dir or venv_bin()) + os.pathsep + env.get("PATH", "")
+    path = [str(bin_dir or venv_bin()), env.get("PATH", "")]
+    env["PATH"] = os.pathsep.join(([str(shim_dir)] if shim_dir else []) + path)
     assert_agent_env_clean(env)
     return env
+
+
+def make_shims(folder: Path) -> Path:
+    """`kiripix` and `kpx` that run this interpreter's `kiripix` with the fake Runners set for that one process.
+
+    A `.cmd` for Windows (the dry run) and a shell script for Git Bash and POSIX (the real agent's Bash), side by side."""
+    folder.mkdir(parents=True, exist_ok=True)
+    python = Path(sys.executable)
+    for name in TOOL_NAMES:
+        shell = folder / name
+        shell.write_text(
+            "#!/bin/sh\n"
+            f'KIRIPIX_TEST_RECIPES="{RECIPES}" PYTHONPATH="{os.pathsep.join(p.as_posix() for p in RECIPE_PATH)}" '
+            f'exec "{python.as_posix()}" -m kiripix "$@"\n', "utf-8", newline="\n")
+        shell.chmod(0o755)
+        (folder / f"{name}.cmd").write_text(
+            "@echo off\r\n"
+            f"set KIRIPIX_TEST_RECIPES={RECIPES}\r\n"
+            f"set PYTHONPATH={os.pathsep.join(str(p) for p in RECIPE_PATH)}\r\n"
+            f'"{python}" -m kiripix %*\r\n', "utf-8", newline="")
+    return folder
 
 
 def assert_agent_env_clean(env: Mapping[str, str]) -> None:
@@ -150,8 +188,9 @@ def assert_no_instructions_above(cwd: Path) -> None:
     """No CLAUDE.md or project .claude folder in the agent's folder or any parent, so none is found by walking up.
 
     The home folder's own `.claude` is the user's config, not a project one; `--safe-mode` keeps that out."""
-    for folder in (cwd, *cwd.parents):
-        for name in ("CLAUDE.md", "CLAUDE.local.md") + (() if folder == Path.home() else (".claude",)):
+    home = Path.home().resolve()  # a Windows TEMP can be the 8.3 short form of the same folder
+    for folder in (cwd.resolve(), *cwd.resolve().parents):
+        for name in ("CLAUDE.md", "CLAUDE.local.md") + (() if folder == home else (".claude",)):
             assert not (folder / name).exists(), f"{folder / name} would reach the agent"
 
 
@@ -186,19 +225,22 @@ def kiripix(cwd: Path, env: Mapping[str, str], *args: str, expect: int | None = 
 
 
 def room_image() -> np.ndarray:
-    """48 x 32, drawn in code so there is no PNG to keep: a blue wall on the left third, a floor, and a rug."""
+    """48 x 32, drawn in code so there is no PNG to keep: a blue wall on the left third, a floor, a rug, and a red crate
+    near (41, 22) for the owner to lift into a foreground Layer."""
     image = np.full((HEIGHT, WIDTH, 4), (200, 190, 170, 255), dtype=np.uint8)
     image[:, :16] = (40, 60, 200, 255)
     image[8:14, 24:36] = (120, 80, 60, 255)
+    image[19:26, 38:45] = (200, 40, 40, 255)
     return image
 
 
 @dataclass
 class Setup:
-    root: Path  # the temporary folder holding both
+    root: Path  # the temporary folder holding all of it
     project: Path
     game: Path
     variant: str  # the imported Variant
+    shims: Path  # the agent's `kiripix` and `kpx`, with the fake Runners
 
 
 def make_setup(root: Path) -> Setup:
@@ -212,7 +254,7 @@ def make_setup(root: Path) -> Setup:
     project.mkdir(parents=True)
     game.mkdir()
     (game / "project.godot").write_text("config_version=5\n", encoding="utf-8")
-    env = clean_env()
+    env = project_env()
     kiripix(project, env, "init")
     settings = project / "kiripix.toml"
     text = settings.read_text("utf-8")
@@ -224,7 +266,7 @@ def make_setup(root: Path) -> Setup:
     Image.fromarray(room_image(), "RGBA").save(source)
     variant = str(kiripix(project, env, "import", ASSET, str(source)).json["data"]["variant"])
     kiripix(project, env, "set", ASSET, "brief", f"width={WIDTH}", f"height={HEIGHT}")
-    return Setup(root, project, game, variant)
+    return Setup(root, project, game, variant, make_shims(root / "bin"))
 
 
 # What the Project is waiting on
@@ -251,7 +293,7 @@ class NextState:
 
 
 def ask_next(setup: Setup, asset: str = ASSET) -> NextState:
-    data = kiripix(setup.project, clean_env(), "next", asset, expect=None).json["data"]
+    data = kiripix(setup.project, project_env(), "next", asset, expect=None).json["data"]
     return NextState(data["done"], data["stage"], data["status"], data["reason"], data["command"], data["owner_action"])
 
 
@@ -308,9 +350,17 @@ class Verification:
 
 def verify(setup: Setup) -> Verification:
     """The harness's own check of the Project and the Godot folder. Ignores whatever the agent said."""
-    env, details = clean_env(), []
+    env, details = project_env(), []
     missing = [name for name in GAME_FILES if not (setup.game / name).is_file()]
-    details.append(f"missing in the Godot project: {missing}" if missing else "all three exported files are in the Godot project")
+    details.append(f"missing in the Godot project: {missing}" if missing else "all four exported files are in the Godot project")
+    manifest = setup.game / "kiripix" / "manifest" / "room.alley.json"
+    try:
+        frozen = list(json.loads(manifest.read_text("utf-8"))["ids"]["layers"])
+    except (OSError, ValueError, KeyError):
+        frozen = []
+    listed = LAYER in frozen
+    details.append(f"the Manifest lists the Layer `{LAYER}`" if listed else f"the Manifest does not list the Layer `{LAYER}`: {frozen}")
+    missing += [] if listed else [f"Manifest id layers/{LAYER}"]
     dry = kiripix(setup.project, env, "export", ASSET, "--dry-run", expect=None)
     pending = dry.json["data"] or {}
     stale = [] if dry.code == 0 else [f"export --dry-run exit {dry.code}"]
@@ -351,7 +401,7 @@ class Outcome:
         return [c for c in self.commands if c.denied]
 
 
-MAX_OWNER_TURNS = 6
+MAX_OWNER_TURNS = 10  # the Decisions, then a review of each Stage the lift sends back to needs-review
 
 
 def run_acceptance(agent: Agent, setup: Setup, budget: int, dry_run: bool, max_usd: float | None = None,
@@ -367,7 +417,7 @@ def run_acceptance(agent: Agent, setup: Setup, budget: int, dry_run: bool, max_u
     last_output = ""
     failure: tuple[str, str] | None = None
 
-    env = agent_env()
+    env = agent_env(shim_dir=setup.shims)
     assert_no_instructions_above(setup.project)
     turn = agent.start(TASK, setup.project, env, budget)
     while True:
@@ -438,7 +488,8 @@ class ScriptedAgent:
 
     name = "scripted (dry run)"
     agent_version = None
-    isolation = ["same allow-list as the real agent (kiripix and kpx prefixes only)", "agent env without KIRIPIX_TEST_*"]
+    isolation = ["same allow-list as the real agent (kiripix and kpx prefixes only)", "agent env without KIRIPIX_TEST_*",
+                 "fake Runners (D16) through the shims `kiripix` and `kpx`, not the agent's env"]
     MAX_STEPS = 40
 
     def __init__(self, asset: str = ASSET) -> None:

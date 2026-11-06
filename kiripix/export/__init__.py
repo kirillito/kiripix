@@ -1,7 +1,7 @@
 """The Exporter (spec §9, ADR 0003): writes engine files from an Asset's final outputs, under the Manifest's rules.
 
-A room's `export` Stage leaves engine-free outputs in `out/export/`: the mapped Plate, and `room.json` with its shapes and
-Markers. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
+A room's or prop's `export` Stage leaves engine-free outputs in `out/export/`: a room's mapped Plate and `room.json` with
+its shapes and Markers, a prop's sprite and `prop.json` with its origin and collision shapes. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
 
 The game's work is never overwritten (ADR 0003). A file is written only if the Manifest lists it and it still has the
 listed hash. `force` backs up and overwrites an owned file the game changed; `adopt` backs up and takes over a file the
@@ -23,10 +23,11 @@ from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
 from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, pairing_findings
-from kiripix.export.godot import room_ids, room_scene
+from kiripix.export.godot import prop_ids, prop_scene, room_ids, room_scene
 from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
 from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
+from kiripix.export.prop import SPRITE_FILE, read_prop
 from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, built_dir, read_room
 from kiripix.export.target import GodotTarget, resolve_target
 
@@ -82,8 +83,21 @@ def _room_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
     return files, room_ids(room)
 
 
+def _prop_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
+    """The files of a prop's export, by `res://` path, and the IDs they carry."""
+    prop = read_prop(graph)
+    name = graph.asset.id.split(".", 1)[1]
+    folder = f"{target.root}/{graph.kind.name}/{name}"
+    sprite = f"{folder}/{SPRITE_FILE}"
+    files = {
+        f"{folder}/{name}.tscn": prop_scene(prop, name, sprite).encode("utf-8"),
+        sprite: (built_dir(graph) / SPRITE_FILE).read_bytes(),
+    }
+    return files, prop_ids(prop)
+
+
 _FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget], tuple[dict[str, bytes], ExportedIds]]] = {
-    "room": _room_files}
+    "room": _room_files, "prop": _prop_files}
 
 
 def _hashes(files: dict[str, bytes]) -> dict[str, str]:
@@ -137,7 +151,7 @@ def _conflict(res: str, current: str | None, wanted: str, manifest: Manifest | N
 def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget, options: ExportOptions) -> _Plan:
     """What exporting the Asset would do, or the refusal why not. Writes nothing."""
     if asset.kind not in _FILES_BY_KIND:
-        raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms can",
+        raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms and props can",
                    fix="kiripix describe project")
     frozen = frozen_findings(project, asset, cache)
     if frozen:
@@ -255,7 +269,7 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
     after the exports are written. Returns the results and the findings of the call."""
     for asset in assets or []:
         if asset.kind not in _FILES_BY_KIND:
-            raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms can",
+            raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms and props can",
                        fix="kiripix describe project")
     target = resolve_target(project)
     prunes = plan_prune(project, target, None, options.force) if prune else []

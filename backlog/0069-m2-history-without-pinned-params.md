@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: core-engineer
 type: ticket
@@ -28,11 +28,15 @@ so it grows the repository too, and it's what the Owner hands to Claude to diagn
 
 ## Acceptance criteria
 
-- [ ] A pinned Runner call's history line has `key` and no `params`; `pinned/<key>.json` has the `params` it would have had.
-- [ ] A failed and a cancelled Runner call still write `params`.
-- [ ] Nothing in Kiripix reads `params` from `history.jsonl` (checked by grep; say so in the Notes).
+- [x] A pinned Runner call's history line has `key` and no `params`; `pinned/<key>.json` has the `params` it would have had.
+- [x] A failed and a cancelled Runner call still write `params`.
+- [x] Nothing in Kiripix reads `params` from `history.jsonl` (checked by grep; say so in the Notes).
 
 ## Notes
 
 Measured on `room.harbor_front`, 2026-11-05: the change would have made that file about 40 KB instead of 138 KB.
 For diagnosing, ask Claude to filter by time and Stage rather than read the whole file.
+
+Grep, 2026-11-05: `history.jsonl` is opened only by `kiripix/core/graph.py` (two `append_jsonl` writes), `core/assets.py` (creates it empty) and
+`core/project.py` (the `.gitattributes` line). Nothing in `kiripix/` or `web/src/` reads it back, so nothing reads `params` from it; the
+web e2e specs only read the file as text (`layers.spec.ts`, `masks.spec.ts`), not its `params`. Tests: `tests/cli/test_history_lines.py`.

@@ -8,7 +8,7 @@ import { call, fileUrl, type Envelope, type StageDescription, type StageDetail }
 import { MAX_RADIUS, MaskTool, MIN_RADIUS, type PreviewRuns } from "./maskTool";
 import { isTyping, type CanvasFrame, type CanvasPixel, type CanvasTool, type PixelCanvas } from "./pixelCanvas";
 import { layerIdOf } from "./sortView";
-import { loadMask } from "./walkTest";
+import { loadMask, type MaskPixels } from "./walkTest";
 
 export const LAYERS_STAGE = "layers";
 export const LAYERS_DECISION = "trim"; // what marks the screen: the decisions only `layers` has
@@ -43,22 +43,23 @@ class LayerView implements CanvasTool {
   }
 }
 
-interface Journalled {
-  name: string;
-  data: Record<string, unknown>;
+// A Layer's own pixels, from its image's alpha: what a Shift-click can take away from.
+function pixelsOf(image: HTMLImageElement): MaskPixels {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d", { willReadFrequently: true })!;
+  context.drawImage(image, 0, 0);
+  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+  const set = new Uint8Array(canvas.width * canvas.height);
+  for (let index = 0; index < set.length; index++) set[index] = data[index * 4 + 3] > 0 ? 1 : 0;
+  return { width: canvas.width, height: canvas.height, set };
 }
 
-// The clicks of the last object on the Layer: its positive click and the negative ones after it, which is what a new
-// negative click joins (spec §6.1).
-function lastObject(decisions: Journalled[], layer: string): string[] {
-  const group: string[] = [];
-  for (const decision of [...decisions].reverse()) {
-    if (decision.name === "trim") continue;
-    if (decision.name !== "click" || decision.data.layer !== layer) break;
-    group.unshift(`${decision.data.x},${decision.data.y}${decision.data.positive ? "" : ",neg"}`);
-    if (decision.data.positive) return group;
-  }
-  return [];
+// Whether a positive click has lifted the Layer yet. A Layer has no other source, so `layers` refuses a negative click
+// before one (ticket 0070); the screen says so before the click is recorded.
+function lifted(decisions: StageDetail["decisions"], layer: string): boolean {
+  return decisions.some((decision) => decision.name === "click" && decision.data.layer === layer && decision.data.positive);
 }
 
 function layerIds(detail: StageDetail): string[] {
@@ -100,6 +101,7 @@ export function LayersPanel(props: {
   latest.current = { ...props, layer, valid, ids, fromDifference };
   const painter = useRef<MaskTool | null>(null);
   const view = useRef(new LayerView());
+  const own = useRef(new Map<string, MaskPixels>());
 
   useEffect(() => {
     const painting = new MaskTool(
@@ -114,18 +116,18 @@ export function LayersPanel(props: {
           const { disabled: off, decide, detail: stage, valid: usable } = latest.current;
           if (off) return;
           if (!usable) setUnavailable("A Layer ID is lower-case letters, digits and underscores, and plate is reserved.");
-          else if (positive || lastObject(stage.decisions, on).length > 0) {
-            decide("click", { x: pixel.x, y: pixel.y, layer: on, positive });
-          } else setUnavailable("Nothing to take away from: click an object on this Layer first.");
+          else if (!positive && !lifted(stage.decisions, on)) {
+            setUnavailable(`Nothing to take away from: click an object to lift it into ${on} first.`);
+          } else decide("click", { x: pixel.x, y: pixel.y, layer: on, positive });
         },
-        async preview(pixel, subtract): Promise<PreviewRuns | null> {
-          const { asset: id, detail: stage, layer: on, fromDifference: planned, valid: usable } = latest.current;
+        async preview(pixel): Promise<PreviewRuns | null> {
+          const { asset: id, fromDifference: planned, valid: usable } = latest.current;
           if (planned || !usable) return null; // A Plate image has no Runner to preview.
-          const clicks = subtract ? lastObject(stage.decisions, on) : [];
-          if (subtract && clicks.length === 0) return null;
-          const here = `${pixel.x},${pixel.y}${subtract ? ",neg" : ""}`;
+          // A Shift-click is segmented like a click: the Probe is asked for the click alone, and the tool tints the part
+          // of the segment that is on the Layer.
+          const here = `${pixel.x},${pixel.y}`;
           try {
-            const result = (await call("probe", { name: PREVIEW_PROBE, asset: id, args: [...clicks, here] })) as Envelope<{
+            const result = (await call("probe", { name: PREVIEW_PROBE, asset: id, args: [here] })) as Envelope<{
               result: PreviewRuns;
             }>;
             setUnavailable(result.ok ? null : (result.findings[0]?.message ?? "No preview."));
@@ -150,6 +152,7 @@ export function LayersPanel(props: {
     if (!painting) return;
     painting.setTool(tool === "click" ? "click" : "brush");
     painting.mask = layer;
+    painting.taking = own.current.get(layer) ?? null;
     painting.radius = radius;
     canvas.current?.redraw();
   }, [canvas, tool, layer, radius]);
@@ -170,6 +173,8 @@ export function LayersPanel(props: {
       .then((loaded) => {
         if (!current) return;
         view.current.layers = loaded;
+        own.current = new Map(loaded.map((entry) => [entry.id, pixelsOf(entry.image)]));
+        if (painter.current) painter.current.taking = own.current.get(latest.current.layer) ?? null;
         canvas.current?.redraw();
       })
       .catch(() => undefined); // Rebuilt while it was read; the next refresh reads it again.
@@ -267,7 +272,7 @@ export function LayersPanel(props: {
           ? "Drag over a rim of the Layer to give those pixels back to the Plate."
           : fromDifference
             ? "Click a region of the difference between the full image and the Plate image to name it a Layer."
-            : "Click an object to lift it into the Layer; Shift-click takes away from it. Hover shows what a click would lift."}
+            : "Click an object to add it; Shift-click an object to take it away. Hover shows what a click would do."}
       </p>
       <h2>Layer</h2>
       <div className="param">

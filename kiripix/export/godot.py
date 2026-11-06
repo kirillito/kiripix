@@ -1,4 +1,5 @@
-"""Godot 4 text resources (spec §9): the scene of a room, written from the room's `room.json`. Text only: no I/O here.
+"""Godot 4 text resources (spec §9): the scene of a room, from its `room.json`, and of a prop, from its `prop.json`.
+Text only: no I/O here.
 
 Marker IDs carry dots, which a node name can't, so a node is named with `-` in their place: no ID has one, so two IDs
 never share a node. The ID itself goes into the node's metadata. A node's place is stable, because the game finds it by
@@ -162,3 +163,31 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str) -> str:
     header = f'[gd_scene load_steps={len(resources) + len(layer_resources) + 2} format=3]'
     plate = f'[ext_resource type="Texture2D" path="{plate_path}" id="plate"]\n'
     return GENERATED + "\n" + "\n".join([header + "\n", plate, *layer_resources, *resources, *nodes])
+
+
+FOOTPRINT = "Footprint"  # a prop's body: its place is stable, because the game finds it by its path
+
+
+def prop_ids(prop: dict[str, Any]) -> ExportedIds:
+    """Every ID a prop's export carries into the game. The Footprint isn't frozen: the polygon can be emptied."""
+    return ExportedIds(markers=[], layers=[], masks=[])
+
+
+def prop_scene(prop: dict[str, Any], name: str, sprite_path: str) -> str:
+    """The scene's text. The root sits at the prop's origin, so the game y-sorts it by its position, and its Sprite2D is
+    drawn offset so that the origin pixel is the root's own place. `name` is the root node's."""
+    ox, oy = prop["origin"]
+    shapes = prop["collision"]
+    nodes = [
+        _node(name, "Node2D", None, f"metadata/kiripix_id = {_text(str(prop['asset']))}"),
+        _node("Sprite", "Sprite2D", ".", 'texture = ExtResource("sprite")', "centered = false",
+              f"offset = Vector2({-ox}, {-oy})"),
+    ]
+    if shapes:
+        nodes.append(_node(FOOTPRINT, "StaticBody2D", ".", f"collision_layer = {COLLISION_LAYERS['solid']}",
+                           "collision_mask = 0"))
+        nodes += [_node(f"polygon_{index}", "CollisionPolygon2D", FOOTPRINT,
+                        f"polygon = {_vectors([(x - ox, y - oy) for x, y in shape])}")
+                  for index, shape in enumerate(shapes)]
+    sprite = f'[ext_resource type="Texture2D" path="{sprite_path}" id="sprite"]\n'
+    return GENERATED + "\n" + "\n".join(["[gd_scene load_steps=2 format=3]\n", sprite, *nodes])

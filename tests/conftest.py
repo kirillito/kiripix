@@ -20,6 +20,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--update-golden", action="store_true", help="Rewrite the expected golden images.")
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """`--update-golden` rewrites files in the repository, so it runs serially: refuse it under pytest-xdist."""
+    if not config.getoption("--update-golden"):
+        return
+    workers = getattr(config.option, "numprocesses", None)
+    if os.environ.get("PYTEST_XDIST_WORKER") or workers not in (None, 0, "0"):
+        raise pytest.UsageError("--update-golden rewrites the expected images and runs without -n: "
+                                "`uv run pytest tests/golden --update-golden`")
+
+
 @dataclass
 class Result:
     code: int

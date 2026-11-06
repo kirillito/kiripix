@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: godot-export
 type: ticket
@@ -23,8 +23,8 @@ Spec §6.2, §9 and ADR 0003. Story 13 of [0037](0037-m2-layers-and-props.md). F
 
 ## Acceptance criteria
 
-- [ ] A prop exports into a temporary Godot folder: the scene's text has the nodes and an offset from the origin, and the
+- [x] A prop exports into a temporary Godot folder: the scene's text has the nodes and an offset from the origin, and the
       Manifest lists its files.
-- [ ] Editing the scene refuses; `--force` backs it up.
-- [ ] `export --all` exports rooms and props together, and Exit pairing still looks only at rooms.
-- [ ] `next` names `kiripix export prop.<id>` until the game has it.
+- [x] Editing the scene refuses; `--force` backs it up.
+- [x] `export --all` exports rooms and props together, and Exit pairing still looks only at rooms.
+- [x] `next` names `kiripix export prop.<id>` until the game has it.

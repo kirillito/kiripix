@@ -1,7 +1,8 @@
 """The room's `layers` Stage (spec §6.1, §7, ticket 0043): lift foreground objects into Layers and fill the Plate behind.
 
-A positive `click` on a Layer ID segments the object under it (one SEGMENTER call per positive click, with the negative
-clicks right after it on the same Layer), in the same way as in `masks`, and the Masks of one Layer ID are added together.
+A positive `click` on a Layer ID segments the object under it (one SEGMENTER call per click), in the same way as in
+`masks`, and the segments of one Layer ID are added together. A negative click is its own call too, and takes its segment
+away from that Layer at its place in the replay (ticket 0070).
 The segmentation's alpha is widened by `grow` target pixels, only where it was partial (D2). The hole in the Plate is the
 union of those alphas; each connected hole gets one INPAINTER call on the Source, cropped around it, so a new object keeps
 the earlier objects' pinned results. The fill maps to the target the way `fit` maps the Source.
@@ -120,7 +121,8 @@ def click_decision() -> DecisionSpec:
     return point_decision(
         "click",
         "Lift an object into a foreground Layer: a positive click on a Layer ID segments the object under it, and a "
-        "negative one right after it takes away from that object. The Layer ID is lower-case letters, digits and "
+        "negative one takes the object under it away from the Layer, wherever it came from; a later positive click can "
+        "add it back. The Layer ID is lower-case letters, digits and "
         "underscores, and `plate` is reserved. The Plate is filled behind the lifted object. Needs `run --rerun`.",
         on_image=True, layer={"type": "string", "pattern": LAYER_ID}, positive={"type": "boolean"},
     )
@@ -185,16 +187,17 @@ def needs_input(run: StageRun) -> NeedsInput | None:
     if png_hash is not None and (wrong := _plate_needs_input(run, png_hash)) is not None:
         return wrong
     seen: set[str] = set()
-    for group in click_groups(_relevant(run), "layer"):
+    for group in click_groups(_relevant(run)):
         first = group[0]
         layer = str(first.data["layer"])
         if first.name == "trim":
             if layer not in seen:
                 return NeedsInput(f"the trim on {layer} comes before any click lifted {layer}", owner_action=f"{undo}.")
             continue
-        if not first.data["positive"]:
-            return NeedsInput(f"the negative click at ({first.data['x']}, {first.data['y']}) has no positive click on "
-                              f"{layer} right before it to take away from", owner_action=f"{undo}.")
+        if not first.data["positive"] and layer not in seen:
+            # A Layer has no source but its positive clicks, so there is nothing yet to take away from.
+            return NeedsInput(f"the negative click at ({first.data['x']}, {first.data['y']}) comes before any positive "
+                              f"click lifted {layer}", owner_action=f"{undo}.")
         seen.add(layer)
         for decision in group:
             x, y = int(decision.data["x"]), int(decision.data["y"])
@@ -281,7 +284,7 @@ def _lift(run: StageRun, read: tuple[Grid, dict[str, Any]]) -> _Lift | None:
     if difference is not None:
         lift.mapped_plate = difference.mapped_plate
     lifted: list[tuple[list[CurrentDecision], np.ndarray]] = []  # each click group's grown alpha, before any trim
-    for group in click_groups(_relevant(run), "layer"):
+    for group in click_groups(_relevant(run)):
         run.check_cancel()
         layer = str(group[0].data["layer"])
         if group[0].name == "trim":
@@ -290,20 +293,22 @@ def _lift(run: StageRun, read: tuple[Grid, dict[str, Any]]) -> _Lift | None:
                                   int(data["radius"]))
             lift.layers[layer] = lift.layers[layer] & ~stroke
             continue
-        if difference is not None:  # one click names a connected region; a negative click drops the region it is on
+        positive = bool(group[0].data["positive"])
+        if difference is not None:  # one click names a connected region
             alpha = grow_where_partial(_region_at(run, difference, int(group[0].data["x"]), int(group[0].data["y"])),
                                        difference.partial, grow) & opaque
-            for decision in group[1:]:
-                alpha &= ~_region_at(run, difference, int(decision.data["x"]), int(decision.data["y"]))
-            lift.layers[layer] = lift.layers.get(layer, np.zeros_like(opaque)) | alpha
+        else:
+            path = run.pinned(click_call(group, grid, source))
+            if not path.is_file():
+                return None
+            with Image.open(path) as image:
+                on_source = runner_mask_on_source(image, read)
+            alpha = grow_where_partial(mask_to_target(on_source, grid), partial_cells(on_source, grid), grow) & opaque
+        if not positive:  # takes its segment away from the Layer, whatever put it there
+            lift.layers[layer] = lift.layers[layer] & ~alpha
             continue
-        path = run.pinned(click_call(group, grid, source))
-        if not path.is_file():
-            return None
-        with Image.open(path) as image:
-            on_source = runner_mask_on_source(image, read)
-        alpha = grow_where_partial(mask_to_target(on_source, grid), partial_cells(on_source, grid), grow) & opaque
-        lifted.append((group, alpha))
+        if difference is None:
+            lifted.append((group, alpha))
         lift.layers[layer] = lift.layers.get(layer, np.zeros_like(opaque)) | alpha
     if difference is not None:
         return lift
@@ -331,7 +336,7 @@ def runner_calls(run: StageRun) -> list[RunnerCall]:
     if read is None or not source.is_file() or not (run.upstream["fit"] / "fit.png").is_file() \
             or plate_hash(run) is not None or needs_input(run) is not None:  # a Plate image: no Runner call
         return []
-    segmentations = [click_call(group, read[0], source) for group in click_groups(_relevant(run), "layer")
+    segmentations = [click_call(group, read[0], source) for group in click_groups(_relevant(run))
                      if group[0].name == "click"]
     if not segmentations:
         return []

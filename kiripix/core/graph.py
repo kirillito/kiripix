@@ -486,9 +486,11 @@ class _Runner:
         device_used = runner.device_used
 
         def history(outcome: str, **extra: Any) -> None:
+            # A pinned result's `params` are in `pinned/<key>.json`; only a call with no pinned result keeps them here.
+            params = {} if "key" in extra else {"params": call.params}
             atomic.append_jsonl(graph.asset.dir / HISTORY_FILE, {
                 "time": _now(), "stage": spec.name, "runner": call.runner, "weights_hash": runner.weights_hash,
-                "params": call.params, "device": device_used,
+                **params, "device": device_used,
                 "duration_s": round(time.monotonic() - started, 3), "outcome": outcome, **extra})
 
         def read_image() -> np.ndarray:

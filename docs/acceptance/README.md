@@ -16,3 +16,9 @@ tested without a model by `uv run pytest tests/acceptance` (the dry run, the iso
 
 How the agent is held to the tool, how the stand-in owner works and what counts as a pass are in the docstrings of
 `tests/acceptance/claude_agent.py` and `harness.py`. The owner's Decisions are `tests/acceptance/fixtures/owner.json`.
+
+**M2 and later.** The room has a red crate for the stand-in owner to lift into a foreground Layer (`click` on `layers`,
+then `accept`, then a y-sort line on `place`). The Runners are fakes (0037's D16): `tests/acceptance/fixtures/acceptance_recipes.py`
+loads the fakes from `tests/fixtures` and removes the test Kinds, so `describe` shows only the real ones. The harness's own
+calls get `KIRIPIX_TEST_RECIPES`; the agent gets it only through the `kiripix` and `kpx` shims first on its PATH. A pass also
+needs the Layer in the export's Manifest. Use `--milestone m2` for that record.

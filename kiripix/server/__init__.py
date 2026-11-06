@@ -2,6 +2,9 @@
 
 Uses only `kiripix.commands`. The entry point (`kiripix.launch`) passes `LAUNCHERS` to the CLI. All it decides itself is
 the socket: where to listen, and whether the port is free.
+
+Importing this package must stay cheap: FastAPI and uvicorn load only when `serve` or `ui` runs, so every other CLI call
+skips them (ticket 0067).
 """
 
 import json
@@ -10,13 +13,11 @@ import sys
 import webbrowser
 from pathlib import Path
 
-import uvicorn
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands import (
     DEFAULT_WARM_IDLE, ExitCode, Finding, KiripixError, Launcher, Session, built_web, error_envelope,
 )
-from kiripix.server.app import create_app
 
 DEFAULT_PORT = 8765
 
@@ -47,6 +48,10 @@ def _serve(arguments: ServeInput, cwd: Path, open_browser: bool) -> ExitCode:
         session = Session.open(cwd, arguments.warm_idle)
     except KiripixError as error:
         return _report(error.findings)
+    import uvicorn  # deferred: see the module docstring
+
+    from kiripix.server.app import create_app
+
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if sys.platform != "win32":  # on Windows SO_REUSEADDR would let a second server share the port
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -84,4 +89,4 @@ LAUNCHERS = (
              ServeInput, _run_ui),
 )
 
-__all__ = ["LAUNCHERS", "ServeInput", "create_app"]
+__all__ = ["LAUNCHERS", "ServeInput"]

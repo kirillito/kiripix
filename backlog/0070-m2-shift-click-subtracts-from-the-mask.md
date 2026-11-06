@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -43,12 +43,12 @@ Only the new rule is kept (the Owner, 2026-11-05). Trimming an object's edge, wh
 
 ## Acceptance criteria
 
-- [ ] With the fake segmenter: two overlapping positive clicks, then a negative click inside both: the overlap leaves the
+- [x] With the fake segmenter: two overlapping positive clicks, then a negative click inside both: the overlap leaves the
       Mask. A later positive click there adds it back.
-- [ ] A negative click on an area a flood or a brush stroke made takes it away.
-- [ ] A negative click at the same pixel as an earlier positive click reuses its pinned result: no new Runner call.
-- [ ] The same on `layers`, for a Layer: the area leaves the Layer and the Plate's hole.
-- [ ] Spec §6, masks and layers rows: say what a negative click does.
+- [x] A negative click on an area a flood or a brush stroke made takes it away.
+- [x] A negative click at the same pixel as an earlier positive click reuses its pinned result: no new Runner call.
+- [x] The same on `layers`, for a Layer: the area leaves the Layer and the Plate's hole.
+- [x] Spec §6, masks and layers rows: say what a negative click does.
 
 ## Notes
 

@@ -228,25 +228,19 @@ def check_unchanged(path: Path, png_hash: str) -> None:
         raise StageFailure(f"{path.name} was changed after it was imported; images named by hash are immutable")
 
 
-# click to segment: shared by the masks and layers Stages. A positive `click` segments the object under it, with the
-# negative clicks right after it on the same target (a Mask for `masks`, a Layer for `layers`) taking away from that
-# segmentation: that is one Runner call. The Runner works on the Source, capped; the clicks map to it through the Grid
+# click to segment: shared by the masks and layers Stages. A `click`, positive or negative, segments the object under it:
+# one Runner call each, with the same params. A positive click adds the segment to its target (a Mask for `masks`, a
+# Layer for `layers`), a negative click takes it away from the target at its place in the replay. The Runner works on the Source, capped; the clicks map to it through the Grid
 # transform, and its Mask maps back through the same transform (ADR 0004).
 
 RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
 
 
-def click_groups(decisions: tuple[CurrentDecision, ...], by: str = "mask") -> list[list[CurrentDecision]]:
-    """The Decisions in order, each in a list of its own, except that a negative `click` joins the `click` before it
-    if that is on the same `by` field (`mask` or `layer`)."""
-    groups: list[list[CurrentDecision]] = []
-    for decision in decisions:
-        previous = groups[-1][-1] if groups else None
-        if decision.name == "click" and not decision.data["positive"] and previous is not None and                 previous.name == "click" and previous.data[by] == decision.data[by]:
-            groups[-1].append(decision)
-        else:
-            groups.append([decision])
-    return groups
+def click_groups(decisions: tuple[CurrentDecision, ...]) -> list[list[CurrentDecision]]:
+    """The Decisions in order, each in a list of its own. A negative `click` is not joined to the click before it: it is
+    its own call, the same as a positive click at that point, and its segment is taken away at its place in the replay
+    (ticket 0070)."""
+    return [[decision] for decision in decisions]
 
 
 def click_params(clicks: list[ClickPoint], grid: Grid) -> dict[str, Any]:
@@ -255,14 +249,15 @@ def click_params(clicks: list[ClickPoint], grid: Grid) -> dict[str, Any]:
 
 
 def click_call(group: list[CurrentDecision], grid: Grid, source: Path) -> RunnerCall:
-    """The SEGMENTER call of a group of clicks. Its `decisions` leave out which Mask or Layer, so the same clicks in
-    `masks` and in `layers` are one pinned result."""
-    clicks = [(int(d.data["x"]), int(d.data["y"]), bool(d.data["positive"])) for d in group]
+    """The SEGMENTER call of a click. A negative click is segmented as a positive click at that point would be, so both
+    make the same call and share one pinned result and one Probe embedding; the sign is the replay's, not the Runner's.
+    Its `decisions` leave out which Mask or Layer, so the same clicks in `masks` and in `layers` are one pinned result."""
+    clicks = [(int(d.data["x"]), int(d.data["y"]), True) for d in group]
     return RunnerCall(
         runner=SEGMENTER,
         image=source,
         params=click_params(clicks, grid),
-        decisions=[{"x": d.data["x"], "y": d.data["y"], "positive": d.data["positive"]} for d in group],
+        decisions=[{"x": d.data["x"], "y": d.data["y"], "positive": True} for d in group],
     )
 
 

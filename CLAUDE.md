@@ -16,6 +16,7 @@ before changing anything; the full design is in [docs/KIRIPIX_SPEC.md](docs/KIRI
 ```
 uv sync                          # the locked environment (uv.lock); never add a dependency without updating it
 uv run pytest                    # all tests; `uv run pytest tests/cli/test_graph.py` for one file
+uv run pytest -n auto --dist loadfile   # all tests in parallel (pytest-xdist); `--update-golden` runs without `-n`
 uv run lint-imports              # the import rule
 uv run mypy                      # the type check
 uv run kiripix --help            # the CLI (alias kpx)

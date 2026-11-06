@@ -22,28 +22,11 @@ const TOOLS: { name: MaskToolName; key: string; label: string; hint: string }[] 
     name: "click",
     key: "c",
     label: "Click to segment",
-    hint: "Click the object to add it; Shift-click takes away from the last one. Hover shows what a click would add.",
+    hint: "Click an object to add it; Shift-click an object to take it away. Hover shows what a click would do.",
   },
 ];
 const SIDES = ["top", "right", "bottom", "left"] as const;
 const TOOL_KEYS = new Set(TOOLS.map((tool) => tool.key));
-
-interface Journalled {
-  name: string;
-  data: Record<string, unknown>;
-}
-
-// The clicks of the last object on the Mask: its positive click and the negative ones after it, which is what a new
-// negative click joins (spec §6.1).
-function lastObject(decisions: Journalled[], mask: string): string[] {
-  const group: string[] = [];
-  for (const decision of [...decisions].reverse()) {
-    if (decision.name !== "click" || decision.data.mask !== mask) break;
-    group.unshift(`${decision.data.x},${decision.data.y}${decision.data.positive ? "" : ",neg"}`);
-    if (decision.data.positive) return group;
-  }
-  return [];
-}
 
 // The painted Masks of the built Stage, from its output files: `solid.png` is the Mask `solid`.
 function maskFiles(detail: StageDetail): { name: string; file: string }[] {
@@ -109,23 +92,21 @@ export function MasksPanel(props: {
           if (!off) decide("brush", { mask: on, erase, radius: size, points });
         },
         point(kind, on, pixel: CanvasPixel, positive) {
-          const { disabled: off, decide, detail: stage, tolerance: within } = latest.current;
+          const { disabled: off, decide, tolerance: within } = latest.current;
           if (off) return;
           if (kind === "flood") {
             decide("flood", { x: pixel.x, y: pixel.y, mask: on, tolerance: within });
-          } else if (positive || lastObject(stage.decisions, on).length > 0) {
-            decide("click", { x: pixel.x, y: pixel.y, mask: on, positive });
           } else {
-            setUnavailable("Nothing to take away from: click an object on this Mask first.");
+            decide("click", { x: pixel.x, y: pixel.y, mask: on, positive });
           }
         },
-        async preview(pixel, subtract): Promise<PreviewRuns | null> {
-          const { asset: id, detail: stage, mask: on } = latest.current;
-          const clicks = subtract ? lastObject(stage.decisions, on) : [];
-          if (subtract && clicks.length === 0) return null;
-          const here = `${pixel.x},${pixel.y}${subtract ? ",neg" : ""}`;
+        async preview(pixel): Promise<PreviewRuns | null> {
+          const { asset: id } = latest.current;
+          // A Shift-click is segmented like a click: the Probe is asked for the click alone, and the tool tints the part
+          // of the segment that is in the Mask.
+          const here = `${pixel.x},${pixel.y}`;
           try {
-            const result = (await call("probe", { name: PREVIEW_PROBE, asset: id, args: [...clicks, here] })) as Envelope<{
+            const result = (await call("probe", { name: PREVIEW_PROBE, asset: id, args: [here] })) as Envelope<{
               result: PreviewRuns;
             }>;
             setUnavailable(result.ok ? null : (result.findings[0]?.message ?? "No preview."));

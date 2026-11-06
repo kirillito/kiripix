@@ -20,12 +20,13 @@ from kiripix.export.manifest import ExportedIds, Manifest, read_manifest
 from kiripix.export.room import EXPORT_STAGE, ROOM_FILE, ROOM_SCHEMA_VERSION
 from kiripix.export.target import resolve_target
 
-EXPORTERS = frozenset({"room"})  # the Kinds that have an exporter
+EXPORTERS = frozenset({"room", "prop"})  # the Kinds that have an exporter
 
 
 def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
     """The IDs the Asset would export now. Markers come from the Decisions, so a rename fails before anything is run
-    again. The Masks and Layers come from the built export when there is one, and otherwise are taken as unchanged."""
+    again. A room's Masks and Layers come from the built export when there is one, and otherwise are taken as unchanged.
+    A prop exports no Marker, Layer or Mask ID to freeze."""
     markers: set[str] = set()
     for spec in graph.kind.stages:
         if spec.markers is not None:
@@ -33,7 +34,7 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
                            if marker["type"] in EXPORTED_MARKER_TYPES)
     layers, masks = manifest.ids.layers, manifest.ids.masks
     spec = graph.spec(EXPORT_STAGE)
-    if graph.built_hash(spec) is not None:
+    if graph.asset.kind == "room" and graph.built_hash(spec) is not None:
         try:
             room = json.loads((graph.output_dir(spec) / ROOM_FILE).read_text(encoding="utf-8"))
         except (OSError, ValueError):

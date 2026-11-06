@@ -167,6 +167,64 @@ test("a click segments, and shift-click subtracts, one Decision each", async ({ 
   expect(decisions(studio)[1]).toMatchObject({ name: "click", data: { x: 20, y: 16, mask: "solid", positive: false } });
 });
 
+async function previewCount(page: Page): Promise<number> {
+  return Number(await page.getByTestId("canvas").getAttribute("data-preview"));
+}
+
+test("Shift-hover over two overlapping objects tints their overlap, and a Shift-click takes it away", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.keyboard.press("c");
+  await clickPixel(page, 20, 16);
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  await expect.poll(async () => (await counts(page)).solid).toBeGreaterThan(0);
+  const before = (await counts(page)).solid;
+
+  // The second object's segment, as a plain click would add it.
+  const at = await pixel(page, 26, 16);
+  await page.mouse.move(at.x - 3, at.y);
+  await page.mouse.move(at.x, at.y);
+  await expect.poll(() => previewCount(page)).toBeGreaterThan(0);
+  const whole = await previewCount(page);
+
+  await page.keyboard.down("Shift");
+  await expect.poll(() => previewCount(page)).toBeLessThan(whole);
+  await expect.poll(() => previewCount(page)).toBeGreaterThan(0);
+  const overlap = await previewCount(page);
+  expect(overlap).toBeGreaterThan(0);
+  await page.mouse.click(at.x, at.y);
+  await page.keyboard.up("Shift");
+
+  await expect(page.getByTestId("decision-count")).toHaveText("2 Decision(s)");
+  const made = decisions(studio);
+  expect(made.filter((entry) => entry.name === "click" && entry.data.positive === false)).toHaveLength(1);
+  expect(made[1]).toMatchObject({ name: "click", data: { x: 26, y: 16, mask: "solid", positive: false } });
+  await expect.poll(async () => (await counts(page)).solid).toBe(before - overlap);
+});
+
+test("Shift-hover over a part of the Mask that a flood made tints it, and over an empty part tints nothing", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.keyboard.press("f");
+  await clickPixel(page, 5, 5); // the red left half of the Plate
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  await expect.poll(async () => (await counts(page)).solid).toBeGreaterThan(100);
+
+  await page.keyboard.press("c");
+  await page.keyboard.down("Shift");
+  const inside = await pixel(page, 12, 16);
+  await page.mouse.move(inside.x - 3, inside.y);
+  await page.mouse.move(inside.x, inside.y);
+  await expect.poll(() => previewCount(page)).toBeGreaterThan(0);
+
+  const empty = await pixel(page, 42, 16);
+  await page.mouse.move(empty.x - 3, empty.y);
+  await page.mouse.move(empty.x, empty.y);
+  await expect.poll(() => previewCount(page)).toBe(0);
+  await page.keyboard.up("Shift");
+  expect(decisions(studio)).toHaveLength(1);
+});
+
 test("with rebuild off, a click waits for an explicit re-run of the Runner, then for Accept", async ({ page, segmentingStudio: studio }) => {
   builtRoom(studio);
   await open(page, studio);

@@ -17,7 +17,7 @@ class ExportInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asset: str | None = Field(None, description="The Asset ID, such as room.queen_west_alley. Omit with --all.")
-    all: bool = Field(False, description="Export every room, or none: Exit pairing must hold and no file may be refused.")
+    all: bool = Field(False, description="Export every room and prop, or none: Exit pairing must hold and no file may be refused.")
     force: bool = Field(False, description="Back up and overwrite files the Manifest lists that the game changed.")
     adopt: bool = Field(False, description="Back up and take over files at the target paths that the Manifest doesn't list.")
     prune: bool = Field(False, description="Remove the files of Assets deleted from the Project, under the same hash rule. "
@@ -109,9 +109,9 @@ def export(arguments: ExportInput, context: Context) -> Outcome[ExportData]:
         assets: list[Asset] | None = [load_asset(project, arguments.asset)]
         run = export_assets(project, assets, cache, options)
     else:
-        # The project lock is held; take every room's lock too, so none is being built while its files are read.
-        rooms = [asset for asset in list_assets(project)[0] if asset.kind in EXPORTERS]
-        with hold(project.state_dir, [asset_lock(asset.id) for asset in rooms], context.wait, context.command_line):
+        # The project lock is held; take every exportable Asset's lock too, so none is being built while its files are read.
+        exportable = [asset for asset in list_assets(project)[0] if asset.kind in EXPORTERS]
+        with hold(project.state_dir, [asset_lock(asset.id) for asset in exportable], context.wait, context.command_line):
             run = export_assets(project, None, cache, options, prune=arguments.prune)
     cache.save()
     return Outcome(_data(arguments.asset, arguments.dry_run, run.results, run.pruned), run.findings)

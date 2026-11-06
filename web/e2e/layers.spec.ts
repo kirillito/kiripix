@@ -164,6 +164,61 @@ test("shift-click subtracts, and a trim stroke is one Decision on release", asyn
   expect((made[2].data.points as number[][]).length).toBeGreaterThan(1);
 });
 
+test("a Shift-click on a Layer no click has lifted yet records nothing and says why", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.getByTestId("layer-id").fill("lamp");
+  await page.getByTestId("layers-panel").click({ position: { x: 2, y: 2 } });
+  await page.keyboard.press("c");
+
+  await page.keyboard.down("Shift");
+  await clickPixel(page, 20, 16);
+  await page.keyboard.up("Shift");
+  await expect(page.getByTestId("layers-notice")).toHaveText(
+    "Nothing to take away from: click an object to lift it into lamp first.",
+  );
+
+  await clickPixel(page, 20, 16);
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  expect(layersStage(studio).decisions[0]).toMatchObject({ name: "click", data: { layer: "lamp", positive: true } });
+});
+
+test("Shift-hover tints the part of the segment on the Layer, and a Shift-click takes it off", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  const canvas = page.getByTestId("canvas");
+  const preview = async () => Number(await canvas.getAttribute("data-preview"));
+  await page.getByTestId("layer-id").fill("lamp");
+  await page.getByTestId("layers-panel").click({ position: { x: 2, y: 2 } });
+  await page.getByLabel("Re-run the Runner after each click").check();
+  await page.keyboard.press("c");
+  await clickPixel(page, 20, 16);
+  await expect(page.getByTestId("accept")).toBeVisible();
+  await expect(page.getByTestId("layer-lamp")).toBeVisible();
+
+  const at = await pixel(page, 26, 16);
+  await page.mouse.move(at.x - 3, at.y);
+  await page.mouse.move(at.x, at.y);
+  await expect.poll(preview).toBeGreaterThan(0);
+  const whole = await preview();
+  await page.keyboard.down("Shift");
+  await expect.poll(preview).toBeLessThan(whole);
+  await expect.poll(preview).toBeGreaterThan(0);
+
+  const away = await pixel(page, 44, 16); // over nothing on the Layer
+  await page.mouse.move(away.x - 3, away.y);
+  await page.mouse.move(away.x, away.y);
+  await expect.poll(preview).toBe(0);
+  await page.mouse.move(at.x - 3, at.y);
+  await page.mouse.move(at.x, at.y);
+  await expect.poll(preview).toBeGreaterThan(0);
+  await page.mouse.click(at.x, at.y);
+  await page.keyboard.up("Shift");
+
+  await expect(page.getByTestId("decision-count")).toHaveText("2 Decision(s)");
+  expect(layersStage(studio).decisions[1]).toMatchObject({ name: "click", data: { x: 26, y: 16, layer: "lamp", positive: false } });
+});
+
 test("a Plate image gives Layers with no Runner call, and the stage is done", async ({ page, segmentingStudio: studio }) => {
   builtRoom(studio, fullImage());
   await open(page, studio);

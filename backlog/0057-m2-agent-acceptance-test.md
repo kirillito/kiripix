@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: qa-engineer
 type: ticket
@@ -22,6 +22,6 @@ Spec §14. Story 17 of [0037](0037-m2-layers-and-props.md). Follows D4 and D16 i
 
 ## Acceptance criteria
 
-- [ ] The dry run passes in `uv run pytest tests/acceptance`.
-- [ ] One real run on the cheap model, recorded under `docs/acceptance/` with `--milestone m2`, compared in its Notes with M1's
+- [x] The dry run passes in `uv run pytest tests/acceptance`.
+- [x] One real run on the cheap model, recorded under `docs/acceptance/` with `--milestone m2`, compared in its Notes with M1's
       7,629 fresh tokens. A failure is filed as a ticket in `backlog/`.

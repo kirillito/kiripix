@@ -1,6 +1,6 @@
 """The prop Recipe (spec §6.2): brief, source, cutout, fit, palette, finish, footprint, export.
 
-Built to the footprint (tickets 0050, 0051): export is declared and not built yet."""
+Built to the footprint (tickets 0050, 0051); `export` leaves the engine-free files the Exporter reads (ticket 0052)."""
 
 import json
 import re
@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from kiripix.checks import Finding, Position, check_alpha, check_conformance, check_chroma_cutout
-from kiripix.ops import add_outline, chroma_key, conformance
+from kiripix.ops import Outline, add_outline, chroma_key, collision_shapes, conformance
 from kiripix.recipes.base import (
     FIT_PARAMS,
     PALETTE_PARAMS,
@@ -43,6 +43,8 @@ from kiripix.runners import MATTER
 
 _RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
 _CHROMA = re.compile("^#[0-9A-Fa-f]{6}$")
+PROP_SCHEMA_VERSION = 1  # 1: `size`, `origin` and the footprint's convex `collision` shapes (ticket 0052)
+_NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
 
 # brief
@@ -231,6 +233,59 @@ def _check_footprint(run: StageRun) -> list[Finding]:
     return findings
 
 
+# export: what the game gets, with nothing of Godot in it: the sprite, and `prop.json` with its size, origin and the
+# footprint as convex collision shapes. The Exporter (`kiripix.export`) turns those into the engine's files.
+
+
+def _export_needs_input(run: StageRun) -> NeedsInput | None:
+    if run.settings["export.godot"].get("project"):
+        return None
+    return NeedsInput("no Godot project to export into", owner_action=_NO_TARGET)
+
+
+def _footprint_shapes(polygon: list[list[int]], asset: str) -> list[list[list[int]]]:
+    """The footprint as convex polygons, since a collision polygon in Godot can be neither concave nor crossing itself."""
+    if len(polygon) < 3:
+        return []
+    ring = [(int(x), int(y)) for x, y in polygon]
+    area = sum(ring[i][0] * ring[(i + 1) % len(ring)][1] - ring[(i + 1) % len(ring)][0] * ring[i][1]
+               for i in range(len(ring)))
+    if area == 0:
+        raise StageFailure("the footprint has no area; draw it again: "
+                           f"kiripix decide {asset} footprint --decision '{_FOOTPRINT_EXAMPLE}'")
+    if area < 0:
+        ring.reverse()  # an outer ring runs clockwise on screen
+    try:
+        shapes = collision_shapes([Outline(outer=ring, holes=[])])
+    except (ValueError, IndexError, KeyError) as error:
+        raise StageFailure(f"the footprint can't be made into collision shapes ({error}); it must not cross itself: "
+                           f"kiripix decide {asset} footprint --decision '{_FOOTPRINT_EXAMPLE}'") from error
+    return [[[x, y] for x, y in shape] for shape in shapes]
+
+
+def _export(run: StageRun) -> None:
+    folder = run.upstream["footprint"]
+    record = json.loads((folder / "footprint.json").read_text(encoding="utf-8"))
+    shutil.copyfile(folder / "sprite.png", run.output_dir / "sprite.png")
+    with Image.open(folder / "sprite.png") as sprite:
+        width, height = sprite.size
+    prop = {
+        "schema_version": PROP_SCHEMA_VERSION,
+        "asset": run.asset_id,
+        "size": [width, height],
+        "origin": record["origin"],
+        "collision": _footprint_shapes(record["polygon"], run.asset_id),
+    }
+    (run.output_dir / "prop.json").write_text(json.dumps(prop, indent=2) + "\n", encoding="utf-8")
+
+
+def _check_export(run: StageRun) -> list[Finding]:
+    if run.settings["export.godot"].get("project"):
+        return []
+    return [Finding(code="export.no_target", message="no Godot project to export into",
+                    position=Position(asset=run.asset_id, stage="export"), owner_action=_NO_TARGET)]
+
+
 PROP = KindSpec(
     name="prop",
     description="A standalone, reusable object for scenes: a bench, a sign, a lamp.",
@@ -365,11 +420,15 @@ PROP = KindSpec(
         ),
         StageSpec(
             name="export",
-            description="A Sprite2D scene with collision and origin.",
-            inputs=StageInputs(settings=["export.godot"]),
+            description="Builds what the game gets: the sprite, its origin and collision shapes. `kiripix export` then "
+                        "writes them into the Godot project as a Sprite2D scene.",
+            inputs=StageInputs(upstream=["footprint"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),),
             output_root="out",
             available_from="M2",
+            run=_export,
+            needs_input=_export_needs_input,
+            check=_check_export,
         ),
     ),
 )

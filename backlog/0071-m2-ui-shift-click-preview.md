@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: ui-engineer
 type: ticket
@@ -22,6 +22,10 @@ Spec §11. After [0070](0070-m2-shift-click-subtracts-from-the-mask.md).
 
 ## Acceptance criteria
 
-- [ ] Playwright with the fake segmenter: Shift-hover over two overlapping objects tints their overlap; a Shift-click there
+- [x] Playwright with the fake segmenter: Shift-hover over two overlapping objects tints their overlap; a Shift-click there
       records one negative `click`, and after `run` the overlap is gone from the canvas.
-- [ ] Shift-hover over a part of the Mask that a flood made tints it.
+- [x] Shift-hover over a part of the Mask that a flood made tints it.
+
+## Notes
+
+- The layers screen refuses a Shift-click on a Layer that no positive click has lifted yet, as `layers` does (0070): "Nothing to take away from: click an object to lift it into <layer> first." Nothing is recorded. The masks screen has no such refusal, since a Mask can have floods and strokes (the Owner, 2026-11-05).

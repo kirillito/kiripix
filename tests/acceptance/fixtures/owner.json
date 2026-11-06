@@ -1,10 +1,12 @@
 {
   "asset": "room.alley",
-  "note": "The stand-in owner's Decisions. An entry with when_stage is applied only when `kiripix next` is waiting at that Stage; the others are applied together, in order, the first time the Project waits on the owner at a Stage with no entry of its own. `pick: imported` picks the Variant the harness imported.",
+  "note": "The stand-in owner's Decisions. An entry with when_stage is applied only when `kiripix next` is waiting at that Stage; the others are applied together, in order, the first time the Project waits on the owner at a Stage with no entry of its own. `pick: imported` picks the Variant the harness imported. The click lifts the red crate (near 41, 22) into the Layer `crate`; it lands in needs-review, and the owner accepts a Stage in needs-review (layers, then masks, as `next` reports them). The ysort line sorts that Layer.",
   "decisions": [
     {"when_stage": "source", "pick": "imported"},
     {"stage": "masks", "decision": "brush", "data": {"mask": "solid", "erase": false, "radius": 7, "points": [[7, 0], [7, 31]]}},
+    {"stage": "layers", "decision": "click", "data": {"layer": "crate", "x": 41, "y": 22, "positive": true}},
     {"stage": "place", "decision": "marker", "data": {"id": "spawn.main", "type": "spawn", "x": 30, "y": 16}},
-    {"stage": "place", "decision": "marker", "data": {"id": "sign.notice", "type": "interactable", "x": 40, "y": 20}}
+    {"stage": "place", "decision": "marker", "data": {"id": "sign.notice", "type": "interactable", "x": 40, "y": 20}},
+    {"stage": "place", "decision": "marker", "data": {"id": "ysort.crate", "type": "ysort", "x": 36, "y": 26, "layer": "crate", "x2": 44, "y2": 26}}
   ]
 }

@@ -158,6 +158,7 @@ class ClaudeAgent:
             "--permission-mode dontAsk, --permission-prompts none: anything else is denied, except what Claude Code "
             "itself counts as read-only inside the temporary folder (cd, echo, head); reading the repo's files is denied",
             "env without KIRIPIX_TEST_OWNER and KIRIPIX_TEST_RECIPES; kiripix on PATH from the venv",
+            "fake Runners (D16) through the shims `kiripix` and `kpx` first on PATH, which set them for that process only",
             "the init event is checked: Bash is the only tool, no MCP servers",
         ]
 

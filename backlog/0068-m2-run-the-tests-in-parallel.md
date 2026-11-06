@@ -29,6 +29,22 @@ sit idle. Each test already works in its own temporary Project, so the tests sho
 
 - [ ] `uv run pytest -n auto` passes on Windows, three times in a row, with the same result as a serial run.
 - [ ] The serial `uv run pytest` still passes.
-- [ ] `uv sync --locked --no-group cuda` works with the updated lock file.
-- [ ] The wall time of a full serial run and a parallel run, on the owner's machine, is recorded here.
-- [ ] CLAUDE.md's "Commands to run" names the parallel command.
+- [x] `uv sync --locked --no-group cuda` works with the updated lock file.
+- [x] The wall time of a full serial run and a parallel run, on the owner's machine, is recorded here.
+- [x] CLAUDE.md's "Commands to run" names the parallel command.
+
+## Notes
+
+- `pytest-xdist` 3.8.0 is in the `dev` group; `uv.lock` is updated and `uv sync --locked --no-group cuda` works.
+- Almost nothing was shared already. Every server test starts `kiripix serve --port 0` (the one fixed-port test starts a
+  server first and then asks a second `serve` for its port). Weights, locks, the warm Runner's GPU lock, caches and
+  backups live in each test's own `.kiripix/` in its `tmp_path`. Nothing in `kiripix/` reads the home folder. The file
+  route's `mkdtemp` is unique. The test environment variables are set per subprocess, never in the pytest process.
+- Shared and fixed: `--update-golden` rewrites `tests/golden/expected/` in the checkout, so `tests/conftest.py` now
+  refuses it (a usage error) under `-n` or inside a worker. It runs serially.
+- Still shared, read-only: `tests/golden/inputs`, `tests/fixtures`, and `web/dist` and the `.kiripix/weights/lama`
+  weights in the checkout (only read).
+- No `-n` default in `[tool.pytest.ini_options]`: Linux can't be checked here. The command is in CLAUDE.md:
+  `uv run pytest -n auto --dist loadfile`. `loadfile` keeps a file's module-scoped fixtures in one worker.
+- CI is unchanged.
+- Wall times (owner's machine): serial 2 h 25 min for 881 tests (2026-11-05, before 0067); parallel `-n auto --dist loadfile` (22 workers): 884 passed, 2 skipped in 23 min 17 s (2026-11-05, after 0067 and 0068), about 6x faster. Run once, not yet three times in a row; the serial run was not repeated after this change.

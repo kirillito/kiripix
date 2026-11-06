@@ -29,6 +29,7 @@ from .harness import (
     command_allowed,
     make_setup,
     owner_env,
+    project_env,
     run_acceptance,
 )
 from .report import render, report_path, write_report
@@ -89,6 +90,36 @@ def test_dry_run_takes_the_room_from_import_to_export(dry_run: tuple[Setup, Outc
     assert outcome.interventions, "the Project waited on the owner at least once, and the stand-in owner answered"
     assert not outcome.denied and outcome.usage.total == 0
     assert all(c.exit_code is not None for c in outcome.commands)
+
+
+def test_dry_run_lifts_the_layer_through_next_and_the_owner_reviews_it(dry_run: tuple[Setup, Outcome]) -> None:
+    setup, outcome = dry_run
+
+    ran = [c.command for c in outcome.commands]
+    assert any("--rerun" in c for c in ran), "`next` led the agent to `run --rerun`; nothing told it so"
+    assert any("accept room.alley layers" in i for i in outcome.interventions), "the owner reviewed the lift"
+    assert any("decide room.alley layers click" in i for i in outcome.interventions)
+    assert outcome.verification and any("Manifest lists the Layer `crate`" in d for d in outcome.verification.details)
+    assert (setup.game / "kiripix" / "room" / "alley" / "layer.crate.png").is_file()
+    scene = (setup.game / "kiripix" / "room" / "alley" / "alley.tscn").read_text("utf-8")
+    assert "layer.crate.png" in scene
+
+
+def test_the_agent_sees_only_the_real_kinds_and_runners_though_the_fakes_are_loaded(setup: Setup) -> None:
+    env = agent_env(shim_dir=setup.shims)
+
+    for name in ("kiripix", "kpx"):
+        exe = shutil.which(name, path=env["PATH"])
+        assert exe and Path(exe).parent == setup.shims, "the shim comes first on the agent's PATH"
+    run = ScriptedAgent()
+    run.cwd, run.env = setup.project, env
+    turn = AgentTurn()
+    described = run._run(turn, "kiripix describe project --json").output
+    runners = run._run(turn, "kiripix runners --json").output
+
+    assert "demo" not in described and "sketch" not in described and "layered" not in described
+    assert "fake.tampered" not in runners and "inpainter-b" not in runners
+    assert "KIRIPIX_TEST" not in "".join(env)
 
 
 def test_the_scripted_agent_was_started_without_the_test_hooks(dry_run: tuple[Setup, Outcome]) -> None:
@@ -161,7 +192,8 @@ def test_the_agents_environment_never_carries_the_test_hooks(monkeypatch: pytest
 
     assert not [k for k in env if k.startswith("KIRIPIX_")] and "PYTHONPATH" not in env
     assert "KIRIPIX_TEST_OWNER" not in clean_env(), "the harness's own calls are not the owner either"
-    assert owner_env()["KIRIPIX_TEST_OWNER"] == "1" and "KIRIPIX_TEST_RECIPES" not in owner_env()
+    assert owner_env()["KIRIPIX_TEST_OWNER"] == "1"
+    assert project_env()["KIRIPIX_TEST_RECIPES"] == "acceptance_recipes" and "KIRIPIX_TEST_OWNER" not in project_env()
     with pytest.raises(AssertionError):
         assert_agent_env_clean({"KIRIPIX_TEST_OWNER": "1"})
 
