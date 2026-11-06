@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from kiripix.checks import Position, check_palette
 from kiripix.core import atomic
@@ -14,6 +14,7 @@ from kiripix.ops import Palette, PaletteSyntaxError, parse_gpl, parse_hex
 from kiripix.ops.colour import U8
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+JPEG_SIGNATURE = b"\xff\xd8\xff"
 
 
 def load_rgba(path: Path | io.BytesIO, shown: str) -> U8:
@@ -46,10 +47,39 @@ def read_png(path: Path, shown: str) -> tuple[bytes, U8]:
     return data, load_rgba(io.BytesIO(data), shown)
 
 
-def save_png(path: Path, rgba: U8) -> None:
+def read_as_png(path: Path, shown: str) -> tuple[bytes, U8]:
+    """A PNG or JPEG file as PNG bytes and its pixels; any other format is refused with `image.not_png_or_jpeg`.
+
+    A PNG's bytes are kept as they are. A JPEG is turned upright by its EXIF orientation, made opaque RGBA and
+    encoded as a PNG, so what Kiripix stores is always a PNG.
+    """
+    try:
+        data = path.read_bytes()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        raise fail("image.not_found", f"no image at {shown}", owner_action=f"Check the path {shown}.") from None
+    if data.startswith(PNG_SIGNATURE):
+        return data, load_rgba(io.BytesIO(data), shown)
+    if not data.startswith(JPEG_SIGNATURE):
+        raise fail("image.not_png_or_jpeg", f"{shown} is not a PNG or a JPEG",
+                   owner_action=f"Save {shown} as a PNG.", position=Position(file=shown))
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            upright = ImageOps.exif_transpose(image)
+            rgba = np.asarray(upright.convert("RGBA"), dtype=np.uint8).copy()
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
+        raise fail("image.unreadable", f"{shown} is not a readable image: {error}",
+                   owner_action=f"Save {shown} as a PNG.", position=Position(file=shown)) from None
+    return png_bytes(rgba), rgba
+
+
+def png_bytes(rgba: U8) -> bytes:
     buffer = io.BytesIO()
     Image.fromarray(rgba, "RGBA").save(buffer, format="PNG")
-    atomic.write_bytes(path, buffer.getvalue())
+    return buffer.getvalue()
+
+
+def save_png(path: Path, rgba: U8) -> None:
+    atomic.write_bytes(path, png_bytes(rgba))
 
 
 def save_mask_png(path: Path, mask: npt.NDArray[np.bool_]) -> None:

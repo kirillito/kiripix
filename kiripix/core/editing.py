@@ -5,7 +5,7 @@ The caller holds the Asset lock. Everything is validated before anything is writ
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +18,11 @@ from kiripix.core.assets import ASSET_FILE, Asset
 from kiripix.core.errors import KiripixError, fail
 from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
-from kiripix.core.images import load_rgba, read_png
+from kiripix.core.images import load_rgba, read_as_png, read_png
 from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
 from kiripix.core.settings import save_settings
+from kiripix.ops.colour import U8
 from kiripix.recipes.base import ParamSpec, Scalar, StageSpec
 from kiripix.recipes.common import IMPORT_DIR
 from kiripix.recipes.room import LAYERS_STAGE, MASKS_STAGE
@@ -256,12 +257,12 @@ def record_mask_import(project: Project, asset: Asset, png: Path, shown: str) ->
     if spec is None or not any(d.name == MASK_IMPORT for d in spec.decisions):
         raise fail("mask_import.no_masks_stage", f"a {asset.kind} has no '{MASKS_STAGE}' Stage to import Masks into",
                    position=Position(asset=asset.id), fix=f"kiripix describe {asset.kind}")
-    return _record_import(project, asset, spec, MASK_IMPORT, png, shown)
+    return _record_import(project, asset, spec, MASK_IMPORT, png, shown, read_png)
 
 
 def record_plate_import(project: Project, asset: Asset, png: Path, shown: str) -> tuple[journal.JournalEntry, Path]:
     """Store a Plate image under `decisions/imports/` by its hash, and journal the `plate` Decision of the layers
-    Stage naming it. A second import of the same image stores nothing new.
+    Stage naming it. A JPEG is stored as a PNG. A second import of the same image stores nothing new.
 
     Returns the entry and the stored PNG.
     """
@@ -269,12 +270,12 @@ def record_plate_import(project: Project, asset: Asset, png: Path, shown: str) -
     if spec is None or not any(d.name == PLATE_DECISION for d in spec.decisions):
         raise fail("plate_import.no_layers_stage", f"a {asset.kind} has no '{LAYERS_STAGE}' Stage to import a Plate into",
                    position=Position(asset=asset.id), fix=f"kiripix describe {asset.kind}")
-    return _record_import(project, asset, spec, PLATE_DECISION, png, shown)
+    return _record_import(project, asset, spec, PLATE_DECISION, png, shown, read_as_png)
 
 
-def _record_import(project: Project, asset: Asset, spec: StageSpec, decision: str, png: Path,
-                   shown: str) -> tuple[journal.JournalEntry, Path]:
-    data, _ = read_png(png, shown)
+def _record_import(project: Project, asset: Asset, spec: StageSpec, decision: str, png: Path, shown: str,
+                   read: Callable[[Path, str], tuple[bytes, U8]]) -> tuple[journal.JournalEntry, Path]:
+    data, _ = read(png, shown)
     png_hash = hash_bytes(data)
     document = DecisionDocument(decision=decision, data={"png": png_hash})
     findings = _entry_findings(spec, asset, document)

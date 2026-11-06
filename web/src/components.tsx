@@ -235,7 +235,7 @@ export function VariantGrid(props: {
         ))}
       </div>
       <p className="hint">
-        Drop PNGs here to import them as Variants, or{" "}
+        Drop PNGs or JPEGs here to import them as Variants, or{" "}
         <button className="link" onClick={() => input.current?.click()}>
           choose files
         </button>
@@ -245,7 +245,7 @@ export function VariantGrid(props: {
         ref={input}
         data-testid="import-input"
         type="file"
-        accept="image/png"
+        accept="image/png,image/jpeg"
         multiple
         hidden
         onChange={(event) => {

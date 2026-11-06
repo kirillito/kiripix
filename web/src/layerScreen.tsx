@@ -368,7 +368,7 @@ export function LayersPanel(props: {
       <input
         ref={input}
         type="file"
-        accept="image/png"
+        accept="image/png,image/jpeg"
         hidden
         data-testid="plate-import-input"
         onChange={(event) => {
@@ -377,7 +377,7 @@ export function LayersPanel(props: {
           event.target.value = "";
         }}
       />
-      <p className="hint">Or drop a PNG on the canvas. It is the full image without the objects, the Source's size.</p>
+      <p className="hint">Or drop a PNG or JPEG on the canvas. It is the full image without the objects, the Source's size.</p>
     </fieldset>
   );
 }

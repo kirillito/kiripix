@@ -130,8 +130,19 @@ def test_plate_import_refuses_a_file_that_is_not_a_png_and_writes_nothing(projec
 
     result = project.json("plate-import", ASSET, "plate.png", expect=1)
 
-    assert [f["code"] for f in result["findings"]] == ["image.not_png"]
+    assert [f["code"] for f in result["findings"]] == ["image.not_png_or_jpeg"]
     assert not (folder / "decisions" / "imports").exists() and not (folder / "decisions" / "layers.jsonl").exists()
+
+
+def test_plate_import_stores_a_jpeg_as_a_png_named_by_its_hash(project: Kiripix) -> None:
+    make_layered(project)
+    Image.new("RGB", (8, 8), BLUE[:3]).save(project.cwd / "plate.jpg", format="JPEG", quality=95)
+
+    data = project.json("plate-import", ASSET, "plate.jpg")["data"]
+
+    stored = project.cwd / data["file"]
+    assert stored.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert stored.stem == hashlib.sha256(stored.read_bytes()).hexdigest()
 
 
 def test_plate_import_on_a_kind_without_the_stage_exits_1_with_a_fix_and_writes_nothing(project: Kiripix) -> None:

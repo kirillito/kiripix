@@ -12,7 +12,7 @@ from kiripix.core.assets import Asset
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
-from kiripix.core.images import read_png
+from kiripix.core.images import read_as_png
 from kiripix.core.project import Project
 from kiripix.recipes.base import PICK, StageSpec
 
@@ -25,8 +25,9 @@ def variants(asset: Asset) -> dict[str, Path]:
 
 
 def import_variant(asset: Asset, file: Path, shown: str) -> tuple[str, Path, bool]:
-    """Copy a PNG into `src/` as a Variant. Returns its name, its path, and whether it is new."""
-    data, _ = read_png(file, shown)
+    """Copy a PNG (or a JPEG, stored as a PNG) into `src/` as a Variant. Returns its name, its path, and whether it
+    is new."""
+    data, _ = read_as_png(file, shown)
     name = hash_bytes(data)[:VARIANT_NAME_LENGTH]
     path = asset.dir / "src" / f"{name}.png"
     if path.exists():

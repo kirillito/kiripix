@@ -27,7 +27,7 @@ def _asset_lock(arguments: _AssetInput) -> str | None:
 
 
 class ImportInput(_AssetInput):
-    file: Path = Field(description="The PNG to add as a Variant.")
+    file: Path = Field(description="The PNG or JPEG to add as a Variant; a JPEG is stored as a PNG.")
 
 
 class ImportData(BaseModel):

@@ -1,10 +1,12 @@
 """The room's brief and source Stages, `import` and `pick` (spec §6.1, §10.5), on small fixture images."""
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from conftest import Kiripix, save_image, stage_status
+from PIL import Image
 
 ROOM = "room.alley"
 
@@ -84,13 +86,50 @@ def test_import_copies_a_png_into_src_named_by_its_hash_and_twice_is_a_no_op(pro
     assert [p.name for p in (folder / "src").iterdir()] == [stored.name]
 
 
-def test_import_refuses_a_file_that_is_not_a_png(project: Kiripix) -> None:
+def test_import_stores_a_jpeg_as_an_opaque_png_variant_named_by_the_png_hash(project: Kiripix) -> None:
     folder = make_room(project)
-    (project.cwd / "made.jpg").write_bytes(b"\xff\xd8\xff\xe0 not a png")
+    Image.new("RGB", (8, 8), (200, 40, 40)).save(project.cwd / "made.jpg", format="JPEG", quality=95)
+
+    first = project.json("import", ROOM, "made.jpg")["data"]
+    again = project.json("import", ROOM, "made.jpg")["data"]
+
+    stored = project.cwd / first["file"]
+    assert stored.name == f"{first['variant']}.png" and stored.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert hashlib.sha256(stored.read_bytes()).hexdigest().startswith(first["variant"])
+    with Image.open(stored) as image:
+        assert image.mode == "RGBA" and image.size == (8, 8) and image.getextrema()[3] == (255, 255)
+    assert again["created"] is False and [p.name for p in (folder / "src").iterdir()] == [stored.name]
+
+
+def test_import_turns_a_jpeg_upright_by_its_exif_orientation(project: Kiripix) -> None:
+    make_room(project)
+    exif = Image.Exif()
+    exif[0x0112] = 6  # shown turned 90 degrees clockwise
+    Image.new("RGB", (16, 8), (40, 40, 200)).save(project.cwd / "made.jpg", format="JPEG", exif=exif)
+
+    stored = project.cwd / project.json("import", ROOM, "made.jpg")["data"]["file"]
+
+    with Image.open(stored) as image:
+        assert image.size == (8, 16)
+
+
+def test_import_refuses_a_file_that_is_not_a_png_or_a_jpeg(project: Kiripix) -> None:
+    folder = make_room(project)
+    (project.cwd / "made.gif").write_bytes(b"GIF89a not a png")
+
+    result = project.json("import", ROOM, "made.gif", expect=1)
+
+    assert result["findings"][0]["code"] == "image.not_png_or_jpeg"
+    assert not (folder / "src").exists() or list((folder / "src").iterdir()) == []
+
+
+def test_import_refuses_a_broken_jpeg(project: Kiripix) -> None:
+    folder = make_room(project)
+    (project.cwd / "made.jpg").write_bytes(b"\xff\xd8\xff\xe0 not a jpeg")
 
     result = project.json("import", ROOM, "made.jpg", expect=1)
 
-    assert result["findings"][0]["code"] == "image.not_png"
+    assert result["findings"][0]["code"] == "image.unreadable"
     assert not (folder / "src").exists() or list((folder / "src").iterdir()) == []
 
 

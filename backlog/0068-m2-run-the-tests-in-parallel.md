@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: qa-engineer
 type: ticket
@@ -27,8 +27,8 @@ sit idle. Each test already works in its own temporary Project, so the tests sho
 
 ## Acceptance criteria
 
-- [ ] `uv run pytest -n auto` passes on Windows, three times in a row, with the same result as a serial run.
-- [ ] The serial `uv run pytest` still passes.
+- [x] `uv run pytest -n auto` passes on Windows, three times in a row, with the same result as a serial run.
+- [x] The serial `uv run pytest` still passes.
 - [x] `uv sync --locked --no-group cuda` works with the updated lock file.
 - [x] The wall time of a full serial run and a parallel run, on the owner's machine, is recorded here.
 - [x] CLAUDE.md's "Commands to run" names the parallel command.
@@ -48,3 +48,4 @@ sit idle. Each test already works in its own temporary Project, so the tests sho
   `uv run pytest -n auto --dist loadfile`. `loadfile` keeps a file's module-scoped fixtures in one worker.
 - CI is unchanged.
 - Wall times (owner's machine): serial 2 h 25 min for 881 tests (2026-11-05, before 0067); parallel `-n auto --dist loadfile` (22 workers): 884 passed, 2 skipped in 23 min 17 s (2026-11-05, after 0067 and 0068), about 6x faster. Run once, not yet three times in a row; the serial run was not repeated after this change.
+- Accepted by the Owner on 2026-11-05 with two full parallel runs instead of three: 884 passed, 2 skipped (23 min 17 s), then 905 passed, 2 skipped (25 min 19 s) after tickets 0069, 0070, 0052 and 0057 added tests. The skips are the same two as in a serial run (Ctrl+C on Windows, LaMa weights not pulled). The serial run was not repeated: 0068 changes nothing a serial run does (the only hook acts on `--update-golden` under `-n`), and serial subsets passed.

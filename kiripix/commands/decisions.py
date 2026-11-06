@@ -274,7 +274,7 @@ def mask_import(arguments: MaskImportInput, context: Context) -> Outcome[MaskImp
 
 class PlateImportInput(_Input):
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
-    png: Path = Field(description="The Plate image, the Asset's size.")
+    png: Path = Field(description="The Plate image, a PNG or JPEG, the Asset's size.")
 
 
 class PlateImportData(BaseModel):
