@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -30,11 +30,17 @@ description already names "polygon", and spec §6.1 says that it isn't built yet
 - [x] A concave polygon (an L, like r03's ticket booth) fills correctly, and `erase` clears it, at the Op seam.
 - [x] CLI seam: `decide`, then `run`, gives the Mask. `undo` removes it. A changed Plate leaves a `polygon`-only `masks` `done`.
 - [x] Fewer than three points is refused with a finding.
-- [ ] `room.harbor_front`'s and the three dungeon rooms' journals still replay unchanged: no existing Decision changes meaning.
+- [x] `room.harbor_front`'s and the three dungeon rooms' journals still replay unchanged: no existing Decision changes meaning.
+      Checked on the three dungeon rooms. `harbor_front` is waived by the Owner as a throw-away test room; see the notes.
 
 ## Notes
 
-- Journal replay, partly checked. The change to `kiripix/recipes/room.py` only adds: the `polygon` branch in `_masks`, its
-  `DecisionSpec` and one import. No existing Decision's schema or replay code changed. harbor_front's `masks.jsonl` (in the art
-  repo) uses `brush`, `click`, `flood`, `marker` and `pick`, but it wasn't replayed: its `work/` has no layers output to run
-  `masks` against. The three dungeon rooms aren't on this machine. The box stays open until the Owner runs `masks` on them.
+- Journal replay, checked 2026-11-06 at `cf44df7`, by `run <room> masks --force` on copies, so the art repo is unchanged. The
+  change to `kiripix/recipes/room.py` only adds: the `polygon` branch in `_masks`, its `DecisionSpec` and one import.
+  - **`ch01_dungeon_r01`, `r02`, `r03`: unchanged.** Each ran to `done` with the same `input_hash`, and `solid.png`, `pit.png` and
+    `floods.json` are byte-identical to the rooms' earlier builds. Their journals hold `brush`, `flood` and `border`, no clicks.
+  - **`room.harbor_front`: not replayed.** `masks` stops at `needs-input`, "Runner not run yet" (exit 3), so nothing was rebuilt.
+    This doesn't come from this ticket: `c425c0a`, the commit before the polygon change, reports the same. `7b68578` reports
+    `done` and `48006d2` doesn't. That commit made a negative `click` its own Runner call, so harbor_front's negative clicks
+    probably have no pinned result; that link isn't proven. The Owner waived this room, and no ticket follows: it's a throw-away
+    test room that won't go into the game.

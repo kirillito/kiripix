@@ -689,9 +689,12 @@ and the tokens used are recorded at each milestone, as the measure of goal 1 ("c
 - Providers (one API provider plus PixelLab), prompt templates, the style bible, the cost ledger and budget.
 - The MCP adapter, with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
   ([0062](../backlog/0062-m2-claude-first-pass-trial.md)).
-- If [0063](../backlog/0063-m2-multi-screen-source-trial.md) shows that extending an image works: a preprocessing tool
-  that extends a Source step by step through a Provider and aligns the pieces, before `source`. Without Provider
-  integration it would be a manual tool, so it waits for this milestone.
+- A preprocessing tool that extends a Source step by step through a Provider and joins the pieces, before `source`. Without
+  Provider integration it would be a manual tool, so it waits for this milestone. The trial
+  [0063](../backlog/0063-m2-multi-screen-source-trial.md) found that the join needs three steps. Register: the model redraws
+  the kept strip and scales the whole piece by up to about 1 %, so a plain shift leaves a step. Tone: the redrawn strip's
+  brightness differs, so match it row by row. Seam: take the least-difference path through the overlap, with a short blend. A
+  piece also fails when too little of a subject is in the kept strip, so the tool must let the Owner choose the strip and retry.
 
 **M5: side view.** Side-view Masks (one-way, ladder), the parallax split with depth, platform reachability.
 
@@ -719,29 +722,31 @@ IDs with aliases.
 4. Image-to-3D: which local Runner fits 8 GB well enough, or none (M3).
 5. Which API provider comes first (M4).
 6. Licence for Kiripix itself, if it's ever published.
-7. How a multi-screen room is made. The game allows them (its DEC-024), and its owner prefers one high-resolution image per
-   location over stitched parts (its ISS-016). A room's size is only the brief's width and height, so **the working
-   assumption is one room, one Source, one set of Masks**: any extending or stitching happens before `source`, and walls
-   and Masks go on the whole image after it. The limits to test on a real room:
-   - **The Source:** it must be at least the room's size, and about 2.15 Source px per target px means a free-tier image
-     of 1,376 px covers one screen. A wider room needs outpainting from an anchor image, or a higher-resolution model.
-   - **SAM 2:** its encoder stretches the whole image to 1024 x 1024, so a click gets coarser as a room gets wider. It
-     would need a crop around the click.
-   - **`fit`:** grid mode applies one grid to the whole image, so pieces whose painted pixels differ in size or alignment
-     may need `downscale`.
-   - **The rest:** canvas zoom and scrolling in the UI, collision piece count, and `reach` time.
+7. ~~How a multi-screen room is made~~: decided 2026-11-06 by the owner, after the trial
+   [0063](../backlog/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects
+   about as many of them as single-screen rooms**, so neither is the exception. Exits still join rooms at natural breaks such as
+   doors, stairs and corners. A room's size is only the brief's width and height, so **one room has one Source and one set of
+   Masks**: any extending happens before `source`, and walls and Masks go on the whole image after it.
 
-   **Order of preference (the owner, 2026-11-04):**
-   1. One screen per location, or rooms joined by Exits at natural breaks such as doors, stairs and corners. This is the
-      default, and it already works.
-   2. For the few locations that need a continuous camera: one image extended step by step, each piece generated from the
-      edge of the last, or one image from a higher-resolution model.
-   3. Independently generated images, stitched, only with a hard visual break at the join, because their horizon, perspective,
-      light and scale won't match.
+   **The method, for now: extend from the edge.** Each piece is generated from the edge of the last, in single generations, and
+   the pieces are joined by hand until the M4 tool. A flaw in a piece, such as a light that throws no pool, is fixed room by room.
+   - **Not tried:** a higher-resolution model, since the budget is $0.
+   - **Independently generated images:** not tried either. Expect a hard visual break at the join, because their horizon,
+     perspective, light and scale won't match.
 
-   **Still open:** which method in point 2 works on the game's art. The trial
-   [0063](../backlog/0063-m2-multi-screen-source-trial.md) decides. Nothing in M2 closes this off: the `border` Decision
-   takes sides.
+   **What the trial found:**
+   - **The Source:** it must be at least the room's size, and about 2.15 Source px per target px means a free-tier image of
+     1,376 px covers one screen. One extension reached 1024 target px across and another 528 down, and neither join is visible
+     after `fit` and `palette`.
+   - **SAM 2:** its encoder stretches the whole image to 1024 x 1024, but on these rooms clicks were accurate and no worse than
+     on a single-screen room, so a crop around the click isn't needed yet.
+   - **`fit`:** grid mode doesn't fit an AI painting, so these rooms use `downscale`, which must keep one scale on both axes
+     ([0081](../backlog/0081-m3-downscale-keeps-one-scale.md)).
+   - **The rest:** `reach` and `export` stay under a second at 1024 x 320, though on test Masks, so its collision piece count
+     (530) is a lower bound. Pieces follow the Masks' edges, not the room's width. The canvas needs better navigation
+     ([0082](../backlog/0082-m3-ui-canvas-navigation.md)).
+   - **In the game:** a scrolling camera is the game's work. The exported scene has no room size or camera limits, but the Plate's
+     texture gives the size.
 
 ## Changes since v0.3
 
@@ -751,8 +756,8 @@ IDs with aliases.
 - `kiripix manifest install` and `kiripix plate-import` are new. The merge rule covers IDs and `files` (ADR 0003).
 - Lights and emitters were built in M1. The prop foreground split and `LightOccluder2D` are deferred.
 - The spec's code layout, stack and import rule now match the repo.
-- Open decision 7: multi-screen rooms, with an order of preference and a trial. A possible M4 tool extends a Source through
-  a Provider.
+- Open decision 7 closed: multi-screen rooms are as ordinary as single-screen ones, made by extending from the edge. An M4 tool
+  extends a Source through a Provider.
 
 ## Changes since v0.2
 
