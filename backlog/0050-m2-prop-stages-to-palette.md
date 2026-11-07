@@ -33,9 +33,9 @@ Spec §6.2, §7 (cleanup, resample) and ADR 0004. Stories 11 and 12 of [0037](00
 - [x] Swapping the fake matter for one with another ID gives "Runner input changed".
 - [x] Every room test passes unchanged, and an existing room's input hashes don't change from the move.
 - [x] `next` gives a command or an owner action at every prop Stage.
-- [ ] A manual (not CI) check of the real matting Runner ([0041](0041-m2-matting-runner.md)) on a real prop Source,
+- [x] A manual (not CI) check of the real matting Runner ([0041](0041-m2-matting-runner.md)) on a real prop Source,
       through `cutout` with `run --rerun`, on the Owner's GPU and with `--cpu`, recorded here as 0020's was: time cold
-      and warm, VRAM above idle and peak, the GPU-vs-CPU alpha difference, edge quality, and a cancel mid-call.
+      and warm, VRAM above idle and peak, the GPU-vs-CPU alpha difference, edge quality, and a cancel mid-call. See below.
 
 ## Notes (2026-11-04)
 
@@ -55,10 +55,33 @@ Spec §6.2, §7 (cleanup, resample) and ADR 0004. Stories 11 and 12 of [0037](00
 - `finish`, `footprint` and `export` stay unbuilt, so `next` ends at `finish` with an owner action until the tickets for them.
 - `tests/cli/test_graph.py` and `test_export.py` use `character` as the unbuilt Kind now.
 
-## Manual check, still to record
+## Manual check (2026-11-06)
 
-Not run by the agent (it needs the Owner's GPU and the real weights). On a real prop Source with a painted, non-flat
-background, in a prop Asset `prop.<id>` at a real brief size:
+Run by the Owner on their 8 GB GPU, with the real BiRefNet (full fp32), on a real prop: a street lamp seen from above, on a
+painted cobbled floor with a pool of lamplight and a cast shadow (1376 x 768 Source). Times and VRAM are the Owner's readings;
+the alphas were measured from the two pinned results, which share one key, weights hash and image hash.
+
+- **Time, one call:** on the GPU, about 11 s cold and about 6 s warm. With `--cpu`, about 22 s
+  ([0041](0041-m2-matting-runner.md) saw 14-28 s on a synthetic 400 x 300 image).
+- **Memory:** about 6.6 GB above idle (7,883 MB peak, with 1,293 MB idle). That leaves about 0.3 GB of the 8 GB, far tighter
+  than SAM 2's 3.4 GB peak in [0020](m1/0020-m1-pinned-runner-calls-sam2.md). The reading doesn't say how much of it the model
+  needs and how much ONNX Runtime just holds.
+- **Same result:** not byte-identical, but as near as makes no difference. The colours are identical, and 14 of 1,056,768
+  alpha values differ, each by 1 of 255. At `fit`'s threshold (alpha from 128) the two have the same 32,083 opaque pixels.
+- **Edge quality:** fine in this example where the matte kept the object (the Owner's review).
+- **Quality, the problem:** the matte removed a large part of the lamp's base, the one real fault of this run. The base is a
+  disc about 104 px wide, down to about y 501 (read by eye from the Source). The matte's opaque part is 46 px wide at y 430 and
+  32 px at y 450, and ends at y 463: roughly two thirds of the disc is gone. What's left below the column is a soft smear,
+  and `fit`'s vote drops whatever is under 128. The cause isn't diagnosed, and this is one prop.
+- **Cancel, real inference:** worked, but took a couple of seconds to stop (the Owner's estimate; 0.31 s on the CPU in 0041).
+  It pinned nothing. The Owner finds the wait acceptable on small props for now.
+
+**Fixing a cutout by hand** needs no new feature: `kiripix override prop.<id> cutout <painted>.png`, a PNG of the Source's
+size that is transparent except for the pixels to restore, then `kiripix run prop.<id>`. Tried on a throwaway chroma prop (not
+on this matte): the painted pixels came through `cutout`, `fit` and `palette`. A transparent pixel leaves what's below it, so
+an Override can put pixels back but can't clear them.
+
+How it was run:
 
 ```
 kiripix runners pull birefnet
@@ -72,8 +95,5 @@ kiripix run prop.<id> --rerun                             # fit and palette on t
 ```
 
 For warm times, start `kiripix serve`, delete `pinned/` and call `/api/run` (`{"asset": "prop.<id>", "stage": "cutout",
-"rerun": true}`) twice. Keep the GPU result's `pinned/*.png` aside before the CPU run to compare the two alphas.
-
-Record here, as 0020's was: time cold and warm; VRAM above idle and at the peak (`nvidia-smi` while it runs); the GPU-vs-CPU
-alpha difference (compare the two `pinned/*.png` alphas); the edge quality in `work/cutout/cutout.png` and
-`work/palette/palette.png`; and a cancel mid-call (Ctrl-C, or `POST /api/jobs/<id>/cancel` through `serve`), which must pin nothing.
+"rerun": true}`) twice. Keep the GPU result's `pinned/*.png` aside before the CPU run to compare the two alphas. VRAM is
+`nvidia-smi` while it runs; a cancel is Ctrl-C, or `POST /api/jobs/<id>/cancel` through `serve`, and must pin nothing.
