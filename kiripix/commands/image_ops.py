@@ -45,7 +45,7 @@ class ConformanceData(BaseModel):
         )
 
 
-def _palette(given: Path | None, context: Context, example: str) -> tuple[Palette, str]:
+def resolve_palette(given: Path | None, context: Context, example: str) -> tuple[Palette, str]:
     """The palette named on the command line, or else the Project's."""
     if given is not None:
         return load_palette(context.cwd / given, str(given)), str(given)
@@ -100,7 +100,7 @@ class QuantizeData(BaseModel):
 )
 def op_quantize(arguments: QuantizeInput, context: Context) -> Outcome[QuantizeData]:
     example = f"kiripix op quantize {arguments.input} {arguments.output}"
-    palette, palette_name = _palette(arguments.palette, context, example)
+    palette, palette_name = resolve_palette(arguments.palette, context, example)
     shown = str(arguments.input)
     rgba = load_rgba(context.cwd / arguments.input, shown)
     palette_rgb = palette.rgb()
@@ -146,7 +146,7 @@ class ConformanceInput(BaseModel):
 def op_conformance(arguments: ConformanceInput, context: Context) -> Outcome[ConformanceData]:
     shown = str(arguments.image)
     stem = arguments.image.with_name(f"{arguments.image.stem}.quantized.png").as_posix()
-    palette, palette_name = _palette(arguments.palette, context, f"kiripix op conformance {shown}")
+    palette, palette_name = resolve_palette(arguments.palette, context, f"kiripix op conformance {shown}")
     report = conformance(load_rgba(context.cwd / arguments.image, shown), palette.rgb())
     palette_flag = f" --palette {arguments.palette}" if arguments.palette else ""
     findings = check_alpha(report, shown) + check_conformance(

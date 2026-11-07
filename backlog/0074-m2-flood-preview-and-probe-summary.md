@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: core-engineer
 type: ticket
@@ -25,8 +25,8 @@ In `kiripix/commands/probes.py`, with the work in core:
 
 ## Acceptance criteria
 
-- [ ] CLI seam: `flood-preview` gives the same `pixels` as `floods.json` after recording that flood and running `masks`.
-- [ ] Three tolerances in one call give three answers. Nothing is recorded, and status doesn't change.
-- [ ] `--summary` gives `pixels` and the box with no `runs`, on both Probes. The default result still has `runs`.
-- [ ] The bounding box matches the runs.
-- [ ] The Probe's sample in `tests/cli/test_contract.py` passes.
+- [x] CLI seam: `flood-preview` gives the same `pixels` as `floods.json` after recording that flood and running `masks`.
+- [x] Three tolerances in one call give three answers. Nothing is recorded, and status doesn't change.
+- [x] `--summary` gives `pixels` and the box with no `runs`, on both Probes. The default result still has `runs`.
+- [x] The bounding box matches the runs.
+- [x] The Probe's sample in `tests/cli/test_contract.py` passes.

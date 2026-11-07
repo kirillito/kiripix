@@ -195,3 +195,9 @@ def append(path: Path, entry: JournalEntry) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic.append_jsonl(path, entry.line())
 
+
+def append_many(path: Path, entries: list[JournalEntry]) -> None:
+    """Append entries all together or not at all."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic.append_jsonl_many(path, [e.line() for e in entries])
+

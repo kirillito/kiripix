@@ -223,11 +223,13 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "pick": lambda a: {"asset": a[1], "variant": a[2]},
     "check": lambda a: {"asset": a[1]},
     "show": lambda a: {"asset": a[1]},
-    "preview": lambda a: {"asset": a[1], "stage": a[3]},
+    "preview": lambda a: {"asset": a[1], "stage": a[3], "region": a[5], "grid": int(a[7])},
     "export": lambda a: {"asset": a[1]},
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
     "op quantize": lambda a: {"input": a[2], "output": a[3]},
     "op conformance": lambda a: {"image": a[2]},
+    "op palette-suggest": lambda a: {"image": a[2], "add": int(a[4]), "scale": float(a[6])},
+    "palette-add": lambda a: {"proposal": a[1]},
     "runners list": lambda a: {},
     "runners pull": lambda a: {"runner": a[2]},
     "runners rm": lambda a: {"runner": a[2]},
@@ -265,7 +267,7 @@ def test_the_rest_response_equals_the_cli_json(project: Kiripix, tmp_path_factor
     arguments = SAMPLES[name](project)
     twin = tmp_path_factory.mktemp("twin") / "project"
     shutil.copytree(project.cwd, twin)  # the same Project, so each side starts from the same state
-    owner = name == "accept"
+    owner = name in {"accept", "palette-add"}
 
     expected = project.json(*arguments, owner=owner)
     with serving(twin) as running:

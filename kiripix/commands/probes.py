@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
@@ -16,7 +17,7 @@ from kiripix.commands.registry import CliMeta, command
 from kiripix.core.assets import Asset, load_asset
 from kiripix.core.errors import fail
 from kiripix.core.project import find_project
-from kiripix.core.segmenting import segment_preview
+from kiripix.core.segmenting import flood_preview, segment_preview
 from kiripix.ops import mask_runs
 from kiripix.recipes.base import ClickPoint
 
@@ -26,8 +27,10 @@ class ProbeInput(BaseModel):
     name: str = Field(description="The Probe's name, such as segment-preview or echo.")
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
     args: list[str] = Field([], description="The Probe's own arguments. segment-preview takes clicks in target pixels: "
-                                            "x,y for a positive one and x,y,neg for a negative one.")
+                                            "x,y for a positive one and x,y,neg for a negative one. flood-preview takes "
+                                            "x,y,tolerance, one or more.")
     cpu: bool = Field(False, description="Run any Runner on the CPU, without the GPU lock.")
+    summary: bool = Field(False, description="Leave `runs` out of a Mask answer; `pixels` and `box` stay.")
 
 
 ProbeFunction = Callable[[Asset, ProbeInput, Context], dict[str, Any]]
@@ -76,13 +79,48 @@ def _segment_preview(asset: Asset, arguments: ProbeInput, context: Context) -> d
     made = segment_preview(find_project(context.cwd), asset, points, keep_warm=context.via == "rest", cpu=arguments.cpu,
                            wait=context.wait, command_line=context.command_line, progress=context.progress)
     return {
-        "width": made.mask.shape[1],
-        "height": made.mask.shape[0],
-        "pixels": int(made.mask.sum()),
-        "runs": mask_runs(made.mask),
+        **_mask_answer(made.mask, arguments),
         "embedding": "computed" if made.computed else "cached",
         "device": made.device,
     }
+
+
+def _mask_answer(mask: np.ndarray, arguments: ProbeInput) -> dict[str, Any]:
+    """The answer for one Mask: its size, `pixels`, the bounding box (null when empty) and, unless `--summary`, `runs`."""
+    runs = mask_runs(mask)
+    box = None
+    if runs:
+        left = min(x for _, x, _ in runs)
+        top = min(y for y, _, _ in runs)
+        box = {"x": left, "y": top, "width": max(x + n for _, x, n in runs) - left,
+               "height": max(y for y, _, _ in runs) - top + 1}
+    answer: dict[str, Any] = {"width": mask.shape[1], "height": mask.shape[0], "pixels": int(mask.sum()), "box": box}
+    if not arguments.summary:
+        answer["runs"] = runs
+    return answer
+
+
+def _flood_point(text: str, asset: Asset) -> tuple[int, int, float]:
+    parts = text.split(",")
+    try:
+        if len(parts) != 3 or not (parts[0].isdecimal() and parts[1].isdecimal()):
+            raise ValueError
+        tolerance = float(parts[2])
+    except ValueError:
+        raise fail("input.invalid", f"'{text}' isn't a flood: give x,y,tolerance, such as 30,10,0.04",
+                   fix=f"kiripix probe flood-preview {asset.id} 30,10,0.04") from None
+    return int(parts[0]), int(parts[1]), tolerance
+
+
+@probe("flood-preview", summary="The region a flood would fill on the built Plate, one answer per x,y,tolerance given.")
+def _flood_preview(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    if not arguments.args:
+        raise fail("input.invalid", "flood-preview needs at least one x,y,tolerance",
+                   fix=f"kiripix probe flood-preview {asset.id} 30,10,0.04")
+    floods = [_flood_point(text, asset) for text in arguments.args]
+    regions = flood_preview(find_project(context.cwd), asset, floods)
+    return {"floods": [{"x": x, "y": y, "tolerance": tolerance, **_mask_answer(region, arguments)}
+                       for (x, y, tolerance), region in zip(floods, regions)]}
 
 
 class ProbeData(BaseModel):

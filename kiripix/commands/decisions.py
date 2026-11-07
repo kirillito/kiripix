@@ -84,7 +84,9 @@ def set_params(arguments: SetInput, context: Context) -> Outcome[SetData]:
 class DecideInput(_StageInput):
     decision: str | None = Field(
         None, description='The Decision as JSON: {"decision": name, "data": {...}, "image_hash": optional}.')
-    file: Path | None = Field(None, description="A file holding that JSON, instead of --decision.")
+    file: Path | None = Field(None, description="A file holding that JSON, instead of --decision. It may hold a JSON "
+                              "array of Decisions for this Stage: all are recorded in order, or none.")
+    brief: bool = Field(False, description="Leave `current` out of the result: give the count of current Decisions.")
 
     @model_validator(mode="after")
     def _one_source(self) -> Self:
@@ -96,13 +98,16 @@ class DecideInput(_StageInput):
 class DecideData(BaseModel):
     asset: str
     stage: str
-    id: str
+    id: str = Field(description="The recorded entry's ID; the last one for an array.")
     parent: str | None
     decision: str
-    current: list[DecisionOut]
+    current: list[DecisionOut] | None = Field(None, description="Every current Decision; null with --brief.")
+    count: int = Field(0, description="How many Decisions are current now.")
+    ids: list[str] = Field(default_factory=list, description="The IDs recorded, in order.")
 
     def text(self) -> str:
-        return f"{self.asset} {self.stage}: recorded {self.decision} ({self.id}); {len(self.current)} current"
+        recorded = f"{len(self.ids)} Decisions, the last {self.decision}" if len(self.ids) > 1 else self.decision
+        return f"{self.asset} {self.stage}: recorded {recorded} ({self.id}); {self.count} current"
 
 
 @command(
@@ -128,13 +133,24 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
     else:
         assert arguments.decision is not None
         text, source = arguments.decision, "--decision"
-    document = editing.parse_decision(text, source, asset, arguments.stage)
-    entry, after = editing.record_decision(project, asset, arguments.stage, document)
-    return Outcome(DecideData(asset=asset.id, stage=arguments.stage, id=entry.id, parent=entry.parent,
-                              decision=document.decision, current=current_decisions(after.current)))
+    documents, is_array = editing.parse_decisions(text, source, asset, arguments.stage)
+    if is_array:
+        entries, after = editing.record_decisions(project, asset, arguments.stage, documents)
+    else:
+        entry, after = editing.record_decision(project, asset, arguments.stage, documents[0])
+        entries = [entry]
+    last = entries[-1]
+    return Outcome(DecideData(asset=asset.id, stage=arguments.stage, id=last.id, parent=last.parent,
+                              decision=documents[-1].decision,
+                              current=None if arguments.brief else current_decisions(after.current),
+                              count=len(after.current), ids=[e.id for e in entries]))
 
 
 # undo and redo
+
+
+class StepInput(_StageInput):
+    brief: bool = Field(False, description="Leave `current` out of the result: give the count of current Decisions.")
 
 
 class StepData(BaseModel):
@@ -142,50 +158,52 @@ class StepData(BaseModel):
     stage: str
     id: str
     target: str
-    current: list[DecisionOut]
+    current: list[DecisionOut] | None = Field(None, description="Every current Decision; null with --brief.")
+    count: int = Field(0, description="How many Decisions are current now.")
 
     def text(self) -> str:
-        return f"{self.asset} {self.stage}: {len(self.current)} current Decisions (entry {self.id} on {self.target})"
+        return f"{self.asset} {self.stage}: {self.count} current Decisions (entry {self.id} on {self.target})"
 
 
-def _step(entry: journal.JournalEntry, after: journal.Replay, asset_id: str, stage: str) -> StepData:
+def _step(entry: journal.JournalEntry, after: journal.Replay, asset_id: str, stage: str, brief: bool) -> StepData:
     target = entry.undo or entry.redo
     assert target is not None
-    return StepData(asset=asset_id, stage=stage, id=entry.id, target=target, current=current_decisions(after.current))
+    return StepData(asset=asset_id, stage=stage, id=entry.id, target=target,
+                    current=None if brief else current_decisions(after.current), count=len(after.current))
 
 
 @command(
     "undo",
     summary="Undo a Stage's latest current Decision by appending an undo entry; nothing is removed from the journal.",
-    input=_StageInput,
+    input=StepInput,
     output=StepData,
     kind="writing",
     mcp="exposed",
     cli=CliMeta(positional=("asset", "stage")),
     locks=LockNeeds(asset=_asset_lock),
 )
-def undo(arguments: _StageInput, context: Context) -> Outcome[StepData]:
+def undo(arguments: StepInput, context: Context) -> Outcome[StepData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
     entry, after = editing.undo(project, asset, arguments.stage)
-    return Outcome(_step(entry, after, asset.id, arguments.stage))
+    return Outcome(_step(entry, after, asset.id, arguments.stage, arguments.brief))
 
 
 @command(
     "redo",
     summary="Redo a Stage's latest undone Decision by appending a redo entry.",
-    input=_StageInput,
+    input=StepInput,
     output=StepData,
     kind="writing",
     mcp="exposed",
     cli=CliMeta(positional=("asset", "stage")),
     locks=LockNeeds(asset=_asset_lock),
 )
-def redo(arguments: _StageInput, context: Context) -> Outcome[StepData]:
+def redo(arguments: StepInput, context: Context) -> Outcome[StepData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
     entry, after = editing.redo(project, asset, arguments.stage)
-    return Outcome(_step(entry, after, asset.id, arguments.stage))
+    return Outcome(_step(entry, after, asset.id, arguments.stage, arguments.brief))
 
 
 # override

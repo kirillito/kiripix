@@ -10,7 +10,7 @@ from kiripix.commands.contract import Context, ExitCode, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import cancel
 from kiripix.core.assets import create_asset, is_asset_id, list_assets, load_asset
-from kiripix.core.errors import KiripixError
+from kiripix.core.errors import KiripixError, fail
 from kiripix.core.graph import AssetGraph, StageRunResult, StageState, run_all, run_asset
 from kiripix.core.hashing import HashCache
 from kiripix.core.kinds import all_kinds, get_kind
@@ -97,6 +97,7 @@ def new(arguments: NewInput, context: Context) -> Outcome[NewData]:
 
 class DescribeInput(_Input):
     target: str = Field(description="'project' for every Kind and its Recipe, or a Kind for its Stages in detail.")
+    stage: str | None = Field(None, description="With a Kind: describe only this Stage.")
 
 
 class StageDescription(BaseModel):
@@ -178,9 +179,20 @@ def _describe(kind: KindSpec, detail: bool) -> KindDescription:
 )
 def describe(arguments: DescribeInput, context: Context) -> Outcome[DescribeData]:
     if arguments.target == "project":
+        if arguments.stage is not None:
+            raise fail("describe.stage_needs_kind", "--stage needs a Kind, not 'project'",
+                       fix="kiripix describe project")
         kinds = [_describe(k, detail=False) for _, k in sorted(all_kinds().items())]
     else:
-        kinds = [_describe(get_kind(arguments.target), detail=True)]
+        kind = _describe(get_kind(arguments.target), detail=True)
+        if arguments.stage is not None:
+            names = [s.name for s in kind.stages or []]
+            if arguments.stage not in names:
+                raise fail("describe.unknown_stage",
+                           f"the {kind.name} Recipe has no Stage '{arguments.stage}'; its Stages are "
+                           f"{', '.join(names)}", fix=f"kiripix describe {kind.name}")
+            kind = kind.model_copy(update={"stages": [s for s in kind.stages or [] if s.name == arguments.stage]})
+        kinds = [kind]
     return Outcome(DescribeData(kinds=kinds))
 
 

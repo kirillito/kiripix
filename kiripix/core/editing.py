@@ -144,6 +144,35 @@ def parse_decision(text: str, source: str, asset: Asset, stage: str) -> Decision
                    position=position, fix=f"kiripix describe {asset.kind}") from None
 
 
+def parse_decisions(text: str, source: str, asset: Asset, stage: str) -> tuple[list[DecisionDocument], bool]:
+    """One Decision, or a JSON array of them. Returns the documents and whether it was an array. Every invalid
+    element is reported, each finding naming its place in the array."""
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        return [parse_decision(text, source, asset, stage)], False  # raises the finding for bad JSON
+    if not isinstance(loaded, list):
+        return [parse_decision(text, source, asset, stage)], False
+    position = Position(asset=asset.id, stage=stage)
+    if not loaded:
+        raise fail("decide.invalid", f"{source} is an empty array; give at least one Decision", position=position,
+                   fix=f"kiripix describe {asset.kind} --stage {stage}")
+    documents: list[DecisionDocument] = []
+    findings: list[Finding] = []
+    for index, item in enumerate(loaded):
+        try:
+            documents.append(DecisionDocument.model_validate(item))
+        except ValidationError as error:
+            problems = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'the Decision'}: {e['msg']}"
+                                 for e in error.errors())
+            findings.append(Finding(code="decide.invalid", message=f"{source}[{index}] is not "
+                                    f"{{\"decision\": name, \"data\": {{...}}}}: {problems}", position=position,
+                                    fix=f"kiripix describe {asset.kind} --stage {stage}"))
+    if findings:
+        raise KiripixError(findings)
+    return documents, True
+
+
 def _entry_findings(spec: StageSpec, asset: Asset, document: DecisionDocument) -> list[Finding]:
     declared = next((d for d in spec.decisions if d.name == document.decision), None)
     if declared is None:
@@ -210,6 +239,36 @@ def record_decision(project: Project, asset: Asset, stage: str, document: Decisi
     path, before = _read(project, asset, stage)
     entry = _append(path, before, decision=document.decision, data=document.data, image_hash=image_hash)
     return entry, _read(project, asset, stage)[1]
+
+
+def record_decisions(project: Project, asset: Asset, stage: str, documents: list[DecisionDocument]) -> tuple[
+        list[journal.JournalEntry], journal.Replay]:
+    """Append several Decisions in order as ordinary journal entries, in one atomic write. All are validated first; one
+    invalid Decision means none is recorded, and its finding names its place in the array."""
+    graph = _graph(project, asset)
+    spec = graph.spec(stage)
+    findings: list[Finding] = []
+    for index, document in enumerate(documents):
+        for found in _entry_findings(spec, asset, document):
+            findings.append(found.model_copy(update={"message": f"[{index}] {found.message}"}))
+    if findings:
+        raise KiripixError(findings)
+    on_image = {d.name for d in spec.decisions if d.on_image}
+    click_image = _image_hash(graph, spec) if any(d.decision in on_image and d.image_hash is None
+                                                  for d in documents) else None
+    path, before = _read(project, asset, stage)
+    entries: list[journal.JournalEntry] = []
+    parent = before.last_id
+    for document in documents:
+        image_hash = document.image_hash
+        if image_hash is None and document.decision in on_image:
+            image_hash = click_image
+        entry = journal.JournalEntry(id=journal.new_ulid(parent), parent=parent, decision=document.decision,
+                                     data=document.data, image_hash=image_hash)
+        entries.append(entry)
+        parent = entry.id
+    journal.append_many(path, entries)
+    return entries, _read(project, asset, stage)[1]
 
 
 def record_override(project: Project, asset: Asset, stage: str, png: Path, shown: str) -> tuple[

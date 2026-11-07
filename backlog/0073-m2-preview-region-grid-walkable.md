@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: core-engineer
 type: ticket
@@ -30,8 +30,8 @@ These read outputs only. `preview` still changes nothing in the Project but its 
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a region's PNG has the right size, and its pixels match the same area of the full preview.
-- [ ] A grid at N lines up with the target pixels at any zoom, including in a region that doesn't start on a multiple of N.
-- [ ] The `walkable` overlay shows nothing on `solid` or a Pit, and the `reachable` overlay leaves out an unreachable island.
-- [ ] With `reach` not built, `--overlay reachable` is refused and the finding's `fix` runs it.
-- [ ] The contract sample in `tests/cli/test_contract.py` covers the new flags.
+- [x] CLI seam: a region's PNG has the right size, and its pixels match the same area of the full preview.
+- [x] A grid at N lines up with the target pixels at any zoom, including in a region that doesn't start on a multiple of N.
+- [x] The `walkable` overlay shows nothing on `solid` or a Pit, and the `reachable` overlay leaves out an unreachable island.
+- [x] With `reach` not built, `--overlay reachable` is refused and the finding's `fix` runs it.
+- [x] The contract sample in `tests/cli/test_contract.py` covers the new flags.

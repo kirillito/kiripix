@@ -1,5 +1,6 @@
-"""The `segment-preview` Probe's work (spec §10.1): the Mask a click would make, with nothing recorded or pinned. `serve`
-keeps the Runner warm for it (`kiripix.core.warm`); the CLI loads and unloads it like any other call."""
+"""The mask Probes' work (spec §10.1): `segment-preview`, the Mask a click would make, and `flood-preview`, the region
+a flood would fill, with nothing recorded or pinned. `serve` keeps segment-preview's Runner warm (`kiripix.core.warm`);
+the CLI loads and unloads it like any other call. flood-preview needs no Runner."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +17,7 @@ from kiripix.core.images import load_rgba
 from kiripix.core.kinds import all_runners
 from kiripix.core.locks import GPU_LOCK, hold
 from kiripix.core.project import Project
+from kiripix.ops import flood_region
 from kiripix.recipes.base import ClickPoint, StageFailure
 from kiripix.runners import Device, EmbeddingRunner, RunnerError, pull, weights_dir
 
@@ -39,6 +41,37 @@ def _cold_call(project: Project, runner_id: str, image: np.ndarray, params: dict
             return runner.call(image, params, cancel.check), runner.device_used
         finally:
             runner.unload()
+
+
+def flood_preview(project: Project, asset: Asset, floods: list[tuple[int, int, float]]) -> list[np.ndarray]:
+    """The region each flood would fill on the built Plate, by the Op the `flood` Decision replays. Nothing is recorded;
+    no Runner is loaded, so there is no lock."""
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    spec = next((stage for stage in graph.kind.stages if any(d.name == "flood" for d in stage.decisions)), None)
+    source = graph.input_image(spec) if spec is not None else None
+    if spec is None or source is None:
+        raise fail("probe.not_supported", f"a {asset.kind} has no Stage that floods", fix="kiripix describe project")
+    upstream, path = source
+    if graph.built_hash(upstream) is None or not path.is_file():
+        raise fail("probe.not_ready", f"{asset.id} has no built {upstream.name} image to flood yet",
+                   fix=f"kiripix run {asset.id} {upstream.name}", position=Position(asset=asset.id, stage=spec.name))
+    decision = next(d for d in spec.decisions if d.name == "flood")
+    bounds = decision.entry_schema["properties"]["tolerance"]  # the Decision's own limits, so `decide` takes what this did
+    low, high = bounds.get("minimum", 0.0), bounds.get("maximum", float("inf"))
+    for x, y, tolerance in floods:
+        if not low <= tolerance <= high:
+            raise fail("input.invalid", f"tolerance {tolerance:g} is outside {low:g} to {high:g}, which the flood "
+                       "Decision takes", position=Position(asset=asset.id, stage=spec.name, x=x, y=y),
+                       fix=f"kiripix probe flood-preview {asset.id} {x},{y},{min(max(tolerance, low), high):g}")
+    plate = load_rgba(path, project.relative(path))
+    regions = []
+    for x, y, tolerance in floods:
+        try:
+            regions.append(flood_region(plate, x, y, tolerance))
+        except ValueError as error:
+            raise fail("input.invalid", str(error), position=Position(asset=asset.id, stage=spec.name, x=x, y=y),
+                       fix=f"kiripix probe flood-preview {asset.id} 10,12,0.04") from None
+    return regions
 
 
 def segment_preview(project: Project, asset: Asset, points: list[ClickPoint], *, keep_warm: bool, cpu: bool, wait: float,

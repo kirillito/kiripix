@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from kiripix.ops import SIDES, collision_shapes, contours, simplify, flood_region, open_edges, paint_stroke, snap_cell, split_painted, wall_off
+from kiripix.ops import SIDES, collision_shapes, contours, fill_polygon, simplify, flood_region, open_edges, paint_stroke, snap_cell, split_painted, wall_off
 
 EXPECTED = Path(__file__).parent / "expected"
 
@@ -167,6 +167,70 @@ def test_a_stroke_outside_the_mask_is_clipped_and_a_negative_radius_refused() ->
         paint_stroke(empty, [(0, 0)], radius=-1)
     with pytest.raises(ValueError, match="Mask"):
         paint_stroke(np.zeros((4, 4), dtype=np.uint8), [(0, 0)], radius=0)
+
+
+# polygon
+
+
+def test_a_rectangle_polygon_is_the_box_filled_by_hand(request: pytest.FixtureRequest) -> None:
+    empty = np.zeros((12, 20), dtype=np.bool_)
+    box = empty.copy()
+    box[3:9, 4:15] = True  # corner pixels (4, 3) and (14, 8), both included
+
+    rectangle = fill_polygon(empty, [(4, 3), (14, 3), (14, 8), (4, 8)])
+    reversed_order = fill_polygon(empty, [(14, 8), (14, 3), (4, 3), (4, 8)])
+
+    assert not empty.any()
+    assert (rectangle == box).all() and (reversed_order == box).all()
+    assert_golden(request, as_image(rectangle), "mask_polygon_rectangle.png")
+
+
+def test_a_concave_polygon_fills_and_erase_clears_it(request: pytest.FixtureRequest) -> None:
+    empty = np.zeros((12, 20), dtype=np.bool_)
+    ell = [(2, 2), (7, 2), (7, 6), (13, 6), (13, 10), (2, 10)]  # an L, like a ticket booth
+
+    filled = fill_polygon(empty, ell)
+    cleared = fill_polygon(np.ones_like(empty), ell, erase=True)
+    notch = fill_polygon(filled, [(3, 3), (5, 3), (5, 5), (3, 5)], erase=True)
+
+    assert filled[3, 5] and filled[9, 12] and filled[6, 13] and not filled[3, 9] and not filled[4, 12]
+    assert filled[2:11, 2:8].all() and filled[6:11, 2:14].all()
+    assert filled.sum() == 9 * 6 + 5 * 6  # the upright 6 wide by 9 tall, and the foot 6 wide, 5 tall (its top row is an edge), beside it
+    assert (cleared == ~filled).all()
+    assert not notch[3:6, 3:6].any() and notch[2, 2]
+    assert_golden(request, as_image(filled, cleared, notch), "mask_polygon_concave.png")
+
+
+def test_a_self_crossing_polygon_follows_the_even_odd_rule(request: pytest.FixtureRequest) -> None:
+    empty = np.zeros((12, 12), dtype=np.bool_)
+    # a pentagram: its middle pentagon is covered twice, so it is a hole; the outline is still drawn
+    star = fill_polygon(empty, [(5, 0), (9, 11), (0, 4), (11, 4), (2, 11)])
+
+    assert star[4, 5] and star[0, 5] and star[4, 1]
+    assert not star[6, 5] and not star[5, 5]  # the middle, clear of the outline
+    assert_golden(request, as_image(star), "mask_polygon_star.png")
+
+
+def test_a_polygon_outside_the_mask_is_clipped_and_needs_three_points() -> None:
+    empty = np.zeros((6, 6), dtype=np.bool_)
+
+    clipped = fill_polygon(empty, [(-5, -5), (3, -5), (3, 3), (-5, 3)])
+    far = fill_polygon(empty, [(10, 10), (20, 10), (20, 20)])
+
+    assert (clipped == np.pad(np.ones((4, 4), dtype=np.bool_), ((0, 2), (0, 2)))).all()
+    assert not far.any()
+    with pytest.raises(ValueError, match="3 points"):
+        fill_polygon(empty, [(0, 0), (3, 3)])
+    with pytest.raises(ValueError, match="Mask"):
+        fill_polygon(np.zeros((4, 4), dtype=np.uint8), [(0, 0), (1, 0), (1, 1)])
+
+
+def test_a_polygon_that_shares_vertices_with_a_neighbour_leaves_no_seam() -> None:
+    empty = np.zeros((8, 16), dtype=np.bool_)
+    left = fill_polygon(empty, [(1, 1), (6, 1), (6, 6), (1, 6)])
+    both = fill_polygon(left, [(7, 1), (12, 1), (12, 6), (7, 6)])
+
+    assert both[1:7, 1:13].all() and not both[:, 13:].any()  # columns 6 and 7 touch with no gap
 
 
 # splitting a painted image

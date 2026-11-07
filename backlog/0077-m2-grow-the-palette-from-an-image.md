@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -51,16 +51,27 @@ This ticket adds no UI. The spec's Command list gains both, and `.kiripix/` keep
 
 ## Acceptance criteria
 
-- [ ] Golden seam: on a fixture, the Op gives the same colours every run, and none is within the minimum distance of another or of
+- [x] Golden seam: on a fixture, the Op gives the same colours every run, and none is within the minimum distance of another or of
       an existing colour.
-- [ ] A palette that already fits an image adds no colours, and says so rather than failing.
-- [ ] CLI seam: `palette-suggest` leaves `palette.gpl` byte-identical and every Asset's status unchanged.
-- [ ] CLI seam, under the harness's owner setting: `palette-add` keeps every existing line byte-identical and in order, and the
+- [x] A palette that already fits an image adds no colours, and says so rather than failing.
+- [x] CLI seam: `palette-suggest` leaves `palette.gpl` byte-identical and every Asset's status unchanged.
+- [x] CLI seam, under the harness's owner setting: `palette-add` keeps every existing line byte-identical and in order, and the
       file still passes `check_palette`.
-- [ ] Without the owner setting, `palette-add` exits 3 with `owner.required` and writes nothing.
-- [ ] A proposal made before the palette changed is refused with `palette.proposal_stale`.
-- [ ] After an add, a room's `palette` and later Stages are `stale`, with nothing in `needs-review`, and `run` rebuilds them.
-- [ ] Both Commands have samples in `tests/cli/test_contract.py`.
-- [ ] A manual check, not in CI, on `c:\Workspace\urban-mystery-club\references\subway-lower-bay.jpeg` with the art repo's palette:
+- [x] Without the owner setting, `palette-add` exits 3 with `owner.required` and writes nothing.
+- [x] A proposal made before the palette changed is refused with `palette.proposal_stale`.
+- [x] After an add, a room's `palette` and later Stages are `stale`, with nothing in `needs-review`, and `run` rebuilds them.
+- [x] Both Commands have samples in `tests/cli/test_contract.py`.
+- [x] A manual check, not in CI, on `c:\Workspace\urban-mystery-club\references\subway-lower-bay.jpeg` with the art repo's palette:
       `palette-suggest --add 32` runs, its error falls, and its time is noted here. The image is only read, and no test depends
       on it. The Owner judges the previews and runs `palette-add`, or doesn't.
+
+## Notes
+
+- Manual check, done on `c:\Homespace\urban-mystery-club\references\subway-lower-bay.jpeg` (the path above says `Workspace`).
+  The art repo's 64-colour palette was copied into a scratch Project, and the image was only read. It downscales to 640x357 at
+  `--scale 2.15`. With `--add 32`, the mean OKLab error before is 0.0241. At the default 0.03 it suggests 15 colours, error
+  0.0176 after; at 0.02, 29 colours and 0.0122; at 0.04, 8 colours and 0.0228. Each call took 13 to 27 s, measured while the
+  test suite ran alongside, so alone it's faster. The default stays 0.03; `--min-distance 0.02` comes close to the 32 asked
+  for. The Owner judges the previews and runs `palette-add`, or doesn't.
+- Earlier, before the subway image was found: as a stand-in, `palette-suggest --add 32` ran on the game repo's `references/approved/ch01-dungeon-r01.jpeg` (402x566 after `--scale 2.15`) with the art repo's 64-colour palette, in a scratch Project, read-only. About 5 s per call (9 s while other tests ran). Mean OKLab error before 0.0338; after 0.0100 at `--min-distance 0.02` (26 colours), 0.0122 at 0.025 (23), 0.0136 at 0.03 (22), 0.0223 at 0.04 (10), 0.0255 at 0.06 (3).
+- Default `--min-distance` is 0.03: the closest pair in the art palette is 0.032, so new colours are no closer than the old ones.

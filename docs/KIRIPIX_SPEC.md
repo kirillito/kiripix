@@ -239,7 +239,7 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | **source** | Generates N variants with a Provider (through `gen`), or **imports** an image made elsewhere (a first-class path: the owner may keep using an external image tool). | Picks between several (an agent may pick a lone variant) | Has a picked source |
 | **fit** | Detects the source's pixel grid, or downscales with a mode filter to the target size. Records the Grid transform. Palette-free. | Tunes the grid, with a before/after view | Exact size |
 | **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2; a negative click takes the object under it away from that Layer, and so from the Plate's hole, at its place in the replay), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. On path (a) the owner names a Layer with one click in a region of the difference; unclicked regions stay in the Plate. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial: a target pixel whose Source cell is partly covered by the Runner's Mask or has alpha strictly between 0 and 255 (default 1 px, 0 allowed). With no Decisions the Stage is `done`, and the Plate is the fit image. | Clicks objects to lift out; trims a rim with a brush on the Layer's alpha | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
-| **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2: a positive click adds the object under it to the Mask, a negative click, a shift-click, takes that object away from the Mask at its place in the replay, whichever Decision put it there; each is one Runner call), flood by colour region within an OKLab tolerance of the clicked pixel, brush, a wall along the room's chosen edges, or import of a painted image; optional snap to an N px cell grid. A polygon tool isn't built yet. | Clicks and brushes | Every Mask binary |
+| **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2: a positive click adds the object under it to the Mask, a negative click, a shift-click, takes that object away from the Mask at its place in the replay, whichever Decision put it there; each is one Runner call), flood by colour region within an OKLab tolerance of the clicked pixel, brush, polygon (`{mask, erase, points}`, at least three corners in target pixels; it closes itself, the outline pixels are included so a rectangle fills exactly its box, a self-crossing polygon follows the even-odd rule, points outside the Mask are clipped; not `on_image`, so a changed Plate leaves it as it is), a wall along the room's chosen edges, or import of a painted image; optional snap to an N px cell grid. The UI has no polygon tool yet (ticket 0080). | Clicks and brushes | Every Mask binary |
 | **palette** | Maps the whole composite once to the palette in OKLab (strict, or with optional ordered dithering) and removes orphan pixels. Each foreground Layer is that mapped image cut by its alpha; the Plate is the same image with only its inpainted areas mapped separately. | Tunes 2–3 sliders, with a before/after view | Every pixel on the palette; Plate + Layers still recompose exactly |
 | **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines. | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag; a sloped line sorts at its mean y, with a warning if its ends differ by more than half a tile |
 | **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, M5+). Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
@@ -319,6 +319,8 @@ Checks:
   - nearest-colour mapping;
   - ordered dithering (Bayer 2/4/8);
   - palette extraction (k-means in OKLab, then a manual merge);
+  - palette suggestion: new colours for a palette from an image, with the existing colours held fixed, new clusters
+    seeded where the palette fits worst, and candidates near an existing or chosen colour dropped;
   - palette conformance report.
 - **resample:**
   - pixel-grid detection (scale and offset of upscaled pixel art), returning a Grid transform;
@@ -499,7 +501,7 @@ One command, `kiripix` (alias `kpx`), with subcommand groups. Every command take
 
 ```
 kiripix init [dir]                          new project
-kiripix describe project|<kind>             Kinds, Recipes, stage parameters, Decision schemas, Checks
+kiripix describe project|<kind> [--stage s] Kinds, Recipes, stage parameters, Decision schemas, Checks; --stage gives one Stage
 kiripix schema [command]                    JSON Schemas of Command inputs and outputs
 kiripix status [--kind room]                board: every asset, its stage and state
 kiripix show <id>                           one asset: variants, the pick, each stage's parameters, decisions and images
@@ -507,22 +509,27 @@ kiripix new <kind> <id> [--view top|side]   new asset from its recipe
 kiripix next <id>                           the next stage and what it needs (a command, or the owner's action)
 kiripix run <id>|--all [stage] [--force] [--rerun] [--cpu]   run stale and todo stages; --rerun also re-runs stale Runner calls
 kiripix set <id> <stage> key=value...       set stage parameters
-kiripix decide <id> <stage> --decision '<json>' | --file d.json   record a Decision (validated against the stage's schema)
+kiripix decide <id> <stage> --decision '<json>' | --file d.json [--brief]   record a Decision (validated against the stage's schema); a file may hold a JSON array of Decisions, recorded all or none; --brief leaves out `current`
 kiripix override <id> <stage> <png>         record an Override from a painted image
 kiripix mask-import <id> <png>              import a painted mask image (the masks Stage's import Decision)
 kiripix plate-import <id> <png>             import a Plate image (the layers Stage's plate Decision)
-kiripix undo <id> <stage>                   undo the stage's last Decision
-kiripix redo <id> <stage>                   redo it
+kiripix undo <id> <stage> [--brief]         undo the stage's last Decision
+kiripix redo <id> <stage> [--brief]         redo it
 kiripix accept <id> <stage>                 confirm a needs-review stage (owner-only)
 kiripix import <id> <file>                  set a source from an outside image or model
 kiripix gen <id> [-n 4] [--provider x]      generate source variants (the only command that calls Providers)
 kiripix pick <id> <variant>                 record the chosen variant
 kiripix check <id>|--all                    run checks (--all includes Project checks), list findings with positions
-kiripix preview <id> [--stage s] [--overlay masks]   write a preview PNG, print its path
-kiripix probe <name> <id> <args...>         run a Probe, such as segment-preview
+kiripix preview <id> [--stage s] [--overlay masks|walkable|reachable] [--region x,y,w,h] [--grid N]
+                                            write a preview PNG, print its path
+kiripix probe <name> <id> <args...>         run a Probe, such as segment-preview or flood-preview x,y,tolerance ...
+                                            (several flood tries in one call, nothing recorded); every Mask answer
+                                            has `pixels` and a bounding box `box`, and `--summary` leaves out `runs`
 kiripix export [<id>|--all] [--dry-run] [--force] [--adopt] [--prune]   write to the Godot project
 kiripix manifest [merge|install|repair]     the git merge driver, installing it, and the manual fallback
 kiripix op <op> <args...>                   one op directly (quantize, snap-mask, reach, ...)
+kiripix op palette-suggest <image> --add N [--scale 2.15] [--min-distance d]   propose up to N colours the palette lacks; writes a proposal under .kiripix/, changes nothing in the palette
+kiripix palette-add <proposal> [--name prefix]   append a proposal's colours to the palette (owner-only); rooms using the palette go stale
 kiripix cost [--month]                      provider spend from the ledger
 kiripix runners [list|pull|rm]              local Runner management
 kiripix serve                               the REST API and the web UI; holds a warm Runner

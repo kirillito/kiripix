@@ -1,5 +1,5 @@
 ---
-status: todo
+status: in-progress
 milestone: M2
 agent: imaging-engineer
 type: ticket
@@ -26,8 +26,15 @@ description already names "polygon", and spec §6.1 says that it isn't built yet
 
 ## Acceptance criteria
 
-- [ ] A rectangle by `polygon` is pixel-identical to the same box filled by hand, with no seam: golden test at the Op seam.
-- [ ] A concave polygon (an L, like r03's ticket booth) fills correctly, and `erase` clears it, at the Op seam.
-- [ ] CLI seam: `decide`, then `run`, gives the Mask. `undo` removes it. A changed Plate leaves a `polygon`-only `masks` `done`.
-- [ ] Fewer than three points is refused with a finding.
+- [x] A rectangle by `polygon` is pixel-identical to the same box filled by hand, with no seam: golden test at the Op seam.
+- [x] A concave polygon (an L, like r03's ticket booth) fills correctly, and `erase` clears it, at the Op seam.
+- [x] CLI seam: `decide`, then `run`, gives the Mask. `undo` removes it. A changed Plate leaves a `polygon`-only `masks` `done`.
+- [x] Fewer than three points is refused with a finding.
 - [ ] `room.harbor_front`'s and the three dungeon rooms' journals still replay unchanged: no existing Decision changes meaning.
+
+## Notes
+
+- Journal replay, partly checked. The change to `kiripix/recipes/room.py` only adds: the `polygon` branch in `_masks`, its
+  `DecisionSpec` and one import. No existing Decision's schema or replay code changed. harbor_front's `masks.jsonl` (in the art
+  repo) uses `brush`, `click`, `flood`, `marker` and `pick`, but it wasn't replayed: its `work/` has no layers output to run
+  `masks` against. The three dungeon rooms aren't on this machine. The box stays open until the Owner runs `masks` on them.

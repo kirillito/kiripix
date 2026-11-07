@@ -223,6 +223,70 @@ def test_brush_strokes_and_erases_replay_in_order(project: Kiripix) -> None:
     assert read_mask(folder)[4, 10]
 
 
+# polygon
+
+
+def test_a_polygon_fills_the_mask_in_order_with_other_decisions_and_undo_removes_it(project: Kiripix) -> None:
+    folder = built_room(project)
+    decide(project, "polygon", {"mask": "solid", "erase": False, "points": [[20, 4], [30, 4], [30, 12], [20, 12]]})
+    decide(project, "polygon", {"mask": "solid", "erase": True, "points": [[22, 6], [26, 6], [26, 8]]})
+    decide(project, "brush", {"mask": "solid", "erase": False, "radius": 0, "points": [[22, 6]]})
+
+    project.json("run", ROOM, "masks")
+
+    solid = read_mask(folder)
+    # the box, less the cleared triangle, but the brush then set (22, 6) again
+    assert solid[4, 20] and solid[12, 30] and solid[6, 22] and not solid[6, 24] and not solid[7, 26]
+    assert not solid[3, 20] and solid[12, 20] and solid[8, 22]
+    project.json("undo", ROOM, "masks")  # the brush
+    project.json("undo", ROOM, "masks")  # the erase
+    project.json("run", ROOM, "masks")
+    assert read_mask(folder)[4:13, 20:31].all()
+    project.json("undo", ROOM, "masks")
+    project.json("run", ROOM, "masks")
+    assert not read_mask(folder).any()
+
+
+def test_a_changed_plate_leaves_a_polygon_only_masks_stage_done(project: Kiripix) -> None:
+    built_room(project)
+    entry = decide(project, "polygon", {"mask": "solid", "erase": False, "points": [[4, 4], [9, 4], [9, 9]]})["data"]
+    project.json("run", ROOM, "masks")
+    assert entry["current"][0]["image_hash"] is None
+
+    repainted = plate()
+    repainted[0:4, 40:48] = RUG
+    Image.fromarray(repainted, "RGBA").save(project.cwd / "source2.png")
+    data: dict[str, Any] = project.json("import", ROOM, "source2.png")["data"]
+    project.json("pick", ROOM, str(data["variant"]))
+    project.json("run", ROOM, expect=3)
+
+    assert stage_status(project, ROOM)["masks"] == "done"
+
+
+def test_a_polygon_with_fewer_than_three_points_is_refused_with_a_finding(project: Kiripix) -> None:
+    built_room(project)
+
+    result = decide(project, "polygon", {"mask": "solid", "erase": False, "points": [[4, 4], [9, 4]]}, expect=1)
+
+    assert result["findings"][0]["code"] == "decision.invalid"
+    assert not result["ok"]
+
+
+def test_a_polygon_naming_a_derived_mask_fails_the_stage_with_the_undo(project: Kiripix) -> None:
+    built_room(project)
+    decide(project, "polygon", {"mask": "walkable", "erase": False, "points": [[1, 1], [5, 1], [5, 5]]})
+
+    result = project.json("run", ROOM, "masks", expect=1)
+
+    assert "derived" in result["findings"][-1]["message"]
+
+
+def test_describe_lists_the_polygon_decision(project: Kiripix) -> None:
+    built_room(project)
+
+    assert "polygon" in json.dumps(project.json("describe", "room"))
+
+
 def test_snap_cell_applies_the_cell_grid_to_every_mask(project: Kiripix) -> None:
     folder = built_room(project)
     decide(project, "brush", {"mask": "solid", "erase": False, "radius": 1, "points": [[5, 5]]})

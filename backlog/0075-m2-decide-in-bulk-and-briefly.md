@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: core-engineer
 type: ticket
@@ -26,11 +26,21 @@ This is the largest token saving the trial found, and an MCP tool in M4 would in
 
 ## Acceptance criteria
 
-- [ ] CLI seam: `--brief` output doesn't grow with the journal, and the default output is unchanged.
-- [ ] An array of 30 Decisions records 30 journal lines in order, in one process, and replays the same as 30 single calls.
-- [ ] An array with one invalid Decision records nothing, and the finding names which one.
-- [ ] `undo` after an array undoes only its last Decision.
-- [ ] A write interrupted during an array leaves the journal readable, with whole lines only, under `kiripix.core.atomic`.
-- [ ] `describe room --stage masks` gives only that Stage. An unknown Stage is refused, and the finding lists the Stages.
-- [ ] The token count of the agent acceptance test ([0057](0057-m2-agent-acceptance-test.md)) is noted before and after, if it
+- [x] CLI seam: `--brief` output doesn't grow with the journal, and the default output is unchanged.
+- [x] An array of 30 Decisions records 30 journal lines in order, in one process, and replays the same as 30 single calls.
+- [x] An array with one invalid Decision records nothing, and the finding names which one.
+- [x] `undo` after an array undoes only its last Decision.
+- [x] A write interrupted during an array leaves the journal readable, with whole lines only, under `kiripix.core.atomic`.
+- [x] `describe room --stage masks` gives only that Stage. An unknown Stage is refused, and the finding lists the Stages.
+- [x] The token count of the agent acceptance test ([0057](0057-m2-agent-acceptance-test.md)) is noted before and after, if it
       uses these Commands.
+
+## Notes
+
+- Built: `decide` takes a JSON array (via `--file` or `--decision`), validated whole and appended in one atomic rewrite of
+  the journal (`atomic.append_jsonl_many`), so an interruption leaves the journal as it was. Findings of an array name the
+  index (`[3] ...`). `--brief` on decide/undo/redo gives `current: null` and `count`; the default output keeps `current`
+  and only gains `count` and `ids`. The UI never reads `current` from a decide result.
+- An interrupted write is not simulated at the CLI seam; the CLI test checks whole LF lines and no leftover temporary files.
+- Token count for 0057: the agent acceptance test doesn't use these Commands (its agent runs one plain command per call and
+  only the stand-in owner calls `decide`, outside the agent's tokens), so there is no before and after to note.

@@ -75,8 +75,20 @@ class PreviewInput(BaseModel):
 
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
     stage: str | None = Field(None, description="The Stage to preview; default is the last done Stage with an image.")
-    overlay: Literal["masks"] | None = Field(None, description="Tint each Mask over the image.")
+    overlay: Literal["masks", "walkable", "reachable"] | None = Field(
+        None, description="Tint each Mask over the image, or the walkable ground (the place Stage's output), or the "
+                          "ground the Body can reach (the reach Stage's).")
     zoom: int = Field(4, ge=1, le=16, description="Whole-number zoom, nearest neighbour.")
+    region: str | None = Field(None, description="x,y,width,height in target pixels: crop to it before the zoom.")
+    grid: int | None = Field(None, ge=1, description="A line every N target pixels, from the room's origin, drawn "
+                                                      "after the zoom; every fifth is stronger.")
+
+
+class PreviewRegion(BaseModel):
+    x: int
+    y: int
+    width: int
+    height: int
 
 
 class PreviewData(BaseModel):
@@ -87,6 +99,10 @@ class PreviewData(BaseModel):
     height: int
     zoom: int
     masks: list[str] = Field(description="The Masks tinted over the image, when an overlay was asked for.")
+    overlay: str | None = None
+    region: PreviewRegion | None = Field(None, description="The target pixels shown: pixel (i, j) of the PNG is target "
+                                                           "pixel (x + i // zoom, y + j // zoom).")
+    grid: int | None = None
 
     def text(self) -> str:
         return self.path
@@ -105,7 +121,13 @@ def preview(arguments: PreviewInput, context: Context) -> Outcome[PreviewData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
     cache = HashCache(project.state_dir)
-    made = write_preview(project, asset, cache, arguments.stage, arguments.overlay, arguments.zoom)
+    made = write_preview(project, asset, cache, arguments.stage, arguments.overlay, arguments.zoom,
+                         arguments.region, arguments.grid)
     cache.save()
+    region = None
+    if made.region is not None:
+        x, y, width, height = made.region
+        region = PreviewRegion(x=x, y=y, width=width, height=height)
     return Outcome(PreviewData(asset=asset.id, stage=made.stage, path=project.relative(made.path), width=made.width,
-                               height=made.height, zoom=arguments.zoom, masks=made.masks))
+                               height=made.height, zoom=arguments.zoom, masks=made.masks, overlay=made.overlay,
+                               region=region, grid=made.grid), list(made.findings))

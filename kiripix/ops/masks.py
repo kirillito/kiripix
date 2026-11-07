@@ -6,6 +6,7 @@ points in order, and a colour that is equally near two defined colours goes to t
 
 from collections import deque
 from collections.abc import Sequence
+from fractions import Fraction
 
 import numpy as np
 import numpy.typing as npt
@@ -92,6 +93,45 @@ def paint_stroke(mask: BoolMask, points: Sequence[tuple[int, int]], radius: int,
             x, y = px + dx, py + dy
             if 0 <= x < width and 0 <= y < height:
                 result[y, x] = not erase
+    return result
+
+
+def fill_polygon(mask: BoolMask, points: Sequence[tuple[int, int]], erase: bool = False) -> BoolMask:
+    """`mask` with a polygon set (or, with `erase`, cleared). The points are pixel coordinates, the polygon closes
+    itself, and it needs at least three.
+
+    A pixel is filled when its centre is inside the polygon by the even-odd rule (so a self-crossing polygon has holes
+    where it overlaps itself) or when it is on the outline, a Bresenham line between each pair of neighbouring points
+    and from the last point back to the first. Edge pixels are therefore included: a rectangle through the corner
+    pixels fills exactly that box. All arithmetic is on integers. Points outside the Mask are clipped.
+    """
+    _require_mask(mask)
+    if len(points) < 3:
+        raise ValueError("a polygon needs at least 3 points")
+    height, width = mask.shape
+    result = mask.copy()
+    value = not erase
+    count = len(points)
+    for y in range(max(0, min(p[1] for p in points)), min(height - 1, max(p[1] for p in points)) + 1):
+        crossings: list[tuple[int, int]] = []  # x of the crossing as a fraction (numerator, positive denominator)
+        for index in range(count):
+            (x0, y0), (x1, y1) = points[index - 1], points[index]
+            if y0 == y1 or not (min(y0, y1) <= y < max(y0, y1)):  # half-open, so a shared vertex counts once
+                continue
+            denominator = y1 - y0
+            numerator = x0 * denominator + (y - y0) * (x1 - x0)
+            crossings.append((numerator, denominator) if denominator > 0 else (-numerator, -denominator))
+        crossings.sort(key=lambda c: Fraction(c[0], c[1]))  # exact
+        for first, last in zip(crossings[0::2], crossings[1::2]):
+            left = -((-first[0]) // first[1])  # ceil
+            right = last[0] // last[1]  # floor
+            left, right = max(left, 0), min(right, width - 1)
+            if left <= right:
+                result[y, left:right + 1] = value
+    for index in range(count):
+        for x, y in _line(points[index - 1], points[index]):
+            if 0 <= x < width and 0 <= y < height:
+                result[y, x] = value
     return result
 
 

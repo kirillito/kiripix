@@ -25,8 +25,27 @@ from kiripix.ops.layers import (
     partial_cells,
     recompose,
 )
-from kiripix.ops.masks import SIDES, flood_region, mask_runs, open_edges, paint_stroke, snap_cell, split_painted, wall_off
-from kiripix.ops.palette import Palette, PaletteEntry, PaletteSyntaxError, format_gpl, parse_gpl, parse_hex
+from kiripix.ops.masks import (
+    SIDES,
+    fill_polygon,
+    flood_region,
+    mask_runs,
+    open_edges,
+    paint_stroke,
+    snap_cell,
+    split_painted,
+    wall_off,
+)
+from kiripix.ops.palette import (
+    Palette,
+    PaletteEntry,
+    PaletteSuggestion,
+    PaletteSyntaxError,
+    format_gpl,
+    parse_gpl,
+    parse_hex,
+    suggest_palette,
+)
 from kiripix.ops.reach import Gap, Island, narrowest_gaps, reachable, walkable, walkable_islands
 from kiripix.ops.resample import (
     Grid,
@@ -51,6 +70,7 @@ __all__ = [
     "Outline",
     "Palette",
     "PaletteEntry",
+    "PaletteSuggestion",
     "PaletteSyntaxError",
     "add_outline",
     "alpha_by_vote",
@@ -79,6 +99,7 @@ __all__ = [
     "SIDES",
     "open_edges",
     "paint_stroke",
+    "fill_polygon",
     "parse_gpl",
     "parse_hex",
     "partial_cells",
@@ -92,6 +113,7 @@ __all__ = [
     "snap_cell",
     "split_painted",
     "srgb_to_oklab",
+    "suggest_palette",
     "target_centre",
     "upscale",
     "walkable",

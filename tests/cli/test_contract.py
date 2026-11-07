@@ -18,6 +18,13 @@ def _image(project: Kiripix) -> None:
     Image.new("RGBA", (4, 4), (255, 0, 77, 255)).save(project.cwd / "in.png")  # "red" in the default palette
 
 
+def _proposal(project: Kiripix) -> None:
+    """A palette proposal for a colour the default palette lacks, copied to a path the sample can name."""
+    Image.new("RGBA", (4, 4), (10, 200, 210, 255)).save(project.cwd / "in.png")
+    made = project.json("op", "palette-suggest", "in.png", "--add", "2", "--scale", "1")["data"]["proposal"]
+    shutil.copy(project.cwd / made, project.cwd / ".kiripix" / "palette-proposals" / "in-proposal.json")
+
+
 def _decided(project: Kiripix) -> None:
     make_demo(project)
     project.json("decide", "demo.a", "choose", "--decision", MARK)
@@ -70,11 +77,13 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "pick": lambda p: (_imported(p), ["pick", "room.alley", _imported(p)])[1],
     "check": lambda p: (make_demo(p), ["check", "demo.a"])[1],
     "show": lambda p: (make_demo(p), ["show", "demo.a"])[1],
-    "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw"])[1],
+    "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw", "--region", "0,0,4,4", "--grid", "2"])[1],
     "export": lambda p: (exportable_room(p), ["export", "room.alley"])[1],
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
+    "op palette-suggest": lambda p: (_image(p), ["op", "palette-suggest", "in.png", "--add", "2", "--scale", "1"])[1],
+    "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
     "runners list": lambda p: ["runners", "list"],
     "runners pull": lambda p: ["runners", "pull", "sam2.1-small"],
     "runners rm": lambda p: ["runners", "rm", "sam2.1-small"],

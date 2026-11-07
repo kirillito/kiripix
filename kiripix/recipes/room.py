@@ -35,6 +35,7 @@ from kiripix.recipes.base import (
 from kiripix.ops import (
     collision_shapes,
     contours,
+    fill_polygon,
     flood_region,
     narrowest_gaps,
     open_edges,
@@ -301,6 +302,10 @@ def _masks(run: StageRun) -> None:
             name = _decision_mask(run, view, str(data["mask"]), "brush")
             masks[name] = paint_stroke(masks[name], [(int(x), int(y)) for x, y in data["points"]],
                                        int(data["radius"]), erase=bool(data["erase"]))
+        elif decision.name == "polygon":
+            name = _decision_mask(run, view, str(data["mask"]), "polygon")
+            masks[name] = fill_polygon(masks[name], [(int(x), int(y)) for x, y in data["points"]],
+                                       erase=bool(data["erase"]))
         elif decision.name == "border":
             name = _decision_mask(run, view, str(data["mask"]), "border")
             masks[name] = wall_off(masks[name], [str(side) for side in data["sides"]],
@@ -982,6 +987,27 @@ ROOM = KindSpec(
                                                                   "minItems": 2, "maxItems": 2}},
                         },
                         "required": ["mask", "erase", "radius", "points"],
+                        "additionalProperties": False,
+                    },
+                ),
+                DecisionSpec(
+                    name="polygon",
+                    description="Fill a polygon on one Mask, or clear it with `erase`: `points` are at least three "
+                                "corners in target pixels, and the polygon closes itself. The pixels on its outline "
+                                "are included, so a rectangle through its corner pixels fills exactly that box; a "
+                                "self-crossing polygon follows the even-odd rule (where it overlaps itself it is "
+                                "clear); points outside the Mask are clipped. Like a brush stroke it depends on the "
+                                "Mask, not on the Plate, so a changed Plate leaves it as it is. It replays in order.",
+                    entry_schema={
+                        "type": "object",
+                        "properties": {
+                            "mask": {"type": "string"},
+                            "erase": {"type": "boolean"},
+                            "points": {"type": "array", "minItems": 3,
+                                       "items": {"type": "array", "items": {"type": "integer"},
+                                                 "minItems": 2, "maxItems": 2}},
+                        },
+                        "required": ["mask", "erase", "points"],
                         "additionalProperties": False,
                     },
                 ),

@@ -46,6 +46,17 @@ def write_json(path: Path, value: Any) -> None:
     write_text(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
+def append_jsonl_many(path: Path, entries: list[dict[str, Any]]) -> None:
+    """Append several objects, one LF-terminated line each, all or none: the file is rewritten whole, atomically, so an
+    interruption leaves the journal as it was. Existing bytes are kept as they are. The caller holds the file's lock
+    (a journal's is its Asset's), or a concurrent append between the read and the rename would be lost."""
+    lines = "".join(json.dumps(e, ensure_ascii=False, separators=(",", ":")) + "\n" for e in entries)
+    existing = path.read_bytes() if path.exists() else b""
+    if existing and not existing.endswith(b"\n"):
+        existing += b"\n"
+    write_bytes(path, existing + lines.encode("utf-8"))
+
+
 def append_jsonl(path: Path, entry: dict[str, Any]) -> None:
     """Append one JSON object as one LF-terminated line, in a single write."""
     line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
