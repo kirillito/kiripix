@@ -7,7 +7,7 @@ type: ticket
 
 # M3: a Probe that answers as a lift would, for many clicks at once
 
-Spec §10.1. Found by [0076](0076-m2-claude-layers-first-pass-trial.md), which has two costs from one cause:
+Spec §10.1. Found by [0076](m2/0076-m2-claude-layers-first-pass-trial.md), which has two costs from one cause:
 
 - **A probe doesn't predict the lift.** `segment-preview` with several clicks sends them as one prompt, while a lift makes one Runner
   call per click and takes the union (`click_groups`, ticket 0070). On r02's lockers the same 6 clicks gave 13,471 px as a probe and

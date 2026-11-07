@@ -27,7 +27,7 @@ Spec §14 (the agent acceptance test). User story 33 of [0010](0010-m1-room-end-
 ## Notes
 
 - **Five real runs on 2026-11-04, all on `claude-haiku-5-5`.** Each has its own report in
-  [docs/acceptance/](../docs/acceptance/README.md). The fifth is the M1 token figure, the first on the tool with 0033 and
+  [docs/acceptance/](../../docs/acceptance/README.md). The fifth is the M1 token figure, the first on the tool with 0033 and
   0034 fixed: **7,629 fresh tokens** (119,248 counting cache reads), 13 Commands, one owner step. It is one pass, and an
   agent's path varies from run to run.
   - `2026-11-04-m1.md`, FAIL: the agent stopped at the Pick, because `describe` and `next` disagree about who makes it. A

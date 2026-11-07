@@ -7,7 +7,7 @@ type: ticket
 
 # M3: `downscale` keeps one scale on both axes
 
-Spec §6.1 (fit) and §6.2. Found by [0063](0063-m2-multi-screen-source-trial.md).
+Spec §6.1 (fit) and §6.2. Found by [0063](m2/0063-m2-multi-screen-source-trial.md).
 
 ## The gap
 

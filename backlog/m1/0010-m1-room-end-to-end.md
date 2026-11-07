@@ -6,9 +6,9 @@ type: spec
 
 # M1: a room, end to end (the vertical slice)
 
-Background: [the Kiripix spec](../docs/KIRIPIX_SPEC.md) (§5, §6.1, §8–§11, §14 M1), [the glossary](../GLOSSARY.md)
-and [the ADRs](../docs/adr/), especially ADR 0002 (pinned calls), 0003 (the Manifest), 0004 (Runners before the
-palette) and 0005 (status is derived). M0 ([0001](0001-m0-skeleton.md)) is done: the Command registry, the JSON
+Background: [the Kiripix spec](../../docs/KIRIPIX_SPEC.md) (§5, §6.1, §8–§11, §14 M1), [the glossary](../../GLOSSARY.md)
+and [the ADRs](../../docs/adr/), especially ADR 0002 (pinned calls), 0003 (the Manifest), 0004 (Runners before the
+palette) and 0005 (status is derived). M0 ([0001](../m0/0001-m0-skeleton.md)) is done: the Command registry, the JSON
 contract, `init`/`new`/`status`/`describe`/`schema`/`next`/`run`, the stage graph, locks, and the palette and quantise
 Ops. Use the glossary's words in code, messages and tests.
 

@@ -13,10 +13,10 @@ gate, and named them as a main cost in their time per room. Nobody has timed the
 
 ## The likely cause
 
-`masks` has `gpu=True` ([room.py:903](../kiripix/recipes/room.py#L903)), so `execute` holds the GPU lock through a run that
-replays pinned results and loads no Runner ([graph.py:535](../kiripix/core/graph.py#L535)). Spec §10.4 says the lock is held
+`masks` has `gpu=True` ([room.py:903](../../kiripix/recipes/room.py#L903)), so `execute` holds the GPU lock through a run that
+replays pinned results and loads no Runner ([graph.py:535](../../kiripix/core/graph.py#L535)). Spec §10.4 says the lock is held
 only while a Runner is loaded. `hold` then asks a warm Runner to let go
-([locks.py:152-155](../kiripix/core/locks.py#L152-L155)). So with "Rebuild the Masks after each edit" on, each edit may unload
+([locks.py:152-155](../../kiripix/core/locks.py#L152-L155)). So with "Rebuild the Masks after each edit" on, each edit may unload
 SAM 2 and lose its embedding, and the next hover loads it and encodes the image again. This comes from reading the code. The
 timing below decides.
 

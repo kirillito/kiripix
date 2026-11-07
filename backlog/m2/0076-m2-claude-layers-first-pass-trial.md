@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M2
 agent: none
 type: trial
@@ -133,8 +133,8 @@ everything after it until the Owner accepts. What Claude can check before that i
 - **Masks after a lift:** whether `brush` and `border` Masks came through the changed Plate with nothing to review, as their
   schemas imply, and whether anything needed repainting.
 - **Tokens,** per room, and Runner time per click and per lift.
-- **Evidence for other tickets:** how often a click returned fragments, for [0079](0079-m3-segment-with-a-box.md), and how much
-  the wait for `accept` got in the way, for [0078](0078-m3-reach-probe.md).
+- **Evidence for other tickets:** how often a click returned fragments, for [0079](../0079-m3-segment-with-a-box.md), and how much
+  the wait for `accept` got in the way, for [0078](../0078-m3-reach-probe.md).
 - **A recommendation for M4:** extend the first pass to Layers, narrow it (for example to separate solid objects, or to y-sort
   lines on Layers the Owner lifts), or leave Layers to the Owner. Say plainly if correcting took longer than doing it by hand.
 
@@ -211,17 +211,17 @@ so the larger room was the cheaper one.
 
 **Evidence for other tickets:**
 
-- **[0078](0078-m3-reach-probe.md):** the wait got in the way less than expected. Clicks and lines all had to go in unconfirmed, and
+- **[0078](../0078-m3-reach-probe.md):** the wait got in the way less than expected. Clicks and lines all had to go in unconfirmed, and
   after `accept` no line or Marker needed changing, so here it cost a longer handover list and nothing else. One trial on rooms with
   good Masks, so it doesn't rule the ticket out.
-- **[0079](0079-m3-segment-with-a-box.md):** fragments are common but concentrated: r02 11 of 14 single-click probes, r01 12 of 14,
+- **[0079](../0079-m3-segment-with-a-box.md):** fragments are common but concentrated: r02 11 of 14 single-click probes, r01 12 of 14,
   r03's booth 9 of 9, against r03's 20-odd whole objects. On r01 a shift of a few pixels decides it: 135,459 leaks to 8,841 px where
   142,460 is the clean rail. The Owner's clicks at y≈102 did the same: 142,102 and 271,102 gave `layer1`'s leak, 134,101 and 268,103
   a thin band. A box may help there, and it's where the Owner lost the time. Untested.
 - **For choosing Layers by numbers:** a test of how much reachable ground puts the Body behind each Layer didn't separate the
   Layers worth lifting: r01's unneeded rails score 108 and 144 px, about the same as Layers the Owner kept. It ignored the Body's
   footprint, so it doesn't show that such a test can't work, only that this one doesn't.
-- **[0083](0083-m3-ui-show-that-work-is-happening.md), new:** `accept` gives no sign of working in the UI, and neither does lifting a
+- **[0083](../0083-m3-ui-show-that-work-is-happening.md), new:** `accept` gives no sign of working in the UI, and neither does lifting a
   Layer or drawing a Mask. The Owner clicks, can't tell whether it's running, and clicks again.
 
 **Recommendation for M4: extend the first pass to Layers, narrowed, for rooms with many objects.**

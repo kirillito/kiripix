@@ -77,7 +77,7 @@ art Project, palette as `harbor_front` (bayer8, orphan 2).
 - **Kiripix limit found: `downscale` scales each axis on its own, silently.** The subway's 2185 x 768 into 1024 x 320 gave
   2.13 across and 2.40 down, an 11 % squash, with no finding. `harbor_front` has the same, at 3 % (2.15 against 2.09).
   Worked around by cropping each Source to the brief's aspect before import (subway rows 40-723; harbour the top 1135
-  rows). Filed as [0081](0081-m3-downscale-keeps-one-scale.md).
+  rows). Filed as [0081](../0081-m3-downscale-keeps-one-scale.md).
 - Station-name text is illegible at the target size in every bay, the original's included. That's the scale, not the join.
 - **SAM 2 at this width (reasoning, not measured):** its encoder stretches the image to 1024 x 1024, so the subway's
   2185 x 683 is squeezed 2.1x across and stretched 1.5x down. Clicks should be coarser across than on a one-screen room.
@@ -110,7 +110,7 @@ stopped at `place`, with no Spawn, no `reach` and no export.
 - **The scene has no room size.** The exported `.tscn` holds the Plate, bodies, Navigation and Markers, but no size or camera
   limits. The game can read the size from the Plate's texture. A scrolling camera needs that on the game side.
 - **Canvas:** panning exists but the Owner couldn't find it, and zoom loses the place. Filed as
-  [0082](0082-m3-ui-canvas-navigation.md).
+  [0082](../0082-m3-ui-canvas-navigation.md).
 
 ## The Owner's judgments (2026-11-06)
 

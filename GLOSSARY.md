@@ -56,7 +56,7 @@ _Avoid_: layer, patch, hand edit
 ## Sources
 
 **Variant**:
-One candidate image or model, generated or imported, offered for a Pick.
+One candidate image or model, generated or imported, offered for a Pick: of an Asset's Source, or of a Look's edit.
 
 **Source**:
 The picked Variant that a Recipe builds from. Immutable once picked.
@@ -132,6 +132,16 @@ The stand-in player footprint used for reachability and walk tests.
 
 **Y-sort line**:
 The line on a foreground Layer that decides whether it is drawn over or under an actor.
+
+**Look**:
+Another appearance of part of a Room, such as a door shut, a lamp unlit or a station unbuilt. It is painted as an edit
+of the room's Source, cut to a region, and shown by the game while its Condition holds.
+_Avoid_: state (that is the game's, and Stage status is "status"), variant, overlay, patch
+
+**Condition**:
+The name of the game state that shows a Look, such as `circuit.hall:off`. Kiripix stores and exports it, and never
+interprets it.
+_Avoid_: when, flag, trigger
 
 ## Verification and output
 

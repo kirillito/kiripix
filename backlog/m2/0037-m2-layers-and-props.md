@@ -1,14 +1,14 @@
 ---
-status: todo
+status: done
 milestone: M2
 type: spec
 ---
 
 # M2: layers and props
 
-Background: [the Kiripix spec](../docs/KIRIPIX_SPEC.md) (§5, §6.1, §6.2, §7–§11, §14 M2), [the glossary](../GLOSSARY.md)
-and [the ADRs](../docs/adr/), especially ADR 0001 (binary Masks), 0002 (pinned calls), 0003 (the Manifest) and 0004
-(Runners before the palette). M1 ([0010](0010-m1-room-end-to-end.md)) is done, signed off on 2026-11-04. Use the
+Background: [the Kiripix spec](../../docs/KIRIPIX_SPEC.md) (§5, §6.1, §6.2, §7–§11, §14 M2), [the glossary](../../GLOSSARY.md)
+and [the ADRs](../../docs/adr/), especially ADR 0001 (binary Masks), 0002 (pinned calls), 0003 (the Manifest) and 0004
+(Runners before the palette). M1 ([0010](../m1/0010-m1-room-end-to-end.md)) is done, signed off on 2026-11-04. Use the
 glossary's words in code, messages and tests.
 
 ## Problem Statement
@@ -139,7 +139,7 @@ The Owner took these on 2026-11-04. The spec and ADRs follow them.
 
 Tickets [0035](0035-m2-ui-brush-stroke-slows-down.md), [0036](0036-m2-flood-does-nothing-on-a-painted-plate.md) and
 [0038](0038-m2-core-for-layers.md) to [0063](0063-m2-multi-screen-source-trial.md). Lights and emitters were built in M1
-([0021](0021-m1-room-export-and-manifest.md)); M2 only proves them in Godot, at the gate.
+([0021](../m1/0021-m1-room-export-and-manifest.md)); M2 only proves them in Godot, at the gate.
 
 **Order:**
 

@@ -7,7 +7,7 @@ type: ticket
 
 # M3: `check` says which results come from an out-of-date Stage
 
-Spec §10.5. Found by [0076](0076-m2-claude-layers-first-pass-trial.md). With `layers` in `needs-review` and five y-sort lines just recorded,
+Spec §10.5. Found by [0076](m2/0076-m2-claude-layers-first-pass-trial.md). With `layers` in `needs-review` and five y-sort lines just recorded,
 `kiripix check room.ch01_dungeon_r02` listed `place` as checked and returned no findings. That reads as a pass, but `check_asset`
 (`kiripix/core/project_checks.py`) runs a Stage's Checks whenever it has an output, however old. So it was checking the `place` output
 from before those lines, and the real result appeared only after `accept`.

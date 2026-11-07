@@ -13,9 +13,9 @@ inpaint call can't be listed until that result exists.
 
 ## The gap
 
-`make_runner_calls` ([graph.py:425](../kiripix/core/graph.py#L425)) reads `missing_calls` once, so one `run --rerun` would
+`make_runner_calls` ([graph.py:425](../../kiripix/core/graph.py#L425)) reads `missing_calls` once, so one `run --rerun` would
 make the segmentation and stop at "Runner not run yet". `was_made_before`
-([pinning.py:33](../kiripix/core/pinning.py#L33)) compares only the Stage and `decisions`.
+([pinning.py:33](../../kiripix/core/pinning.py#L33)) compares only the Stage and `decisions`.
 
 ## What to build
 

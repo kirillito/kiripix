@@ -3,14 +3,14 @@ status: todo
 milestone: M3
 agent: ui-engineer
 type: ticket
-depends_on: [0072-m2-polygon-decision.md]
+depends_on: [m2/0072-m2-polygon-decision.md]
 ---
 
 # M3: a polygon tool on the mask screen
 
-Spec §6.1 and §11. The Owner's idea, from [0062](0062-m2-claude-first-pass-trial.md): six clicks build a six-point polygon on the
+Spec §6.1 and §11. The Owner's idea, from [0062](m2/0062-m2-claude-first-pass-trial.md): six clicks build a six-point polygon on the
 Mask. It sits in M3 because the trial's corrections took about a minute and because a new hand tool in M2 would change the
-comparison the gate is measuring, the time for the hand-made reference room ([0058](0058-m2-gate.md)). Reconsider it if the
+comparison the gate is measuring, the time for the hand-made reference room ([0058](m2/0058-m2-gate.md)). Reconsider it if the
 gate's hand-made room shows a lot of tracing.
 
 ## What to build

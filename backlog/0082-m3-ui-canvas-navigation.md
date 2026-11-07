@@ -7,7 +7,7 @@ type: ticket
 
 # M3: finding your way around a room larger than the canvas
 
-Spec §11. Found by the Owner in [0063](0063-m2-multi-screen-source-trial.md), on 1024 x 320 and 640 x 528 rooms: zoomed in, they
+Spec §11. Found by the Owner in [0063](m2/0063-m2-multi-screen-source-trial.md), on 1024 x 320 and 640 x 528 rooms: zoomed in, they
 found no way to move around the image. Dragging, arrow keys and scrollbars all did nothing.
 
 ## What's there today

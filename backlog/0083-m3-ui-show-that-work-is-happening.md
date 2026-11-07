@@ -7,7 +7,7 @@ type: ticket
 
 # M3: show that a click did something and Kiripix is working on it
 
-Spec §11. Found by the Owner in [0076](0076-m2-claude-layers-first-pass-trial.md). On all three rooms, `Accept` took a long time with
+Spec §11. Found by the Owner in [0076](m2/0076-m2-claude-layers-first-pass-trial.md). On all three rooms, `Accept` took a long time with
 no sign of working: "you click and nothing happens, and you're not sure if it's working or not". The same goes for lifting a Layer
 and drawing a Mask. There's almost no way to tell, and it causes extra clicks.
 
@@ -30,8 +30,9 @@ All in `web/src/App.tsx`, unless named.
 
 Web only. The UI knows when each action starts and ends, so nothing here should need a new Command or event.
 
-- **An answer to every action, at once:** within a frame of the click, whether or not the server has replied. This covers `Accept`,
-  `run` and the rerun, layer clicks and trims, Mask brush, flood, click and border, undo and redo, imports and pick.
+- **An answer to every action, at once:** within a frame of the click, whether or not the server has replied. This covers opening
+  the room list and opening a room (13 to 15 s each at the [M2 gate](m2/0058-m2-gate.md), with nothing on screen; the cause is
+  [0090](0090-m3-status-without-re-deriving-lifts.md)), `Accept`, `run` and the rerun, the `palette` Stage's run, layer clicks and trims, Mask brush, flood, click and border, undo and redo, imports and pick.
 - **On the canvas, where the Owner is looking:**
   - A layer or Mask click leaves a mark on its pixel until its result lands.
   - A brush stroke stays drawn, marked as pending, until the Stage has rebuilt.
@@ -53,6 +54,7 @@ a ticket of their own, starting with the 23 s gap. `Accept` doesn't gain a Cance
 
 Playwright, with the response held back by `page.route` so the wait can be seen:
 
+- [ ] Opening the room list and opening a room show the strip at once, before the response.
 - [ ] `Accept`: the strip and the button's working state show before the response, and a second press sends no second request.
 - [ ] A layer click leaves a mark on its pixel before the response, and the mark goes when the result lands.
 - [ ] A brush stroke stays visible, marked as pending, until the Stage has rebuilt.

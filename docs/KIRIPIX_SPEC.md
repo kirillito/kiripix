@@ -78,6 +78,7 @@ layers, and the layers get stacked back into a scene.
 | **Decision** | Recorded human input that a stage replays: a Pick, segmentation clicks, an Override, marker positions. |
 | **Override** | A recorded hand edit on a stage's image output, tied to the hash of the image it was painted on. |
 | **Layer** / **Plate** | A visible image plane of a room; the Plate is the room with its foreground objects removed. |
+| **Look** / **Condition** | Another appearance of part of a room (a door shut, a lamp unlit), painted as an edit of its Source; the opaque name of the game state that shows it. |
 | **Mask** | A named binary gameplay region (`solid`, `oneway`, `ladder`). Derived masks (`walkable`, `foreground`) are computed, never painted. |
 | **Model** / **Runner** / **Provider** | A 3D model; a local ML model; an image or 3D-model generator. In names Kiripix controls (paths, fields, flags, code), `model` means only the 3D Model; a Runner's files are its **weights**. |
 | **Pinned output** | A committed Runner or Provider result, keyed on all of its inputs. |
@@ -103,6 +104,7 @@ my-game-assets/
       asset.toml             kind and parameters (no stage status, ADR 0005)
       history.jsonl          append-only log of runs and generations
       src/                   variants and the picked source (immutable once picked)
+        looks/<look>/        a Look's edit Variants (outside src/*.png, so a new one never touches the Source)
       decisions/             one Decision journal per stage (<stage>.jsonl), plus Override PNGs
       pinned/                pinned Runner and Provider results, keyed by input hash
       work/                  deterministic stage outputs (cache, safe to delete)
@@ -231,7 +233,7 @@ Every recipe keeps Runners before the palette (ADR 0004): a palette tweak then i
 
 A background scene with Layers, Masks, Markers and lights. A room is either `view = "top"` or `view = "side"`.
 
-**brief → source → fit → layers → masks → palette → place → reach → export**
+**brief → source → fit → layers → masks → palette → looks → place → reach → export**
 
 | Stage | What it does | Owner input | Checks |
 |---|---|---|---|
@@ -241,6 +243,7 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2; a negative click takes the object under it away from that Layer, and so from the Plate's hole, at its place in the replay), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. On path (a) the owner names a Layer with one click in a region of the difference; unclicked regions stay in the Plate. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial: a target pixel whose Source cell is partly covered by the Runner's Mask or has alpha strictly between 0 and 255 (default 1 px, 0 allowed). With no Decisions the Stage is `done`, and the Plate is the fit image. | Clicks objects to lift out; trims a rim with a brush on the Layer's alpha | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
 | **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2: a positive click adds the object under it to the Mask, a negative click, a shift-click, takes that object away from the Mask at its place in the replay, whichever Decision put it there; each is one Runner call), flood by colour region within an OKLab tolerance of the clicked pixel, brush, polygon (`{mask, erase, points}`, at least three corners in target pixels; it closes itself, the outline pixels are included so a rectangle fills exactly its box, a self-crossing polygon follows the even-odd rule, points outside the Mask are clipped; not `on_image`, so a changed Plate leaves it as it is), a wall along the room's chosen edges, or import of a painted image; optional snap to an N px cell grid. The UI has no polygon tool yet (ticket 0080). | Clicks and brushes | Every Mask binary |
 | **palette** | Maps the whole composite once to the palette in OKLab (strict, or with optional ordered dithering) and removes orphan pixels. Each foreground Layer is that mapped image cut by its alpha; the Plate is the same image with only its inpainted areas mapped separately. | Tunes 2–3 sliders, with a before/after view | Every pixel on the palette; Plate + Layers still recompose exactly |
+| **looks** | The room's other Looks (see Looks, below). Each is an edit of the Source, picked as a Variant of that Look. It is resized to the Source, registered to it, fitted with the room's Grid transform, optionally regraded, mapped to the palette as `palette` maps the room, and cut to its region. The region's pixels over a foreground Layer become a piece at that Layer's depth. A Look may have its own `solid` Mask. With no Looks the Stage is `done`. M4. | Imports or generates an edit, names the Condition, draws the region; paints `solid` where the Look blocks | Every pixel on the palette; the edit registers to the Source; drift outside the region is reported; the region shows a change |
 | **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines. | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag; a sloped line sorts at its mean y, with a warning if its ends differ by more than half a tile |
 | **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, M5+). Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
 | **export** | Writes the Godot scene (see §9). | — | Export target set; Project checks (see below) |
@@ -265,6 +268,62 @@ exists.
 
 **Walk test (UI):** the stand-in body walks the room with the arrow keys, on the real collision, at game resolution,
 with the foreground Layers drawn over it by their y-sort lines.
+
+#### Looks (ADR 0009, M4)
+
+A painted room is one baked picture, so a door that opens or a lamp that goes out has its other appearance painted too.
+That appearance is a **Look**. The game shows it while its **Condition** holds. The Condition is an opaque string to
+Kiripix (`door.cell_3:shut`, `circuit.hall:off`). A Look belongs to the room's Asset because it must share the room's
+Grid transform, palette mapping and Layers exactly.
+
+**Making one.**
+- A `look` Decision gives the Look an ID and a Condition.
+- Its edit is added with `kiripix import <id> <png> --look <look>`. From M4, `gen <id> --look <look>` makes one with an
+  edit prompt ("Edit this image. Keep everything exactly the same except: …"). An edit can also be painted by hand on a
+  copy of the Source.
+- `pick <id> <variant> --look <look>` chooses the edit, and records the hash of the room's Source it was made on.
+
+**Building one,** in the `looks` Stage:
+1. **Resize** the edit to the Source's exact size, because an edit often comes back at another size.
+2. **Register:** estimate the edit's scale and shift against the Source outside the region, and undo them (`register`,
+   on by default). An image model rescales its redraw by up to about 1 % (trial 0063). The limits come from trial 0119.
+3. **Fit** through the room's Grid transform: the same mode, scale and offsets.
+4. **Regrade**, optionally (`regrade`, default `none`). `outside` fits the edit's colours, in OKLab, to the Source's on
+   the pixels outside the region, and applies that fit to the whole edit. It is off by default: an unlit Look's darkening
+   is often the point.
+5. **Map** the whole fitted edit to the palette with the `palette` Stage's parameters, so that orphan cleanup sees the
+   same context it saw in the room. Then cut the region.
+6. **Split:** the region's pixels inside a foreground Layer's alpha become a piece for that Layer, drawn at its depth,
+   so an actor still sorts right. The rest draws with the Plate.
+
+**Decisions,** in target pixels, each naming its Look:
+- `look` (ID, Condition) and `pick` (the edit);
+- region: `polygon` and `brush` as on `masks`, and `difference`: inside a box, the pixels where the mapped edit differs
+  from the mapped room by more than a tolerance, with specks removed. A `difference` region picks out a lamp's glass
+  without anyone drawing it, and it is on the image, so a new edit or a refit puts it in `needs-review`. A polygon or a
+  brush stroke stays where it is. The region is the Look's binary alpha, not a Mask, because it is visible.
+- `solid`: the Look's own `solid` Mask, by polygon or brush, with the `masks` Stage's `snap_cell`. It adds collision
+  while the Look shows, such as a shut door. A Look can't take collision away from the room yet (§16, open decision 8).
+
+**Staleness.** A new room Source invalidates every Look's pick, and the Stage goes to `needs-input` with "the edit was
+made on another Source". A refit or a Layer change rebuilds every Look: its `difference` regions and registration go to
+`needs-review`. A palette change rebuilds them, and they are `done`. A room with no Looks has a `looks` Stage that is
+`done` at once. `place` and `reach` read the room without its Looks.
+
+**Checks:**
+- `look.off_palette`: every pixel is a palette colour.
+- `look.misaligned`: after registration, the edit still sits more than half a target pixel off the Source outside the
+  region, or registration hit its limits. This is an error, because the picture would jump when the Look toggles. Its
+  `owner_action` is to re-make the edit.
+- `look.drift` (warning): target pixels outside the region where the edit changed the room, with a count and the box
+  of each patch. A model drifts, and this reports the drift; it never hides or quietly fixes it. Its `owner_action` is to
+  widen the region if the change belongs to the Look, or to re-make the edit.
+- `look.unchanged` (warning): most of the region matches the room, so the region is in the wrong place or the edit
+  missed it.
+
+**Keep Looks small.** A large crop of an edit shows the edit's compression noise and redraw as blotches, which
+Lost-and-Found found (§15). Cut a lamp's glass, not the wall around it. Look IDs are frozen once exported, like Layer
+IDs.
 
 ### 6.2 Prop
 
@@ -296,12 +355,12 @@ pixel size (52 px tall in the Toronto RPG), so the recipe has no `fit`.
 |---|---|---|
 | **model** | Imports `.glb`, `.fbx` or `.blend`; optional image-to-3D (a local Runner if one fits 8 GB, or a Provider). Normalises scale and the up axis. | Picks or imports |
 | **rig** | Validates a humanoid rig, or guides the Mixamo auto-rig round trip (the tool shows the steps and picks up the downloaded file). Rigify for non-humanoids. | Mixamo step, when used |
-| **clips** | Maps named clips (`idle`, `walk`, `run`, `attack_1`, `hit`, `ko`, `cast`…) to animation sources, with frame range, frame rate and loop flag. | Chooses clips |
-| **render** | Blender headless. Orthographic camera from a preset: top-down 3/4 at 4 or 8 directions, side view, battle-pose camera. Rendered at the target pixel size, no anti-aliasing, toon shading. Passes: colour, normal, depth and an object mask. Frames are subsampled to the clip's frame rate. | Tunes the camera preset once per project |
+| **clips** | Maps named clips (`idle`, `walk`, `run`, `attack`, `hit`, `ko`, `cast`…) to animation sources, with frame range, frame rate and loop flag. Clip IDs are snake_case verbs; a variant is named for what it is (`attack_kick`), not numbered. | Chooses clips |
+| **render** | Blender headless. Orthographic camera from a preset: top-down 3/4 at 4 or 8 directions (all rendered, none mirrored, so an asymmetric character stays right), side view, battle-pose camera. Directions are named `s sw w nw n ne e se` from the screen's view, `s` facing the camera. Rendered at the target pixel size, no anti-aliasing, toon shading. Passes: colour, normal, depth and an object mask. Frames are subsampled to the clip's frame rate. Renders aren't pinned: they rebuild as deterministic work, with the Blender version and render settings among the Stage's inputs. | Tunes the camera preset once per project |
 | **palette** | One palette per character across all frames (a project-palette subset), orphan cleanup. | — |
-| **finish** | Outline, drawn after mapping, in a palette colour; outline consistency across frames. The normal pass is quantised to its own levels (not palette-mapped) and aligned to the colour frames. | — |
+| **finish** | Outline, drawn after mapping, in a palette colour: a 1 px silhouette from the object mask (§16, decision 3); outline consistency across frames. The normal pass is quantised to its own levels (not palette-mapped) and aligned to the colour frames. | — |
 | **sheet** | Packs frames into an atlas with a fixed pivot (the feet) per frame, plus frame metadata. | — |
-| **export** | Godot `SpriteFrames` `.tres`, plus a `CanvasTexture` with the normal map for 2D lights, plus a scene with `AnimatedSprite2D`. | — |
+| **export** | Godot `SpriteFrames` `.tres`, plus a `CanvasTexture` with the normal map for 2D lights, plus a scene with `AnimatedSprite2D`. An animation is named `<clip>_<dir>`, such as `walk_sw`. | — |
 
 Checks:
 - **pivot drift:** the feet don't move between frames of a stationary clip;
@@ -373,7 +432,7 @@ review, so a swap can never change an exported asset silently.
 | Background matting | BiRefNet | Chroma key |
 | Depth (parallax, normals) | Depth Anything V2 (the small model; check licences of larger ones) | Manual depth planes |
 | Inpainting (plate holes) | LaMa | OpenCV Telea or PatchMatch for small holes (OpenCV isn't a dependency yet); an edit API for large ones |
-| Image-to-3D (optional) | Decide at M3, after testing which fit 8 GB | Bought or hand-made models |
+| Image-to-3D (optional) | Decide at M4, after testing which fit 8 GB, beside Providers (deferred from M3) | Bought or hand-made models |
 
 ONNX Runtime with CUDA is preferred to keep installs small, with PyTorch where a model needs it. The core works with
 no GPU: Runners run on CPU, slower. Because results are pinned, the device that produced one doesn't matter.
@@ -384,7 +443,7 @@ Kiripix writes Godot 4 text resources (`.tscn`, `.tres`) and PNGs under `export.
 
 | Asset | Godot output |
 |---|---|
-| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `GPUParticles2D` stubs from emitter Markers. (`LightOccluder2D` has no source for its shape yet, so it isn't in M2.) `solid` is on collision layer 1 and `pit` is a `StaticBody2D` of its own on layer 2: the game's Body drops layer 2 from its mask while it dashes. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. |
+| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `GPUParticles2D` stubs from emitter Markers. (`LightOccluder2D` has no source for its shape yet, so it isn't in M2.) `solid` is on collision layer 1 and `pit` is a `StaticBody2D` of its own on layer 2: the game's Body drops layer 2 from its mask while it dashes. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. **Looks** (M4): a `Sprite2D` per Look in a `Looks` node drawn with the Plate, at its region's box, `visible = false`, with metadata `kiripix_id` and `condition`; each piece over a foreground Layer is a `Sprite2D` child of that Layer's node, so it sorts with the Layer and draws over it, also hidden and with the same metadata; a Look's `solid` is a `StaticBody2D` on layer 1 whose `CollisionPolygon2D`s start `disabled = true`. The game shows a Look by showing every node whose `condition` holds and enabling its polygons. `room.json` (schema 3) carries the same data (`looks`: ID, Condition, file, box, pieces with their Layer, collision), so another Exporter reads it, not the scene. |
 | Prop | A scene: a `Node2D` root at the origin (the y-sort point), a `Sprite2D` offset so the origin pixel is the root's own place, and a `StaticBody2D` footprint on collision layer 1, with a `CollisionPolygon2D` per convex piece of the polygon, relative to the origin. No body when the polygon is empty. The prop's `export` Stage leaves `sprite.png` and `prop.json` (`schema_version`, `asset`, `size`, `origin`, `collision`) in `out/export/`. The scene instances the sprite as `sprite.png` beside it. No prop ID is frozen, so the footprint can be emptied. |
 | Character | `SpriteFrames` `.tres`, `CanvasTexture` (diffuse + normal), a scene with `AnimatedSprite2D` and its feet at the origin. |
 
@@ -516,9 +575,9 @@ kiripix plate-import <id> <png>             import a Plate image (the layers Sta
 kiripix undo <id> <stage> [--brief]         undo the stage's last Decision
 kiripix redo <id> <stage> [--brief]         redo it
 kiripix accept <id> <stage>                 confirm a needs-review stage (owner-only)
-kiripix import <id> <file>                  set a source from an outside image or model
-kiripix gen <id> [-n 4] [--provider x]      generate source variants (the only command that calls Providers)
-kiripix pick <id> <variant>                 record the chosen variant
+kiripix import <id> <file> [--look l]       set a source from an outside image or model; --look adds an edit Variant of Look l (M4)
+kiripix gen <id> [-n 4] [--provider x] [--look l]   generate source variants, or edits of Look l (the only command that calls Providers)
+kiripix pick <id> <variant> [--look l]      record the chosen variant; --look picks Look l's edit (M4)
 kiripix check <id>|--all                    run checks (--all includes Project checks), list findings with positions
 kiripix preview <id> [--stage s] [--overlay masks|walkable|reachable] [--region x,y,w,h] [--grid N]
                                             write a preview PNG, print its path
@@ -688,13 +747,16 @@ and the tokens used are recorded at each milestone, as the measure of goal 1 ("c
 **M4: generation and agents.**
 - Providers (one API provider plus PixelLab), prompt templates, the style bible, the cost ledger and budget.
 - The MCP adapter, with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
-  ([0062](../backlog/0062-m2-claude-first-pass-trial.md)).
+  ([0062](../backlog/m2/0062-m2-claude-first-pass-trial.md)).
 - A preprocessing tool that extends a Source step by step through a Provider and joins the pieces, before `source`. Without
   Provider integration it would be a manual tool, so it waits for this milestone. The trial
-  [0063](../backlog/0063-m2-multi-screen-source-trial.md) found that the join needs three steps. Register: the model redraws
+  [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md) found that the join needs three steps. Register: the model redraws
   the kept strip and scales the whole piece by up to about 1 %, so a plain shift leaves a step. Tone: the redrawn strip's
   brightness differs, so match it row by row. Seam: take the least-difference path through the overlap, with a short blend. A
   piece also fails when too little of a subject is in the kept strip, so the tool must let the Owner choose the strip and retry.
+- Room Looks (§6.1, ADR 0009): the `looks` Stage, edits by `import --look` and, through a Provider, by `gen --look`, and their
+  export to Godot. Trial [0119](../backlog/0119-m4-room-look-edit-trial.md) comes first; the work is
+  [0118](../backlog/0118-m4-room-looks.md).
 
 **M5: side view.** Side-view Masks (one-way, ladder), the parallax split with depth, platform reachability.
 
@@ -711,6 +773,11 @@ IDs with aliases.
   replace it.
 - **Agent sessions should get numbers, not pictures,** unless a picture is needed to decide.
 - **Stable IDs and versioned data with migrations** paid off, so Kiripix keeps both.
+- **Rooms need other looks** (its D10 "states"): shut doors, unlit lamps, unbuilt stations, each an image-model edit of the
+  room's source cut to a rect. They became one of the art pipeline's most-used parts. The edit came back at another size, so it
+  was resized to the source first. Where a look met a foreground piece, a second crop drew at that piece's depth. Large crops
+  showed the edit's JPEG noise as blotches, so looks were kept small. Kiripix has Looks (§6.1), and reports an edit's drift
+  outside its region instead of trusting it.
 
 ## 16. Open decisions
 
@@ -718,12 +785,15 @@ IDs with aliases.
    characters 52 px tall. 360 px is 22.5 tiles, so a room that fills the screen is 640 x 368. Resolution and tile are set
    in `kiripix.toml`; character height has no setting until the character recipe (M3) adds one.
 2. ~~The UI framework~~: decided 2026-11-02, React with TypeScript and Vite (ADR 0008).
-3. The outline method for 3D renders: inverted hull, Freestyle or a post-process edge pass (M3, by test).
-4. Image-to-3D: which local Runner fits 8 GB well enough, or none (M3).
+3. ~~The outline method for 3D renders~~: decided 2026-11-07 by the owner: a 1 px silhouette from the render's object mask,
+   drawn in `finish`. The mask is exact, so the line has no isolated pixels; Blender's own lines (inverted hull, Freestyle)
+   are sized in scene units and break up at 52 px. Trial [0106](../backlog/0106-m3-outline-method-trial.md) confirms it on a
+   real character and settles inner lines.
+4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (M4, deferred from M3).
 5. Which API provider comes first (M4).
 6. Licence for Kiripix itself, if it's ever published.
 7. ~~How a multi-screen room is made~~: decided 2026-11-06 by the owner, after the trial
-   [0063](../backlog/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects
+   [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects
    about as many of them as single-screen rooms**, so neither is the exception. Exits still join rooms at natural breaks such as
    doors, stairs and corners. A room's size is only the brief's width and height, so **one room has one Source and one set of
    Masks**: any extending happens before `source`, and walls and Masks go on the whole image after it.
@@ -747,6 +817,10 @@ IDs with aliases.
      ([0082](../backlog/0082-m3-ui-canvas-navigation.md)).
    - **In the game:** a scrolling camera is the game's work. The exported scene has no room size or camera limits, but the Plate's
      texture gives the size.
+8. **Room Looks beyond one picture and added collision** (§6.1, M4). Not settled: whether Looks stack or combine (an unbuilt
+   station with the lamps off, Lost-and-Found's `relight`); whether a Look can take collision away (rubble cleared) or change
+   walkable, navigation and `reach`; whether a Look has its own Markers, such as a light that goes off with an unlit Look; and
+   whether a soft edge is allowed with binary alpha. Each waits for a room that needs it.
 
 ## Changes since v0.3
 
@@ -758,6 +832,9 @@ IDs with aliases.
 - The spec's code layout, stack and import rule now match the repo.
 - Open decision 7 closed: multi-screen rooms are as ordinary as single-screen ones, made by extending from the edge. An M4 tool
   extends a Source through a Provider.
+- Room Looks (ADR 0009): a `looks` Stage after `palette` for a room's other appearances, shown by an opaque Condition, with
+  their own `solid`, pieces at a Layer's depth, drift reported, and `room.json` schema 3. M4. Open decision 8 lists what's
+  left.
 
 ## Changes since v0.2
 
@@ -767,7 +844,7 @@ IDs with aliases.
 - The UI is React with TypeScript and Vite (open decision 2 closed; ADR 0008).
 - `palette` reads `layers`, not `masks`, so Mask edits don't rebuild it.
 - In M1, `layers` is a pass-through; the real Stage is M2.
-- M1 is split into tickets: [backlog/0010](../backlog/0010-m1-room-end-to-end.md) and its children.
+- M1 is split into tickets: [backlog/0010](../backlog/m1/0010-m1-room-end-to-end.md) and its children.
 
 ## Changes since v0.1
 

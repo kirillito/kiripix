@@ -7,7 +7,7 @@ type: ticket
 
 # M3: a `layer-stats` Probe: a Layer's numbers, and its y-sort line
 
-Spec §10.1. Found by [0076](0076-m2-claude-layers-first-pass-trial.md). After a lift, the only way to judge a Layer is by looking at
+Spec §10.1. Found by [0076](m2/0076-m2-claude-layers-first-pass-trial.md). After a lift, the only way to judge a Layer is by looking at
 it. Claude wrote a scratch script for these numbers, and it found most problems without a picture: stray specks with their
 coordinates, door tops missing from a Layer, and a Layer that had leaked. The Owner's `layer1` on r01 is 26,630 px in 90 pieces, which
 one line of this answer would have shown.

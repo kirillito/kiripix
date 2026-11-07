@@ -9,7 +9,7 @@ depends_on: [0023-m1-serve.md]
 
 # M1: REST transport per ADR 0007: file inputs as multipart, and a `transport` section in `schema`
 
-[ADR 0007](../docs/adr/0007-adapter-transport-is-not-a-command.md) amends ADR 0006. A follow-up to
+[ADR 0007](../../docs/adr/0007-adapter-transport-is-not-a-command.md) amends ADR 0006. A follow-up to
 [0023](0023-m1-serve.md).
 
 ## What to build

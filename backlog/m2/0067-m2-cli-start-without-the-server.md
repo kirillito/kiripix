@@ -9,7 +9,7 @@ type: ticket
 
 Every `kiripix … --json` call spends about 1.2 s importing before it does any work (`python -X importtime -m kiripix --help`,
 2026-11-05, measured while the full suite was running). About 0.4 s of that is `kiripix.server`, with FastAPI. It's imported
-because [launch.py](../kiripix/launch.py) imports `LAUNCHERS` from `kiripix.server` at the top, for every Command. Only `serve`
+because [launch.py](../../kiripix/launch.py) imports `LAUNCHERS` from `kiripix.server` at the top, for every Command. Only `serve`
 and `ui` need it. The CLI tests spawn thousands of these calls, so the suite pays this cost on each one, and so does an agent
 driving Kiripix.
 

@@ -7,10 +7,10 @@ type: ticket
 
 # M3: segment with a rough box, not only a click
 
-Spec §6.1. Found by [0062](0062-m2-claude-first-pass-trial.md). A single click returned fragments of a compound object: 99 px and
+Spec §6.1. Found by [0062](m2/0062-m2-claude-first-pass-trial.md). A single click returned fragments of a compound object: 99 px and
 then 1,183 px of r03's ticket booth, against a box of about 4,900 px. An agent can give a rough box more reliably than it can
 choose the right point, and the Runner would snap that box to the object's edges. That matters most for Layers, whose edges are
-visible, so this is worth more if the Layers trial, [0076](0076-m2-claude-layers-first-pass-trial.md), shows the same fragments.
+visible, so this is worth more if the Layers trial, [0076](m2/0076-m2-claude-layers-first-pass-trial.md), shows the same fragments.
 
 **It did.** Single-click probes came back partial or leaking on 11 of 14 on r02, 12 of 14 on r01, and 9 of 9 on r03's booth, while r03's
 benches, planters, railings and pylons came whole. On r01 a few pixels decide it: 135,459 leaks to 8,841 px where 142,460 is the clean

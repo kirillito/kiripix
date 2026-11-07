@@ -9,7 +9,7 @@ parent: 0010-m1-room-end-to-end.md
 # M1: a `done` `export` Stage reads as "exported"
 
 Found by the agent acceptance test ([0028](0028-m1-agent-acceptance-test.md)), real run of 2026-11-04:
-[docs/acceptance/2026-11-04-m1-4.md](../docs/acceptance/2026-11-04-m1-4.md), 10,697 fresh tokens.
+[docs/acceptance/2026-11-04-m1-4.md](../../docs/acceptance/2026-11-04-m1-4.md), 10,697 fresh tokens.
 
 ## The bug
 
@@ -43,4 +43,4 @@ as the Pick was before [0033](0033-m1-source-stage-contradicts-next-on-the-pick.
       `kiripix export <id>`.
 - [x] Once exported, neither says so, and an edit that changes the output brings it back.
 - [x] A CLI test covers it, and the next real acceptance run reaches `export`
-      ([2026-11-04-m1-5.md](../docs/acceptance/2026-11-04-m1-5.md): one run, so later runs will show whether it holds).
+      ([2026-11-04-m1-5.md](../../docs/acceptance/2026-11-04-m1-5.md): one run, so later runs will show whether it holds).

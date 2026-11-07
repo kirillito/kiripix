@@ -64,7 +64,7 @@ the alphas were measured from the two pinned results, which share one key, weigh
 - **Time, one call:** on the GPU, about 11 s cold and about 6 s warm. With `--cpu`, about 22 s
   ([0041](0041-m2-matting-runner.md) saw 14-28 s on a synthetic 400 x 300 image).
 - **Memory:** about 6.6 GB above idle (7,883 MB peak, with 1,293 MB idle). That leaves about 0.3 GB of the 8 GB, far tighter
-  than SAM 2's 3.4 GB peak in [0020](m1/0020-m1-pinned-runner-calls-sam2.md). The reading doesn't say how much of it the model
+  than SAM 2's 3.4 GB peak in [0020](../m1/0020-m1-pinned-runner-calls-sam2.md). The reading doesn't say how much of it the model
   needs and how much ONNX Runtime just holds.
 - **Same result:** not byte-identical, but as near as makes no difference. The colours are identical, and 14 of 1,056,768
   alpha values differ, each by 1 of 255. At `fit`'s threshold (alpha from 128) the two have the same 32,083 opaque pixels.

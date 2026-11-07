@@ -13,7 +13,7 @@ Spec §6.1 (place), §9. Story 9 of [0037](0037-m2-layers-and-props.md). Follows
 
 ## The gap
 
-The `ysort` Marker ([room.py:511](../kiripix/recipes/room.py#L511)) has `x2` and `y2` but doesn't say which Layer it sorts.
+The `ysort` Marker ([room.py:511](../../kiripix/recipes/room.py#L511)) has `x2` and `y2` but doesn't say which Layer it sorts.
 "Always above" exists nowhere.
 
 ## What to build

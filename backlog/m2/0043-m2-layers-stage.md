@@ -13,7 +13,7 @@ Spec §6.1, §7, §8 and ADR 0004. Stories 1–5, 7 and 8 of [0037](0037-m2-laye
 
 ## What to build
 
-- Replace `_layers` ([room.py:209](../kiripix/recipes/room.py#L209)). Upstream: `fit` first (the clicks' image), then `source`.
+- Replace `_layers` ([room.py:209](../../kiripix/recipes/room.py#L209)). Upstream: `fit` first (the clicks' image), then `source`.
 - A `click` Decision (`on_image`): `{layer, x, y, positive}` in target pixels. Grouping is as in `masks`, one Runner call per
   positive click plus the negative clicks right after it, and the Masks for one Layer ID are added together. Share
   `_click_groups` rather than copy it. A Layer ID matches `^[a-z0-9_]+$`, and `plate` is refused.

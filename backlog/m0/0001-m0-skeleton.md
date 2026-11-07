@@ -6,8 +6,8 @@ type: spec
 
 # M0: skeleton
 
-Background: [the Kiripix spec](../docs/KIRIPIX_SPEC.md) (§14 M0), [the glossary](../GLOSSARY.md) and
-[the ADRs](../docs/adr/), especially ADR 0005 (status is derived) and ADR 0006 (one Command registry). Use the
+Background: [the Kiripix spec](../../docs/KIRIPIX_SPEC.md) (§14 M0), [the glossary](../../GLOSSARY.md) and
+[the ADRs](../../docs/adr/), especially ADR 0005 (status is derived) and ADR 0006 (one Command registry). Use the
 glossary's words in code, messages and tests.
 
 ## Problem Statement

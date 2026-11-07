@@ -30,7 +30,7 @@ Spec §6.1, §8, ADRs 0002 and 0004, docs/runner-licences.md. Today's choice, no
       go to "Runner input changed", and `run --rerun` remakes them into `needs-review`.
 - [x] Cancel during a long fake call: `run.cancelled`, nothing pinned.
 - [x] A manual (not CI) check of the real Runner on a real room, on the Owner's 8 GB GPU and with `--cpu`: time, memory and
-      quality, recorded in this ticket as in [0020](0020-m1-pinned-runner-calls-sam2.md).
+      quality, recorded in this ticket as in [0020](../m1/0020-m1-pinned-runner-calls-sam2.md).
 
 ## Done (ml-engineer, 2026-11-04)
 

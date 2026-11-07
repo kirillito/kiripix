@@ -105,7 +105,7 @@ trial didn't need. About 100k of fresh tokens for three rooms, against a budget 
 - Coordinates judged by eye, and no view of where the Body fits: [0073](0073-m2-preview-region-grid-walkable.md).
 - No way to try a flood without recording it, and `segment-preview`'s runs are huge: [0074](0074-m2-flood-preview-and-probe-summary.md).
 - `decide` returns every current Decision on every call, which is about 444 KB over r01's Decisions: [0075](0075-m2-decide-in-bulk-and-briefly.md).
-- Clicks must come last because `reach` can't run on a pending click: [0078](0078-m3-reach-probe.md).
+- Clicks must come last because `reach` can't run on a pending click: [0078](../0078-m3-reach-probe.md).
 
 **Recommendation for M4: build on this, for `solid`, `pit` and Markers.** Correcting took far less time than doing the work by
 hand, and almost nothing was thrown away. Give the first pass the game's room map too, so that Exits get their real targets

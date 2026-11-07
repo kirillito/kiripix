@@ -7,7 +7,7 @@ type: ticket
 
 # M3: `preview` shows the Layers, and can brighten a dark room
 
-Spec §10.5. Found by [0076](0076-m2-claude-layers-first-pass-trial.md). `preview` can show the Plate and tint Masks, but not a Layer's
+Spec §10.5. Found by [0076](m2/0076-m2-claude-layers-first-pass-trial.md). `preview` can show the Plate and tint Masks, but not a Layer's
 alpha, so nothing shows where a Layer's edge falls on the object. Claude drew it in a scratch script. These rooms were also too dark
 to judge by eye, with mean luma 29 to 46 of 255, so the script brightened them 1.8×. Without that, r01's rails could barely be read.
 

@@ -7,7 +7,7 @@ type: ticket
 
 # M3: clean up a Layer: drop its specks, and add pixels by brush
 
-Spec §6.1. Found by [0076](0076-m2-claude-layers-first-pass-trial.md). Two things `trim` can't do well:
+Spec §6.1. Found by [0076](m2/0076-m2-claude-layers-first-pass-trial.md). Two things `trim` can't do well:
 
 - **Specks take a round of their own.** Segmenting leaves stray pieces of 1 to 5 px. On r02 and r03 each needed their coordinates read
   out and a trim recorded, with another rerun, for 9 and 7 pixels in all.

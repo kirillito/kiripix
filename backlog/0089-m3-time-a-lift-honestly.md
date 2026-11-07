@@ -7,7 +7,7 @@ type: ticket
 
 # M3: find where a lift's time goes, and report all of it
 
-Spec §10.2. Found by [0076](0076-m2-claude-layers-first-pass-trial.md). A lift's reported times don't explain how long it takes:
+Spec §10.2. Found by [0076](m2/0076-m2-claude-layers-first-pass-trial.md). A lift's reported times don't explain how long it takes:
 
 | Room, `run layers --rerun` | Wall time | Sum of Runner calls, about | `duration_s` reported |
 |---|---|---|---|
