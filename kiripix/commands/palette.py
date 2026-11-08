@@ -20,7 +20,7 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.images import load_rgba, png_bytes
 from kiripix.core.project import Project, find_project
-from kiripix.ops import Grid, downscale_mode, parse_gpl, quantize, suggest_palette
+from kiripix.ops import Grid, downscale, parse_gpl, quantize, suggest_palette
 
 PROPOSAL_SCHEMA_VERSION = 1
 PROPOSALS_DIR = "palette-proposals"
@@ -66,7 +66,7 @@ class PaletteSuggestInput(BaseModel):
     scale: float = Field(
         DEFAULT_SCALE,
         ge=1,
-        description="Source pixels per target pixel: the image is downscaled by a mode filter first, because the game "
+        description="Source pixels per target pixel: the image is downscaled as `fit` does first, because the game "
         "never sees noise at full size. The default is the scale the Project's rooms use so far.",
     )
     min_distance: float = Field(
@@ -128,7 +128,7 @@ def op_palette_suggest(arguments: PaletteSuggestInput, context: Context) -> Outc
     rgba = load_rgba(image_path, shown)
     height, width = rgba.shape[:2]
     target_w, target_h = max(1, round(width / arguments.scale)), max(1, round(height / arguments.scale))
-    small = downscale_mode(rgba, Grid.to_size(width, height, target_w, target_h))
+    small = downscale(rgba, Grid.to_size(width, height, target_w, target_h))
     palette_rgb = palette.rgb()
     suggestion = suggest_palette(small, palette_rgb, arguments.add, arguments.min_distance)
     both = np.concatenate([palette_rgb, suggestion.colours])

@@ -27,6 +27,7 @@ class Lama(Runner):
     id = "lama"
     description = "LaMa (big-lama, fp32, 512 px): inpainting, a hole filled from its surroundings."
     licence = "Apache-2.0"
+    can_stay_warm = True  # about 0.5 GB of VRAM; it loads in 20 s, so a lift in `serve` shouldn't pay that each time
     weights = (WeightFile(_MODEL, _URL, "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6", 208044816),)
 
     def __init__(self) -> None:

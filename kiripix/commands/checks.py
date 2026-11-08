@@ -27,16 +27,31 @@ class CheckInput(BaseModel):
         return self
 
 
+class OutOfDate(BaseModel):
+    asset: str
+    stage: str
+    status: str = Field(description="The Stage's derived status, which isn't `done`.")
+    reason: str | None = None
+
+
 class CheckData(BaseModel):
     """What was checked; the findings are in the result's `findings`."""
 
     assets: list[str]
     stages: list[str] = Field(description="The `<asset> <stage>` pairs whose Checks ran: those with an output.")
     project_checks: bool
+    out_of_date: list[OutOfDate] = Field(
+        default_factory=list,
+        description="The checked Stages whose status isn't `done`: their Checks ran on an output that may not match "
+                    "the current inputs, so a clean result doesn't cover them. Empty when everything checked is current.")
 
     def text(self) -> str:
         scope = "the Project" if self.project_checks else ", ".join(self.assets)
-        return f"checked {len(self.stages)} built Stage(s) of {scope}"
+        line = f"checked {len(self.stages)} built Stage(s) of {scope}"
+        if self.out_of_date:
+            names = ", ".join(f"{o.asset} {o.stage}" if self.project_checks else o.stage for o in self.out_of_date)
+            line = f"checked {len(self.stages)} built Stage(s), {len(self.out_of_date)} out of date: {names}"
+        return line
 
 
 @command(
@@ -53,11 +68,12 @@ def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
     cache = HashCache(project.state_dir)
     broken = False
     if arguments.all:
-        assets, stages, findings, broken = check_all(project, cache)
+        assets, stages, findings, broken, late = check_all(project, cache)
     else:
         assert arguments.asset is not None
         asset = load_asset(project, arguments.asset)
-        done, findings = check_asset(project, asset, cache)
+        done, findings, old = check_asset(project, asset, cache)
+        late = [(asset.id, state) for state in old]
         findings += frozen_findings(project, asset, cache)  # the Exporter's: it reads the game's Manifest
         assets, stages = [asset.id], [f"{asset.id} {s}" for s in done]
     cache.save()
@@ -67,7 +83,9 @@ def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
         code = ExitCode.CHECK_FAILED
     else:
         code = ExitCode.OK
-    return Outcome(CheckData(assets=assets, stages=stages, project_checks=arguments.all), findings, code)
+    out_of_date = [OutOfDate(asset=a, stage=s.stage, status=s.status, reason=s.reason) for a, s in late]
+    return Outcome(CheckData(assets=assets, stages=stages, project_checks=arguments.all, out_of_date=out_of_date),
+                   findings, code)
 
 
 class PreviewInput(BaseModel):

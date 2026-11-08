@@ -70,3 +70,23 @@ def check_conformance(report: ConformanceReport, file: str, fix: str) -> list[Fi
             fix=fix,
         )
     ]
+
+
+MAPPING_ERROR_LIMIT = 0.016  # mean OKLab distance from an image to its palette mapping, above which it is warned about
+
+
+def check_mapping_error(error: float, file: str, fix: str, limit: float = MAPPING_ERROR_LIMIT) -> list[Finding]:
+    """The palette maps the image with a high mean OKLab error: its colours are poorly covered, and the result looks
+    muddy. `fix` is the command that suggests the colours the palette lacks."""
+    if error <= limit:
+        return []
+    return [
+        Finding(
+            code="palette.mapping_error",
+            severity="warning",
+            message=f"{file} is {error:.4f} from the image it was mapped from (mean OKLab distance; over {limit:.3f} "
+                    f"looks muddy): the palette lacks colours this image uses",
+            position=Position(file=file),
+            fix=fix,
+        )
+    ]

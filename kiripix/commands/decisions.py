@@ -8,8 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import editing, journal
-from kiripix.core.errors import fail
+from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.assets import is_asset_id, load_asset
+from kiripix.export import frozen_layer_findings
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import find_project
@@ -134,6 +135,10 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
         assert arguments.decision is not None
         text, source = arguments.decision, "--decision"
     documents, is_array = editing.parse_decisions(text, source, asset, arguments.stage)
+    removed = [str(d.data["layer"]) for d in documents
+               if arguments.stage == "layers" and d.decision == "remove" and isinstance(d.data.get("layer"), str)]
+    if removed and (frozen := frozen_layer_findings(project, asset, removed)):
+        raise KiripixError(frozen, ExitCode.CHECK_FAILED)  # an exported Layer's ID is frozen (spec §9)
     if is_array:
         entries, after = editing.record_decisions(project, asset, arguments.stage, documents)
     else:
@@ -202,6 +207,11 @@ def undo(arguments: StepInput, context: Context) -> Outcome[StepData]:
 def redo(arguments: StepInput, context: Context) -> Outcome[StepData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if arguments.stage == "layers" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
+        layer = (target.data or {}).get("layer")
+        if target.decision == "remove" and isinstance(layer, str) and (
+                frozen := frozen_layer_findings(project, asset, [layer])):
+            raise KiripixError(frozen, ExitCode.CHECK_FAILED)  # redoing a remove is a remove: the freeze holds
     entry, after = editing.redo(project, asset, arguments.stage)
     return Outcome(_step(entry, after, asset.id, arguments.stage, arguments.brief))
 

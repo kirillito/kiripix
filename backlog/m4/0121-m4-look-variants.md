@@ -3,7 +3,7 @@ status: todo
 milestone: M4
 agent: core-engineer
 type: ticket
-parent: 0118-m4-room-looks.md
+parent: 0119-m4-room-looks.md
 ---
 
 # M4: a Look's edit Variants: `import --look` and `pick --look`
@@ -22,7 +22,7 @@ Spec §4, §6.1 (Looks) and §10.5; ADR 0009.
   on another Source", and an `owner_action` to re-make it.
 - `describe room` lists the new options.
 
-Coordinate with [0121](0121-m4-looks-stage.md), which declares the Stage. This ticket can land first, with the Stage
+Coordinate with [0122](0122-m4-looks-stage.md), which declares the Stage. This ticket can land first, with the Stage
 declared and a build that does nothing.
 
 ## Acceptance criteria

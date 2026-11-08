@@ -12,13 +12,27 @@ export function layerIdOf(path: string): string | undefined {
   return LAYER_FILE.exec(path.slice(path.lastIndexOf("/") + 1))?.[1];
 }
 
+// The Layers a `remove` Decision has taken out (ticket 0091): a Layer is out when the latest Decision on it is a remove.
+export function removedLayers(decisions: { name: string; data: Record<string, unknown> }[]): Set<string> {
+  const out = new Set<string>();
+  for (const { name, data } of decisions) {
+    const id = data.layer;
+    if (typeof id !== "string") continue;
+    if (name === "remove") out.add(id);
+    else out.delete(id);
+  }
+  return out;
+}
+
 // Each Layer's PNG, by ID: the mapped one from `palette` where it is built, else the cut one from `layers`.
 export function layerFiles(show: ShowData): Map<string, string> {
   const files = new Map<string, string>();
+  // `show`'s files before a Stage is rebuilt can still name a removed Layer.
+  const removed = removedLayers(show.stages.find((entry) => entry.stage === "layers")?.decisions ?? []);
   for (const name of ["layers", "palette"]) {
     for (const path of show.stages.find((entry) => entry.stage === name)?.outputs ?? []) {
       const id = layerIdOf(path);
-      if (id !== undefined) files.set(id, path);
+      if (id !== undefined && !removed.has(id)) files.set(id, path);
     }
   }
   return new Map([...files].sort(([one], [other]) => (one < other ? -1 : 1)));

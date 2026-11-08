@@ -20,6 +20,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ContextManager, Literal
@@ -39,7 +40,10 @@ from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
 from kiripix.recipes.base import CurrentDecision, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
-from kiripix.runners import Device, EmbeddingRunner, RunnerError, pull, runners, weights_dir
+import kiripix.ops as ops_package
+import kiripix.recipes as recipes_package
+import kiripix.runners as runners_package
+from kiripix.runners import Device, RunnerError, pull, runners, weights_dir
 
 Status = Literal["todo", "stale", "done", "needs-input", "needs-review", "failed"]
 Outcome = Literal["done", "skipped", "failed", "needs-input", "needs-review", "cancelled"]
@@ -119,6 +123,19 @@ def _lookup(document: dict[str, Any], dotted: str) -> Any:
     return value
 
 
+def _recipes_code() -> list[list[Any]]:
+    """The recipes' and Ops' source files by name, size and time, so a changed Stage function or an Op it replays
+    never reads an old answer."""
+    folders = [Path(recipes_package.__file__).parent, Path(ops_package.__file__).parent]
+    return [[f"{p.parent.name}/{p.name}", p.stat().st_size, p.stat().st_mtime_ns]
+            for folder in folders for p in sorted(folder.glob("*.py"))]
+
+
+def _runner_roles() -> dict[str, str]:
+    """Which Runner is behind each role (`runners.INPAINTER`...): a Stage reads it when it lists its calls."""
+    return {name: value for name, value in vars(runners_package).items() if name.isupper() and isinstance(value, str)}
+
+
 class AssetGraph:
     """The Stages of one Asset, with their input hashes and derived status."""
 
@@ -131,6 +148,8 @@ class AssetGraph:
         self._hashes: dict[str, str] = {}
         self._image_hashes: dict[Path, str] = {}  # for `pin_key`, which a pass over a room's Stages asks hundreds of times
         self._replays: dict[str, journal.Replay] = {}
+        self._calls: dict[str, list[RunnerCall]] = {}
+        self._files: dict[str, dict[str, Path]] = {}
         self._settings = settings_document(project.settings)
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
         if unknown:
@@ -185,12 +204,15 @@ class AssetGraph:
         return self._replays[stage]
 
     def files(self, spec: StageSpec) -> dict[str, Path]:
-        found: dict[str, Path] = {}
-        for pattern in spec.inputs.files:
-            for path in sorted(self.asset.dir.glob(pattern)):
-                if path.is_file():
-                    found[path.relative_to(self.asset.dir).as_posix()] = path
-        return found
+        if spec.name not in self._files:
+            found: dict[str, Path] = {}
+            for pattern in spec.inputs.files:
+                literal = not any(c in pattern for c in "*?[")  # a plain path needs no directory walk
+                for path in ([self.asset.dir / pattern] if literal else sorted(self.asset.dir.glob(pattern))):
+                    if path.is_file():
+                        found[path.relative_to(self.asset.dir).as_posix()] = path
+            self._files[spec.name] = found
+        return dict(self._files[spec.name])
 
     def palette_path(self) -> Path:
         return self.project.root / self.project.settings.project.palette
@@ -235,10 +257,55 @@ class AssetGraph:
         """Forget the hashes worked out so far, after a Runner call added a pinned result or a Stage rebuilt its image."""
         self._hashes.clear()
         self._image_hashes.clear()
+        self._calls.clear()
+        self._files.clear()
+
+    def _calls_key(self, spec: StageSpec) -> str:
+        """What a Stage's Runner calls derive from: its own inputs, every file of its upstream outputs, and which
+        results are pinned (a call list can depend on whether an earlier call is pinned)."""
+        upstream: dict[str, str] = {}
+        for name in spec.inputs.upstream:
+            folder = self.output_dir(self.spec(name))
+            if folder.is_dir():
+                for path in sorted(folder.rglob("*")):
+                    if path.is_file():
+                        upstream[path.relative_to(self.asset.dir).as_posix()] = self.cache.file_hash(path)
+        pins = self.asset.dir / pinning.PINNED_DIR
+        pinned = sorted(p.name for p in pins.glob("*.png")) if pins.is_dir() else []
+        return hash_json({
+            "code": _recipes_code(), "roles": _runner_roles(),
+            "kind": self.kind.name, "stage": spec.name, "asset_params": self.asset.settings.params,
+            "params": self.params(spec), "decisions": journal.hashable(self.replay(spec.name)),
+            "files": {name: self.cache.file_hash(path) for name, path in self.files(spec).items()},
+            "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
+            "upstream": upstream, "pinned": pinned,
+        })
 
     def runner_calls(self, spec: StageSpec) -> list[RunnerCall]:
-        """The Runner calls the Stage's current Decisions need, as far as its upstream outputs are built."""
-        return spec.runner_calls(self.stage_run(spec, self.output_dir(spec))) if spec.runner_calls else []
+        """The Runner calls the Stage's current Decisions need, as far as its upstream outputs are built. Working them
+        out can replay a whole lift, so the answer is kept by what it derives from (a computation, not a status)."""
+        if spec.runner_calls is None:
+            return []
+        if spec.name in self._calls:
+            return self._calls[spec.name]
+        if not self.replay(spec.name).current:  # nothing decided: the cheap answer needs no cache
+            calls = spec.runner_calls(self.stage_run(spec, self.output_dir(spec)))
+        else:
+            name = f"runner-calls:{self.asset.id}:{spec.name}"
+            key = self._calls_key(spec)
+            stored = self.cache.derived(name, key)
+            if stored is not None:
+                # Images are kept relative to the Project, so a moved or re-cloned Project reads its own files.
+                calls = [RunnerCall(runner=c["runner"], image=self.project.root / c["image"], params=c["params"],
+                                    decisions=c["decisions"]) for c in stored]
+            else:
+                calls = spec.runner_calls(self.stage_run(spec, self.output_dir(spec)))
+                if all(c.image.is_relative_to(self.project.root) for c in calls):
+                    self.cache.remember(name, key, [
+                        {"runner": c.runner, "image": c.image.relative_to(self.project.root).as_posix(),
+                         "params": c.params, "decisions": c.decisions} for c in calls])
+        self._calls[spec.name] = calls
+        return calls
 
     def pin_key(self, call: RunnerCall) -> str:
         if call.image not in self._image_hashes:
@@ -257,8 +324,19 @@ class AssetGraph:
         with other inputs, or a result that changed, is reviewed again, and one not made yet can't be accepted ahead of
         time."""
         accepted = self.replay(spec.name).accepted
+        accepted_keys = {entry.split(":", 1)[0] for entry in accepted}
         paths = {self.pin_key(call): self.pinned_path(call) for call in self.runner_calls(spec)}
-        results = [f"{key}:{self.cache.file_hash(path)}" for key, path in paths.items() if path.is_file()]
+        results = []
+        for key, path in paths.items():
+            if not path.is_file():
+                continue
+            # The key doesn't hold the device (ADR 0002), and a Runner's bytes differ a little between the CPU and the
+            # GPU (BiRefNet: 1 level of alpha in about 14 of a million pixels). So a key the Owner accepted stays
+            # accepted when it is pinned again, as long as the PNG is still the bytes the Runner made for it.
+            png_hash = self.cache.file_hash(path)
+            if key in accepted_keys and pinning.is_as_made(self.asset.dir, key, png_hash):
+                continue
+            results.append(f"{key}:{png_hash}")
         return [result for result in results if result not in accepted]
 
     def output_dir(self, spec: StageSpec) -> Path:
@@ -416,6 +494,9 @@ class _Runner:
         self.cpu = cpu
         self.keep_warm = keep_warm
         self.gpu_unused: str | None = None  # a call just made left the GPU unused, and why
+        self.runner_seconds: dict[str, float] = {}  # per Stage: what its Runner calls took, less any wait for a lock
+        self._lock_wait = 0.0
+        self._loaded_seconds: dict[str, float] = {}  # per Runner: its load, until its first call's history entry
 
     def _gpu_lock(self) -> list[str]:
         return [] if self.cpu else [GPU_LOCK]
@@ -433,6 +514,8 @@ class _Runner:
         graph = self.graph
         device: Device = "cpu" if self.cpu else "auto"
         attempted: set[str] = set()
+        started = time.monotonic()
+        self._lock_wait = 0.0
         try:
             while True:
                 missing = [c for c in graph.missing_calls(spec) if graph.pin_key(c) not in attempted]
@@ -445,7 +528,15 @@ class _Runner:
             return str(error)
         finally:
             graph.forget_hashes()
+            # The Stage's `duration_s` covers all of it: pulling, loading, the calls and unloading.
+            took = time.monotonic() - started - self._lock_wait
+            self.runner_seconds[spec.name] = self.runner_seconds.get(spec.name, 0.0) + max(took, 0.0)
         return None
+
+    def took(self, stage: str, forget: bool = False) -> float | None:
+        """The seconds the Stage's Runner calls took in this run, or None when it made none."""
+        seconds = self.runner_seconds.pop(stage, None) if forget else self.runner_seconds.get(stage)
+        return None if seconds is None else round(seconds, 3)
 
     def _make_round(self, spec: StageSpec, missing: list[RunnerCall], device: Device) -> None:
         graph = self.graph
@@ -455,12 +546,18 @@ class _Runner:
             self.progress(ProgressEvent(event="runner_start", stage=spec.name, message=runner_id))
             pull(directory, runner, cancel.check)
             calls = [c for c in missing if c.runner == runner_id]
-            if self.keep_warm and not self.cpu and isinstance(runner, EmbeddingRunner):
+            if self.keep_warm and not self.cpu and runner.can_stay_warm:
                 calls = self._warm_calls(spec, calls)
             if not calls:
                 continue
-            with self._hold_gpu(spec.name), warm.one_runner_loaded():
-                runner.load(directory, device)
+            with ExitStack() as stack:
+                waited = time.monotonic()
+                stack.enter_context(self._hold_gpu(spec.name))
+                self._lock_wait += time.monotonic() - waited
+                stack.enter_context(warm.one_runner_loaded())
+                loading = time.monotonic()
+                warm.load_runner(runner, directory, device)
+                self._loaded_seconds[runner_id] = round(time.monotonic() - loading, 3)
                 try:
                     for call in calls:
                         self._call(spec, call)
@@ -484,10 +581,16 @@ class _Runner:
         runner = runners()[call.runner]
         started = time.monotonic()
         device_used = runner.device_used
+        loaded: list[float] = []  # the warm path's load, if this call made it
 
         def history(outcome: str, **extra: Any) -> None:
             # A pinned result's `params` are in `pinned/<key>.json`; only a call with no pinned result keeps them here.
             params = {} if "key" in extra else {"params": call.params}
+            load_s = self._loaded_seconds.pop(call.runner, None)
+            if load_s is None and loaded:
+                load_s = loaded[0]
+            if load_s is not None:
+                extra = {"load_s": load_s, **extra}
             atomic.append_jsonl(graph.asset.dir / HISTORY_FILE, {
                 "time": _now(), "stage": spec.name, "runner": call.runner, "weights_hash": runner.weights_hash,
                 **params, "device": device_used,
@@ -499,10 +602,9 @@ class _Runner:
         cancel.check()
         try:
             if on_warm:
-                assert isinstance(runner, EmbeddingRunner)
                 result, _, device_used = warm.warm_call(runner, graph.project.state_dir, "auto",
                                                         graph.cache.file_hash(call.image), read_image, call.params,
-                                                        self.command_line)
+                                                        self.command_line, loaded)
             else:
                 result = runner.call(read_image(), call.params, cancel.check)
                 device_used = runner.device_used
@@ -577,8 +679,9 @@ class _Runner:
         started = time.monotonic()
 
         def result(outcome: Outcome, message: str | None = None) -> StageRunResult:
+            own = time.monotonic() - started
             return StageRunResult(asset=graph.asset.id, stage=spec.name, outcome=outcome, input_hash=input_hash,
-                                  duration_s=round(time.monotonic() - started, 3), message=message)
+                                  duration_s=round(own + self.runner_seconds.get(spec.name, 0.0), 3), message=message)
 
         try:
             context = graph.stage_run(spec, building, progress=report)
@@ -610,6 +713,7 @@ class _Runner:
             outcome = result("failed", f"{type(error).__name__}: {error}")
         finally:
             shutil.rmtree(building, ignore_errors=True)
+            self.runner_seconds.pop(spec.name, None)
         if outcome.outcome == "failed":
             graph.failures.record(spec.name, input_hash, outcome.message or "failed")
         self._history(spec, params, outcome)
@@ -675,7 +779,8 @@ def run_asset(
                 runner.gpu_unused = None
             if problem is not None:
                 results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="failed",
-                                              input_hash=graph.input_hash(spec.name), message=problem))
+                                              input_hash=graph.input_hash(spec.name), message=problem,
+                                              duration_s=runner.took(spec.name, forget=True)))
                 findings.append(
                     Finding(
                         code="stage.failed",
@@ -709,14 +814,16 @@ def run_asset(
             break
         if state.status == "needs-review":
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="needs-review",
-                                          input_hash=graph.input_hash(spec.name), message=state.reason))
+                                          input_hash=graph.input_hash(spec.name), message=state.reason,
+                                          duration_s=runner.took(spec.name, forget=True)))
             findings.append(_needs_review(asset, spec.name, state.reason))
             exit_code = _worse(exit_code, ExitCode.NEEDS_OWNER)
             break
         if state.status == "done" and not force:
             results.append(StageRunResult(asset=asset.id, stage=spec.name, outcome="skipped",
                                           input_hash=graph.input_hash(spec.name),
-                                          message=RUNNER_SAME_RESULT if called else None))
+                                          message=RUNNER_SAME_RESULT if called else None,
+                                          duration_s=runner.took(spec.name, forget=True)))
             continue
         progress(ProgressEvent(event="stage_start", stage=spec.name, done=index, total=len(specs)))
         outcome, checked = runner.execute(spec)

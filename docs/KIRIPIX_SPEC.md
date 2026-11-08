@@ -44,7 +44,9 @@ layers, and the layers get stacked back into a scene.
 1. **Assets and stages, not functions.** The user works on an asset, and the asset's kind gives it a fixed list of
    stages. Ops (the image functions) are reached through stages. `kiripix op` exposes them directly for power use.
 2. **Non-destructive.** A stage's output is a pure function of its inputs, its parameters, its recorded human
-   decisions (clicks, picks, Overrides) and its pinned Runner and Provider results. Change anything upstream, the
+   decisions (clicks, picks, Overrides) and its pinned Runner and Provider results. A Blender render counts as a function
+   of its inputs, the Blender version and render settings among them, though it isn't bit-exact across devices
+   (ADR 0010). Change anything upstream, the
    palette for example, and everything below it rebuilds. Nobody edits a generated file by hand. Hand edits are
    Overrides: recorded, and replayed on top.
 3. **Built for agents and UIs.** Every operation is a Command, defined once in core and offered identically through
@@ -65,7 +67,7 @@ layers, and the layers get stacked back into a scene.
    in git LFS.
 10. **Never overwrite the game's own work.** Export writes only files the Manifest says Kiripix owns, and only while
     they are unchanged (ADR 0003). Game logic lives in scenes that instance Kiripix's scenes, never inside them.
-11. **Never re-run a Runner or Provider silently.** A rebuild re-runs only deterministic Ops. Running a Runner again
+11. **Never re-run a Runner or Provider silently.** A rebuild re-runs only deterministic work: Ops, and Blender renders (ADR 0010). Running a Runner again
     is always an explicit request, and calling a Provider (which costs money) only ever happens through `gen`.
 
 ## 3. Concepts
@@ -189,7 +191,9 @@ needs a status; file hashes are cached by modification time and size in `.kiripi
 
 **Pinned calls** (ADR 0002). Each Runner or Provider call is pinned, not each stage output. The key covers the input
 image or crop hash, the click Decisions, the parameters, and the Runner's ID with a hash of its weights. The device
-(CUDA or CPU) is not part of the key. The deterministic Ops around a call rebuild freely.
+(CUDA or CPU) is not part of the key. The deterministic Ops around a call rebuild freely. A Blender render is not a
+pinned call (ADR 0010): it rebuilds like deterministic work, with the Blender version and render settings among the
+Stage's inputs.
 
 **Replaying Decisions.**
 - If a stage's input hash is unchanged, replay is exact and the stage goes straight to `done`.
@@ -239,7 +243,7 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 |---|---|---|---|
 | **brief** | Size in px or tiles, view, mood, exits and their sides, notes. Renders the generation prompt from the kind's template and the style bible. | Writes the brief | Size is a whole number of tiles |
 | **source** | Generates N variants with a Provider (through `gen`), or **imports** an image made elsewhere (a first-class path: the owner may keep using an external image tool). | Picks between several (an agent may pick a lone variant) | Has a picked source |
-| **fit** | Detects the source's pixel grid, or downscales with a mode filter to the target size. Records the Grid transform. Palette-free. | Tunes the grid, with a before/after view | Exact size |
+| **fit** | Detects the source's pixel grid, or downscales to the target size. The downscale uses one scale on both axes, the largest that still fills the brief, and crops the rest (`offset_x` and `offset_y` place the crop; an info finding, `fit.cropped`, says what was cropped and offers the centring `set`). Each cell takes the colour of its dark or light group, so a thin dark line stays one continuous pixel and flat areas stay even (the cell's mean when it has no clear line or edge). Records the Grid transform. Palette-free. | Tunes the grid, with a before/after view | Exact size |
 | **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2; a negative click takes the object under it away from that Layer, and so from the Plate's hole, at its place in the replay), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. On path (a) the owner names a Layer with one click in a region of the difference; unclicked regions stay in the Plate. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial: a target pixel whose Source cell is partly covered by the Runner's Mask or has alpha strictly between 0 and 255 (default 1 px, 0 allowed). With no Decisions the Stage is `done`, and the Plate is the fit image. | Clicks objects to lift out; trims a rim with a brush on the Layer's alpha | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
 | **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2: a positive click adds the object under it to the Mask, a negative click, a shift-click, takes that object away from the Mask at its place in the replay, whichever Decision put it there; each is one Runner call), flood by colour region within an OKLab tolerance of the clicked pixel, brush, polygon (`{mask, erase, points}`, at least three corners in target pixels; it closes itself, the outline pixels are included so a rectangle fills exactly its box, a self-crossing polygon follows the even-odd rule, points outside the Mask are clipped; not `on_image`, so a changed Plate leaves it as it is), a wall along the room's chosen edges, or import of a painted image; optional snap to an N px cell grid. The UI has no polygon tool yet (ticket 0080). | Clicks and brushes | Every Mask binary |
 | **palette** | Maps the whole composite once to the palette in OKLab (strict, or with optional ordered dithering) and removes orphan pixels. Each foreground Layer is that mapped image cut by its alpha; the Plate is the same image with only its inpainted areas mapped separately. | Tunes 2–3 sliders, with a before/after view | Every pixel on the palette; Plate + Layers still recompose exactly |
@@ -286,7 +290,7 @@ Grid transform, palette mapping and Layers exactly.
 **Building one,** in the `looks` Stage:
 1. **Resize** the edit to the Source's exact size, because an edit often comes back at another size.
 2. **Register:** estimate the edit's scale and shift against the Source outside the region, and undo them (`register`,
-   on by default). An image model rescales its redraw by up to about 1 % (trial 0063). The limits come from trial 0119.
+   on by default). An image model rescales its redraw by up to about 1 % (trial 0063). The limits come from trial 0120.
 3. **Fit** through the room's Grid transform: the same mode, scale and offsets.
 4. **Regrade**, optionally (`regrade`, default `none`). `outside` fits the edit's colours, in OKLab, to the Source's on
    the pixels outside the region, and applies that fit to the whole edit. It is off by default: an unlit Look's darkening
@@ -384,7 +388,7 @@ Checks:
 - **resample:**
   - pixel-grid detection (scale and offset of upscaled pixel art), returning a Grid transform;
   - mapping points, images and masks through a Grid transform (a click maps to the centre of its target pixel);
-  - nearest, mode-filter and majority-vote downscale;
+  - nearest, line-keeping and majority-vote downscale;
   - integer upscale.
 - **cleanup:**
   - orphan pixel removal;
@@ -474,7 +478,11 @@ over (principle 10).
 - **Branch merges:** when two game branches export the same asset, `kiripix manifest merge` (a git merge driver)
   resolves it: the higher counter plus one, the union of the IDs, and our `files` with theirs in `replacing`, so the next
   export accepts either. Export checks that the driver is configured in the clone, and its finding's `fix` is `kiripix
-  manifest install` (`.gitattributes` alone does nothing). GitHub never runs custom drivers, so for a conflict in a pull
+  manifest install` (`.gitattributes` alone does nothing). The exported images and scenes (`*.png`, `*.tscn`, `*.tres`
+  under the export root) can't be merged by git either, and the Manifest already accepts either side, so `manifest
+  install` also writes those rules to `<root>/.gitattributes` with a `kiripix-ours` driver (`true`, configured in the
+  clone): a merge keeps our file with no conflict, and the next export puts the right one in place. The same check and
+  `fix` cover these rules. GitHub never runs custom drivers, so for a conflict in a pull
   request, merge locally or run `kiripix manifest repair`, which handles a Manifest with conflict markers.
 
 ## 10. Commands: CLI, REST and MCP
@@ -755,8 +763,8 @@ and the tokens used are recorded at each milestone, as the measure of goal 1 ("c
   brightness differs, so match it row by row. Seam: take the least-difference path through the overlap, with a short blend. A
   piece also fails when too little of a subject is in the kept strip, so the tool must let the Owner choose the strip and retry.
 - Room Looks (§6.1, ADR 0009): the `looks` Stage, edits by `import --look` and, through a Provider, by `gen --look`, and their
-  export to Godot. Trial [0119](../backlog/0119-m4-room-look-edit-trial.md) comes first; the work is
-  [0118](../backlog/0118-m4-room-looks.md).
+  export to Godot. Trial [0120](../backlog/m4/0120-m4-room-look-edit-trial.md) comes first; the work is
+  [0119](../backlog/m4/0119-m4-room-looks.md).
 
 **M5: side view.** Side-view Masks (one-way, ladder), the parallax split with depth, platform reachability.
 

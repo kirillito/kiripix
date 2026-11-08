@@ -36,7 +36,7 @@ def _cold_call(project: Project, runner_id: str, image: np.ndarray, params: dict
     pull(directory, runner, cancel.check)
     locks = [] if device == "cpu" else [GPU_LOCK]
     with hold(project.state_dir, locks, wait, command_line, on_wait=gpu_wait_notice(progress)), warm.one_runner_loaded():
-        runner.load(directory, device)
+        warm.load_runner(runner, directory, device)
         try:
             return runner.call(image, params, cancel.check), runner.device_used
         finally:

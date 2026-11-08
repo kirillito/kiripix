@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: ui-engineer
 type: ticket
@@ -54,11 +54,28 @@ a ticket of their own, starting with the 23 s gap. `Accept` doesn't gain a Cance
 
 Playwright, with the response held back by `page.route` so the wait can be seen:
 
-- [ ] Opening the room list and opening a room show the strip at once, before the response.
-- [ ] `Accept`: the strip and the button's working state show before the response, and a second press sends no second request.
-- [ ] A layer click leaves a mark on its pixel before the response, and the mark goes when the result lands.
-- [ ] A brush stroke stays visible, marked as pending, until the Stage has rebuilt.
-- [ ] Three quick layer clicks all reach the journal in order, and the strip shows the waiting count falling.
-- [ ] `run` and the rerun show the strip, with elapsed time rising, and Cancel still works and clears it.
-- [ ] With no progress event at all, the strip still names the action and its animation runs.
-- [ ] A failed action clears the marks and the strip, and shows its finding.
+- [x] Opening the room list and opening a room show the strip at once, before the response.
+- [x] `Accept`: the strip and the button's working state show before the response, and a second press sends no second request.
+- [x] A layer click leaves a mark on its pixel before the response, and the mark goes when the result lands.
+- [x] A brush stroke stays visible, marked as pending, until the Stage has rebuilt.
+- [x] Three quick layer clicks all reach the journal in order, and the strip shows the waiting count falling.
+- [x] `run` and the rerun show the strip, with elapsed time rising, and Cancel still works and clears it.
+- [x] With no progress event at all, the strip still names the action and its animation runs.
+- [x] A failed action clears the marks and the strip, and shows its finding.
+
+## Findings (UI pass)
+
+- Built web only: no new Command or event. `perform` in `App.tsx` registers each action when it is clicked and removes it once its
+  result and the refresh have landed. `web/src/workStrip.tsx` is the one strip, in the header after the Project name. It shows the
+  action, elapsed time, a moving bar, the latest progress message, a real `<progress>` only when an event has `done` and `total`,
+  and `N waiting`. Opening the room list or a room uses the same strip until the refresh ends.
+- `Accept` is disabled and reads `Accepting…` while it works, with a ref guard against a second request. It still has no Cancel.
+- Marks: `MaskTool.addMark` (`maskTool.ts`) draws a dashed box on a clicked pixel and the stroke itself, tinted, for a brush
+  or trim, until `settled` runs at the end of the action. That is after the `run` of the rebuild and the refresh, whether it worked,
+  failed or was cancelled. `data-pending-marks` on the canvas exposes it to tests.
+- Tests: `web/e2e/work.spec.ts`, 7 flows, one per criterion (the rerun shares the `run` path and is not tested separately).
+  The whole suite run at once on this busy machine (7 workers) timed out on 20 tests, including ones untouched by this ticket;
+  with `--workers=3` they pass.
+- Not covered: the `palette` run, undo and redo, imports and pick get the strip through the same `perform`, but have no test of their own.
+  The lag between a result and the overlay images reloading (a refresh, then an image decode) is not covered by the marks, so a
+  stroke can flicker for a frame once the mark is gone.

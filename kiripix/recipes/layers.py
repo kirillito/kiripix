@@ -30,7 +30,7 @@ from kiripix.ops import (
     Grid,
     connected_regions,
     cut_by_alpha,
-    downscale_mode,
+    downscale,
     grow_where_partial,
     mask_from_difference,
     mask_to_source,
@@ -109,6 +109,12 @@ def read_layers(folder: Path, asset: str) -> list[dict[str, Any]]:
     return listed
 
 
+def read_removed(folder: Path) -> list[str]:
+    """The Layers a built `layers.json` in `folder` says were removed; none for a file made before `remove`."""
+    built = json.loads((folder / LAYERS_FILE).read_text(encoding="utf-8"))
+    return [str(layer) for layer in built.get("removed", [])]
+
+
 def hole_of(alphas: list[np.ndarray], shape: tuple[int, ...]) -> np.ndarray:
     """The hole behind the Layers: the union of their alphas (each a bool Mask, or an RGBA image's alpha above 0)."""
     hole = np.zeros(shape[:2], dtype=np.bool_)
@@ -149,7 +155,23 @@ def trim_decision() -> DecisionSpec:
     )
 
 
-DECISIONS = (PLATE, click_decision(), trim_decision())
+def remove_decision() -> DecisionSpec:
+    return DecisionSpec(
+        name="remove",
+        description="Remove a lifted Layer: its pixels go back to the Plate as if it had never been lifted, and its "
+                    "earlier clicks and trims stop counting. A later positive click on the same Layer ID starts a new "
+                    "Layer. Its y-sort line and always-above flag in `place` stop counting too. Refused for a Layer "
+                    "already exported to the game (its ID is frozen). Undo brings the Layer back.",
+        entry_schema={
+            "type": "object",
+            "properties": {"layer": {"type": "string", "pattern": LAYER_ID}},
+            "required": ["layer"],
+            "additionalProperties": False,
+        },
+    )
+
+
+DECISIONS = (PLATE, click_decision(), trim_decision(), remove_decision())
 
 
 def plate_hash(run: StageRun) -> str | None:
@@ -175,9 +197,33 @@ def _plate_needs_input(run: StageRun, png_hash: str) -> NeedsInput | None:
     return None
 
 
+def _lifting(run: StageRun) -> tuple[CurrentDecision, ...]:
+    return tuple(d for d in run.decisions if d.name in ("click", "trim", "remove"))
+
+
 def _relevant(run: StageRun) -> tuple[CurrentDecision, ...]:
-    """The lifting Decisions; the `plate` Decision only changes where a click gets its Layer (ticket 0044)."""
-    return tuple(d for d in run.decisions if d.name in ("click", "trim"))
+    """The lifting Decisions; the `plate` Decision only changes where a click gets its Layer (ticket 0044). A `remove`
+    drops the Layer's earlier clicks and trims, and itself, so a removed Layer makes no segmentation or fill call and a
+    later click on its ID starts afresh (ticket 0091)."""
+    kept: list[CurrentDecision] = []
+    for decision in _lifting(run):
+        if decision.name == "remove":
+            kept = [d for d in kept if d.data["layer"] != decision.data["layer"]]
+        else:
+            kept.append(decision)
+    return tuple(kept)
+
+
+def removed_layers(run: StageRun) -> list[str]:
+    """The Layers a `remove` took out and no later positive click lifted again, in order of removal."""
+    gone: dict[str, None] = {}
+    for decision in _lifting(run):
+        layer = str(decision.data["layer"])
+        if decision.name == "remove":
+            gone[layer] = None
+        elif decision.name == "click" and decision.data["positive"]:
+            gone.pop(layer, None)
+    return list(gone)
 
 
 def needs_input(run: StageRun) -> NeedsInput | None:
@@ -186,6 +232,15 @@ def needs_input(run: StageRun) -> NeedsInput | None:
     png_hash = plate_hash(run)
     if png_hash is not None and (wrong := _plate_needs_input(run, png_hash)) is not None:
         return wrong
+    lifted: set[str] = set()
+    for decision in _lifting(run):
+        layer = str(decision.data["layer"])
+        if decision.name == "remove":
+            if layer not in lifted:
+                return NeedsInput(f"the remove of {layer} comes before any click lifted {layer}", owner_action=f"{undo}.")
+            lifted.discard(layer)
+        elif decision.name == "click" and decision.data["positive"]:
+            lifted.add(layer)
     seen: set[str] = set()
     for group in click_groups(_relevant(run)):
         first = group[0]
@@ -258,7 +313,7 @@ def _difference(run: StageRun, read: tuple[Grid, dict[str, Any]], png_hash: str,
     label = np.full(opaque.shape, -1, dtype=np.int64)
     for number, region in enumerate(connected_regions(mask_to_target(difference, grid) & opaque)):
         label[region[:, 0], region[:, 1]] = number
-    mapped = downscale_mode(plate, grid) if record["mode"] == "downscale" else sample_nearest(plate, grid)
+    mapped = downscale(plate, grid) if record["mode"] == "downscale" else sample_nearest(plate, grid)
     return _Difference(label, partial_cells(difference, grid), mapped)
 
 
@@ -364,7 +419,7 @@ def _filled_plate(run: StageRun, read: tuple[Grid, dict[str, Any]], fit: np.ndar
         inside = hole_mask(call.params, filled.shape[:2])[top:bottom, left:right]
         region = filled[top:bottom, left:right]
         region[inside] = patch[inside]
-    mapped = downscale_mode(filled, grid) if record["mode"] == "downscale" else sample_nearest(filled, grid)
+    mapped = downscale(filled, grid) if record["mode"] == "downscale" else sample_nearest(filled, grid)
     plate = fit.copy()
     plate[hole] = mapped[hole]
     return plate
@@ -398,7 +453,8 @@ def run_layers(run: StageRun) -> None:
         write_rgba(out / layer_file(layer), cut_by_alpha(fit, alpha))
         listed.append({"id": layer, "file": layer_file(layer), "pixels": int(alpha.sum())})
     Image.fromarray(hole).save(out / FOREGROUND_FILE, format="PNG")
-    built = {"schema_version": LAYERS_SCHEMA_VERSION, "layers": listed}
+    # `removed` is for `place`, which ignores a y-sort line or flag of a removed Layer; an older file has none
+    built = {"schema_version": LAYERS_SCHEMA_VERSION, "layers": listed, "removed": removed_layers(run)}
     (out / LAYERS_FILE).write_text(json.dumps(built, indent=2) + "\n", encoding="utf-8")
 
 

@@ -1,5 +1,6 @@
 """The Project on disk (spec §4): finding it, and creating it with `init`."""
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,10 @@ class Project:
 
     def relative(self, path: Path) -> str:
         try:
+            if path.is_absolute() and ".." not in path.parts:  # the usual case: no filesystem walk (`resolve` is slow)
+                text, root = str(path), str(self.root)
+                if text.startswith(root + os.sep):
+                    return text[len(root) + 1:].replace(os.sep, "/")
             return path.resolve().relative_to(self.root).as_posix()
         except ValueError:
             return path.as_posix()

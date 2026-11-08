@@ -40,6 +40,7 @@ class Runner(ABC):
     description: str
     licence: str
     weights: tuple[WeightFile, ...] = ()
+    can_stay_warm = False  # `serve` may keep it loaded between Commands: its VRAM is small enough to sit beside another's
 
     @property
     def weights_hash(self) -> str:
@@ -73,6 +74,8 @@ class Runner(ABC):
 class EmbeddingRunner(Runner):
     """A Runner in two halves: `embed` is slow and depends only on the image, and `decode` is fast. So a server can keep an
     image's embedding, and each new set of parameters on that image runs only `decode` (spec §10.6)."""
+
+    can_stay_warm = True
 
     @abstractmethod
     def embed(self, image: np.ndarray, check_cancel: CheckCancel) -> Any:

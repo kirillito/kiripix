@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: imaging-engineer
 type: ticket
@@ -41,9 +41,11 @@ The workaround in 0063 was to crop each Source to the brief's aspect before `imp
 
 ## Acceptance criteria
 
-- [ ] CLI test: a 2185 x 768 Source into 1024 x 320 gives `scale_x` equal to `scale_y` (2185/1024), a 1024 x 320 `fit.png`, and
-      a `fit.cropped` info whose `fix` centres it. Running that `fix` moves the crop.
-- [ ] A Source with the brief's aspect fits byte-identically to today, with no finding.
-- [ ] An offset too large to leave the brief's size fails and names the largest allowed.
-- [ ] With a fake segmenter: a `masks` click on a cropped room is sent to the Runner at the right Source point.
-- [ ] A prop with a matte, cropped, still gets binary alpha by vote.
+- [x] CLI test: a 2185 x 768 Source into 1024 x 320 gives `scale_x` equal to `scale_y` (2185/1024), a 1024 x 320 `fit.png`, and
+      a `fit.cropped` info whose `fix` centres it. Running that `fix` moves the crop. (The crop is 86 rows, so the fix is
+      `offset_y=43`; once centred the finding is no longer said.)
+- [x] A Source with the brief's aspect fits as with B (the cluster-pick `downscale` of [0094](0094-m3-palette-stage-muddies-rooms.md)),
+      with no finding. (Reworded: byte-identical to the old mode filter can't hold now that B replaces it.)
+- [x] An offset too large to leave the brief's size fails and names the largest allowed.
+- [x] With a fake segmenter: a `masks` click on a cropped room is sent to the Runner at the right Source point.
+- [x] A prop with a matte, cropped, still gets binary alpha by vote.

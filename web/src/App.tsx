@@ -20,6 +20,8 @@ import {
   FilterBar,
   FindingList,
   ParamControl,
+  pressing,
+  readable,
   StageBar,
   StatusBoard,
   VariantGrid,
@@ -31,9 +33,18 @@ import { ABOVE_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } f
 import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
 import { LAYERS_DECISION, LAYERS_STAGE, LayersPanel } from "./layerScreen";
 import { layerIdOf } from "./sortView";
+import { WorkStrip, type Working } from "./workStrip";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
 const REFRESH_DELAY_MS = 100; // one refresh for a burst of "changed" events
+
+// An action the Owner started, from the click until its result has landed (ticket 0083).
+interface Work {
+  id: number;
+  label: string;
+  kind: string | null;
+  since: number | null; // set when it reaches the front of the queue
+}
 
 interface Selected {
   status: StatusData | null;
@@ -76,7 +87,17 @@ export function App() {
   const [notice, setNotice] = useState<Finding[]>([]);
   const [job, setJob] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState<string | null>(null);
-  const [progress, setProgress] = useState<string | null>(null);
+  const [progress, setProgressText] = useState<string | null>(null);
+  const [fraction, setFraction] = useState<number | null>(null);
+  const [works, setWorks] = useState<Work[]>([]);
+  const [reading, setReading] = useState<{ label: string; since: number } | null>({
+    label: asset ? `Opening ${asset}` : "Reading the Project",
+    since: Date.now(),
+  });
+  const setProgress = useCallback((message: string | null, part: number | null = null) => {
+    setProgressText(message);
+    setFraction(part);
+  }, []);
   const [connected, setConnected] = useState(true);
   const [gameFrame, setGameFrame] = useState(false);
   const [rebuild, setRebuild] = useState(true);
@@ -124,6 +145,7 @@ export function App() {
       }
     } while ((refreshing.current as string) === "again");
     refreshing.current = "idle";
+    setReading(null);
   }, []);
 
   useEffect(() => {
@@ -142,7 +164,7 @@ export function App() {
       window.clearTimeout(timer);
       close();
     };
-  }, [refresh]);
+  }, [refresh, setProgress]);
 
   useEffect(() => {
     void refresh();
@@ -190,9 +212,19 @@ export function App() {
   // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
   // go one at a time, in the order they were made: a Run straight after a `set` must see that `set`, not find its lock held.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const workIds = useRef(0);
   const perform = useCallback(
-    <T,>(action: () => Promise<Envelope<T>>): Promise<void> => {
+    <T,>(
+      action: () => Promise<Envelope<T>>,
+      label = "Working",
+      kind: string | null = null,
+      settled?: () => void,
+    ): Promise<void> => {
+      // Registered at once, so the strip and the marks show before the server has answered; it stays until its result landed.
+      const id = ++workIds.current;
+      setWorks((now) => [...now, { id, label, kind, since: null }]);
       const done = queue.current.then(async () => {
+        setWorks((now) => now.map((work) => (work.id === id ? { ...work, since: Date.now() } : work)));
         try {
           const result = await action();
           setNotice(result.findings);
@@ -200,6 +232,9 @@ export function App() {
           await refresh();
         } catch {
           setConnected(false);
+        } finally {
+          setWorks((now) => now.filter((work) => work.id !== id));
+          settled?.();
         }
       });
       queue.current = done;
@@ -215,25 +250,25 @@ export function App() {
       const result = await call("set", { asset, stage: current, assignments: [`${name}=${value}`] });
       if (!result.ok) setRefusals((count) => count + 1); // The control goes back to the value that stands.
       return result;
-    });
+    }, `Setting ${name}`);
   const decideMarker = useCallback(
     (marker: Record<string, unknown>) => {
       const decision = JSON.stringify({ decision: PLACE_DECISION, data: marker });
-      void perform(() => call("decide", { asset, stage: current, decision }));
+      void perform(() => call("decide", { asset, stage: current, decision }), "Placing a marker");
     },
     [asset, current, perform],
   );
   const decideAbove = useCallback(
     (layer: string, above: boolean) => {
       const decision = JSON.stringify({ decision: ABOVE_DECISION, data: { layer, above } });
-      void perform(() => call("decide", { asset, stage: current, decision }));
+      void perform(() => call("decide", { asset, stage: current, decision }), "Setting the sort side");
     },
     [asset, current, perform],
   );
   const decideFootprint = useCallback(
     (footprint: Record<string, unknown>) => {
       const decision = JSON.stringify({ decision: FOOTPRINT_DECISION, data: footprint });
-      void perform(() => call("decide", { asset, stage: current, decision }));
+      void perform(() => call("decide", { asset, stage: current, decision }), "Setting the footprint");
     },
     [asset, current, perform],
   );
@@ -241,8 +276,9 @@ export function App() {
   // Only a `click` asks for a Runner's result, hence `rerun` for it alone: no other edit may re-run a pinned call (ADR 0002).
   // It can be cancelled, but it doesn't make the screen busy: the queue keeps quick strokes in order, and none is dropped.
   const rebuilt = useCallback(
-    async <T,>(result: Envelope<T>, rerun = false): Promise<Envelope<unknown>> => {
-      if (!(isMasks ? rebuild : isLayers && layersRebuild) || !result.ok) return result;
+    async <T,>(result: Envelope<T>, rerun = false, force = false): Promise<Envelope<unknown>> => {
+      // `force`: a removed Layer is taken out by a plain `run layers`, with no rerun and no accept (ticket 0091).
+      if (!(force || (isMasks ? rebuild : isLayers && layersRebuild)) || !result.ok) return result;
       const id = crypto.randomUUID();
       setRebuilding(id);
       try {
@@ -256,34 +292,63 @@ export function App() {
     [asset, current, isMasks, isLayers, rebuild, layersRebuild],
   );
   const decideMask = useCallback(
-    (name: string, data: Record<string, unknown>) => {
+    (name: string, data: Record<string, unknown>, settled?: () => void) => {
       const decision = JSON.stringify({ decision: name, data });
-      void perform(async () => rebuilt(await call("decide", { asset, stage: current, decision }), name === "click"));
+      const into = String(data.layer ?? data.mask ?? "");
+      const verbs: Record<string, string> = {
+        trim: "Trimming",
+        brush: data.erase ? "Erasing" : "Painting",
+        flood: "Flooding",
+        click: "Clicking into",
+        border: "Bordering",
+        remove: "Removing",
+      };
+      const label =
+        name === "click" && isLayers
+          ? data.positive === false
+            ? `Taking from ${into}`
+            : `Lifting into ${into}`
+          : `${verbs[name] ?? "Deciding on"} ${into}`;
+      void perform(
+        async () => rebuilt(await call("decide", { asset, stage: current, decision }), name === "click", name === "remove" && isLayers),
+        label,
+        null,
+        settled,
+      );
     },
-    [asset, current, perform, rebuilt],
+    [asset, current, isLayers, perform, rebuilt],
   );
   const importMask = useCallback(
-    (file: File) => void perform(async () => rebuilt(await callWithFile("mask-import", { asset }, "png", file))),
+    (file: File) => void perform(async () => rebuilt(await callWithFile("mask-import", { asset }, "png", file)), "Importing a Mask image"),
     [asset, perform, rebuilt],
   );
   const importPlate = useCallback(
-    (file: File) => void perform(async () => rebuilt(await callWithFile("plate-import", { asset }, "png", file))),
+    (file: File) => void perform(async () => rebuilt(await callWithFile("plate-import", { asset }, "png", file)), "Importing a Plate image"),
     [asset, perform, rebuilt],
   );
   const pick = useCallback(
     (variant: string) => {
-      if (!busy) void perform(() => call("pick", { asset, variant }));
+      if (!busy) void perform(() => call("pick", { asset, variant }), "Picking a Variant");
     },
     [asset, busy, perform],
   );
   const importFiles = async (files: File[]) => {
-    for (const file of files) await perform(() => callWithFile("import", { asset }, "file", file));
+    for (const file of files) await perform(() => callWithFile("import", { asset }, "file", file), `Importing ${file.name}`);
   };
   const step = useCallback(
     (command: "undo" | "redo") => {
-      if (!busy) void perform(async () => rebuilt(await call(command, { asset, stage: current })));
+      if (!busy) void perform(
+          async () => {
+            // Undoing or redoing a remove changes which Layers there are, so `layers` is run again (never a rerun: a
+            // Runner call still missing waits for the Owner). Every step on `layers` does it, because which Decision a
+            // queued step undoes is only known once the steps before it have landed.
+            const result = await call(command, { asset, stage: current });
+            return rebuilt(result, false, isLayers);
+          },
+          command === "undo" ? "Undoing" : "Redoing",
+        );
     },
-    [asset, busy, current, perform, rebuilt],
+    [asset, busy, current, isLayers, perform, rebuilt],
   );
 
   // The job exists once it reaches the front of the queue, and only then can it be cancelled.
@@ -292,7 +357,7 @@ export function App() {
     await perform(() => {
       setJob(id);
       return call("run", { asset }, id);
-    });
+    }, `Running ${asset}`);
     setJob(null);
     setProgress(null);
   };
@@ -302,11 +367,20 @@ export function App() {
     await perform(() => {
       setJob(id);
       return call("run", { asset, stage: current, rerun: true }, id);
-    });
+    }, `Re-running ${current}`);
     setJob(null);
     setProgress(null);
   };
-  const accept = () => void perform(() => call("accept", { asset, stage: current }));
+  // One Accept at a time: it can't be cancelled, so a second press while it works would only be a second request.
+  const accepting = works.some((work) => work.kind === "accept");
+  const acceptingNow = useRef(false);
+  const accept = () => {
+    if (acceptingNow.current) return;
+    acceptingNow.current = true;
+    void perform(() => call("accept", { asset, stage: current }), `Accepting ${current}`, "accept").finally(() => {
+      acceptingNow.current = false;
+    });
+  };
 
   const names = show?.stages.map((entry) => entry.stage) ?? [];
   const following = current ? names[names.indexOf(current) + 1] : undefined;
@@ -327,7 +401,15 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [description, isSource, pick, step, variants]);
 
+  function goHome() {
+    setReading({ label: "Opening the room list", since: Date.now() });
+    if (selection.current === null) void refresh();
+    setAsset(null);
+  }
+
   function open(assetId: string, stageName: string | null) {
+    setReading({ label: `Opening ${assetId}`, since: Date.now() });
+    if (assetId === selection.current) void refresh(); // the effect runs only when the Asset changes
     setAsset(assetId);
     setStage(stageName);
     setNotice([]);
@@ -351,12 +433,38 @@ export function App() {
     else setRefocus((count) => count + 1);
   }
 
-  const stageChecks = data.checks.filter((finding) => (finding.position?.stage ?? current) === current);
+  const stageChecks = readable(
+    data.checks.filter((finding) => (finding.position?.stage ?? current) === current),
+    [],
+    show?.stages,
+  );
+  const noticeShown = readable(notice, stageChecks, show?.stages);
+  const problemsShown = readable(data.problems, [...stageChecks, ...noticeShown]);
+  const wantsReview = detail?.status === "needs-review";
+  const wantsRerun = next?.stage === detail?.stage && !!next?.command?.includes("--rerun");
+  const asking = pressing([...stageChecks, ...noticeShown, ...problemsShown]);
+  const nextLine =
+    next && next.stage === detail?.stage && next.owner_action
+      ? next.owner_action
+      : wantsReview
+        ? "Look at the result, then accept it to go on."
+        : asking?.owner_action;
   // Reach has no image of its own, and the Body walks on the mapped room that `place` is made on.
   const reachImage = isReach ? show?.stages.find((entry) => entry.stage === "place")?.input_image : null;
   const image = detail?.image ?? detail?.input_image ?? reachImage ?? null;
   const after = image ? fileUrl(image, imageVersion) : null;
   const before = detail?.image && detail.input_image ? fileUrl(detail.input_image, imageVersion) : null;
+
+  // The strip: the action at the front of the queue, else the read in flight. The rest of the queue is the waiting count.
+  const front = works.find((work) => work.since !== null) ?? works[0];
+  const working: Working | null = front
+    ? { label: front.label, since: front.since ?? Date.now(), waiting: works.length - 1, progress, fraction }
+    : reading
+      ? { label: reading.label, since: reading.since, waiting: 0, progress: null, fraction: null }
+      : null;
+  useEffect(() => {
+    if (works.length === 0) setProgress(null);
+  }, [works.length, setProgress]);
 
   const cancellable = job ?? rebuilding;
   const primary = cancellable ? (
@@ -364,8 +472,8 @@ export function App() {
       Cancel
     </button>
   ) : detail?.status === "needs-review" ? (
-    <button className="primary" data-testid="accept" onClick={accept}>
-      Accept ▶
+    <button className="primary" data-testid="accept" onClick={accept} disabled={accepting} aria-busy={accepting}>
+      {accepting ? "Accepting…" : "Accept ▶"}
     </button>
   ) : next?.stage === detail?.stage && next?.command?.includes("--rerun") ? (
     <button className="primary" data-testid="rerun" onClick={() => void rerun()}>
@@ -384,10 +492,11 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <button className="title" data-testid="home" onClick={() => setAsset(null)}>
+        <button className="title" data-testid="home" onClick={goHome}>
           Kiripix
         </button>
         <span className="project">{data.status?.project}</span>
+        <WorkStrip working={working} />
         <FilterBar filter={filter} onChange={setFilter} />
         {!connected && (
           <span className="offline" role="alert">
@@ -417,10 +526,20 @@ export function App() {
             <h1 data-testid="stage-title">{detail.stage}</h1>
             <p>{description.description}</p>
             {detail.reason && <p className="reason">{detail.reason}</p>}
-            {next && next.stage === detail.stage && (next.owner_action || next.command) && (
-              <p className="hint" data-testid="next-hint">
-                {next.owner_action ?? <code>{next.command}</code>}
-              </p>
+            {(nextLine || (next && next.stage === detail.stage && next.command)) && (
+              <div className="next-line" data-testid="next-hint">
+                <span>{nextLine ?? <code>{next?.command}</code>}</span>
+                {!cancellable && wantsReview && (
+                  <button data-testid="next-accept" onClick={accept} disabled={accepting}>
+                    Accept
+                  </button>
+                )}
+                {!cancellable && !wantsReview && wantsRerun && (
+                  <button data-testid="next-rerun" onClick={() => void rerun()}>
+                    Re-run
+                  </button>
+                )}
+              </div>
             )}
             {isPlace && (
               <PlacePanel
@@ -525,10 +644,10 @@ export function App() {
             ) : (
               <FindingList findings={stageChecks} onJump={jump} testid="checks" />
             )}
-            {notice.length > 0 && (
+            {noticeShown.length > 0 && (
               <>
                 <h2>Last Command</h2>
-                <FindingList findings={notice} onJump={jump} testid="notice" />
+                <FindingList findings={noticeShown} onJump={jump} testid="notice" />
               </>
             )}
             {progress && <p className="hint" data-testid="progress">{progress}</p>}
@@ -537,10 +656,10 @@ export function App() {
         ) : data.problems.length === 0 ? (
           <p className="hint">Choose an Asset to see its Stages.</p>
         ) : null}
-        {data.problems.length > 0 && (
+        {problemsShown.length > 0 && (
           <>
             <h2>Can't read the Project</h2>
-            <FindingList findings={data.problems} onJump={jump} testid="problems" />
+            <FindingList findings={problemsShown} onJump={jump} testid="problems" />
           </>
         )}
       </aside>

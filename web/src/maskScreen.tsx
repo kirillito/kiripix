@@ -58,7 +58,7 @@ export function MasksPanel(props: {
   disabled: boolean;
   rebuild: boolean;
   onRebuild: (rebuild: boolean) => void;
-  decide: (decision: string, data: Record<string, unknown>) => void;
+  decide: (decision: string, data: Record<string, unknown>, settled?: () => void) => void;
   importPng: (file: File) => void;
 }) {
   const { canvas, asset, detail, imageVersion, disabled, rebuild, onRebuild } = props;
@@ -88,16 +88,15 @@ export function MasksPanel(props: {
     const painting = new MaskTool(
       {
         stroke(on, erase, size, points) {
-          const { disabled: off, decide } = latest.current;
-          if (!off) decide("brush", { mask: on, erase, radius: size, points });
+          const { decide } = latest.current;
+          decide("brush", { mask: on, erase, radius: size, points }, painter.current?.addMark({ kind: "stroke", mask: on, erase, radius: size, points }));
         },
         point(kind, on, pixel: CanvasPixel, positive) {
-          const { disabled: off, decide, tolerance: within } = latest.current;
-          if (off) return;
+          const { decide, tolerance: within } = latest.current;
           if (kind === "flood") {
-            decide("flood", { x: pixel.x, y: pixel.y, mask: on, tolerance: within });
+            decide("flood", { x: pixel.x, y: pixel.y, mask: on, tolerance: within }, painter.current?.addMark({ kind: "point", x: pixel.x, y: pixel.y, positive: true }));
           } else {
-            decide("click", { x: pixel.x, y: pixel.y, mask: on, positive });
+            decide("click", { x: pixel.x, y: pixel.y, mask: on, positive }, painter.current?.addMark({ kind: "point", x: pixel.x, y: pixel.y, positive }));
           }
         },
         async preview(pixel): Promise<PreviewRuns | null> {

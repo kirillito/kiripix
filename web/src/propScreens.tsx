@@ -34,7 +34,7 @@ export function FootprintPanel(props: {
   useEffect(() => {
     const drawing = new FootprintTool({
       change(next) {
-        if (!form.current.disabled) form.current.decide(next);
+        form.current.decide(next); // queued behind a Run, never dropped (ticket 0083)
       },
     });
     tool.current = drawing;

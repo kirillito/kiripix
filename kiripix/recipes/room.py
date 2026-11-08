@@ -74,7 +74,7 @@ from kiripix.recipes.layers import (
     run_layers,
     runner_calls as layers_runner_calls,
 )
-from kiripix.recipes.layers import LAYER_ID, LAYERS_FILE, layer_file, read_layers
+from kiripix.recipes.layers import LAYER_ID, LAYERS_FILE, layer_file, read_layers, read_removed
 from kiripix.recipes.room_palette import (
     after_overrides as palette_after_overrides,
     check_room_palette,
@@ -521,19 +521,22 @@ def _above_decision() -> DecisionSpec:
     )
 
 
-def _sort_positions(decisions: tuple[CurrentDecision, ...], layers: list[str] | None = None) -> list[SortPosition]:
+def _sort_positions(decisions: tuple[CurrentDecision, ...], layers: list[str] | None = None,
+                    removed: list[str] | None = None) -> list[SortPosition]:
     """Each Layer's sort position (see `SortPosition`): the first y-sort line placed on it, its `y` the line's mean y
     rounded half up, `(y + y2 + 1) // 2`, unless an `above` Decision puts it always above. With `layers` (the built
     Layers) every one is listed, in their order, with `y` None when it has neither line nor flag, then any other Layer a
-    line or flag names; without it only Layers a line or flag names are listed (`show`, before any build).
+    line or flag names; without it only Layers a line or flag names are listed (`show`, before any build). A line or
+    flag naming a `removed` Layer (ticket 0091) counts for nothing.
     """
+    gone = set(removed or [])
     flags: dict[str, bool] = {}
     for decision in decisions:
-        if decision.name == "above":
+        if decision.name == "above" and decision.data["layer"] not in gone:
             flags[str(decision.data["layer"])] = bool(decision.data["above"])  # the latest counts
     lines: dict[str, dict[str, Any]] = {}
     for marker in _current_markers(decisions):
-        if marker["type"] == "ysort" and "layer" in marker:
+        if marker["type"] == "ysort" and "layer" in marker and marker["layer"] not in gone:
             lines.setdefault(str(marker["layer"]), marker)
     named = list(dict.fromkeys([*lines, *(layer for layer, above in flags.items() if above)]))
     order = list(dict.fromkeys([*(layers or []), *named]))
@@ -557,6 +560,11 @@ def _built_layers(run: StageRun) -> list[str]:
     return [str(entry["id"]) for entry in read_layers(layers_dir, run.asset_id)]
 
 
+def _removed_layers(run: StageRun) -> list[str]:
+    layers_dir = run.upstream[LAYERS_STAGE]
+    return read_removed(layers_dir) if (layers_dir / LAYERS_FILE).is_file() else []
+
+
 MARKERS_FILE = "markers.json"
 MARKERS_SCHEMA_VERSION = 1  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046)
 
@@ -572,7 +580,7 @@ def _read_markers(place_dir: Path, asset: str) -> tuple[list[dict[str, Any]], li
 
 
 def _place(run: StageRun) -> None:
-    sort = _sort_positions(run.decisions, _built_layers(run))
+    sort = _sort_positions(run.decisions, _built_layers(run), _removed_layers(run))
     built = {"schema_version": MARKERS_SCHEMA_VERSION, "markers": _current_markers(run.decisions),
              "sort": [position.model_dump() for position in sort]}
     (run.output_dir / MARKERS_FILE).write_text(json.dumps(built, indent=2) + "\n", encoding="utf-8")
@@ -594,7 +602,8 @@ def _check_sort(run: StageRun, markers: list[dict[str, Any]], sort: list[SortPos
     layers = _built_layers(run)
     tile = float(run.settings["project.tile"])
     findings = []
-    lines = [m for m in markers if m["type"] == "ysort"]
+    removed = set(_removed_layers(run))
+    lines = [m for m in markers if m["type"] == "ysort" and m.get("layer") not in removed]
     for marker in lines:
         at = Position(asset=asset, stage="place", x=int(marker["x"]), y=int(marker["y"]))
         if "layer" not in marker:
@@ -916,7 +925,8 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="fit",
-            description="Grid detection or downscale to the target size; records the Grid transform. Palette-free.",
+            description="Grid detection, or a downscale at one scale on both axes that crops the rest, to the target size; "
+                        "records the Grid transform. Palette-free.",
             inputs=StageInputs(upstream=["source", "brief"]),
             params=FIT_PARAMS,
             checks=(CheckSpec(code="fit.size_mismatch", description="The output has the brief's exact size."),),
@@ -1032,6 +1042,7 @@ ROOM = KindSpec(
             params=PALETTE_PARAMS,
             checks=(
                 CheckSpec(code="palette.off_palette", description="Every pixel is a palette colour."),
+                CheckSpec(code="palette.mapping_error", description="The palette maps the image without a high error."),
                 CheckSpec(code="layers.recompose_mismatch", description="Plate and Layers still recompose exactly."),
             ),
             owner_input="Tunes the sliders.",

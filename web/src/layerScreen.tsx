@@ -5,9 +5,9 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { call, fileUrl, type Envelope, type StageDescription, type StageDetail } from "./api";
-import { MAX_RADIUS, MaskTool, MIN_RADIUS, type PreviewRuns } from "./maskTool";
+import { MAX_RADIUS, MaskTool, MIN_RADIUS, tintOf, type PreviewRuns } from "./maskTool";
 import { isTyping, type CanvasFrame, type CanvasPixel, type CanvasTool, type PixelCanvas } from "./pixelCanvas";
-import { layerIdOf } from "./sortView";
+import { layerIdOf, removedLayers } from "./sortView";
 import { loadMask, type MaskPixels } from "./walkTest";
 
 export const LAYERS_STAGE = "layers";
@@ -20,11 +20,23 @@ interface LayerImage {
   image: HTMLImageElement;
 }
 
+const FLASH_MS = 1600;
+
+// The pixels a lift just added to a Layer, in the Layer's colour; they fade, so a result is shown against its click.
+interface Flash {
+  layer: string;
+  image: HTMLCanvasElement;
+  count: number;
+}
+
 // The Layers as the Stage built them, drawn with their own pixels over the Plate, and the Plate itself on or off.
 class LayerView implements CanvasTool {
   layers: LayerImage[] = [];
   shown = new Set<string>();
   plate = true;
+  flashes: Flash[] = [];
+  flashedAt = 0;
+  flashed = ""; // the latest landing, kept for the tests: "lamp:123"
 
   draw(context: CanvasRenderingContext2D, frame: CanvasFrame): void {
     context.imageSmoothingEnabled = false;
@@ -37,7 +49,16 @@ class LayerView implements CanvasTool {
     for (const { id, image } of this.layers) {
       if (this.shown.has(id)) context.drawImage(image, frame.left, frame.top, width, height);
     }
+    const age = Date.now() - this.flashedAt;
+    if (age < FLASH_MS) {
+      context.globalAlpha = 0.85 * (1 - age / FLASH_MS);
+      for (const flash of this.flashes) {
+        if (this.shown.has(flash.layer)) context.drawImage(flash.image, frame.left, frame.top, width, height);
+      }
+      context.globalAlpha = 1;
+    }
     const data = frame.element.dataset;
+    data.layerFlash = this.flashed;
     data.layersShown = this.layers.filter((layer) => this.shown.has(layer.id)).map((layer) => layer.id).join(" ");
     data.plateShown = String(this.plate);
   }
@@ -62,10 +83,40 @@ function lifted(decisions: StageDetail["decisions"], layer: string): boolean {
   return decisions.some((decision) => decision.name === "click" && decision.data.layer === layer && decision.data.positive);
 }
 
+// The Layers the Stage built and a `remove` has not taken out.
 function layerIds(detail: StageDetail): string[] {
+  const removed = removedLayers(detail.decisions);
   return detail.outputs
     .map(layerIdOf)
-    .filter((id): id is string => id !== undefined);
+    .filter((id): id is string => id !== undefined && !removed.has(id));
+}
+
+// The pixels of `now` that `before` did not have, as a tinted image.
+function added(now: MaskPixels, before: MaskPixels | undefined, colour: string): { image: HTMLCanvasElement; count: number } {
+  const image = document.createElement("canvas");
+  image.width = now.width;
+  image.height = now.height;
+  const context = image.getContext("2d")!;
+  const data = context.createImageData(now.width, now.height);
+  let count = 0;
+  for (let index = 0; index < now.set.length; index++) {
+    const had = before && before.width === now.width && before.height === now.height ? before.set[index] : 0;
+    if (now.set[index] && !had) {
+      data.data[index * 4 + 3] = 255;
+      count++;
+    }
+  }
+  context.putImageData(data, 0, 0);
+  context.globalCompositeOperation = "source-in";
+  context.fillStyle = colour;
+  context.fillRect(0, 0, now.width, now.height);
+  return { image, count };
+}
+
+function countOf(pixels: MaskPixels): number {
+  let count = 0;
+  for (const value of pixels.set) count += value;
+  return count;
 }
 
 export function LayersPanel(props: {
@@ -77,7 +128,7 @@ export function LayersPanel(props: {
   disabled: boolean;
   rebuild: boolean;
   onRebuild: (rebuild: boolean) => void;
-  decide: (decision: string, data: Record<string, unknown>) => void;
+  decide: (decision: string, data: Record<string, unknown>, settled?: () => void) => void;
   importPlate: (file: File) => void;
 }) {
   const { canvas, detail, imageVersion, disabled, rebuild, onRebuild } = props;
@@ -90,6 +141,23 @@ export function LayersPanel(props: {
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [over, setOver] = useState(false);
   const ids = layerIds(detail);
+  const [planned, setPlanned] = useState<string[]>([]); // Layers named here that no click has lifted yet
+  const [pending, setPending] = useState<Record<string, { lift: number; remove: number }>>({});
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const bump = (id: string, key: "lift" | "remove", by: number) =>
+    setPending((now) => {
+      const was = now[id] ?? { lift: 0, remove: 0 };
+      return { ...now, [id]: { ...was, [key]: Math.max(0, was[key] + by) } };
+    });
+  const removed = removedLayers(detail.decisions);
+  const removedKey = [...removed].join(" ");
+  const decided = detail.decisions
+    .filter((decision) => typeof decision.data.layer === "string")
+    .map((decision) => decision.data.layer as string);
+  const waiting = Object.keys(pending).filter((id) => pending[id].lift > 0);
+  // Built Layers, then the ones with a Decision, the ones named here, and the ones a click is lifting into right now.
+  const listed = [...new Set([...ids, ...decided, ...planned, ...waiting])].filter((id) => !removed.has(id));
+  const listedKey = listed.join(" ");
   // A string, so the effect below reloads the images only when the files change, not on every new `show`.
   const idsKey = JSON.stringify(detail.outputs.filter((path) => layerIdOf(path) !== undefined));
   const pattern = props.decisions.find((entry) => entry.name === "click")?.entry_schema?.properties?.layer?.pattern;
@@ -97,28 +165,34 @@ export function LayersPanel(props: {
   const fromDifference = detail.decisions.some((decision) => decision.name === PLATE_DECISION);
   const hole = detail.outputs.find((path) => path.endsWith("foreground.png"));
 
-  const latest = useRef({ ...props, layer, valid, ids, fromDifference });
-  latest.current = { ...props, layer, valid, ids, fromDifference };
+  const latest = useRef({ ...props, layer, valid, ids, fromDifference, bump });
+  latest.current = { ...props, layer, valid, ids, fromDifference, bump };
   const painter = useRef<MaskTool | null>(null);
   const view = useRef(new LayerView());
   const own = useRef(new Map<string, MaskPixels>());
+  const loadedOnce = useRef(false);
 
   useEffect(() => {
     const painting = new MaskTool(
       {
         stroke(on, _erase, size, points) {
-          const { disabled: off, decide, ids: known } = latest.current;
-          if (off) return;
+          const { decide, ids: known } = latest.current;
           if (!known.includes(on)) setUnavailable(`Nothing to trim: ${on} isn't a lifted Layer yet.`);
-          else decide("trim", { layer: on, radius: size, points });
+          else decide("trim", { layer: on, radius: size, points }, painter.current?.addMark({ kind: "stroke", mask: on, erase: false, radius: size, points }));
         },
         point(_kind, on, pixel: CanvasPixel, positive) {
-          const { disabled: off, decide, detail: stage, valid: usable } = latest.current;
-          if (off) return;
+          const { decide, detail: stage, valid: usable, bump: count } = latest.current;
           if (!usable) setUnavailable("A Layer ID is lower-case letters, digits and underscores, and plate is reserved.");
           else if (!positive && !lifted(stage.decisions, on)) {
             setUnavailable(`Nothing to take away from: click an object to lift it into ${on} first.`);
-          } else decide("click", { x: pixel.x, y: pixel.y, layer: on, positive });
+          } else {
+            const clear = painter.current?.addMark({ kind: "point", x: pixel.x, y: pixel.y, positive, layer: on });
+            count(on, "lift", 1);
+            decide("click", { x: pixel.x, y: pixel.y, layer: on, positive }, () => {
+              clear?.();
+              count(on, "lift", -1);
+            });
+          }
         },
         async preview(pixel): Promise<PreviewRuns | null> {
           const { asset: id, fromDifference: planned, valid: usable } = latest.current;
@@ -152,10 +226,18 @@ export function LayersPanel(props: {
     if (!painting) return;
     painting.setTool(tool === "click" ? "click" : "brush");
     painting.mask = layer;
+    painting.label = valid ? layer : ""; // the Layer a click goes to, beside the cursor
     painting.taking = own.current.get(layer) ?? null;
     painting.radius = radius;
     canvas.current?.redraw();
-  }, [canvas, tool, layer, radius]);
+  }, [canvas, tool, layer, radius, valid]);
+
+  // Each Layer keeps its colour in the list, on the cursor, on a waiting click and in the flash of its new pixels.
+  useEffect(() => {
+    if (!painter.current) return;
+    painter.current.layerColours = new Map(listedKey.split(" ").filter(Boolean).map((id, index) => [id, tintOf(index)]));
+    canvas.current?.redraw();
+  }, [canvas, listedKey]);
 
   // The Layers and the hole as built; a refresh brings the new ones.
   const holeFile = hole ?? "";
@@ -173,7 +255,27 @@ export function LayersPanel(props: {
       .then((loaded) => {
         if (!current) return;
         view.current.layers = loaded;
+        const before = own.current;
         own.current = new Map(loaded.map((entry) => [entry.id, pixelsOf(entry.image)]));
+        setCounts(Object.fromEntries([...own.current].map(([id, pixels]) => [id, countOf(pixels)])));
+        // Pixels a lift has just brought, flashed in the Layer's colour; the first read of the screen is not a landing.
+        if (loadedOnce.current) {
+          const flashes: Flash[] = [];
+          for (const [id, pixels] of own.current) {
+            const made = added(pixels, before.get(id), painter.current?.colourOf(id) ?? tintOf(0));
+            if (made.count > 0) flashes.push({ layer: id, ...made });
+          }
+          if (flashes.length > 0) {
+            view.current.flashes = flashes;
+            view.current.flashedAt = Date.now();
+            view.current.flashed = flashes.map((flash) => `${flash.layer}:${flash.count}`).join(" ");
+            const timer = window.setInterval(() => {
+              canvas.current?.redraw();
+              if (Date.now() - view.current.flashedAt >= FLASH_MS) window.clearInterval(timer);
+            }, 60);
+          }
+        }
+        loadedOnce.current = true;
         if (painter.current) painter.current.taking = own.current.get(latest.current.layer) ?? null;
         canvas.current?.redraw();
       })
@@ -203,10 +305,10 @@ export function LayersPanel(props: {
   }, [canvas, holeOn, holeFile, imageVersion]);
 
   useEffect(() => {
-    view.current.shown = new Set(ids.filter((id) => !hidden.includes(id)));
+    view.current.shown = new Set(ids.filter((id) => !hidden.includes(id) && !removed.has(id)));
     view.current.plate = plateOn;
     canvas.current?.redraw();
-  }, [canvas, idsKey, hidden, plateOn]);
+  }, [canvas, idsKey, hidden, plateOn, removedKey]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -251,9 +353,30 @@ export function LayersPanel(props: {
   const input = useRef<HTMLInputElement>(null);
   const newLayer = () => {
     let number = ids.length + 1;
-    while (ids.includes(`layer${number}`)) number++;
+    while (listed.includes(`layer${number}`)) number++;
     setLayer(`layer${number}`);
+    setPlanned((now) => [...now, `layer${number}`]);
     setTool("click");
+  };
+  // A name typed into the field is a Layer from then on: in the list at once, with no pixels until a lift lands.
+  const commitName = () => {
+    if (valid && layer !== "plate" && !listed.includes(layer)) setPlanned((now) => [...now, layer]);
+  };
+  const remove = (id: string) => {
+    if (!decided.includes(id) && !ids.includes(id)) {
+      setPlanned((now) => now.filter((one) => one !== id)); // never lifted: nothing to record
+      return;
+    }
+    bump(id, "remove", 1);
+    props.decide("remove", { layer: id }, () => bump(id, "remove", -1));
+  };
+  const stateOf = (id: string): { state: string; text: string } => {
+    if ((pending[id]?.remove ?? 0) > 0) return { state: "removing", text: "removing..." };
+    if ((pending[id]?.lift ?? 0) > 0) return { state: "lifting", text: "lifting..." };
+    if (!ids.includes(id)) return { state: "none", text: "no pixels yet" };
+    const count = counts[id];
+    if (count === undefined) return { state: "lifting", text: "reading..." };
+    return count > 0 ? { state: "lifted", text: `${count} px` } : { state: "empty", text: "empty" };
   };
 
   return (
@@ -284,21 +407,34 @@ export function LayersPanel(props: {
           value={layer}
           aria-invalid={!valid}
           onChange={(event) => setLayer(event.target.value)}
+          onBlur={commitName}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitName();
+          }}
         />
         <button data-testid="layer-new" onClick={newLayer}>
           New Layer
         </button>
       </div>
       {!valid && <p className="reason">A Layer ID is lower-case letters, digits and underscores, and plate is reserved.</p>}
-      {ids.length === 0 ? (
+      {valid && tool === "click" && (
+        <p className="hint" data-testid="layer-target">
+          A click goes to <b style={{ color: painter.current?.colourOf(layer) ?? tintOf(0) }}>{layer}</b>.
+        </p>
+      )}
+      {listed.length === 0 ? (
         <p className="hint">No Layer is lifted yet: this room's foreground is empty.</p>
       ) : (
         <ul className="layer-list" data-testid="layer-list">
-          {ids.map((id) => (
+          {listed.map((id) => (
             <li key={id}>
+              <span className="swatch" style={{ background: painter.current?.colourOf(id) ?? tintOf(0) }} aria-hidden="true" />
               <button data-testid={`layer-${id}`} aria-pressed={layer === id} onClick={() => setLayer(id)}>
                 {id}
               </button>
+              <span className="hint" data-testid={`layer-state-${id}`} data-state={stateOf(id).state}>
+                {stateOf(id).text}
+              </span>
               <label className="toggle">
                 <input
                   type="checkbox"
@@ -310,6 +446,14 @@ export function LayersPanel(props: {
                 />
                 show
               </label>
+              <button
+                data-testid={`layer-remove-${id}`}
+                title={`Remove ${id} (Ctrl+Z brings it back)`}
+                disabled={(pending[id]?.remove ?? 0) > 0}
+                onClick={() => remove(id)}
+              >
+                Remove
+              </button>
             </li>
           ))}
         </ul>

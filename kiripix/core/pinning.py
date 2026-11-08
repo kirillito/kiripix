@@ -5,6 +5,7 @@ Runner's ID with a hash of its weights. The device isn't part of it. The record 
 PNG is written last, so a result that exists is a whole one.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,9 @@ from kiripix.recipes.base import RunnerCall
 from kiripix.runners import runners
 
 PINNED_DIR = "pinned"
-RECORD_SCHEMA_VERSION = 1
+# 2 adds `result_hash` (ticket 0095). A version 1 record has none, and reads as a result not known to be as made,
+# so its key is reviewed once more: nothing to migrate.
+RECORD_SCHEMA_VERSION = 2
 
 
 def key(call: RunnerCall, image_hash: str) -> str:
@@ -64,3 +67,18 @@ def store(asset_dir: Path, stage: str, call: RunnerCall, pin: str, image_hash: s
         save_mask_png(result_path(asset_dir, pin), result)
     else:
         save_png(result_path(asset_dir, pin), result)
+    # Written after the PNG, so a record with it says the PNG is whole and as the Runner made it (see `is_as_made`).
+    record["result_hash"] = hashlib.sha256(result_path(asset_dir, pin).read_bytes()).hexdigest()
+    atomic.write_json(asset_dir / PINNED_DIR / f"{pin}.json", record)
+
+
+def is_as_made(asset_dir: Path, pin: str, png_hash: str) -> bool:
+    """Whether the pinned PNG, whose sha256 is `png_hash`, is still the bytes the Runner made for this key: its record's
+    `result_hash` matches it. A record without one (older, or cut short between the two writes) says nothing, so it is
+    not."""
+    try:
+        record = json.loads((asset_dir / PINNED_DIR / f"{pin}.json").read_text(encoding="utf-8"))
+        made = record.get("result_hash") if isinstance(record, dict) else None
+        return isinstance(made, str) and made == png_hash
+    except (OSError, ValueError):
+        return False

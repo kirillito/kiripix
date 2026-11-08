@@ -309,11 +309,15 @@ FIT_PARAMS = (
     ParamSpec(
         name="mode",
         type="choice",
-        description="Detect the Source's pixel grid, or downscale with a mode filter.",
+        description="Detect the Source's pixel grid, or downscale at one scale on both axes, cropping the rest.",
         default="grid",
         choices=["grid", "downscale"],
     ),
     ParamSpec(name="scale", type="int", description="Source pixels per target pixel; 0 detects it.", default=0, minimum=0),
-    ParamSpec(name="offset_x", type="int", description="Grid offset in Source pixels.", default=0, minimum=0),
-    ParamSpec(name="offset_y", type="int", description="Grid offset in Source pixels.", default=0, minimum=0),
+    ParamSpec(name="offset_x", type="int", default=0, minimum=0,
+              description="Source pixels from the left to the first cell: the grid's offset, or in downscale mode "
+                          "where the crop starts."),
+    ParamSpec(name="offset_y", type="int", default=0, minimum=0,
+              description="Source pixels from the top to the first cell: the grid's offset, or in downscale mode "
+                          "where the crop starts."),
 )

@@ -24,6 +24,8 @@ from kiripix.export.manifest import (
 from kiripix.export.target import GodotTarget
 
 DRIVER = "kiripix-manifest"
+OURS_DRIVER = "kiripix-ours"  # keeps our side of an exported image or scene; the next export rewrites it
+OURS_PATTERNS = ("*.png", "*.tscn", "*.tres")
 INSTALL_FIX = "kiripix manifest install"
 _GIT_TIMEOUT = 20
 
@@ -178,9 +180,17 @@ def driver_installed(target: GodotTarget) -> bool | None:
     configured = _git(target.folder, "config", "--get", f"merge.{DRIVER}.driver")
     if configured is None or configured.returncode != 0 or not configured.stdout.strip():
         return False
-    probe = f"{target.root.removeprefix('res://')}/{MANIFEST_DIR}/probe.json"
-    attr = _git(target.folder, "check-attr", "merge", "--", probe)
-    return attr is not None and attr.returncode == 0 and attr.stdout.strip().endswith(f": merge: {DRIVER}")
+    ours = _git(target.folder, "config", "--get", f"merge.{OURS_DRIVER}.driver")
+    if ours is None or ours.returncode != 0 or not ours.stdout.strip():
+        return False
+    base = target.root.removeprefix("res://")
+    probes = [(f"{base}/{MANIFEST_DIR}/probe.json", DRIVER)]
+    probes += [(f"{base}/probe/probe{pattern[1:]}", OURS_DRIVER) for pattern in OURS_PATTERNS]
+    for probe, driver in probes:
+        attr = _git(target.folder, "check-attr", "merge", "--", probe)
+        if attr is None or attr.returncode != 0 or not attr.stdout.strip().endswith(f": merge: {driver}"):
+            return False
+    return True
 
 
 def driver_finding(target: GodotTarget) -> Finding | None:
@@ -188,9 +198,10 @@ def driver_finding(target: GodotTarget) -> Finding | None:
     if driver_installed(target) is not False:
         return None
     return Finding(code="export.merge_driver_missing", severity="warning",
-                   message="the game's clone has no Manifest merge driver, so two branches that export the same Asset "
-                           "will conflict in its Manifest (`.gitattributes` alone does nothing; the clone needs the "
-                           "driver configured)",
+                   message="the game's clone has no Manifest merge driver or no merge rule for the exported images and "
+                           "scenes, so two branches that export the same Asset will conflict in its Manifest, "
+                           "`.png`, `.tscn` and `.tres` files (`.gitattributes` alone does nothing; the clone needs "
+                           "the drivers configured)",
                    fix=INSTALL_FIX)
 
 
@@ -220,6 +231,14 @@ def install_driver(target: GodotTarget) -> list[str]:
         kept = "" if not current else current if current.endswith("\n") else current + "\n"
         atomic.write_text(attributes, kept + line)
         changed.append(f"{target.root}/{MANIFEST_DIR}/{GITATTRIBUTES}")
+    root_attributes = target.path(f"{target.root}/{GITATTRIBUTES}")
+    wanted = [f"{pattern} merge={OURS_DRIVER}" for pattern in OURS_PATTERNS]
+    current = root_attributes.read_text("utf-8") if root_attributes.is_file() else ""
+    missing = [rule for rule in wanted if rule not in current.splitlines()]
+    if missing:
+        kept = current if not current or current.endswith("\n") else current + "\n"
+        atomic.write_text(root_attributes, kept + "".join(rule + "\n" for rule in missing))
+        changed.append(f"{target.root}/{GITATTRIBUTES}")
     command = driver_command()
     have = _git(target.folder, "config", "--get", f"merge.{DRIVER}.driver")
     if have is None or have.stdout.strip() != command:
@@ -230,4 +249,15 @@ def install_driver(target: GodotTarget) -> list[str]:
                                                          f"{done.stderr.strip() if done else 'git can not be run'}",
                            owner_action="Check the game's .git/config is writable.")
         changed.append("git config")
+    have_ours = _git(target.folder, "config", "--get", f"merge.{OURS_DRIVER}.driver")
+    if have_ours is None or have_ours.stdout.strip() != "true":
+        for key, value in ((f"merge.{OURS_DRIVER}.name", "Keep ours; the next Kiripix export rewrites it"),
+                           (f"merge.{OURS_DRIVER}.driver", "true")):
+            done = _git(target.folder, "config", "--local", key, value)
+            if done is None or done.returncode != 0:
+                raise fail("manifest.git_config_failed", f"git config {key} failed: "
+                                                         f"{done.stderr.strip() if done else 'git can not be run'}",
+                           owner_action="Check the game's .git/config is writable.")
+        if "git config" not in changed:
+            changed.append("git config")
     return changed

@@ -118,6 +118,17 @@ def quantize(rgba: U8, palette_rgb: U8, dither: BayerSize = 0, strength: float =
     return out
 
 
+def mapping_error(before: U8, after: U8) -> float:
+    """The mean OKLab distance between two same-sized RGBA images, over the pixels opaque in both; 0.0 when none are."""
+    if before.shape != after.shape:
+        raise ValueError("the images differ in size")
+    both = (before[..., 3] == 255) & (after[..., 3] == 255)
+    if not both.any():
+        return 0.0
+    delta = srgb_to_oklab(before[..., :3][both]) - srgb_to_oklab(after[..., :3][both])
+    return float(np.sqrt((delta**2).sum(axis=-1)).mean())
+
+
 @dataclass(frozen=True)
 class ConformanceReport:
     """How well an image keeps to a palette. Positions are (x, y), in row-major order."""

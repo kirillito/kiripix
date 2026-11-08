@@ -504,3 +504,77 @@ kbd {
 .mask-form .param input[type="text"] {
   width: 100%;
 }
+
+/* The status strip: always in the header, after the Project's name. */
+.work-slot {
+  flex: 1;
+  min-height: 24px;
+  min-width: 0;
+}
+
+.work-strip {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.work-anim {
+  animation: work-slide 1s linear infinite;
+  background: linear-gradient(90deg, var(--line) 0 30%, var(--accent) 30% 60%, var(--line) 60% 100%) 0 0 / 200% 100%;
+  border-radius: 3px;
+  flex: none;
+  height: 6px;
+  width: 48px;
+}
+
+@keyframes work-slide {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.work-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.work-elapsed,
+.work-waiting {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.work-progress {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-bar {
+  flex: none;
+  width: 120px;
+}
+
+.next-line {
+  align-items: center;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin: 8px 0;
+  padding: 6px 8px;
+}
+
+.findings .agent {
+  color: var(--muted);
+  font-size: 0.8em;
+}
+
+.info-toggle {
+  font-size: 0.85em;
+  margin-bottom: 6px;
+}

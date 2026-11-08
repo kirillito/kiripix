@@ -4,7 +4,9 @@ pinned RGBA crop with the hole filled; swapping the Runner behind the role makes
 real-weights check runs only when the weights are on disk (the ticket's manual check is the Owner's, not CI's)."""
 
 import json
+import shutil
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +110,49 @@ def test_cancel_during_a_long_inpainter_call_is_run_cancelled_and_pins_nothing(
     [reply] = replies
     assert reply.status == 400 and reply.codes == ["run.cancelled"]
     assert not list(folder.glob("pinned/*"))
+
+
+def _history(folder: Path) -> list[dict[str, Any]]:
+    entries = [json.loads(line) for line in (folder / "history.jsonl").read_text("utf-8").splitlines()]
+    return [e for e in entries if "runner" in e]
+
+
+def test_serve_keeps_the_inpainter_warm_so_only_the_first_run_pays_its_load(
+        project: Kiripix, server: Server) -> None:  # noqa: F811
+    folder = make_inpaint(project)
+    (project.cwd / "runner-load-seconds").write_text("0.5", encoding="utf-8")
+    body = {"asset": ASSET, "stage": "patched", "rerun": True}
+
+    assert server.call("/api/run", body).status == 403  # the rerun waits for the Owner's accept
+    shutil.rmtree(folder / "pinned")  # a call to make again
+    assert server.call("/api/run", body).status == 403
+
+    first, second = _history(folder)
+    assert first["load_s"] >= 0.5 and "load_s" not in second, "the second run found the Runner loaded"
+    assert (project.cwd / ".kiripix" / "locks" / "gpu.lock").is_file(), "serve holds the GPU lock while it is warm"
+
+
+def test_cancel_during_a_long_load_is_run_cancelled_at_once_and_the_next_run_still_works(
+        project: Kiripix, server: Server) -> None:  # noqa: F811
+    folder = make_inpaint(project)
+    (project.cwd / "runner-load-seconds").write_text("4", encoding="utf-8")
+    replies: list[Any] = []
+    body = {"asset": ASSET, "stage": "patched", "rerun": True}
+    caller = threading.Thread(target=lambda: replies.append(
+        server.call("/api/run", body, headers={"X-Kiripix-Job": "l"})))
+    caller.start()
+    time.sleep(1)  # inside the load
+
+    server.call("/api/jobs/l/cancel")
+    started = time.monotonic()
+    caller.join(timeout=30)
+
+    [reply] = replies
+    assert reply.codes == ["run.cancelled"] and time.monotonic() - started < 2, "it didn't wait for the load to end"
+    assert not list(folder.glob("pinned/*"))
+    (project.cwd / "runner-load-seconds").unlink()
+    assert server.call("/api/run", body).status == 403, "the next run waits for the abandoned load, then loads its own"
+    assert len(pinned(folder)) == 1
 
 
 def test_the_real_inpainter_is_listed_with_its_licence_hash_and_size_without_downloading(project: Kiripix) -> None:

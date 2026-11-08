@@ -383,6 +383,15 @@ def undo(project: Project, asset: Asset, stage: str) -> tuple[journal.JournalEnt
     return entry, _read(project, asset, stage)[1]
 
 
+def next_redo(project: Project, asset: Asset, stage: str) -> journal.JournalEntry | None:
+    """The Decision a `redo` of the Stage would bring back, or None when there is nothing to redo."""
+    path, replay = _read(project, asset, stage)
+    target = replay.next_redo()
+    if target is None:
+        return None
+    return next((e for e in journal.read_entries(path, project.relative(path)) if e.id == target), None)
+
+
 def redo(project: Project, asset: Asset, stage: str) -> tuple[journal.JournalEntry, journal.Replay]:
     _graph(project, asset).spec(stage)
     path, before = _read(project, asset, stage)

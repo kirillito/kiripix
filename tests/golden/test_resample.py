@@ -11,7 +11,7 @@ from PIL import Image
 from kiripix.ops import (
     Grid,
     detect_grid,
-    downscale_mode,
+    downscale,
     mask_to_source,
     mask_to_target,
     point_to_target,
@@ -117,35 +117,70 @@ def test_grid_transform_round_trips_through_json() -> None:
 # downscale
 
 
-def test_mode_filter_downscale_returns_the_majority_colour_of_each_cell(request: pytest.FixtureRequest) -> None:
+def test_downscaling_uniform_cells_gives_the_colours_back(request: pytest.FixtureRequest) -> None:
     source = upscale(art(), 4)
-    rng = np.random.default_rng(7)
-    for _ in range(60):  # 60 stray pixels in 96 cells of 16: no cell loses its majority
-        y, x = rng.integers(0, 32), rng.integers(0, 48)
-        source[y, x] = PALETTE[rng.integers(0, 5)].tolist() + [255]
 
-    result = downscale_mode(source, Grid.to_size(48, 32, 12, 8))
+    result = downscale(source, Grid.to_size(48, 32, 12, 8))
 
     assert (result == art()).all()
-    assert_golden(request, result, "downscale_noisy_art.png")
+    assert_golden(request, result, "downscale_art.png")
 
 
 def test_downscale_by_a_ratio_partitions_the_source_exactly(request: pytest.FixtureRequest) -> None:
     source = art()[:, :10].copy()
     source[0, 0] = (255, 0, 77, 255)
 
-    result = downscale_mode(source, Grid.to_size(10, 8, 4, 3))
+    result = downscale(source, Grid.to_size(10, 8, 4, 3))
 
     assert result.shape == (3, 4, 4)
     assert_golden(request, result, "downscale_ratio.png")
 
 
-def test_mode_ties_go_to_the_smallest_packed_colour() -> None:
+def test_a_cell_of_two_clearly_different_colours_takes_the_darker_when_it_covers_enough() -> None:
     red, blue = (255, 0, 77, 255), (41, 173, 255, 255)
     cell = np.array([[red, blue], [blue, red]], dtype=np.uint8)
 
-    assert downscale_mode(cell, Grid.to_size(2, 2, 1, 1)).tolist() == [[list(blue)]]
-    assert downscale_mode(cell[::-1], Grid.to_size(2, 2, 1, 1)).tolist() == [[list(blue)]]
+    assert downscale(cell, Grid.to_size(2, 2, 1, 1)).tolist() == [[list(red)]]  # red is the darker, at 50 % of the cell
+    assert downscale(cell[::-1], Grid.to_size(2, 2, 1, 1)).tolist() == [[list(red)]]
+
+
+def painted_wall(width: int, height: int) -> np.ndarray:
+    """A soft-shaded wall with a little deterministic noise, as a painted Source has."""
+    rng = np.random.default_rng(11)
+    x = np.arange(width)[None, :, None] * np.ones((height, 1, 3))
+    base = np.array([96, 128, 132]) + (x * 0.6).astype(np.int64) * np.array([1, 1, 1])
+    wall = np.full((height, width, 4), 255, dtype=np.uint8)
+    wall[..., :3] = np.clip(base + rng.integers(-3, 4, size=(height, width, 3)), 0, 255)
+    return wall
+
+
+def test_a_thin_dark_line_straddling_cells_stays_one_continuous_pixel_line(request: pytest.FixtureRequest) -> None:
+    source = painted_wall(30, 30)
+    source[:, 5:7] = (20, 30, 35, 255)  # a 2 px vertical line across the cells [4, 6) and [6, 8): half of each
+    source[22:24, 10:] = (20, 30, 35, 255)  # and a horizontal one across the rows [21, 23) and [23, 25), clear of it
+
+    result = downscale(source, Grid.to_size(30, 30, 14, 14))
+
+    dark = result[..., :3].sum(axis=2) < 150
+    columns = np.nonzero(dark[0])[0]
+    rows = np.nonzero(dark[:, 13])[0]
+    assert columns.tolist() == [3] and rows.tolist() == [11]  # one pixel wide each, on the cell with the larger share
+    assert dark[:, 3].all() and dark[11, 5:].all()  # unbroken along their length
+    assert dark.sum() == 14 + 9  # and nothing else is dark
+    assert_golden(request, result, "downscale_thin_line.png")
+
+
+def test_a_flat_soft_shaded_area_stays_even(request: pytest.FixtureRequest) -> None:
+    source = painted_wall(45, 30)
+
+    result = downscale(source, Grid.to_size(45, 30, 21, 14))
+
+    mean = np.stack([np.add.reduceat(np.add.reduceat(source[..., c].astype(float), Grid.to_size(45, 30, 21, 14).edges_y()[:-1],
+                                                     axis=0), Grid.to_size(45, 30, 21, 14).edges_x()[:-1], axis=1)
+                     for c in range(3)], axis=-1)
+    sizes = np.outer(np.diff(Grid.to_size(45, 30, 21, 14).edges_y()), np.diff(Grid.to_size(45, 30, 21, 14).edges_x()))
+    assert np.abs(result[..., :3] - mean / sizes[..., None]).max() <= 3  # within the noise of the plain mean
+    assert_golden(request, result, "downscale_soft_shade.png")
 
 
 def test_alpha_is_binarised_by_majority_vote(request: pytest.FixtureRequest) -> None:
@@ -157,7 +192,7 @@ def test_alpha_is_binarised_by_majority_vote(request: pytest.FixtureRequest) -> 
     source[1, 4:6] = (0, 228, 54, 100)
     source[2:, 4:8] = (0, 228, 54, 90)  # the last two: all below 128, so transparent
 
-    result = downscale_mode(source, Grid.to_size(8, 4, 4, 2))
+    result = downscale(source, Grid.to_size(8, 4, 4, 2))
 
     assert set(np.unique(result[..., 3])) <= {0, 255}
     assert (result[result[..., 3] == 0] == 0).all()

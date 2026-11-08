@@ -114,7 +114,7 @@ Not decided here. A ticket that depends on one says so, and stops until it's ans
 |---|---|---|
 | Q1 | **Answered 2026-11-07: not pinned.** A render is deterministic work, with the Blender version and render settings among its inputs (above). | [0098](0098-m3-blender-renders-and-pinning.md), every Stage that runs Blender |
 | Q2 | **Answered 2026-11-07: a 1 px silhouette from the object mask,** in `finish` after `palette` (above). Inverted hull only if the Owner dislikes it in 0106; Freestyle isn't tried. | [0106](0106-m3-outline-method-trial.md) |
-| Q3 | **Answered 2026-11-07: deferred to M4.** The Owner's rule was M3 only if under 1M tokens; the estimate was 0.7 to 1.2M, and the models that fit 8 GB rig badly. The trial is now [0125](0125-m4-image-to-3d-trial.md), in M4, beside Providers. | 0125 |
+| Q3 | **Answered 2026-11-07: deferred to M4.** The Owner's rule was M3 only if under 1M tokens; the estimate was 0.7 to 1.2M, and the models that fit 8 GB rig badly. The trial is now [0126](m4/0126-m4-image-to-3d-trial.md), in M4, beside Providers. | 0126 |
 | Q4 | **Answered 2026-11-07: a Quaternius character (CC0),** not a blocky or toy-like one. Its base body and outfit are separate meshes on one skeleton, so they are joined into one `.blend` in Blender first; that file is the Model Kiripix imports. Upload it to Mixamo once first to check that it rigs cleanly. Which character and outfit is still the Owner's pick. | the gate, 0106 |
 | Q5 | **Answered 2026-11-07:** snake_case verbs (`attack`, not `attack_1`) and `<clip>_<dir>` with compass suffixes (above). | 0103, 0104, 0113 |
 | Q6 | **Answered 2026-11-07: all 8 directions are rendered,** none mirrored, so an asymmetric character stays right. | 0104 |

@@ -6,6 +6,7 @@ seconds before it is hashed isn't cached, so a quick second write with the same 
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -39,16 +40,37 @@ class HashCache:
         self._path = state_dir / "hash-cache.json"
         self._entries: dict[str, list[Any]] = {}
         self._dirty = False
+        self._derived_path = state_dir / "derived-cache.json"
+        self._derived: dict[str, Any] = {}
+        self._derived_dirty = False
         try:
             loaded = json.loads(self._path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 self._entries = loaded
         except (OSError, ValueError):
             pass
+        try:
+            loaded = json.loads(self._derived_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                self._derived = loaded
+        except (OSError, ValueError):
+            pass
+
+    def derived(self, name: str, key: str) -> Any | None:
+        """A computed value remembered under `name`, if it was stored for exactly this `key` (what it derives from)."""
+        entry = self._derived.get(name)
+        if isinstance(entry, list) and len(entry) == 2 and entry[0] == key:
+            return entry[1]
+        return None
+
+    def remember(self, name: str, key: str, value: Any) -> None:
+        """Remember a computation for `key`. It only saves work and is never a status (ADR 0005)."""
+        self._derived[name] = [key, value]
+        self._derived_dirty = True
 
     def file_hash(self, path: Path) -> str:
         stat = path.stat()
-        key = str(path.resolve())
+        key = os.path.abspath(path)
         entry = self._entries.get(key)
         if entry and entry[0] == stat.st_mtime_ns and entry[1] == stat.st_size:
             return str(entry[2])
@@ -65,3 +87,9 @@ class HashCache:
             except OSError:
                 pass  # Another process may be replacing it; the cache is only an optimisation.
             self._dirty = False
+        if self._derived_dirty:
+            try:
+                atomic.write_json(self._derived_path, self._derived)
+            except OSError:
+                pass
+            self._derived_dirty = False

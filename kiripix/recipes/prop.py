@@ -367,7 +367,10 @@ PROP = KindSpec(
             description="Palette mapping and orphan cleanup.",
             inputs=StageInputs(settings=["palette"]),
             params=PALETTE_PARAMS,
-            checks=(CheckSpec(code="palette.off_palette", description="Every opaque pixel is a palette colour."),),
+            checks=(
+                CheckSpec(code="palette.off_palette", description="Every opaque pixel is a palette colour."),
+                CheckSpec(code="palette.mapping_error", description="The palette maps the image without a high error."),
+            ),
             available_from="M2",
             image="palette.png",
             run=_palette,

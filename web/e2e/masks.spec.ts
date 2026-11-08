@@ -431,7 +431,8 @@ test("masks.open_edge lists each open side, and clicking it jumps to that edge",
   await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
 
   const findings = page.getByTestId("finding-masks.open_edge");
-  // The decide's answer and the Stage's Checks both list them: two sides open, so each shows once or twice.
+  // They are info findings, so a count first; each side shows once, though the decide's answer and the Checks both list it.
+  await page.getByTestId("checks-info").click();
   await expect(findings.filter({ hasText: /\(0, / }).first()).toBeVisible();
   await expect(findings.filter({ hasText: /\(47, / }).first()).toBeVisible();
   await expect(findings.filter({ hasText: /\((?!0,|47,)/ })).toHaveCount(0);

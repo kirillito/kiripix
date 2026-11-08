@@ -79,7 +79,7 @@ def test_chroma_runs_to_the_palette_with_binary_alpha_on_the_palette_and_no_runn
     opaque = {tuple(int(c) for c in p) for p in mapped[mapped[..., 3] == 255][:, :3]}
     assert opaque <= palette_colours(project) and (255, 0, 77) in opaque, "mapped to the nearest palette colour"
     assert no_runner_call(project) and not (folder / "pinned").exists()
-    assert project.json("check", PROP)["findings"] == []
+    assert [f for f in project.json("check", PROP)["findings"] if f["code"] != "palette.mapping_error"] == []
 
 
 def test_chroma_needs_no_pinned_result_and_is_never_waiting_on_a_runner(project: Kiripix) -> None:
@@ -187,7 +187,7 @@ def test_matting_gives_the_fit_a_binary_alpha_by_majority_vote(project: Kiripix)
     assert (np.diff(alpha.astype(int)) >= 0).all(), "one step across the ramp"
     mapped = read(work(folder, "palette", "palette.png"))
     assert set(np.unique(mapped[..., 3])) == {0, 255}
-    assert project.json("check", PROP)["findings"] == []
+    assert [f for f in project.json("check", PROP)["findings"] if f["code"] != "palette.mapping_error"] == []
 
 
 def source_pad() -> np.ndarray:
@@ -267,6 +267,19 @@ def test_downscale_fit_keeps_alpha_binary_and_the_brief_size(project: Kiripix) -
     assert fitted.shape == (TARGET, TARGET, 4) and set(np.unique(fitted[..., 3])) == {0, 255}
 
 
+def test_a_cropped_downscale_fit_still_has_binary_alpha_by_vote(project: Kiripix) -> None:
+    source = np.full((48, 32, 4), 255, dtype=np.uint8)  # taller than the brief's aspect: 16 rows are cropped
+    source[..., :3] = KEY
+    source[10:34, 8:24, :3] = SUBJECT
+    folder = built_prop(project, source, mode="downscale")
+
+    result = project.json("run", PROP, expect=3)
+
+    fitted = read(work(folder, "fit", "fit.png"))
+    assert fitted.shape == (TARGET, TARGET, 4) and set(np.unique(fitted[..., 3])) == {0, 255}
+    assert [f["fix"] for f in result["findings"] if f["code"] == "fit.cropped"] == [f"kiripix set {PROP} fit offset_y=8"]
+
+
 def test_a_partial_alpha_painted_over_the_fit_is_a_finding(project: Kiripix) -> None:
     folder = built_prop(project)
     upto(project, "fit")
@@ -291,7 +304,7 @@ def test_palette_keeps_transparent_pixels_and_every_opaque_one_is_on_the_palette
     mapped = read(work(folder, "palette", "palette.png"))
 
     assert (mapped[..., 3] == read(work(folder, "fit", "fit.png"))[..., 3]).all(), "transparent pixels stay"
-    assert project.json("check", PROP)["findings"] == []
+    assert [f for f in project.json("check", PROP)["findings"] if f["code"] != "palette.mapping_error"] == []
 
 
 # the brief
@@ -410,7 +423,7 @@ def test_no_footprint_waits_for_the_owner_then_decide_runs_to_done_and_moving_th
     record = json.loads(work(folder, "footprint", "footprint.json").read_text("utf-8"))
     assert record == {"polygon": [[1, 5], [6, 5], [6, 7], [1, 7]], "origin": [3, 7]}
     assert (read(work(folder, "footprint", "sprite.png")) == read(work(folder, "finish", "finish.png"))).all()
-    assert project.json("check", PROP)["findings"] == []
+    assert [f for f in project.json("check", PROP)["findings"] if f["code"] != "palette.mapping_error"] == []
 
     finish_stamp = work(folder, "finish", "finish.png").stat().st_mtime_ns
     project.json("decide", PROP, "footprint", "--decision", decision([[1, 5], [6, 5], [6, 7], [1, 7]], [4, 7]))

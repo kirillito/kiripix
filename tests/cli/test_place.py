@@ -9,7 +9,7 @@ from conftest import Kiripix, stage_status
 from PIL import Image
 from test_layers_stage import accept, click, lift
 from test_layers_stage import built_room as layers_room
-from test_masks import ROOM, built_room, decide
+from test_masks import FLOOR, ROOM, RUG, WALL, built_room, decide
 
 # built_room's Plate is 48 x 32, with a wall on its left 16 columns. With the wall flooded into `solid` and the default
 # 12 x 8 Body, walkable is x 22 to 42, y 4 to 28: a footprint at (x, y) covers x - 6 to x + 5 and y - 4 to y + 3.
@@ -272,6 +272,9 @@ def test_the_same_id_on_a_marker_of_another_type_is_a_duplicate_and_keeps_both(p
 
 def test_a_clean_place_reports_nothing(project: Kiripix) -> None:
     walled_room(project)
+    palette = project.cwd / "style" / "palette.gpl"  # the room's own colours, so the mapping is exact, not muddy
+    lines = [f"{r} {g} {b} room{i}" for i, (r, g, b, _) in enumerate((WALL, FLOOR, RUG))]
+    palette.write_text(palette.read_text("utf-8") + "\n".join(lines) + "\n", "utf-8")
     place(project, "spawn.main", "spawn")
     built_place(project)
 

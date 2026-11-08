@@ -6,6 +6,7 @@ from pathlib import Path
 from PIL import Image
 
 from conftest import Kiripix, make_demo, make_sketch, save_image
+from test_layers_stage import ROOM as LAYERED, accept, built_room, click, lift
 from test_locks import finish, start_holding
 from test_room import ROOM, make_room
 
@@ -94,6 +95,53 @@ def test_check_needs_an_asset_or_all(project: Kiripix) -> None:
 
 def test_check_of_an_unknown_asset_is_an_error(project: Kiripix) -> None:
     assert project.json("check", "room.nope", expect=1)["findings"][0]["code"] == "asset.not_found"
+
+
+# check: out of date
+
+
+def test_check_names_the_checked_stages_that_are_out_of_date_and_still_exits_0(project: Kiripix) -> None:
+    _built_room(project)
+    assert project.json("check", ROOM)["data"]["out_of_date"] == []
+
+    project.json("set", ROOM, "brief", "width=496", "height=272")  # the built output is now behind its inputs
+    result = project.json("check", ROOM)
+
+    [late] = result["data"]["out_of_date"]
+    assert (late["asset"], late["stage"], late["status"]) == (ROOM, "brief", "stale") and late["reason"]
+    assert result["ok"] is True and result["findings"] == []
+    text = project("check", ROOM)
+    assert "1 out of date: brief" in text.stdout
+
+
+def test_check_all_names_out_of_date_stages_of_every_asset(project: Kiripix) -> None:
+    _built_room(project)
+    project.json("set", ROOM, "brief", "width=496", "height=272")
+
+    result = project.json("check", "--all")
+
+    assert [(o["asset"], o["stage"], o["status"]) for o in result["data"]["out_of_date"]] == [(ROOM, "brief", "stale")]
+
+
+def test_check_names_the_built_stages_after_a_layers_stage_in_needs_review(project: Kiripix) -> None:
+    built_room(project)
+    click(project, "lamp", 8, 8)
+    lift(project)
+    accept(project)
+    project.json("decide", LAYERED, "place", "--decision",  # a Layer needs a y-sort line or "always above"
+                 json.dumps({"decision": "above", "data": {"layer": "lamp", "above": True}}))
+    project("run", LAYERED, "--json")  # builds the Stages after layers; reach waits for a Spawn
+    before = project.json("check", LAYERED)
+    assert before["data"]["out_of_date"] == [] and f"{LAYERED} place" in before["data"]["stages"]
+
+    click(project, "crate", 40, 24)
+    lift(project)  # layers is now in needs-review; the Stages after it are built from the accepted lift
+    result = project.json("check", LAYERED)
+
+    late = {o["stage"]: o for o in result["data"]["out_of_date"]}
+    assert "layers" in late and late["layers"]["status"] == "needs-review"
+    assert {"place"} <= set(late) and all(o["status"] != "done" and o["reason"] for o in late.values())
+    assert result["ok"] is True and not [f for f in result["findings"] if f["severity"] == "error"]
 
 
 # check --all

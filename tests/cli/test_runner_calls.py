@@ -1,6 +1,7 @@
 """Pinned Runner calls (spec §5, ADR 0002) and click-to-segment in masks, with the fake Runner: `run` never calls a Runner,
 `run --rerun` does and lands in needs-review, and a rebuild uses the committed result."""
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -222,6 +223,26 @@ def test_clicks_map_from_the_target_grid_to_the_source_and_the_mask_maps_back(pr
     assert (read_mask(folder) == box(0, 11, 4, 16)).all()
 
 
+def test_a_click_on_a_cropped_room_is_sent_at_the_source_point_inside_the_crop(project: Kiripix) -> None:
+    project.json("new", "room", "alley", "--view", "top")
+    project.json("set", ROOM, "brief", f"width={WIDTH}", f"height={HEIGHT}")
+    project.json("set", ROOM, "fit", "mode=downscale", "offset_y=8")
+    source = np.zeros((80, 96, 4), dtype=np.uint8)  # scale 2 on both axes; 16 spare rows, 8 of them above the crop
+    source[8:72] = np.repeat(np.repeat(plate(), 2, axis=0), 2, axis=1)
+    source[:8] = source[72:] = (1, 2, 3, 255)
+    Image.fromarray(source, "RGBA").save(project.cwd / "source.png")
+    project.json("pick", ROOM, str(project.json("import", ROOM, "source.png")["data"]["variant"]))
+    project.json("run", ROOM, expect=3)
+    folder = project.cwd / "assets" / "room" / "alley"
+    click(project, 10, 5)
+
+    rerun(project)
+
+    # Target pixel (10, 5) covers Source x 20 to 21 and y 8 + 10 to 8 + 11, so its centre is (21, 19).
+    assert calls(project)[0]["params"]["points"] == [[21.0, 19.0, True]]
+    assert read_mask(folder).shape == (HEIGHT, WIDTH)
+
+
 def test_a_large_source_is_capped_for_the_runner_and_its_mask_still_maps_to_the_target(project: Kiripix) -> None:
     project.json("new", "room", "alley", "--view", "top")
     project.json("set", ROOM, "brief", f"width={WIDTH}", f"height={HEIGHT}")
@@ -413,7 +434,7 @@ def test_the_pin_record_holds_what_made_the_result_and_the_key_ignores_the_devic
     [path] = pinned(folder)
     record = json.loads(path.with_suffix(".json").read_text("utf-8"))
 
-    assert record["schema_version"] == 1
+    assert record["schema_version"] == 2 and record["result_hash"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert record["key"] == path.stem and record["stage"] == "masks" and record["runner"] == "sam2.1-small"
     assert record["device"] == "cpu" and record["licence"] == "test"
     assert record["decisions"] == [{"x": 30, "y": 10, "positive": True}]
@@ -605,3 +626,54 @@ def test_an_unknown_runner_lists_where_to_look(project: Kiripix) -> None:
     [finding] = project.json("runners", "pull", "sam9", expect=1)["findings"]
 
     assert finding["code"] == "runner.unknown" and finding["fix"] == "kiripix runners list"
+
+
+# the time a Runner takes is in the Stage's duration (ticket 0089)
+
+
+def masks_result(result: dict[str, Any]) -> dict[str, Any]:
+    [found] = [r for r in result["data"]["results"] if r["stage"] == "masks"]
+    return found
+
+
+def test_a_stages_duration_covers_its_runner_load_and_calls(project: Kiripix) -> None:
+    built_room(project)
+    click(project)
+    (project.cwd / "runner-load-seconds").write_text("0.4", encoding="utf-8")
+    (project.cwd / "runner-call-seconds").write_text("0.3", encoding="utf-8")
+
+    result = rerun(project)
+
+    assert masks_result(result)["duration_s"] >= 0.7
+
+
+def test_a_history_entry_has_load_s_only_for_the_call_that_loaded_the_runner(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project)
+    click(project, x=20, y=12)
+    (project.cwd / "runner-load-seconds").write_text("0.4", encoding="utf-8")
+    (project.cwd / "runner-call-seconds").write_text("0.2", encoding="utf-8")
+
+    rerun(project)
+
+    entries = [json.loads(line) for line in (folder / "history.jsonl").read_text("utf-8").splitlines()]
+    first, second = [e for e in entries if "runner" in e]
+    assert first["load_s"] >= 0.4 and "load_s" not in second, "one load serves both calls"
+    assert first["duration_s"] >= 0.2 and first["duration_s"] < first["load_s"] + 0.2, "duration_s is the call alone"
+    assert second["duration_s"] >= 0.2
+
+
+def test_a_pinned_rebuild_makes_no_call_so_its_duration_is_the_stages_own_work(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project)
+    rerun(project)
+    accept(project)
+    project.json("run", ROOM, expect=3)
+    (project.cwd / "runner-load-seconds").write_text("5", encoding="utf-8")
+    (project.cwd / "runner-call-seconds").write_text("5", encoding="utf-8")
+    shutil.rmtree(folder / "work")
+
+    result = project.json("run", ROOM, expect=3)
+
+    assert len(calls(project)) == 1
+    assert masks_result(result)["duration_s"] < 5

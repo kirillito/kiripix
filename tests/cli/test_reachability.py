@@ -95,7 +95,7 @@ def test_reach_writes_the_reachable_mask_as_1_bit_and_a_report(project: Kiripix)
     assert report(folder)["markers"] == [{"id": "spawn.main", "type": "spawn", "x": 30, "y": 16, "on_ground": True,
                                            "reached": True}]
     # the walled room has a wall on its left only, so its other edges are open (info)
-    assert {f["code"] for f in project.json("check", ROOM)["findings"]} == {"masks.open_edge"}
+    assert {f["code"] for f in project.json("check", ROOM)["findings"]} - {"palette.mapping_error"} == {"masks.open_edge"}
 
 
 def test_the_reachable_mask_is_the_union_of_every_flood(project: Kiripix) -> None:
@@ -198,7 +198,7 @@ def test_walkable_ground_nothing_reaches_is_a_warning_with_its_bounding_box(proj
     assert finding["severity"] == "warning" and finding["fix"] is None and finding["owner_action"]
     advice = project.json("next", ROOM)
     assert advice["data"]["stage"] == "export"  # never a reason to stop, but `next` still says it
-    assert [f["code"] for f in advice["findings"] if f["code"] != "masks.open_edge"] == ["reach.unreachable_island"]
+    assert [f["code"] for f in advice["findings"] if f["code"] not in ("masks.open_edge", "palette.mapping_error")] == ["reach.unreachable_island"]
 
 
 # reach.narrow_gap

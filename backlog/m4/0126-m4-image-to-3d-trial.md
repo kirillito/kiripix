@@ -10,7 +10,7 @@ type: trial
 Spec §16, open decision 4 ("Image-to-3D: which local Runner fits 8 GB well enough, or none (M3)"), §6.3 (model: "optional
 image-to-3D") and §8.
 
-**Deferred from M3** (Q3 of [0097](0097-m3-characters.md), 2026-11-07). The Owner's rule: in M3 only if the work is estimated
+**Deferred from M3** (Q3 of [0097](../0097-m3-characters.md), 2026-11-07). The Owner's rule: in M3 only if the work is estimated
 under 1M tokens. The estimate was 0.7 to 1.2M (this trial 300 to 500k, mostly Windows CUDA builds of each candidate's
 dependencies; a Runner and the `model` Stage path after it 400 to 700k). Also, the models known to fit 8 GB in mid-2026 gave
 blobby meshes with lighting baked into the texture, which rig badly, while the good ones needed 16 to 24 GB. In M4, with

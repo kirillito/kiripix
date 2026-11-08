@@ -12,9 +12,10 @@ import shutil
 import numpy as np
 
 from kiripix.checks import Finding, Position, check_conformance
-from kiripix.ops import conformance, cut_by_alpha, recompose, remove_orphans
+from kiripix.ops import conformance, cut_by_alpha, has_partial_alpha, recompose, remove_orphans
 from kiripix.recipes.base import StageFailure, StageRun
 from kiripix.recipes.common import (
+    check_mapping,
     check_palette as check_palette_image,
     map_to_palette,
     palette_rgb,
@@ -92,6 +93,11 @@ def check_room_palette(run: StageRun) -> list[Finding]:
             assert finding.position is not None
             finding.position.asset, finding.position.stage = asset, "palette"
             findings.append(finding)
+    lifted_plate, lifted_layers = _lifted(run)
+    composite = recompose(lifted_plate, lifted_layers)  # what `palette` mapped, before it did
+    if composite.shape == image.shape and not has_partial_alpha(image):
+        fit = run.upstream["layers"].parent / "fit" / "fit.png"  # only to name the image `palette-suggest` reads
+        findings += check_mapping(run, composite, image, fit)
     differs = (recompose(plate, layers) != image).any(axis=2)
     if differs.any():
         ys, xs = np.nonzero(differs)

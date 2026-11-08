@@ -346,20 +346,73 @@ export function ParamControl(props: { spec: ParamSpec; value: Scalar | undefined
   );
 }
 
+const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 } as const;
+
+function findingKey(finding: Finding): string {
+  const at = finding.position;
+  return `${finding.code}|${finding.message}|${at?.stage ?? ""}|${at?.file ?? ""}|${at?.x ?? ""},${at?.y ?? ""}`;
+}
+
+// What a person reads (ticket 0093): each finding once, whichever list it came from; none that only repeats a Stage's status,
+// which the Stage bar and the next line already say; errors above warnings above info.
+export function readable(
+  findings: Finding[],
+  alreadyShown: Finding[] = [],
+  stages: { stage: string; status: string }[] = [],
+): Finding[] {
+  const seen = new Set(alreadyShown.map(findingKey));
+  const repeatsStatus = (finding: Finding) => {
+    const status = finding.code === "stage.needs_review" ? "needs-review" : finding.code === "stage.needs_input" ? "needs-input" : null;
+    if (!status) return false;
+    const stage = finding.position?.stage;
+    return stages.some((entry) => entry.status === status && (!stage || entry.stage === stage));
+  };
+  return findings
+    .filter((finding) => {
+      const key = findingKey(finding);
+      if (seen.has(key) || repeatsStatus(finding)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+}
+
+// The one thing to do first: the most pressing finding that asks the Owner for something.
+export function pressing(findings: Finding[]): Finding | undefined {
+  return findings.find((finding) => finding.severity !== "info" && finding.owner_action);
+}
+
 export function FindingList(props: { findings: Finding[]; onJump: (finding: Finding) => void; testid: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const info = props.findings.filter((finding) => finding.severity === "info");
+  const shown = props.findings.filter((finding) => expanded || finding.severity !== "info");
   return (
-    <ul className="findings" data-testid={props.testid}>
-      {props.findings.map((finding, index) => (
-        <li key={`${finding.code}-${index}`} data-severity={finding.severity}>
-          <button className="link" data-testid={`finding-${finding.code}`} onClick={() => props.onJump(finding)}>
-            <code>{finding.code}</code>
-            {finding.position?.x != null && ` (${finding.position.x}, ${finding.position.y})`}
-          </button>
-          <p>{finding.message}</p>
-          {finding.fix && <code className="remedy">{finding.fix}</code>}
-          {finding.owner_action && <p className="remedy">{finding.owner_action}</p>}
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="findings" data-testid={props.testid}>
+        {shown.map((finding, index) => (
+          <li key={`${finding.code}-${index}`} data-severity={finding.severity}>
+            <button className="link" data-testid={`finding-${finding.code}`} onClick={() => props.onJump(finding)}>
+              {finding.message}
+              {finding.position?.x != null && ` (${finding.position.x}, ${finding.position.y})`}
+            </button>
+            {finding.owner_action && <p className="remedy">{finding.owner_action}</p>}
+            <small className="agent">
+              <code>{finding.code}</code>
+              {finding.fix && (
+                <>
+                  {" "}
+                  <code>{finding.fix}</code>
+                </>
+              )}
+            </small>
+          </li>
+        ))}
+      </ul>
+      {info.length > 0 && (
+        <button className="link info-toggle" data-testid={`${props.testid}-info`} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          {expanded ? "Hide" : "Show"} {info.length} {info.length === 1 ? "note" : "notes"}
+        </button>
+      )}
+    </>
   );
 }

@@ -172,7 +172,7 @@ export function fileUrl(relative: string, version: number): string {
 export interface EventHandlers {
   // Files changed in the Project (or, with `null`, the stream has just connected and anything may have).
   onChange: (paths: string[] | null) => void;
-  onProgress: (message: string) => void;
+  onProgress: (message: string, fraction: number | null) => void;
   onLost: () => void;
 }
 
@@ -188,9 +188,11 @@ export function events({ onChange, onProgress, onLost }: EventHandlers): () => v
   source.onerror = onLost;
   source.addEventListener("progress", (event) => {
     const { progress } = JSON.parse((event as MessageEvent<string>).data) as {
-      progress: { stage: string | null; message: string | null; event: string };
+      progress: { stage: string | null; message: string | null; event: string; done: number | null; total: number | null };
     };
-    onProgress([progress.stage, progress.message ?? progress.event].filter(Boolean).join(": "));
+    // A fraction only where the event gives a real one.
+    const fraction = progress.total && progress.done != null ? Math.min(1, Math.max(0, progress.done / progress.total)) : null;
+    onProgress([progress.stage, progress.message ?? progress.event].filter(Boolean).join(": "), fraction);
   });
   return () => source.close();
 }

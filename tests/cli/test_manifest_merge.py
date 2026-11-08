@@ -11,9 +11,10 @@ from typing import Any
 
 import pytest
 from conftest import Kiripix
+from PIL import Image
 from test_export import MANIFEST, exportable_room
 from test_export_ownership import put
-from test_masks import ROOM
+from test_masks import ROOM, plate
 from test_place import findings
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git isn't installed")
@@ -144,9 +145,10 @@ def test_a_missing_file_exits_1(kpx: Kiripix) -> None:
 # a real git merge
 
 
-def two_branches(project: Kiripix, driver: bool) -> Path:
+def two_branches(project: Kiripix, driver: bool, images: bool = False) -> Path:
     """A game repo with room.alley exported on `main`, then branches `a` and `b` that each export it again with another
-    Spawn. Returns the game folder, on branch `b`."""
+    Spawn. With `images`, branch `a` also exports a different Plate (the rug in another colour), and so does `b`, in a third. Returns the game folder,
+    on branch `b`."""
     exportable_room(project)
     game = init_game(project)
     if driver:
@@ -156,6 +158,13 @@ def two_branches(project: Kiripix, driver: bool) -> Path:
     assert git(game, "commit", "-m", "base").returncode == 0
     git(game, "checkout", "-q", "-b", "a")
     put(project, ROOM, "spawn.a", "spawn", at=(36, 16))
+    if images:
+        other = plate()
+        other[8:14, 24:36] = (200, 30, 160, 255)
+        Image.fromarray(other, "RGBA").save(project.cwd / "other.png")
+        project.json("pick", ROOM, str(project.json("import", ROOM, "other.png")["data"]["variant"]))
+        project.json("run", ROOM, expect=3)
+        project.json("accept", ROOM, "masks", owner=True)  # the clicks were replayed onto a changed image
     project.json("run", ROOM)
     project.json("export", "room.alley")
     git(game, "add", "-A")
@@ -163,6 +172,13 @@ def two_branches(project: Kiripix, driver: bool) -> Path:
     git(game, "checkout", "-q", "main")
     git(game, "checkout", "-q", "-b", "b")
     project.json("undo", ROOM, "place")
+    if images:
+        third = plate()
+        third[8:14, 24:36] = (20, 200, 60, 255)  # a third Plate: both branches change the image from the base
+        Image.fromarray(third, "RGBA").save(project.cwd / "again.png")
+        project.json("pick", ROOM, str(project.json("import", ROOM, "again.png")["data"]["variant"]))
+        project.json("run", ROOM, expect=3)
+        project.json("accept", ROOM, "masks", owner=True)
     put(project, ROOM, "spawn.b", "spawn", at=(38, 16))
     project.json("run", ROOM)
     project.json("export", "room.alley")
@@ -185,8 +201,32 @@ def test_a_real_git_merge_with_the_driver_merges_the_manifest_without_conflict(p
     merged = json.loads(text)
     assert merged["counter"] == 3  # both were 2: the higher + 1
     assert {"spawn.main", "spawn.a", "spawn.b"} <= set(merged["ids"]["markers"])
-    # the scene differs on the two branches, so git still conflicts there: only the Manifest is the driver's
-    assert "alley.tscn" in unmerged
+    # the scene and images differ on the two branches too: the `merge=kiripix-ours` rules keep ours, no conflict
+    assert unmerged == "", unmerged
+    assert git(game, "status", "--porcelain").stdout.strip() == ""
+    # the next export is clean: nothing refused, and the files are the ones the Manifest accepts
+    put(project, ROOM, "spawn.a", "spawn", at=(36, 16))  # the Project has both branches' Markers, as after a merge
+    project.json("run", ROOM)
+    again = project.json("export", "room.alley")
+    assert again["ok"] is True and not [f for f in again["findings"] if f["severity"] == "error"]
+
+
+@needs_git
+def test_a_merge_of_two_different_exported_images_keeps_ours_and_the_next_export_is_clean(project: Kiripix) -> None:
+    game = two_branches(project, driver=True, images=True)
+    png = "kiripix/room/alley/plate.png"
+    on_a = subprocess.run(["git", "-C", str(game), "show", f"a:{png}"], capture_output=True, check=True).stdout
+    on_b = (project.cwd / "game" / png).read_bytes()
+    assert on_a != on_b  # the two branches exported different images
+
+    done = git(game, "merge", "a", "-m", "merge")
+
+    assert git(game, "ls-files", "-u").stdout == "", done.stdout + done.stderr
+    assert (project.cwd / "game" / png).read_bytes() == on_b  # ours
+    put(project, ROOM, "spawn.a", "spawn", at=(36, 16))
+    project.json("run", ROOM)
+    again = project.json("export", "room.alley")
+    assert again["ok"] is True and not [f for f in again["findings"] if f["severity"] == "error"]
 
 
 @needs_git
@@ -235,6 +275,21 @@ def test_gitattributes_alone_still_warns(project: Kiripix) -> None:
     result = project.json("export", "room.alley")
 
     assert [f["code"] for f in result["findings"]] == [MISSING]
+
+
+@needs_git
+def test_the_manifest_rules_without_the_image_rules_still_warn(project: Kiripix) -> None:
+    exportable_room(project)
+    game = init_game(project)
+    project.json("manifest", "install")
+    (project.cwd / "game/kiripix/.gitattributes").unlink()
+
+    [warning] = findings(project.json("export", "room.alley"), MISSING)
+
+    assert warning["fix"] == "kiripix manifest install"
+    assert git(game, "config", "--get", "merge.kiripix-ours.driver").stdout.strip() == "true"
+    project.json("manifest", "install")
+    assert project.json("export", "room.alley")["findings"] == []
 
 
 @needs_git

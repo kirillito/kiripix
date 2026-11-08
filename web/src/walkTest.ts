@@ -60,8 +60,8 @@ export class WalkTest implements CanvasTool {
   private owed = 0;
 
   constructor(
-    private readonly walkable: MaskPixels,
-    private readonly clear: MaskPixels,
+    private walkable: MaskPixels,
+    private clear: MaskPixels,
     private readonly body: Body,
     private x: number,
     private y: number,
@@ -76,6 +76,18 @@ export class WalkTest implements CanvasTool {
     cancelAnimationFrame(this.frameRequest);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
+  }
+
+  // A rebuild reloads the Masks under a Body already walking: it stays where it is, with its keys still held, unless
+  // the rebuilt ground no longer has room for it there, and then it goes back to (x, y).
+  setMasks(walkable: MaskPixels, clear: MaskPixels, x: number, y: number): void {
+    this.walkable = walkable;
+    this.clear = clear;
+    if (!isSet(walkable, this.x, this.y)) {
+      this.x = x;
+      this.y = y;
+    }
+    this.redraw();
   }
 
   private walk(dx: number, dy: number): void {

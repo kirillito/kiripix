@@ -113,9 +113,9 @@ export function PlacePanel(props: {
   useEffect(() => {
     const placing = new MarkerTool({
       place(start: CanvasPixel, end: CanvasPixel) {
-        const { type: chosen, id: name, fields: own, layer: sorted, decide: record, disabled: off } = form.current;
+        const { type: chosen, id: name, fields: own, layer: sorted, decide: record } = form.current;
         const line = isDrawnFromTwoPoints(chosen);
-        if (off || (line && start.x === end.x && start.y === end.y)) return;
+        if ((line && start.x === end.x && start.y === end.y)) return;
         if (chosen === "ysort" && !sorted) return; // a line sorts a Layer, and the room has none yet
         record({
           id: name,
@@ -129,8 +129,7 @@ export function PlacePanel(props: {
         setSelectedId(null);
       },
       move(marker: Marker) {
-        if (form.current.disabled) tool.current?.setMarkers(form.current.markers);
-        else form.current.decide(marker);
+        form.current.decide(marker); // queued behind a Run, never dropped (ticket 0083)
       },
       select: choose,
     });
@@ -482,32 +481,46 @@ export function ReachPanel(props: {
   const first = JSON.stringify(markers.find((marker) => marker.type === "spawn") ?? markers.find((marker) => marker.type === "exit") ?? null);
   const [bodyWidth, bodyHeight] = show.body.size;
   const dash = show.body.dash;
+  // One walk test for as long as the Body walks from the same start: a rebuild only swaps its Masks, so the Body keeps
+  // its place and no arrow pressed during the reload is lost.
+  const walk = useRef<{ from: string; test: WalkTest } | null>(null);
+  const stopWalking = (): void => {
+    walk.current?.test.destroy();
+    walk.current = null;
+    canvas.current?.setTools([tool.current]);
+    if (canvas.current) delete canvas.current.element.dataset.body;
+  };
   useEffect(() => {
-    if (!walking || !walkable || !clear) {
-      canvas.current?.setTools([tool.current]);
+    if (!walking) {
+      stopWalking();
       return;
     }
-    let walk: WalkTest | null = null;
+    if (!walkable || !clear) return; // a Mask still loading keeps the Body where it is
     let current = true;
     const start = JSON.parse(first) as Marker | null;
+    const from = JSON.stringify([first, bodyWidth, bodyHeight, dash]);
     void Promise.all([loadMask(fileUrl(walkable, imageVersion)), loadMask(fileUrl(clear, imageVersion))]).then(
       ([ground, open]) => {
         if (!current) return;
         const x = start?.x ?? Math.floor(ground.width / 2);
         const y = start?.y ?? Math.floor(ground.height / 2);
+        if (walk.current?.from === from) {
+          walk.current.test.setMasks(ground, open, x, y);
+          return;
+        }
+        stopWalking();
         const body = { size: [bodyWidth, bodyHeight] as [number, number], dash };
-        walk = new WalkTest(ground, open, body, x, y, () => canvas.current?.redraw(), sorted.current);
-        canvas.current?.setTools([tool.current, walk]);
+        const test = new WalkTest(ground, open, body, x, y, () => canvas.current?.redraw(), sorted.current);
+        walk.current = { from, test };
+        canvas.current?.setTools([tool.current, test]);
       },
     );
     return () => {
       current = false;
-      walk?.destroy();
-      canvas.current?.setTools([tool.current]);
-      if (canvas.current) delete canvas.current.element.dataset.body;
     };
   }, [canvas, walking, walkable, clear, imageVersion, first, bodyWidth, bodyHeight, dash]);
 
+  useEffect(() => () => stopWalking(), []);
   useEffect(() => () => canvas.current?.setTools([]), [canvas]);
 
   return (

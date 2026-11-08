@@ -22,7 +22,7 @@ from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
-from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, pairing_findings
+from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, frozen_layer_findings, pairing_findings
 from kiripix.export.godot import prop_ids, prop_scene, room_ids, room_scene
 from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
@@ -333,5 +333,5 @@ def export_command(project: Project, asset: Asset, cache: HashCache, states: lis
 
 
 __all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "ExportRun", "PruneResult", "export_assets",
-           "export_command", "export_pending", "frozen_findings", "install_driver", "merge_files", "pairing_findings",
+           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "install_driver", "merge_files", "pairing_findings",
            "apply_repairs", "plan_repairs", "prune_assets", "resolve_target"]

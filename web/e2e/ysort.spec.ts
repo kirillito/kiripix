@@ -89,7 +89,7 @@ test("a layer.no_ysort finding jumps to its Layer on the place screen", async ({
   layeredRoom(studio);
   await open(page, studio, "place");
 
-  await page.getByTestId("checks").getByText("layer.no_ysort").first().click();
+  await page.getByTestId("checks").getByTestId("finding-layer.no_ysort").first().click();
 
   await expect(page.getByTestId("marker-type")).toHaveValue("ysort");
   await expect(page.getByTestId("marker-layer")).toHaveValue(/^(crate|lamp)$/);

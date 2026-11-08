@@ -110,3 +110,25 @@ def test_hex_import_matches_gpl() -> None:
     hex_text = "\n".join(e.hex for e in gpl.entries)
 
     assert (parse_hex(hex_text).rgb() == gpl.rgb()).all()
+
+
+def test_a_smooth_dark_gradient_maps_without_hard_bands(request: pytest.FixtureRequest) -> None:
+    """A teal-grey gradient and a palette that covers it (the shape `palette-suggest` grows): every column is mapped
+    within a small OKLab distance, and neighbouring columns never jump to a colour far from each other."""
+    from kiripix.ops import mapping_error
+    from kiripix.ops.colour import srgb_to_oklab
+
+    steps = np.arange(16, dtype=np.int64)
+    palette = np.stack([10 + steps * 3, 22 + steps * 4, 26 + steps * 4], axis=-1).astype(np.uint8)
+    ramp = np.linspace(0, 15, 64)
+    gradient = np.full((8, 64, 4), 255, dtype=np.uint8)
+    gradient[..., 0] = np.round(10 + ramp * 3)
+    gradient[..., 1] = np.round(22 + ramp * 4)
+    gradient[..., 2] = np.round(26 + ramp * 4)
+
+    result = quantize(gradient, palette, 0)
+
+    assert_golden(request, result, "dark_gradient.png")
+    assert mapping_error(gradient, result) < 0.005
+    lab = srgb_to_oklab(result[0, :, :3])
+    assert np.sqrt(((lab[1:] - lab[:-1]) ** 2).sum(axis=1)).max() < 0.03  # no band edge is a visible jump

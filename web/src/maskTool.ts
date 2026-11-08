@@ -52,6 +52,11 @@ function tinted(width: number, height: number, set: (x: number, y: number) => bo
   return canvas;
 }
 
+// A gesture the Stage hasn't answered yet: drawn where the Owner made it, so a wait doesn't look like nothing happened.
+export type PendingMark =
+  | { kind: "point"; x: number; y: number; positive: boolean; layer?: string }
+  | { kind: "stroke"; mask: string; erase: boolean; radius: number; points: [number, number][] };
+
 interface Overlay {
   name: string;
   image: HTMLCanvasElement;
@@ -63,12 +68,16 @@ export class MaskTool implements CanvasTool {
   mask = "";
   radius = 2;
   opacity = 0.5;
+  // Where a click will go (ticket 0092): named beside the cursor, and on each click still waiting for its answer.
+  label = "";
+  layerColours = new Map<string, string>();
   private names: string[] = [];
   private overlays: Overlay[] = [];
   private pixels = new Map<string, MaskPixels>();
   // What a Shift-hover can take away from: the Layer's own pixels, where the screen's masks aren't the thing edited.
   taking: MaskPixels | null = null;
   private preview: { image: HTMLCanvasElement; count: number; subtract: boolean } | null = null;
+  private marks: { mark: PendingMark; image: HTMLCanvasElement | null }[] = [];
   private stroke: [number, number][] | null = null;
   private strokeImage: HTMLCanvasElement | null = null;
   private stamped = 0; // how many of the stroke's points are on strokeImage
@@ -94,6 +103,71 @@ export class MaskTool implements CanvasTool {
     this.asked++;
   }
 
+  // Returns what clears the mark: the screen calls it when the action ends, whether it worked, failed or was cancelled.
+  addMark(mark: PendingMark): () => void {
+    const entry = { mark, image: null as HTMLCanvasElement | null };
+    this.marks.push(entry);
+    this.changed();
+    return () => {
+      this.marks = this.marks.filter((one) => one !== entry);
+      this.changed();
+    };
+  }
+
+  private drawMarks(context: CanvasRenderingContext2D, frame: CanvasFrame): void {
+    const width = frame.width * frame.zoom;
+    const height = frame.height * frame.zoom;
+    for (const entry of this.marks) {
+      const { mark } = entry;
+      if (mark.kind === "stroke") {
+        if (!entry.image || entry.image.width !== frame.width || entry.image.height !== frame.height) {
+          const image = document.createElement("canvas");
+          image.width = frame.width;
+          image.height = frame.height;
+          const own = image.getContext("2d")!;
+          own.fillStyle = mark.erase ? "#ffffff" : this.colourOf(mark.mask);
+          let previous = mark.points[0];
+          mark.points.forEach((point, index) => {
+            for (const [x, y] of this.segment(previous, point, index === 0)) {
+              for (let dy = -mark.radius; dy <= mark.radius; dy++) {
+                const half = Math.floor(Math.sqrt(mark.radius * mark.radius - dy * dy));
+                own.fillRect(x - half, y + dy, 2 * half + 1, 1);
+              }
+            }
+            previous = point;
+          });
+          entry.image = image;
+        }
+        context.globalAlpha = 0.45;
+        context.drawImage(entry.image, frame.left, frame.top, width, height);
+        context.globalAlpha = 1;
+      } else {
+        const left = frame.left + mark.x * frame.zoom;
+        const top = frame.top + mark.y * frame.zoom;
+        const reach = Math.max(frame.zoom, 6);
+        context.save();
+        context.strokeStyle = mark.positive ? (mark.layer ? this.colourOf(mark.layer) : PREVIEW_TINT) : SUBTRACT_TINT;
+        context.lineWidth = 2;
+        context.setLineDash([4, 3]);
+        context.strokeRect(left + frame.zoom / 2 - reach, top + frame.zoom / 2 - reach, reach * 2, reach * 2);
+        context.setLineDash([]);
+        context.fillStyle = context.strokeStyle;
+        context.fillRect(left, top, frame.zoom, frame.zoom);
+        if (mark.layer) this.text(context, `${mark.positive ? "+" : "-"} ${mark.layer}`, left + reach + frame.zoom, top, context.strokeStyle);
+        context.restore();
+      }
+    }
+  }
+
+  private text(context: CanvasRenderingContext2D, words: string, x: number, y: number, colour: string | CanvasGradient | CanvasPattern): void {
+    context.font = "12px monospace";
+    context.textBaseline = "top";
+    context.fillStyle = "#000000";
+    context.fillText(words, x + 1, y + 1);
+    context.fillStyle = colour;
+    context.fillText(words, x, y);
+  }
+
   setMasks(masks: { name: string; pixels: MaskPixels }[]): void {
     this.names = masks.map((entry) => entry.name);
     this.pixels = new Map(masks.map((entry) => [entry.name, entry.pixels]));
@@ -106,7 +180,7 @@ export class MaskTool implements CanvasTool {
   }
 
   colourOf(name: string): string {
-    return tintOf(Math.max(0, this.names.indexOf(name)));
+    return this.layerColours.get(name) ?? tintOf(Math.max(0, this.names.indexOf(name)));
   }
 
   setTool(tool: MaskToolName): void {
@@ -295,8 +369,15 @@ export class MaskTool implements CanvasTool {
         frame.zoom - 1,
       );
     }
+    if (this.cursor && this.label && !painting && !this.stroke) {
+      const word = `${this.shift ? "- from" : "+ into"} ${this.label}`;
+      this.text(context, word, frame.left + (this.cursor.x + 1) * frame.zoom + 4, frame.top + this.cursor.y * frame.zoom, this.shift ? SUBTRACT_TINT : this.colourOf(this.label));
+    }
+    this.drawMarks(context, frame);
     const data = frame.element.dataset;
+    data.pendingMarks = this.marks.map((entry) => entry.mark.kind).join(" ");
     data.masks = this.overlays.map((overlay) => `${overlay.name}:${overlay.count}`).join(" ");
+    data.target = this.label;
     data.tool = this.tool;
     data.mask = this.mask;
     data.radius = String(this.radius);

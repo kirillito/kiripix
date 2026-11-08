@@ -11,16 +11,18 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from kiripix.checks import Finding, Position, check_conformance
+from kiripix.checks import Finding, Position, check_conformance, check_mapping_error
 from kiripix.ops import (
     BayerSize,
     Grid,
     alpha_by_vote,
+    has_partial_alpha,
     conformance,
     detect_grid,
-    downscale_mode,
+    downscale,
     mask_to_target,
     parse_gpl,
+    mapping_error,
     parse_hex,
     quantize,
     remove_orphans,
@@ -86,7 +88,7 @@ def run_source(run: StageRun) -> None:
     shutil.copyfile(path, run.output_dir / "source.png")
 
 
-# fit: the Source's pixel grid (or a mode-filter downscale) down to the brief's exact size. Palette-free.
+# fit: the Source's pixel grid (or a one-scale downscale) down to the brief's exact size. Palette-free.
 
 
 def brief_size(run: StageRun) -> tuple[int, int]:
@@ -104,8 +106,9 @@ def read_grid(run: StageRun) -> tuple[Grid, dict[str, Any]] | None:
 
 
 def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False) -> None:
-    """Fit `image` to the brief's size. With `vote_alpha`, alpha goes to the target grid by majority vote in either mode
-    (a prop's matte has partial alpha); a room's alpha is the centre pixel's, as before."""
+    """Fit `image` to the brief's size. In `downscale` mode the scale is the same on both axes and the rest of the Source
+    is cropped (`offset_x` and `offset_y` place the crop). With `vote_alpha`, alpha goes to the target grid by majority
+    vote in either mode (a prop's matte has partial alpha); a room's alpha is the centre pixel's in grid mode."""
     source = read_rgba(image)
     height, width = source.shape[:2]
     target_width, target_height = brief_size(run)
@@ -113,11 +116,14 @@ def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False) -> None:
     scale = int(run.params["scale"])
     if mode == "downscale":
         try:
-            grid = Grid.to_size(width, height, target_width, target_height)
-        except ValueError:
+            grid = Grid.cover(width, height, target_width, target_height, int(run.params["offset_x"]),
+                              int(run.params["offset_y"]))
+        except ValueError as error:
+            if "largest" in str(error):
+                raise StageFailure(str(error)) from None
             raise StageFailure(f"can't downscale the {width}x{height} Source to the brief's "
                                f"{target_width}x{target_height}: the Source is smaller") from None
-        fitted = downscale_mode(source, grid)
+        fitted = downscale(source, grid)
     else:
         try:
             grid = (Grid.uniform(scale, int(run.params["offset_x"]), int(run.params["offset_y"]), width, height)
@@ -132,12 +138,40 @@ def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False) -> None:
     (run.output_dir / "grid.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
+CROP_NOTICE = 4  # Source pixels cropped on an axis from which `fit.cropped` is said
+
+
+def _cropped(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
+    """An info finding when `downscale` crops more than a few Source pixels off an axis, with the `set` that centres it."""
+    source_width, source_height = grid["source"]
+    record = Grid.from_json(grid)
+    dropped_x = int(source_width - record.edges_x()[-1] + record.offset_x)
+    dropped_y = int(source_height - record.edges_y()[-1] + record.offset_y)
+    axes = [(name, dropped) for name, dropped, offset in (("x", dropped_x, record.offset_x),
+                                                         ("y", dropped_y, record.offset_y))
+            if dropped > CROP_NOTICE and abs(offset - dropped // 2) > 1]  # nothing to say once it is centred
+    if not axes:
+        return []
+    centred = " ".join(f"offset_{name}={dropped // 2}" for name, dropped in axes)
+    said = " and ".join(f"{dropped} Source pixels across {name}" for name, dropped in axes)
+    return [
+        Finding(
+            code="fit.cropped",
+            severity="info",
+            message=f"fit crops {said} to keep one scale on both axes; offset_x={record.offset_x} offset_y="
+                    f"{record.offset_y} place the crop from the top left",
+            position=Position(asset=run.asset_id, stage="fit", field="stages.fit.offset_x"),
+            fix=f"kiripix set {run.asset_id} fit {centred}",
+        )
+    ]
+
+
 def check_fit(run: StageRun) -> list[Finding]:
     grid = json.loads((run.output_dir / "grid.json").read_text(encoding="utf-8"))
     width, height = int(grid["width"]), int(grid["height"])
     target_width, target_height = brief_size(run)
     if (width, height) == (target_width, target_height):
-        return []
+        return _cropped(run, grid) if grid["mode"] == "downscale" else []
     source_width, source_height = grid["source"]
     asset = run.asset_id
     ratio = source_width // target_width if target_width else 0
@@ -206,6 +240,32 @@ def check_palette(run: StageRun) -> list[Finding]:
         return []  # the palette's own Checks report it
     report = conformance(read_rgba(run.output_dir / "palette.png"), palette)
     findings = check_conformance(report, "palette.png", fix=f"kiripix run {run.asset_id} palette --force")
+    for finding in findings:
+        assert finding.position is not None
+        finding.position.asset, finding.position.stage = run.asset_id, "palette"
+    return findings + _check_against_fit(run)
+
+
+def _check_against_fit(run: StageRun) -> list[Finding]:
+    """The palette image against the `fit` image it came from, when `fit` is an input and the sizes agree."""
+    fit = run.upstream.get("fit")
+    if fit is None or not (fit / "fit.png").is_file():
+        return []
+    source, mapped = read_rgba(fit / "fit.png"), read_rgba(run.output_dir / "palette.png")
+    if source.shape != mapped.shape or has_partial_alpha(mapped):
+        return []
+    return check_mapping(run, source, mapped, fit / "fit.png")
+
+
+def check_mapping(run: StageRun, source: np.ndarray, mapped: np.ndarray, fit_image: Path) -> list[Finding]:
+    """Warn when `mapped` is far from `source` in OKLab, with the `palette-suggest` that grows the palette from
+    `fit_image` (a file of the Asset's `fit` output; its path is given from the Project's root)."""
+    try:
+        shown = fit_image.relative_to(run.asset_dir.parent.parent.parent).as_posix()
+    except ValueError:
+        shown = fit_image.as_posix()
+    fix = f"kiripix op palette-suggest {shown} --add 16 --scale 1"
+    findings = check_mapping_error(mapping_error(source, mapped), "palette.png", fix=fix)
     for finding in findings:
         assert finding.position is not None
         finding.position.asset, finding.position.stage = run.asset_id, "palette"

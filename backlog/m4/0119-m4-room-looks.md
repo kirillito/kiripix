@@ -6,8 +6,8 @@ type: spec
 
 # M4: room Looks
 
-Background: [the spec](../docs/KIRIPIX_SPEC.md) §6.1 (Looks), §9 and §16 open decision 8; [ADR 0009](../docs/adr/0009-a-rooms-looks-are-a-stage-on-the-room.md);
-[the glossary](../GLOSSARY.md) (Look, Condition). Lost-and-Found's D10 "states" are the reference (`docs/TECHNICAL.md`,
+Background: [the spec](../../docs/KIRIPIX_SPEC.md) §6.1 (Looks), §9 and §16 open decision 8; [ADR 0009](../../docs/adr/0009-a-rooms-looks-are-a-stage-on-the-room.md);
+[the glossary](../../GLOSSARY.md) (Look, Condition). Lost-and-Found's D10 "states" are the reference (`docs/TECHNICAL.md`,
 `scripts/gen/backgrounds.py` and `scripts/gen/backgrounds/hub.json` in that repo); read them, don't copy them.
 
 ## Problem Statement
@@ -27,13 +27,13 @@ pipeline's most-used parts.
 
 ## Order
 
-1. [0119](0119-m4-room-look-edit-trial.md): trial: what an image model's edit of a ch01 room really changes. Sets the
+1. [0120](0120-m4-room-look-edit-trial.md): trial: what an image model's edit of a ch01 room really changes. Sets the
    defaults below.
-2. [0120](0120-m4-look-variants.md) (core): edit Variants, `import --look`, `pick --look`.
-3. [0121](0121-m4-looks-stage.md) (imaging): the Stage, its Decisions and Checks.
-4. [0122](0122-m4-looks-export.md) (export): `room.json` schema 3 and the Godot scene.
-5. [0123](0123-m4-ui-looks-screen.md) (UI): the looks screen.
-6. [0124](0124-m4-gen-a-look-edit.md) (Providers): `gen --look`, after M4's first Provider.
+2. [0121](0121-m4-look-variants.md) (core): edit Variants, `import --look`, `pick --look`.
+3. [0122](0122-m4-looks-stage.md) (imaging): the Stage, its Decisions and Checks.
+4. [0123](0123-m4-looks-export.md) (export): `room.json` schema 3 and the Godot scene.
+5. [0124](0124-m4-ui-looks-screen.md) (UI): the looks screen.
+6. [0125](0125-m4-gen-a-look-edit.md) (Providers): `gen --look`, after M4's first Provider.
 
 ## User Stories
 

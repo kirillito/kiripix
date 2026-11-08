@@ -3,12 +3,12 @@ status: todo
 milestone: M4
 agent: ml-engineer
 type: ticket
-parent: 0118-m4-room-looks.md
+parent: 0119-m4-room-looks.md
 ---
 
 # M4: `gen --look`: make a Look's edit through a Provider
 
-Spec §6.1 (Looks), §10.5 and §14 M4. Needs M4's first Provider with image editing, and [0120](0120-m4-look-variants.md).
+Spec §6.1 (Looks), §10.5 and §14 M4. Needs M4's first Provider with image editing, and [0121](0121-m4-look-variants.md).
 
 ## What to build
 

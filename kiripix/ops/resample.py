@@ -2,10 +2,10 @@
 
 A Grid transform cuts the Source into cells: cell k of an axis starts at `offset + floor(k * scale)` and ends where
 cell k + 1 starts, so the cells partition the Source with no gaps and no overlaps, and `scale` may be a whole number
-(detected pixel art) or a ratio (a mode-filter downscale). Everything here is exact integer or Fraction arithmetic.
+(detected pixel art) or a ratio (a downscale). Everything here is exact integer or Fraction arithmetic.
 
-Ties are broken explicitly: the colour mode of a cell goes to the smallest packed RGBA value among equally common
-colours; a cell's alpha is opaque when at least half its pixels are; a Mask cell is set when at least half its
+Ties are broken explicitly: a thin line that straddles two cells goes to the cell with the larger dark share, then to
+the right or lower one; a cell's alpha is opaque when at least half its pixels are; a Mask cell is set when at least half its
 pixels are; an even-sized cell is sampled at the upper of its two middle pixels; the grid offset goes to the smallest
 offset among equally good ones, and the scale to the largest consistent one.
 """
@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from kiripix.ops.colour import U8
+from kiripix.ops.colour import U8, srgb_to_oklab
 
 BoolMask = npt.NDArray[np.bool_]
 IntArray = npt.NDArray[np.int64]
@@ -56,6 +56,25 @@ class Grid:
         if width < 1 or height < 1 or width > source_width or height > source_height:
             raise ValueError(f"can't downscale {source_width}x{source_height} to {width}x{height}")
         return Grid(Fraction(source_width, width), Fraction(source_height, height), 0, 0, width, height)
+
+    @staticmethod
+    def cover(source_width: int, source_height: int, width: int, height: int, offset_x: int = 0,
+              offset_y: int = 0) -> "Grid":
+        """The grid that fills width x height cells with one scale on both axes: the largest that still fills them,
+        `min(source_width / width, source_height / height)`. The Source left over on the other axis is cropped; the
+        offsets place the crop, in Source pixels from the top left. An offset that leaves less than the grid's size
+        raises a ValueError that names the largest allowed."""
+        if width < 1 or height < 1 or width > source_width or height > source_height:
+            raise ValueError(f"can't downscale {source_width}x{source_height} to {width}x{height}")
+        scale = min(Fraction(source_width, width), Fraction(source_height, height))
+        grid = Grid(scale, scale, 0, 0, width, height)
+        largest_x = source_width - int(grid.edges_x()[-1])
+        largest_y = source_height - int(grid.edges_y()[-1])
+        for axis, offset, largest in (("offset_x", offset_x, largest_x), ("offset_y", offset_y, largest_y)):
+            if offset < 0 or offset > largest:
+                raise ValueError(f"{axis} {offset} leaves less than the {width}x{height} the brief asks for: "
+                                 f"the largest {axis} is {largest}")
+        return Grid(scale, scale, offset_x, offset_y, width, height)
 
     def edges_x(self) -> IntArray:
         """The Source columns where each cell starts, plus where the last one ends: `width + 1` values."""
@@ -149,9 +168,21 @@ def sample_nearest(image: U8, grid: Grid) -> U8:
     return _binarise(sampled)
 
 
-def downscale_mode(image: U8, grid: Grid) -> U8:
-    """One pixel per cell: the most common colour among the cell's opaque pixels. A cell is opaque when at least half
-    its pixels are (alpha from 128 up); ties between colours go to the smallest packed RGBA value."""
+SEPARATION = 0.05  # OKLab lightness gap between a cell's dark and light groups, from which it holds an edge or a line
+DARK_SHARE = 0.4  # the share of a cell's pixels the dark group needs to win the cell
+
+
+def downscale(image: U8, grid: Grid) -> U8:
+    """One pixel per cell, keeping the Source's thin dark lines continuous and its flat areas even.
+
+    A cell's opaque pixels are split at the cell's mean OKLab lightness into a dark and a light group. When the groups
+    differ clearly (`SEPARATION`), the cell holds a line or an edge: it takes the dark group's mean colour if the dark
+    group covers at least `DARK_SHARE` of the cell, else the light group's. Otherwise it takes the plain mean colour.
+    A line two Source pixels wide that straddles two cells would be dark in both; only the cell with the larger dark
+    share keeps it (ties go to the right or lower cell), so a line stays one pixel wide. A line runs along the axis where its run of
+    cells is longer; where the runs are equal, as at a crossing, nothing is thinned. A cell is opaque when at least
+    half its pixels are (alpha from 128 up); a clear cell is (0, 0, 0, 0).
+    """
     _check_size(image, grid)
     index_x, index_y = _cell_index(grid.edges_x(), image.shape[1]), _cell_index(grid.edges_y(), image.shape[0])
     cell = index_y[:, None] * grid.width + index_x[None, :]
@@ -160,29 +191,66 @@ def downscale_mode(image: U8, grid: Grid) -> U8:
     cells = grid.width * grid.height
     votes = np.bincount(cell[inside & opaque], minlength=cells)
     sizes = np.bincount(cell[inside], minlength=cells)
-    packed = _pack(_binarise(image))
-    colours, colour_of = np.unique(packed[inside & opaque], return_inverse=True)
+    chosen = (inside & opaque)
+    where = cell[chosen]
+    rgb = image[..., :3][chosen]
+    lightness = srgb_to_oklab(rgb)[:, 0]
+
+    def sums(weight: npt.NDArray[np.float64] | None = None) -> tuple[npt.NDArray[np.float64], ...]:
+        w = np.ones(len(where)) if weight is None else weight
+        return (np.bincount(where, weights=w, minlength=cells),
+                np.bincount(where, weights=w * lightness, minlength=cells),
+                *(np.bincount(where, weights=w * rgb[:, c], minlength=cells) for c in range(3)))
+
+    count, light_sum, *rgb_sum = sums()
+    mean_light = light_sum / np.maximum(count, 1)
+    dark = (lightness < mean_light[where]).astype(np.float64)
+    dark_count, dark_light, *dark_rgb = sums(dark)
+    bright_count = count - dark_count
+    gap = (light_sum - dark_light) / np.maximum(bright_count, 1) - dark_light / np.maximum(dark_count, 1)
+    holds_edge = (gap > SEPARATION) & (dark_count > 0) & (bright_count > 0)
+    share = np.where(count > 0, dark_count / np.maximum(count, 1), 0.0)
+    is_line = (holds_edge & (share >= DARK_SHARE)).reshape(grid.height, grid.width)
+    line_share = np.where(is_line, share.reshape(grid.height, grid.width), 0.0)
+    padded = np.pad(line_share, 1)
+    across_x = (line_share >= padded[1:-1, :-2]) & (line_share > padded[1:-1, 2:])  # wins against its x neighbours
+    across_y = (line_share >= padded[:-2, 1:-1]) & (line_share > padded[2:, 1:-1])
+    along_y, along_x = _run_lengths(is_line.T).T, _run_lengths(is_line)
+    # A line runs along the axis where its run of cells is longer, and is thinned across the other; where the runs are
+    # equal (a crossing, a lone cell) every cell is kept.
+    is_line &= np.where(along_y > along_x, across_x, np.where(along_x > along_y, across_y, True))
+    line_cell = is_line.reshape(-1)
     result = np.zeros((cells, 4), dtype=np.uint8)
-    if len(colours):
-        key = cell[inside & opaque] * len(colours) + colour_of
-        keys, counts = np.unique(key, return_counts=True)  # keys ascend: cell, then colour (packed order)
-        owner = keys // len(colours)
-        order = np.lexsort((keys, -counts, owner))  # per cell: most common first, then the smallest colour
-        first = np.ones(len(order), dtype=bool)
-        first[1:] = owner[order][1:] != owner[order][:-1]
-        winners = order[first]
-        result[owner[winners]] = _unpack(colours[keys[winners] % len(colours)])
+    for c in range(3):
+        mean = rgb_sum[c] / np.maximum(count, 1)
+        dark_mean = dark_rgb[c] / np.maximum(dark_count, 1)
+        bright_mean = (rgb_sum[c] - dark_rgb[c]) / np.maximum(bright_count, 1)
+        value = np.where(holds_edge, np.where(line_cell, dark_mean, bright_mean), mean)
+        result[:, c] = np.clip(np.rint(value), 0, 255).astype(np.uint8)
+    result[:, 3] = 255
     result[votes * 2 < sizes] = 0
+    result[count == 0] = 0
     shaped: U8 = result.reshape(grid.height, grid.width, 4)
     return shaped
+
+
+def _run_lengths(mask: BoolMask) -> IntArray:
+    """For each set cell, the length of the run of set cells along its row it belongs to; 0 for a clear cell."""
+    starts = mask & ~np.pad(mask, ((0, 0), (1, 0)))[:, :-1]
+    label = np.cumsum(starts.ravel()).reshape(mask.shape)
+    label[~mask] = 0
+    lengths = np.bincount(label.ravel())
+    lengths[0] = 0
+    result: IntArray = lengths[label].astype(np.int64)
+    return result
 
 
 def alpha_by_vote(fitted: U8, source: U8, grid: Grid) -> U8:
     """`fitted` (one pixel per cell, as `sample_nearest` gives) with its alpha decided by majority vote of the cell.
 
-    A cell is opaque when at least half its Source pixels are (alpha from 128 up), as in `downscale_mode`; the result's
+    A cell is opaque when at least half its Source pixels are (alpha from 128 up), as in `downscale`; the result's
     alpha is 0 or 255. Where the vote is opaque but the sampled pixel is clear, the colour is the cell's most common
-    one, as `downscale_mode` gives; where the vote is clear, the pixel is (0, 0, 0, 0).
+    one, as `downscale` gives; where the vote is clear, the pixel is (0, 0, 0, 0).
     """
     _check_size(source, grid)
     if fitted.shape != (grid.height, grid.width, 4):
@@ -191,7 +259,7 @@ def alpha_by_vote(fitted: U8, source: U8, grid: Grid) -> U8:
     result = _binarise(fitted)
     refill = opaque & (result[..., 3] == 0)
     if refill.any():
-        result[refill] = downscale_mode(source, grid)[refill]
+        result[refill] = downscale(source, grid)[refill]
     result[~opaque] = 0
     return result
 

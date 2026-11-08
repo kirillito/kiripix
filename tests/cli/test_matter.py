@@ -62,6 +62,39 @@ def test_run_never_calls_the_matter_and_rerun_pins_one_rgba_result_for_review(pr
     assert len(calls(project)) == 1, "nothing stale, so no second call"
 
 
+def test_an_accepted_result_stays_accepted_when_a_rerun_on_the_other_device_differs_a_little(project: Kiripix) -> None:
+    folder = make_matte(project)
+    (project.cwd / "matter-cpu-differs").write_text("", encoding="utf-8")
+    project.json("run", ASSET, "cutout", "--rerun", "--cpu", expect=3)
+    project.json("accept", ASSET, "cutout", owner=True)
+    assert stage_status(project, ASSET)["cutout"] == "done"
+    [path] = pinned(folder)
+    on_cpu = path.read_bytes()
+
+    path.unlink()  # the Owner wants the call made again, this time on the GPU
+    assert stage_status(project, ASSET)["cutout"] == "needs-input"
+    project.json("run", ASSET, "cutout", "--rerun")
+
+    assert len(calls(project)) == 2 and calls(project)[0]["device"] == "cpu" and calls(project)[1]["device"] != "cpu"
+    assert path.read_bytes() != on_cpu, "the two devices made different bytes"
+    assert stage_status(project, ASSET)["cutout"] == "done", "the same key, made by the Runner: nothing to review again"
+
+
+def test_an_accepted_key_whose_pinned_result_was_edited_is_reviewed_again(project: Kiripix) -> None:
+    folder = make_matte(project)
+    project.json("run", ASSET, "cutout", "--rerun", expect=3)
+    project.json("accept", ASSET, "cutout", owner=True)
+    [path] = pinned(folder)
+    with Image.open(path) as image:
+        edited = np.asarray(image).copy()
+    edited[0, 1, 3] += 1
+    Image.fromarray(edited, "RGBA").save(path)
+
+    assert stage_status(project, ASSET)["cutout"] == "stale"
+    project.json("run", ASSET, "cutout", expect=3)
+    assert stage_status(project, ASSET)["cutout"] == "needs-review"
+
+
 def test_the_matter_caps_its_result_on_the_longer_side(project: Kiripix) -> None:
     folder = make_matte(project, (3000, 8))
 

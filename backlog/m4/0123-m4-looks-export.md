@@ -3,12 +3,12 @@ status: todo
 milestone: M4
 agent: godot-export
 type: ticket
-parent: 0118-m4-room-looks.md
+parent: 0119-m4-room-looks.md
 ---
 
 # M4: export a room's Looks
 
-Spec §9 (the Room row, Looks); ADR 0009. Needs [0121](0121-m4-looks-stage.md).
+Spec §9 (the Room row, Looks); ADR 0009. Needs [0122](0122-m4-looks-stage.md).
 
 ## What to build
 

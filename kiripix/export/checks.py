@@ -75,6 +75,29 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     return found
 
 
+def frozen_layer_findings(project: Project, asset: Asset, layers: list[str]) -> list[Finding]:
+    """An error for each of `layers` that the game's Manifest lists as exported: a `remove` Decision on it is refused
+    before it is recorded, as a rename would fail the freeze (spec §9). Nothing is frozen with no game or no Manifest."""
+    if asset.kind not in EXPORTERS or project.settings.export.godot.project is None:
+        return []
+    try:
+        target = resolve_target(project)
+    except KiripixError as error:
+        return list(error.findings)
+    shown = target.manifest(asset.id)
+    manifest = read_manifest(target.path(shown), shown)
+    if manifest is None or not manifest.exported:
+        return []
+    where = ", ".join(sorted(res for res in manifest.files if res.endswith(".tscn"))) or shown
+    return [Finding(
+        code="export.id_frozen",
+        message=f"{asset.id}: the Layer ID '{layer}' was exported in {where} (Manifest {shown}, export "
+                f"{manifest.counter}), so it can't be removed",
+        position=Position(asset=asset.id, stage="layers", file=shown),
+        owner_action=f"Keep the Layer '{layer}': the game refers to it. Adding new Layers is always fine.")
+        for layer in layers if layer in manifest.ids.layers]
+
+
 def _exits(project: Project, assets: list[Asset]) -> dict[str, dict[str, dict[str, str]]]:
     """Each Asset that places Markers, with its Exits by ID: `{target_room, target_exit}`."""
     cache = HashCache(project.state_dir)

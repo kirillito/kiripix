@@ -227,10 +227,10 @@ def kiripix(cwd: Path, env: Mapping[str, str], *args: str, expect: int | None = 
 def room_image() -> np.ndarray:
     """48 x 32, drawn in code so there is no PNG to keep: a blue wall on the left third, a floor, a rug, and a red crate
     near (41, 22) for the owner to lift into a foreground Layer."""
-    image = np.full((HEIGHT, WIDTH, 4), (200, 190, 170, 255), dtype=np.uint8)
-    image[:, :16] = (40, 60, 200, 255)
-    image[8:14, 24:36] = (120, 80, 60, 255)
-    image[19:26, 38:45] = (200, 40, 40, 255)
+    image = np.full((HEIGHT, WIDTH, 4), (194, 195, 199, 255), dtype=np.uint8)  # colours from `init`'s palette, so
+    image[:, :16] = (29, 43, 83, 255)  # `palette.mapping_error` has nothing to say
+    image[8:14, 24:36] = (171, 82, 54, 255)
+    image[19:26, 38:45] = (255, 0, 77, 255)
     return image
 
 

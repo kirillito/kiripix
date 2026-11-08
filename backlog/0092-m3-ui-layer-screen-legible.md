@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: ui-engineer
 type: ticket
@@ -28,6 +28,19 @@ lift is slow. This ticket is about the screen's model: which Layer a click goes 
 
 Playwright, against a real `kiripix serve`:
 
-- [ ] A new Layer shows in the list before its first lift lands, and a click is drawn as going to it.
-- [ ] After a lift, the list shows the Layer's pixel count, and the new pixels are marked on the canvas.
-- [ ] Removing a Layer takes it out of the list and the canvas, and undo brings it back.
+- [x] A new Layer shows in the list before its first lift lands, and a click is drawn as going to it.
+- [x] After a lift, the list shows the Layer's pixel count, and the new pixels are marked on the canvas.
+- [x] Removing a Layer takes it out of the list and the canvas, and undo brings it back.
+
+## Findings (UI pass)
+
+- Built from existing Commands only; the pixel count is read from the Layer's own PNG alpha (no backend change).
+- The target Layer is named beside the cursor, on a waiting click, and in a line in the panel ("A click goes to ...").
+- A Layer appears in the list when it is built, has a Decision, is made with New Layer, or its ID is committed in the field (Enter or
+  leaving it). Per-Layer state: lifting, N px, empty, no pixels yet. The new pixels flash in the Layer's colour for about 1.6 s.
+- Remove sends `decide` `remove`, then always a plain `run layers` (no rerun); Ctrl+Z / Redo after a remove also run it. A refused
+  remove (`export.id_frozen`) shows through the ordinary finding notice, and the Layer stays listed because the list follows the recorded
+  Decisions, not the click. The place screen hides removed Layers in `layerFiles`.
+- A Layer named only in the field and never lifted is dropped locally by Remove (nothing to record).
+- Tests: `web/e2e/legible.spec.ts`; `layers.spec.ts` Plate test now waits for the Layer's state instead of its appearance.
+- Screenshot: `web/test-results/layers-legible.png` (overwritten by each run).

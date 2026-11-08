@@ -228,9 +228,23 @@ register_kind(
 # - runner-embeds.jsonl, runner-decodes.jsonl: one line per run of a warm Runner's two halves;
 # - hold-embed: while it exists, an `embed` marks `embed-holding` and waits in chunks, checking the cancel token;
 # - runner-no-gpu: while it exists, a Runner not asked for the CPU says it left the GPU unused;
-# - fake-weights-v2: while it exists, the Runner's weights hash is another one, as if it had been upgraded.
+# - matter-cpu-differs: while it exists, the fake matter's result on the CPU differs from the GPU's by one alpha level;
+# - fake-weights-v2: while it exists, the Runner's weights hash is another one, as if it had been upgraded;
+# - runner-load-seconds, runner-call-seconds: while they exist, a load or a call takes that many seconds (the file's text).
 
 _WEIGHTS = Path(__file__).parent / "fake_weights.bin"
+
+
+def _take_time(name: str) -> None:
+    """Stand in for a slow load or call: wait the seconds that the file `name` holds, if it exists."""
+    path = Path(name)
+    if path.exists():
+        seconds = float(path.read_text("utf-8"))
+        # Until every clock Kiripix might time it with has passed it: on Windows `time.monotonic` ticks about every
+        # 16 ms, so a plain sleep can measure a little short.
+        start, precise = time.monotonic(), time.perf_counter()
+        while min(time.monotonic() - start, time.perf_counter() - precise) < seconds:
+            time.sleep(0.005)
 
 
 def _fake_weight(sha256: str) -> WeightFile:
@@ -256,6 +270,7 @@ class FakeSegmenter(EmbeddingRunner):
 
     def load(self, directory: Path, device: Device) -> None:
         assert (directory / "fake_weights.bin").is_file()
+        _take_time("runner-load-seconds")
         self._device = device
 
     @property
@@ -268,6 +283,7 @@ class FakeSegmenter(EmbeddingRunner):
 
     def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
         assert self._device is not None, "called while not loaded"
+        _take_time("runner-call-seconds")
         with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
             calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
         hold = Path("hold-runner")
@@ -295,6 +311,7 @@ class FakeSegmenter(EmbeddingRunner):
     def decode(self, embedding: Any, size: tuple[int, int], params: dict[str, Any],
                check_cancel: CheckCancel) -> np.ndarray:
         assert self._device is not None and embedding == "the fake embedding"
+        _take_time("runner-call-seconds")
         with Path("runner-decodes.jsonl").open("a", encoding="utf-8") as calls:
             calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
         if Path("runner-fails").exists():
@@ -339,6 +356,7 @@ class FakeMatter(Runner):
 
     def load(self, directory: Path, device: Device) -> None:
         assert (directory / "fake_weights.bin").is_file()
+        _take_time("runner-load-seconds")
         self._device = device
 
     @property
@@ -347,6 +365,7 @@ class FakeMatter(Runner):
 
     def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
         assert self._device is not None, "called while not loaded"
+        _take_time("runner-call-seconds")
         with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
             calls.write(json.dumps({"device": self._device, "params": params}) + "\n")
         # A call with a hole (the `fill` Kind) holds on its own file, so a test can stop between it and the call before.
@@ -363,6 +382,8 @@ class FakeMatter(Runner):
         size = (max(1, round(width * scale)), max(1, round(height * scale)))
         result = np.asarray(Image.fromarray(image, "RGBA").resize(size, Image.Resampling.NEAREST)).copy()
         result[..., 3] = np.round(np.linspace(0, 255, size[0]))[None, :].astype(np.uint8)
+        if self._device == "cpu" and Path("matter-cpu-differs").exists():
+            result[0, 1, 3] += 1  # as BiRefNet's alpha on the CPU differs by one level in a few pixels from the GPU's
         return result
 
     def unload(self) -> None:
@@ -436,6 +457,7 @@ class FakeInpainter(Runner):
     id = INPAINTER
     description = "A fake inpainting Runner for the tests."
     licence = "test"
+    can_stay_warm = True  # as the real one is: `serve` keeps it loaded
     weights = (_fake_weight(hashlib.sha256(_WEIGHTS.read_bytes()).hexdigest()),)
 
     def __init__(self) -> None:
@@ -443,10 +465,12 @@ class FakeInpainter(Runner):
 
     def load(self, directory: Path, device: Device) -> None:
         assert (directory / "fake_weights.bin").is_file()
+        _take_time("runner-load-seconds")
         self._device = device
 
     def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
         assert self._device is not None, "called while not loaded"
+        _take_time("runner-call-seconds")
         with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
             calls.write(json.dumps({"runner": self.id, "device": self._device, "params": params}) + "\n")
         hold = Path("hold-runner")

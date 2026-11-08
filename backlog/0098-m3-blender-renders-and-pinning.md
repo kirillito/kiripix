@@ -34,5 +34,37 @@ character; LFS size wasn't the issue (a 52 px frame is about 1 KB).
 ## Acceptance criteria
 
 - [ ] The measurement is recorded here: equal or not, and by how many pixels.
-- [ ] An ADR in `docs/adr/`, in the folder's format, recording the Owner's choice.
-- [ ] If the choice changes the spec's wording (§2, §5, §6.3), the changes are listed here for the main session to make.
+- [x] An ADR in `docs/adr/`, in the folder's format, recording the Owner's choice:
+      [0010](../docs/adr/0010-blender-renders-rebuild-and-are-not-pinned.md).
+- [x] If the choice changes the spec's wording (§2, §5, §6.3), the changes are listed here for the main session to make.
+
+## Measurement
+
+**Pending (2026-11-07).** It can't be made yet: Blender isn't installed on the development machine (not on `PATH`,
+not under `C:\Program Files`), the repo has no fixture Model, and no `render` Stage exists to say which engine and
+settings to use. It needs:
+- Blender 5.2 LTS (5.2.3, `docs/versions.md`) installed, on a machine with both a CUDA GPU and the CPU device;
+- the fixture Model from [0100](0100-m3-character-test-fixtures.md);
+- the render engine and settings fixed by the `render` ticket ([0104](0104-m3-render-stage.md)): toon shading, no
+  anti-aliasing, colour, normal, depth and object-mask passes, at the target pixel size.
+
+Then render one clip in one direction twice on the GPU and once on the CPU, and compare each pass pixel by pixel:
+GPU against GPU, and GPU against CPU. Record "equal" or the count of differing pixels per pass. It decides nothing: the
+choice (ADR 0010) stands either way.
+
+## Spec wording changes (made)
+
+- **§2, principle 11.** "A rebuild re-runs only deterministic Ops." became "A rebuild re-runs only deterministic work:
+  Ops, and Blender renders (ADR 0010)."
+- **§2, principle 2.** Added: "A Blender render counts as a function of its inputs, the Blender version and render
+  settings among them, though it isn't bit-exact across devices (ADR 0010)."
+- **§5, "Pinned calls".** Added: "A Blender render is not a pinned call (ADR 0010): it rebuilds like deterministic work,
+  with the Blender version and render settings among the Stage's inputs."
+- **§6.3:** none.
+
+## Which Blender version is an input
+
+**The Owner's choice (2026-11-07): patch releases are fine.** `render`'s input is the Blender major and minor version
+(5.2), not the patch. A 5.2.x patch upgrade doesn't make `render` stale; a new LTS does. A patch can still change a few
+pixels on a rebuild, and that shows in the game repo's diff like any other rebuild. The `render` ticket
+([0104](0104-m3-render-stage.md)) implements this.

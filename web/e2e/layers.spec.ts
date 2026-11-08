@@ -234,7 +234,7 @@ test("a Plate image gives Layers with no Runner call, and the stage is done", as
   await page.getByLabel("Re-run the Runner after each click").check();
   await clickPixel(page, 24, 14);
 
-  await expect(page.getByTestId("layer-crate")).toBeVisible();
+  await expect(page.getByTestId("layer-state-crate")).toHaveAttribute("data-state", "lifted");
   expect(layersStage(studio).status).toBe("done");
   await expect(page.getByTestId("accept")).toHaveCount(0);
   expect(runnerCalls(studio)).toBe(0);

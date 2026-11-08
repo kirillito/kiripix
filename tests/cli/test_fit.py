@@ -53,7 +53,7 @@ def test_a_4x_upscaled_source_fits_exactly_and_layers_passes_the_image_through(p
                     "offset_y": 0, "width": 480, "height": 272}
     assert read(folder / "work" / "layers" / "plate.png").tobytes() == fit.tobytes()
     layers = json.loads((folder / "work" / "layers" / "layers.json").read_text(encoding="utf-8"))
-    assert layers == {"schema_version": 1, "layers": []}
+    assert layers == {"schema_version": 1, "layers": [], "removed": []}
     assert project.json("next", ROOM)["data"]["stage"] == "reach"  # masks is done, empty; palette and place are built
 
 
@@ -119,6 +119,54 @@ def test_a_source_without_a_grid_suggests_downscale_and_downscale_fits_exactly(p
     grid = json.loads((folder / "work" / "fit" / "grid.json").read_text(encoding="utf-8"))
     assert grid["mode"] == "downscale" and grid["scale_x"] == "25/8" and grid["scale_y"] == "25/8"
     assert (grid["width"], grid["height"]) == (160, 96)
+
+
+def flat(width: int, height: int) -> np.ndarray:
+    image = np.full((height, width, 4), 255, dtype=np.uint8)
+    image[..., :3] = (90, 120, 125)
+    return image
+
+
+def test_downscale_keeps_one_scale_on_both_axes_and_says_what_it_cropped(project: Kiripix) -> None:
+    folder = room_from(project, flat(2185, 768), 1024, 320)
+    project.json("set", ROOM, "fit", "mode=downscale")
+
+    result = project.json("run", ROOM, expect=3)
+
+    grid = json.loads((folder / "work" / "fit" / "grid.json").read_text(encoding="utf-8"))
+    assert grid["scale_x"] == grid["scale_y"] == "2185/1024" and (grid["offset_x"], grid["offset_y"]) == (0, 0)
+    assert read(folder / "work" / "fit" / "fit.png").shape == (320, 1024, 4)
+    [finding] = [f for f in result["findings"] if f["code"] == "fit.cropped"]
+    assert finding["severity"] == "info" and "86 Source pixels across y" in finding["message"]
+    assert finding["fix"] == f"kiripix set {ROOM} fit offset_y=43"
+
+    project.json("set", ROOM, "fit", "offset_y=43")  # the fix
+    result = project.json("run", ROOM, expect=3)
+
+    grid = json.loads((folder / "work" / "fit" / "grid.json").read_text(encoding="utf-8"))
+    assert grid["offset_y"] == 43 and grid["scale_x"] == grid["scale_y"] == "2185/1024"
+    assert not [f for f in result["findings"] if f["code"] == "fit.cropped"]  # centred: nothing to say
+
+
+def test_a_source_with_the_briefs_aspect_is_not_cropped_and_has_no_finding(project: Kiripix) -> None:
+    folder = room_from(project, flat(960, 544), 480, 272)
+    project.json("set", ROOM, "fit", "mode=downscale")
+
+    result = project.json("run", ROOM, expect=3)
+
+    grid = json.loads((folder / "work" / "fit" / "grid.json").read_text(encoding="utf-8"))
+    assert grid["scale_x"] == grid["scale_y"] == 2 and (grid["offset_x"], grid["offset_y"]) == (0, 0)
+    assert not [f for f in result["findings"] if f["code"].startswith("fit.")]
+
+
+def test_an_offset_that_leaves_less_than_the_brief_fails_and_names_the_largest(project: Kiripix) -> None:
+    room_from(project, flat(2185, 768), 1024, 320)
+    project.json("set", ROOM, "fit", "mode=downscale", "offset_y=87")
+
+    result = project.json("run", ROOM, expect=1)
+
+    assert result["findings"][-1]["code"] == "stage.failed"
+    assert "the largest offset_y is 86" in result["findings"][-1]["message"]
 
 
 def test_downscale_of_a_source_smaller_than_the_brief_fails_the_stage(project: Kiripix) -> None:

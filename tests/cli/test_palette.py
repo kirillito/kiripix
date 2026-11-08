@@ -50,7 +50,11 @@ def test_a_fit_room_runs_through_palette_with_every_pixel_on_the_palette_and_che
     colours = {tuple(int(c) for c in p) for p in mapped[..., :3].reshape(-1, 3)}
     assert colours <= palette_colours(project) and len(colours) > 1
     result = project.json("check", ROOM, expect=0)
-    assert [f for f in result["findings"] if f["severity"] != "info"] == []
+    # the test palette is tiny, so the mapping is far from the image: that warning is right, and is checked on its own
+    others = [f for f in result["findings"] if f["severity"] != "info" and f["code"] != "palette.mapping_error"]
+    assert others == []
+    (warning,) = [f for f in result["findings"] if f["code"] == "palette.mapping_error"]
+    assert warning["severity"] == "warning" and warning["fix"].startswith("kiripix op palette-suggest ")
 
 
 def test_a_plate_already_on_the_palette_is_unchanged_when_there_are_no_orphans(project: Kiripix) -> None:

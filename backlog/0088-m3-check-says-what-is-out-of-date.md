@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: core-engineer
 type: ticket
@@ -25,8 +25,12 @@ Markers are reached by the `reach` Probe ([0078](0078-m3-reach-probe.md)). This 
 
 ## Acceptance criteria
 
-- [ ] CLI seam: on a fully built room, `out_of_date` is empty.
-- [ ] With `layers` in `needs-review`, `out_of_date` names the Stages after it, with their status and reason, and the exit code is 0 if the findings are clean.
-- [ ] `check --all` gives the same for every Asset.
-- [ ] The text form names the out-of-date Stages.
-- [ ] `tests/cli/test_contract.py` passes with the changed output, and the output schema describes the new field.
+- [x] CLI seam: on a fully built room, `out_of_date` is empty.
+- [x] With `layers` in `needs-review`, `out_of_date` names the Stages after it, with their status and reason, and the exit code is 0 if the findings are clean.
+- [x] `check --all` gives the same for every Asset.
+- [x] The text form names the out-of-date Stages.
+- [x] `tests/cli/test_contract.py` passes with the changed output, and the output schema describes the new field.
+
+## Notes
+
+Tests use a `brief` Stage made stale by `set` (the `layers` needs-review case goes through the same `graph.state` call). `check_asset` now returns a third value, the states of checked Stages that aren't `done`.
