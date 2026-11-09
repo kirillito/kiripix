@@ -1,11 +1,11 @@
 ---
 status: todo
-milestone: M4
+milestone: M5
 agent: ml-engineer
 type: trial
 ---
 
-# M4: trial: image-to-3D, a local Runner in 8 GB or a Provider?
+# M5: trial: image-to-3D, a local Runner in 8 GB or a Provider?
 
 Spec §16, open decision 4 ("Image-to-3D: which local Runner fits 8 GB well enough, or none (M3)"), §6.3 (model: "optional
 image-to-3D") and §8.
@@ -13,7 +13,7 @@ image-to-3D") and §8.
 **Deferred from M3** (Q3 of [0097](../0097-m3-characters.md), 2026-11-07). The Owner's rule: in M3 only if the work is estimated
 under 1M tokens. The estimate was 0.7 to 1.2M (this trial 300 to 500k, mostly Windows CUDA builds of each candidate's
 dependencies; a Runner and the `model` Stage path after it 400 to 700k). Also, the models known to fit 8 GB in mid-2026 gave
-blobby meshes with lighting baked into the texture, which rig badly, while the good ones needed 16 to 24 GB. In M4, with
+blobby meshes with lighting baked into the texture, which rig badly, while the good ones needed 16 to 24 GB. In M5, with
 Providers, the trial compares local Runners with a Provider (an API) on the same image. Recheck the candidates first: the list
 above is from mid-2026.
 
@@ -21,7 +21,7 @@ above is from mid-2026.
 
 1. List the current open image-to-3D models that might run in 8 GB of VRAM, shared with nothing else during the test. For each,
    record its licence and the source of its weights. Drop any whose licence isn't confirmed for commercial use; ask the Owner
-   about any that are unclear. Don't add one to the project. Add one or two image-to-3D Providers that M4 can call, with their
+   about any that are unclear. Don't add one to the project. Add one or two image-to-3D Providers that M5 can call, with their
    terms for game assets.
 2. On the two or three that remain, from one concept image of a game character the Owner provides: peak VRAM, time on the
    GPU and on the CPU, and whether the result has a clean mesh Mixamo can rig.
@@ -36,6 +36,6 @@ above is from mid-2026.
 
 ## Acceptance criteria
 
-- [x] The Owner's call on Q3 is recorded here first: deferred to M4.
+- [x] The Owner's call on Q3 is recorded here first: deferred to M4, then moved to M5 on 2026-11-08 with the Providers.
 - [ ] The table and frames above, and the Owner's choice, with the change to spec §8 and §16 decision 4 listed for the main
       session.

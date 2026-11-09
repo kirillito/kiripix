@@ -114,16 +114,16 @@ Not decided here. A ticket that depends on one says so, and stops until it's ans
 |---|---|---|
 | Q1 | **Answered 2026-11-07: not pinned.** A render is deterministic work, with the Blender version and render settings among its inputs (above). | [0098](0098-m3-blender-renders-and-pinning.md), every Stage that runs Blender |
 | Q2 | **Answered 2026-11-07: a 1 px silhouette from the object mask,** in `finish` after `palette` (above). Inverted hull only if the Owner dislikes it in 0106; Freestyle isn't tried. | [0106](0106-m3-outline-method-trial.md) |
-| Q3 | **Answered 2026-11-07: deferred to M4.** The Owner's rule was M3 only if under 1M tokens; the estimate was 0.7 to 1.2M, and the models that fit 8 GB rig badly. The trial is now [0126](m4/0126-m4-image-to-3d-trial.md), in M4, beside Providers. | 0126 |
+| Q3 | **Answered 2026-11-07: deferred to M4.** The Owner's rule was M3 only if under 1M tokens; the estimate was 0.7 to 1.2M, and the models that fit 8 GB rig badly. The trial is now [0126](m5/0126-m5-image-to-3d-trial.md), in M5, beside Providers (moved from M4 on 2026-11-08). | 0126 |
 | Q4 | **Answered 2026-11-07: a Quaternius character (CC0),** not a blocky or toy-like one. Its base body and outfit are separate meshes on one skeleton, so they are joined into one `.blend` in Blender first; that file is the Model Kiripix imports. Upload it to Mixamo once first to check that it rigs cleanly. Which character and outfit is still the Owner's pick. | the gate, 0106 |
 | Q5 | **Answered 2026-11-07:** snake_case verbs (`attack`, not `attack_1`) and `<clip>_<dir>` with compass suffixes (above). | 0103, 0104, 0113 |
 | Q6 | **Answered 2026-11-07: all 8 directions are rendered,** none mirrored, so an asymmetric character stays right. | 0104 |
-| Q7 | Camera presets "once per Project": are they settings in `kiripix.toml` that an Asset's `camera` parameter picks? What is the top-down 3/4 elevation? Are `side` and `battle` needed in M3, or only `top34_8`? | 0099, 0104 |
-| Q8 | Character height: one Project value (52 px), or per character too (a large enemy)? | 0099 |
-| Q9 | "One palette per character (a project-palette subset)": how many colours, chosen how? A subset means `palette` isn't quite "the same thing in every Recipe" (ADR 0004). | 0107, 0110 |
-| Q10 | Pivot drift: is "the feet" the ground point under the root that Blender reports, or the lowest opaque pixels? Which clips are stationary: a new flag on the `clip` Decision, or every looping clip? A walk in place moves its feet, so foot pixels can't measure it. | 0103, 0108, 0112 |
+| Q7 | **Answered 2026-11-08:** presets are settings in `[character]` in `kiripix.toml`, picked by name by an Asset's `camera` parameter. M3 ships only `top34_8`, at a 30° elevation; `side` and `battle` wait until needed. | 0099, 0104 |
+| Q8 | **Answered 2026-11-08:** `height = 52` in `[character]` is the Project default, and a character's `height` parameter overrides it. | 0099 |
+| Q9 | **Answered 2026-11-08:** a `colors` parameter on the character's `palette` Stage, default 16; `palette_subset` picks the n best-fitting palette colours in OKLab across all frames. | 0107, 0110 |
+| Q10 | **Answered 2026-11-08:** the ground point under the root that Blender reports per frame, so no `feet_point` Op; the Check reads the pivots it's given. Stationary clips carry a `stationary` flag on the `clip` Decision (default false); only those are checked. | 0103, 0108, 0112 |
 | Q11 | Rigify for non-humanoids: in M3, or deferred until a non-humanoid character is needed? | 0102 |
-| Q12 | The sheet: one atlas per character or per clip, and one cell size for the whole character? | 0108, 0112 |
+| Q12 | **Answered 2026-11-08:** one atlas per character, with one cell size for the whole character. | 0108, 0112 |
 
 ## Testing Decisions
 

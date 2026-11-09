@@ -14,6 +14,7 @@ from kiripix.ops.colour import (
     quantize,
     srgb_to_oklab,
 )
+from kiripix.ops.character import encode_normals, palette_subset, quantise_normals
 from kiripix.ops.chroma import chroma_key, key_fringe
 from kiripix.ops.cleanup import add_outline, remove_orphans
 from kiripix.ops.compose import overlay
@@ -21,10 +22,12 @@ from kiripix.ops.geometry import NavigationPolygon, Outline, collision_shapes, c
 from kiripix.ops.layers import (
     connected_regions,
     cut_by_alpha,
+    enclosed_holes,
     grow_where_partial,
     mask_from_difference,
     partial_cells,
     recompose,
+    remove_small_pieces,
 )
 from kiripix.ops.masks import (
     SIDES,
@@ -47,6 +50,7 @@ from kiripix.ops.palette import (
     parse_hex,
     suggest_palette,
 )
+from kiripix.ops.sheet import Rect, default_cell_pivot, pack_atlas
 from kiripix.ops.reach import Gap, Island, narrowest_gaps, reachable, walkable, walkable_islands
 from kiripix.ops.resample import (
     Grid,
@@ -73,6 +77,7 @@ __all__ = [
     "PaletteEntry",
     "PaletteSuggestion",
     "PaletteSyntaxError",
+    "Rect",
     "add_outline",
     "alpha_by_vote",
     "bayer_matrix",
@@ -82,8 +87,12 @@ __all__ = [
     "connected_regions",
     "contours",
     "cut_by_alpha",
+    "default_cell_pivot",
+    "pack_atlas",
     "detect_grid",
     "downscale",
+    "enclosed_holes",
+    "encode_normals",
     "flood_region",
     "format_gpl",
     "grow_where_partial",
@@ -103,13 +112,16 @@ __all__ = [
     "fill_polygon",
     "parse_gpl",
     "parse_hex",
+    "palette_subset",
     "partial_cells",
     "point_to_target",
     "mapping_error",
+    "quantise_normals",
     "quantize",
     "reachable",
     "recompose",
     "remove_orphans",
+    "remove_small_pieces",
     "sample_nearest",
     "simplify",
     "snap_cell",

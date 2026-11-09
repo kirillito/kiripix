@@ -12,7 +12,7 @@ Spec §9 (the Room row, Looks); ADR 0009. Needs [0122](0122-m4-looks-stage.md).
 
 ## What to build
 
-- `room.json` schema 3: `looks`, each with `id`, `condition`, `file`, `box`, `pieces` (`layer`, `file`) and `collision`
+- `room.json`'s next `schema_version` (after [0131](0131-m4-area-marker.md) and [0134](0134-m4-export-masks-and-room-json.md), whichever lands last): `looks`, each with `id`, `condition`, `file`, `box`, `pieces` (`layer`, `file`) and `collision`
   (`solid` shapes, as for the room). An old `room.json` is refused and the finding names the rebuild (no production
   rooms through M3).
 - **The scene:**

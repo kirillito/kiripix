@@ -1,7 +1,10 @@
 """Variants and the Pick: `import` copies an outside image into `src/` as a Variant, `pick` chooses the Source.
 
 A Variant is `src/<hash>.png`, named by the start of its content hash, so importing the same image twice is a no-op
-and a Variant never changes once picked. The caller holds the Asset lock.
+and a Variant never changes once picked. A character's Variants are Models instead: `src/<hash>.glb`, `.fbx` or
+`.blend`. A character also has clip sources (`src/clips/<name>.<hash>.<ext>`, named by the file stem, which a `clip`
+Decision's `source` names) and one rigged file (`src/rigged/<hash>.<ext>`, the Mixamo round trip's result). The
+caller holds the Asset lock.
 """
 
 from pathlib import Path
@@ -17,11 +20,111 @@ from kiripix.core.project import Project
 from kiripix.recipes.base import PICK, StageSpec
 
 VARIANT_NAME_LENGTH = 16  # hex digits of the SHA-256: 64 bits, plenty for one Asset's Variants
+MODEL_SUFFIXES = (".glb", ".fbx", ".blend")
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+_IMAGE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")
+CHARACTER = "character"
+
+
+def takes_models(asset: Asset) -> bool:
+    return asset.kind == CHARACTER
 
 
 def variants(asset: Asset) -> dict[str, Path]:
-    """The Asset's Variants by name, sorted."""
-    return {path.stem: path for path in sorted((asset.dir / "src").glob("*.png")) if path.is_file()}
+    """The Asset's Variants by name, sorted: images, or for a character its Models."""
+    suffixes = MODEL_SUFFIXES if takes_models(asset) else (".png",)
+    return {path.stem: path for path in sorted((asset.dir / "src").glob("*")) if path.is_file()
+            and path.suffix in suffixes}
+
+
+def clip_sources(asset: Asset) -> dict[str, Path]:
+    """A character's animation files by name (the file stem they were imported with), sorted."""
+    found = {}
+    for path in sorted((asset.dir / "src" / "clips").glob("*")):
+        if path.is_file() and path.suffix in MODEL_SUFFIXES:
+            found[Path(path.stem).stem] = path
+    return dict(sorted(found.items()))
+
+
+def rigged(asset: Asset) -> Path | None:
+    """The character's rigged file, if one was imported."""
+    found = [p for p in sorted((asset.dir / "src" / "rigged").glob("*")) if p.is_file() and p.suffix in MODEL_SUFFIXES]
+    return max(found, key=lambda p: p.stat().st_mtime_ns) if found else None  # the newest, if a replace was cut short
+
+
+def _slug(asset: Asset) -> str:
+    return asset.id.split(".", 1)[-1]
+
+
+def _read_for_import(file: Path, shown: str) -> bytes:
+    try:
+        return file.read_bytes()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        raise fail("import.not_found", f"no file at {shown}", owner_action=f"Check the path {shown}.") from None
+
+
+def _is_image(file: Path, data: bytes) -> bool:
+    return file.suffix.lower() in IMAGE_SUFFIXES or data.startswith(_IMAGE_SIGNATURES)
+
+
+def _model_suffix(asset: Asset, file: Path, shown: str) -> str:
+    suffix = file.suffix.lower()
+    if suffix not in MODEL_SUFFIXES:
+        raise fail("import.not_a_model", f"{shown} is not a .glb, .fbx or .blend file",
+                   owner_action=f"Export {shown} from your 3D tool as a .glb, .fbx or .blend.",
+                   position=Position(asset=asset.id, file=shown))
+    return suffix
+
+
+def import_file(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path, bool]:
+    """Add a file to the Asset in a role. Returns its name, its path, and whether anything new was stored.
+
+    A character takes Models (`.glb`, `.fbx`, `.blend`) and a room or Prop images; the wrong one is refused with
+    the Kind that takes it."""
+    data = _read_for_import(file, shown)
+    position = Position(asset=asset.id, file=shown)
+    if not takes_models(asset):
+        if role != "variant":
+            raise fail("import.role_needs_character", f"--role {role} is for a character; {asset.id} is a {asset.kind}",
+                       fix=f"kiripix new character {_slug(asset)}", position=position)
+        if file.suffix.lower() in MODEL_SUFFIXES and not _is_image(file, data):
+            raise fail("import.model_needs_character",
+                       f"{shown} is a 3D Model, and a {asset.kind} takes an image (a PNG or JPEG)",
+                       fix=f"kiripix new character {_slug(asset)}", position=position)
+        return import_variant(asset, file, shown)
+    if _is_image(file, data):
+        raise fail("import.image_needs_room_or_prop",
+                   f"{shown} is an image, and a character takes a Model (.glb, .fbx or .blend)",
+                   fix=f"kiripix new prop {_slug(asset)}", position=position)
+    suffix = _model_suffix(asset, file, shown)
+    digest = hash_bytes(data)[:VARIANT_NAME_LENGTH]
+    if role == "variant":
+        return _store(asset.dir / "src", digest, suffix, data)
+    if role == "rigged":
+        name, path, created = _store(asset.dir / "src" / "rigged", digest, suffix, data)
+        if created:
+            for old in (asset.dir / "src" / "rigged").glob("*"):
+                if old != path and old.suffix in MODEL_SUFFIXES:
+                    old.unlink()
+        return name, path, created
+    name = file.stem
+    folder = asset.dir / "src" / "clips"
+    path = folder / f"{name}.{digest}{suffix}"
+    if path.exists():
+        return name, path, False
+    atomic.write_bytes(path, data)
+    for old in folder.glob("*"):  # the same name with other content replaces the earlier file
+        if old != path and old.suffix in MODEL_SUFFIXES and Path(old.stem).stem == name:
+            old.unlink()
+    return name, path, True
+
+
+def _store(folder: Path, digest: str, suffix: str, data: bytes) -> tuple[str, Path, bool]:
+    path = folder / f"{digest}{suffix}"
+    if path.exists():
+        return digest, path, False
+    atomic.write_bytes(path, data)
+    return digest, path, True
 
 
 def import_variant(asset: Asset, file: Path, shown: str) -> tuple[str, Path, bool]:

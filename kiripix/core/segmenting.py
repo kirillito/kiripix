@@ -18,7 +18,8 @@ from kiripix.core.kinds import all_runners
 from kiripix.core.locks import GPU_LOCK, hold
 from kiripix.core.project import Project
 from kiripix.ops import flood_region
-from kiripix.recipes.base import ClickPoint, StageFailure
+from kiripix.recipes.base import (BoxCorners, ClickPoint, RunnerCall, SegmentHooks, StageFailure, StageRun,
+                                  StageSpec)
 from kiripix.runners import Device, EmbeddingRunner, RunnerError, pull, weights_dir
 
 
@@ -41,6 +42,115 @@ def _cold_call(project: Project, runner_id: str, image: np.ndarray, params: dict
             return runner.call(image, params, cancel.check), runner.device_used
         finally:
             runner.unload()
+
+
+def _cold_calls(project: Project, runner_id: str, image: np.ndarray, params: list[dict[str, Any]], device: Device,
+                wait: float, command_line: str, progress: ProgressSink) -> tuple[list[np.ndarray], str]:
+    """Several calls on one image in one load: an embedding Runner embeds once and decodes each."""
+    runner = all_runners()[runner_id]
+    directory = weights_dir(project.state_dir, runner)
+    pull(directory, runner, cancel.check)
+    locks = [] if device == "cpu" else [GPU_LOCK]
+    with hold(project.state_dir, locks, wait, command_line, on_wait=gpu_wait_notice(progress)), warm.one_runner_loaded():
+        warm.load_runner(runner, directory, device)
+        try:
+            results = []
+            if isinstance(runner, EmbeddingRunner):
+                embedding = runner.embed(image, cancel.check)
+                for each in params:
+                    results.append(runner.decode(embedding, image.shape[:2], each, cancel.check))
+            else:
+                for each in params:
+                    cancel.check()
+                    results.append(runner.call(image, each, cancel.check))
+            return results, runner.device_used
+        finally:
+            runner.unload()
+
+
+@dataclass(frozen=True)
+class ClickPreview:
+    masks: list[np.ndarray]  # each click's Mask on the target grid, in order, as that click alone would make
+    union: np.ndarray  # the clicks replayed in order: a positive one adds its Mask, a negative one takes it away
+    computed: bool
+    device: str
+
+
+def _segmenting(graph: AssetGraph) -> tuple[StageSpec, SegmentHooks, StageRun]:
+    """The Stage that segments, its hooks, and a run of it to build calls from."""
+    spec, hooks = graph.stage_with(lambda s: s.segment, "segments")
+    return spec, hooks, graph.stage_run(spec, graph.output_dir(spec))
+
+
+def _not_ready(asset: Asset, spec: StageSpec) -> KiripixError:
+    return fail("probe.not_ready", f"{asset.id} has no fit and Source to segment yet", fix=f"kiripix run {asset.id}",
+                position=Position(asset=asset.id, stage=spec.name))
+
+
+def _segment(project: Project, cache: HashCache, calls: list[RunnerCall], *, batched: bool, keep_warm: bool, cpu: bool,
+             wait: float, command_line: str, progress: ProgressSink) -> tuple[list[np.ndarray], bool, str]:
+    """The results of calls on one image, and whether its embedding was computed, and the device. In `serve` each goes
+    to the warm Runner. In the CLI, `batched` loads the Runner once and embeds once for all of them; otherwise there is
+    one call. A busy GPU is refused with `--cpu` as the fix, since a Probe has no --wait to offer and the CPU never
+    needs the lock."""
+    first = calls[0]
+    device: Device = "cpu" if cpu else "auto"
+    runner = all_runners()[first.runner]
+
+    def read_image() -> np.ndarray:
+        return load_rgba(first.image, project.relative(first.image))
+
+    try:
+        if keep_warm and isinstance(runner, EmbeddingRunner):
+            results, computed, used = [], False, runner.device_used
+            image_hash = cache.file_hash(first.image)
+            for call in calls:
+                cancel.check()
+                result, was_computed, used = warm.warm_call(runner, project.state_dir, device, image_hash, read_image,
+                                                            call.params, command_line)
+                results.append(result)
+                computed = computed or was_computed
+        elif batched:
+            computed = True
+            results, used = _cold_calls(project, first.runner, read_image(), [call.params for call in calls], device,
+                                        wait, command_line, progress)
+        else:
+            computed = True
+            result, used = _cold_call(project, first.runner, read_image(), first.params, device, wait, command_line,
+                                      progress)
+            results = [result]
+    except RunnerError as error:
+        raise fail("runner.failed", str(error), fix=command_line) from None
+    except KiripixError as error:
+        if error.exit_code != ExitCode.BUSY:
+            raise
+        findings = [finding.model_copy(update={"fix": f"{command_line} --cpu"}) for finding in error.findings]
+        raise KiripixError(findings, error.exit_code, error.data) from None
+    cache.save()
+    return results, computed, used
+
+
+def click_preview(project: Project, asset: Asset, points: list[ClickPoint], *, keep_warm: bool, cpu: bool, wait: float,
+                  command_line: str, progress: ProgressSink) -> ClickPreview:
+    """What a lift of these clicks would make: one Runner call per click, each the call `click_call` makes (a negative
+    click is segmented as a positive one at its point), replayed in order. One load and one embedding for all of them."""
+    cache = HashCache(project.state_dir)
+    spec, hooks, stage_run = _segmenting(AssetGraph(project, asset, cache))
+    try:
+        built = [hooks.call(stage_run, [(x, y, True)]) for x, y, _ in points]
+    except StageFailure as error:
+        raise fail("input.invalid", str(error), position=Position(asset=asset.id, stage=spec.name),
+                   fix=f"kiripix probe click-preview {asset.id} <x,y>") from None
+    calls = [call for call in built if call is not None]
+    if len(calls) < len(built):
+        raise _not_ready(asset, spec)
+    results, computed, used = _segment(project, cache, calls, batched=True, keep_warm=keep_warm, cpu=cpu, wait=wait,
+                                       command_line=command_line, progress=progress)
+    masks = [hooks.to_target(stage_run, result) for result in results]
+    union = np.zeros_like(masks[0])
+    for (_, _, positive), mask in zip(points, masks):
+        union = union | mask if positive else union & ~mask
+    return ClickPreview(masks, union, computed, used)
 
 
 def flood_preview(project: Project, asset: Asset, floods: list[tuple[int, int, float]]) -> list[np.ndarray]:
@@ -75,42 +185,23 @@ def flood_preview(project: Project, asset: Asset, floods: list[tuple[int, int, f
 
 
 def segment_preview(project: Project, asset: Asset, points: list[ClickPoint], *, keep_warm: bool, cpu: bool, wait: float,
-                    command_line: str, progress: ProgressSink) -> SegmentPreview:
+                    command_line: str, progress: ProgressSink, box: BoxCorners | None = None) -> SegmentPreview:
+    """The Mask the clicks `points` would make as one prompt, or, with `box`, the Mask that box would make (ticket 0079)."""
     cache = HashCache(project.state_dir)
-    graph = AssetGraph(project, asset, cache)
-    spec = next((stage for stage in graph.kind.stages if stage.segment is not None), None)
-    if spec is None or spec.segment is None:
-        raise fail("probe.not_supported", f"a {asset.kind} has no Stage that segments", fix="kiripix describe project")
-    stage_run = graph.stage_run(spec, graph.output_dir(spec))
+    spec, hooks, stage_run = _segmenting(AssetGraph(project, asset, cache))
     try:
-        call = spec.segment.call(stage_run, points)
+        if box is not None:
+            if hooks.box_call is None:
+                raise fail("probe.not_supported", f"a {asset.kind} has no Stage that segments with a box",
+                           fix="kiripix describe project")
+            call = hooks.box_call(stage_run, box)
+        else:
+            call = hooks.call(stage_run, points)
     except StageFailure as error:
         raise fail("input.invalid", str(error), position=Position(asset=asset.id, stage=spec.name),
-                   fix=f"kiripix probe segment-preview {asset.id} <x,y>") from None
+                   fix=f"kiripix probe segment-preview {asset.id} {'<x0,y0,x1,y1>' if box is not None else '<x,y>'}") from None
     if call is None:
-        raise fail("probe.not_ready", f"{asset.id} has no fit and Source to segment yet", fix=f"kiripix run {asset.id}",
-                   position=Position(asset=asset.id, stage=spec.name))
-    device: Device = "cpu" if cpu else "auto"
-    runner = all_runners()[call.runner]
-
-    def read_image() -> np.ndarray:
-        return load_rgba(call.image, project.relative(call.image))
-
-    try:
-        if keep_warm and isinstance(runner, EmbeddingRunner):
-            result, computed, used = warm.warm_call(runner, project.state_dir, device, cache.file_hash(call.image),
-                                                    read_image, call.params, command_line)
-        else:
-            computed = True
-            result, used = _cold_call(project, call.runner, read_image(), call.params, device, wait, command_line,
-                                      progress)
-    except RunnerError as error:
-        raise fail("runner.failed", str(error), fix=command_line) from None
-    except KiripixError as error:
-        if error.exit_code != ExitCode.BUSY:
-            raise
-        # A Probe has no --wait to offer, and the CPU never needs the lock.
-        findings = [finding.model_copy(update={"fix": f"{command_line} --cpu"}) for finding in error.findings]
-        raise KiripixError(findings, error.exit_code, error.data) from None
-    cache.save()
-    return SegmentPreview(spec.segment.to_target(stage_run, result), computed, used)
+        raise _not_ready(asset, spec)
+    results, computed, used = _segment(project, cache, [call], batched=False, keep_warm=keep_warm, cpu=cpu, wait=wait,
+                                       command_line=command_line, progress=progress)
+    return SegmentPreview(hooks.to_target(stage_run, results[0]), computed, used)

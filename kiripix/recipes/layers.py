@@ -2,7 +2,8 @@
 
 A positive `click` on a Layer ID segments the object under it (one SEGMENTER call per click), in the same way as in
 `masks`, and the segments of one Layer ID are added together. A negative click is its own call too, and takes its segment
-away from that Layer at its place in the replay (ticket 0070).
+away from that Layer at its place in the replay (ticket 0070). A `box` is the same for a rough box: one call, snapped to the
+object's edges by the Runner, positive or negative (ticket 0079).
 The segmentation's alpha is widened by `grow` target pixels, only where it was partial (D2). The hole in the Plate is the
 union of those alphas; each connected hole gets one INPAINTER call on the Source, cropped around it, so a new object keeps
 the earlier objects' pinned results. The fill maps to the target the way `fit` maps the Source.
@@ -10,6 +11,11 @@ the earlier objects' pinned results. The fill maps to the target the way `fit` m
 A `trim` Decision is a brush stroke, in target pixels, on one Layer's alpha: it takes those pixels out of the Layer and
 gives them back to the Plate (D1). It replays in order with the clicks. It changes no Runner call: the fill was made for
 the hole before trimming, and a trimmed pixel takes the fit image's colour in the Plate.
+
+An `add` Decision is the opposite brush stroke: those pixels, taken from the fit image, join the Layer and leave the Plate
+(ticket 0087). It widens the hole, so the fill for it is a Runner call of its own. `min_piece` then sends every 8-connected
+piece of a Layer under that many pixels back to the Plate, after the replay and before the hole is filled; it moves no hole
+the fills were made for, so it makes no Runner call.
 
 Layer pixels are the fit image cut by alpha, the hole equals the union of the alphas, and the Plate outside the hole is the
 fit image, so Plate and Layers recompose exactly (ADR 0004). With no Decisions the Plate is a byte copy of the fit image.
@@ -38,6 +44,7 @@ from kiripix.ops import (
     paint_stroke,
     partial_cells,
     recompose,
+    remove_small_pieces,
     sample_nearest,
 )
 from kiripix.recipes.base import (
@@ -49,13 +56,16 @@ from kiripix.recipes.base import (
     RunnerCall,
     StageFailure,
     StageRun,
+    box_decision,
     point_decision,
 )
 from kiripix.recipes.common import (
     IMPORT_DIR,
+    box_of,
+    box_problem,
     check_unchanged,
-    click_call,
     click_groups,
+    lift_call,
     read_grid,
     read_rgba,
     runner_mask_on_source,
@@ -82,6 +92,14 @@ GROW = ParamSpec(
     minimum=0,
 )
 
+MIN_PIECE = ParamSpec(
+    name="min_piece",
+    type="int",
+    description="After the Decisions replay, an 8-connected piece of a Layer under this many target pixels goes back to "
+                "the Plate (the pieces `probe layer-stats` counts as small). 0 removes nothing.",
+    default=0,
+    minimum=0,
+)
 
 DIFFERENCE = ParamSpec(
     name="difference",
@@ -115,6 +133,13 @@ def read_removed(folder: Path) -> list[str]:
     return [str(layer) for layer in built.get("removed", [])]
 
 
+def read_layer_files(folder: Path, asset: str) -> tuple[list[tuple[str, Path]], list[str]]:
+    """The built Layers in `folder` as (ID, PNG file), in order, and the removed IDs. None for a folder with no build."""
+    if not (folder / LAYERS_FILE).is_file():
+        return [], []
+    return [(str(entry["id"]), folder / str(entry["file"])) for entry in read_layers(folder, asset)], read_removed(folder)
+
+
 def hole_of(alphas: list[np.ndarray], shape: tuple[int, ...]) -> np.ndarray:
     """The hole behind the Layers: the union of their alphas (each a bool Mask, or an RGBA image's alpha above 0)."""
     hole = np.zeros(shape[:2], dtype=np.bool_)
@@ -134,12 +159,46 @@ def click_decision() -> DecisionSpec:
     )
 
 
+def layer_box_decision() -> DecisionSpec:
+    return box_decision(
+        "box",
+        "Lift the object a rough box holds into a foreground Layer, from (x0, y0) to (x1, y1) in target pixels, both "
+        "pixels included: the Runner snaps the box to the object's edges. For an object a single click returns only a "
+        "part of, or leaks from. A positive box adds the object to the Layer and a negative one takes it away, as a "
+        "click does. One Runner call, pinned; needs `run --rerun`. Try it first: `kiripix probe segment-preview <asset> "
+        "x0,y0,x1,y1`. Not with a `plate` Decision.",
+        on_image=True, layer={"type": "string", "pattern": LAYER_ID}, positive={"type": "boolean"},
+    )
+
+
 def trim_decision() -> DecisionSpec:
     return DecisionSpec(
         name="trim",
         description="A brush stroke, in target pixels, on one Layer's alpha: those pixels leave the Layer and go back "
                     "to the Plate, for a rim the segmentation left. It replays in order with the clicks, and needs no "
                     "Runner call.",
+        entry_schema={
+            "type": "object",
+            "properties": {
+                "layer": {"type": "string", "pattern": LAYER_ID},
+                "radius": {"type": "integer", "minimum": 0},
+                "points": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2,
+                                                       "maxItems": 2}, "minItems": 1},
+            },
+            "required": ["layer", "radius", "points"],
+            "additionalProperties": False,
+        },
+        on_image=True,
+    )
+
+
+def add_decision() -> DecisionSpec:
+    return DecisionSpec(
+        name="add",
+        description="A brush stroke, in target pixels, on one Layer's alpha, the opposite of `trim`: those pixels, taken "
+                    "from the fit image with full alpha, join the Layer and leave the Plate. It replays in order with "
+                    "the clicks and trims. It changes the hole, so the Plate's fill can need a new Runner call: an "
+                    "unpinned fill needs `run --rerun` and lands in needs-review.",
         entry_schema={
             "type": "object",
             "properties": {
@@ -171,7 +230,7 @@ def remove_decision() -> DecisionSpec:
     )
 
 
-DECISIONS = (PLATE, click_decision(), trim_decision(), remove_decision())
+DECISIONS = (PLATE, click_decision(), layer_box_decision(), trim_decision(), add_decision(), remove_decision())
 
 
 def plate_hash(run: StageRun) -> str | None:
@@ -198,7 +257,7 @@ def _plate_needs_input(run: StageRun, png_hash: str) -> NeedsInput | None:
 
 
 def _lifting(run: StageRun) -> tuple[CurrentDecision, ...]:
-    return tuple(d for d in run.decisions if d.name in ("click", "trim", "remove"))
+    return tuple(d for d in run.decisions if d.name in ("click", "box", "trim", "add", "remove"))
 
 
 def _relevant(run: StageRun) -> tuple[CurrentDecision, ...]:
@@ -221,7 +280,7 @@ def removed_layers(run: StageRun) -> list[str]:
         layer = str(decision.data["layer"])
         if decision.name == "remove":
             gone[layer] = None
-        elif decision.name == "click" and decision.data["positive"]:
+        elif decision.name in ("click", "box") and decision.data["positive"]:
             gone.pop(layer, None)
     return list(gone)
 
@@ -239,21 +298,34 @@ def needs_input(run: StageRun) -> NeedsInput | None:
             if layer not in lifted:
                 return NeedsInput(f"the remove of {layer} comes before any click lifted {layer}", owner_action=f"{undo}.")
             lifted.discard(layer)
-        elif decision.name == "click" and decision.data["positive"]:
+        elif decision.name in ("click", "box") and decision.data["positive"]:
             lifted.add(layer)
     seen: set[str] = set()
     for group in click_groups(_relevant(run)):
         first = group[0]
         layer = str(first.data["layer"])
-        if first.name == "trim":
+        if first.name in ("trim", "add"):
             if layer not in seen:
-                return NeedsInput(f"the trim on {layer} comes before any click lifted {layer}", owner_action=f"{undo}.")
+                return NeedsInput(f"the {first.name} on {layer} comes before any click lifted {layer}",
+                                  owner_action=f"{undo}.")
             continue
         if not first.data["positive"] and layer not in seen:
             # A Layer has no source but its positive clicks, so there is nothing yet to take away from.
-            return NeedsInput(f"the negative click at ({first.data['x']}, {first.data['y']}) comes before any positive "
-                              f"click lifted {layer}", owner_action=f"{undo}.")
+            where = (f"box ({first.data['x0']}, {first.data['y0']}) to ({first.data['x1']}, {first.data['y1']})"
+                     if first.name == "box" else f"click at ({first.data['x']}, {first.data['y']})")
+            return NeedsInput(f"the negative {where} comes before any positive click lifted {layer}",
+                              owner_action=f"{undo}.")
         seen.add(layer)
+        if first.name == "box":
+            if png_hash is not None:
+                return NeedsInput(f"the box on {layer} can't be used with a plate Decision, which lifts by the "
+                                  f"difference between two images", owner_action=f"{undo}.")
+            corners = box_of(first)
+            problem = box_problem(corners, read[0].width, read[0].height) if read is not None else None
+            if problem is not None:
+                return NeedsInput(f"the box ({corners[0]}, {corners[1]}) to ({corners[2]}, {corners[3]}) {problem}",
+                                  owner_action=f"{undo}.")
+            continue
         for decision in group:
             x, y = int(decision.data["x"]), int(decision.data["y"])
             if read is not None and not (x < read[0].width and y < read[0].height):
@@ -292,7 +364,9 @@ class _Lift:
 
 
 def _clicks_of(group: list[CurrentDecision]) -> list[dict[str, Any]]:
-    return [{"x": d.data["x"], "y": d.data["y"], "positive": d.data["positive"]} for d in group]
+    """What decided a lift, for the fill's key: a click's point, a box's corners. A click's entry is what it always was."""
+    return [{"box": list(box_of(d)), "positive": d.data["positive"]} if d.name == "box"
+            else {"x": d.data["x"], "y": d.data["y"], "positive": d.data["positive"]} for d in group]
 
 
 @dataclass
@@ -338,7 +412,8 @@ def _lift(run: StageRun, read: tuple[Grid, dict[str, Any]]) -> _Lift | None:
     difference = _difference(run, read, png_hash, opaque) if png_hash is not None else None
     if difference is not None:
         lift.mapped_plate = difference.mapped_plate
-    lifted: list[tuple[list[CurrentDecision], np.ndarray]] = []  # each click group's grown alpha, before any trim
+    # what each lifting Decision group decided, and its alpha before any trim: a click's grown alpha, or an add's stroke
+    lifted: list[tuple[list[dict[str, Any]], np.ndarray]] = []
     for group in click_groups(_relevant(run)):
         run.check_cancel()
         layer = str(group[0].data["layer"])
@@ -348,12 +423,20 @@ def _lift(run: StageRun, read: tuple[Grid, dict[str, Any]]) -> _Lift | None:
                                   int(data["radius"]))
             lift.layers[layer] = lift.layers[layer] & ~stroke
             continue
+        if group[0].name == "add":
+            data = group[0].data
+            stroke = paint_stroke(np.zeros_like(opaque), [(int(x), int(y)) for x, y in data["points"]],
+                                  int(data["radius"])) & opaque
+            lift.layers[layer] = lift.layers[layer] | stroke
+            if difference is None:
+                lifted.append(([{"add": layer, "radius": int(data["radius"]), "points": data["points"]}], stroke))
+            continue
         positive = bool(group[0].data["positive"])
         if difference is not None:  # one click names a connected region
             alpha = grow_where_partial(_region_at(run, difference, int(group[0].data["x"]), int(group[0].data["y"])),
                                        difference.partial, grow) & opaque
         else:
-            path = run.pinned(click_call(group, grid, source))
+            path = run.pinned(lift_call(group, grid, source))
             if not path.is_file():
                 return None
             with Image.open(path) as image:
@@ -363,8 +446,12 @@ def _lift(run: StageRun, read: tuple[Grid, dict[str, Any]]) -> _Lift | None:
             lift.layers[layer] = lift.layers[layer] & ~alpha
             continue
         if difference is None:
-            lifted.append((group, alpha))
+            lifted.append((_clicks_of(group), alpha))
         lift.layers[layer] = lift.layers.get(layer, np.zeros_like(opaque)) | alpha
+    min_piece = int(run.params["min_piece"])
+    if min_piece > 0:  # after the replay, before the hole is filled: the fills' holes are the ones the Decisions made
+        for layer, alpha in lift.layers.items():
+            lift.layers[layer] = remove_small_pieces(alpha, min_piece)
     if difference is not None:
         return lift
     union = np.zeros_like(opaque)
@@ -377,7 +464,7 @@ def _lift(run: StageRun, read: tuple[Grid, dict[str, Any]]) -> _Lift | None:
         hole[region[:, 0], region[:, 1]] = True
         # What the Owner decided that made this hole: the clicks whose alpha lies in it. A new `grow` moves the hole but
         # not these, so a changed hole is "Runner input changed" rather than a call never made.
-        clicks = [_clicks_of(group) for group, alpha in lifted if (alpha & hole).any()]
+        clicks = [decided for decided, alpha in lifted if (alpha & hole).any()]
         params = hole_params(mask_to_source(hole, grid, int(source_width), int(source_height)), FILL_MARGIN)
         call = RunnerCall(runner=runners.INPAINTER, image=source, params=params, decisions=[{"fill": clicks}])
         lift.fills.append((call, hole))
@@ -391,8 +478,8 @@ def runner_calls(run: StageRun) -> list[RunnerCall]:
     if read is None or not source.is_file() or not (run.upstream["fit"] / "fit.png").is_file() \
             or plate_hash(run) is not None or needs_input(run) is not None:  # a Plate image: no Runner call
         return []
-    segmentations = [click_call(group, read[0], source) for group in click_groups(_relevant(run))
-                     if group[0].name == "click"]
+    segmentations = [lift_call(group, read[0], source) for group in click_groups(_relevant(run))
+                     if group[0].name in ("click", "box")]
     if not segmentations:
         return []
     lift = _lift(run, read)

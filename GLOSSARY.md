@@ -118,7 +118,12 @@ An Asset of Kind room: a background with Layers, Masks and Markers, in top or si
 _Avoid_: scene, level, map, background
 
 **Marker**:
-A placed point or line on a Room with a stable ID: an Exit, a Spawn, a light, an emitter or a y-sort line.
+A placed point, line or box on a Room with a stable ID: an Exit, a Spawn, a light, an emitter, a y-sort line or an Area.
+
+**Area**:
+A Marker that is a box on a Room, optionally snapped to a cell grid. Kiripix gives it no meaning; the game decides what it
+is for, such as a battle area.
+_Avoid_: region (that is a Look's), zone, battle area (in Kiripix's own code and messages)
 
 **Exit**:
 A Marker that leads to an Exit in another Room.

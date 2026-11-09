@@ -17,6 +17,18 @@ const TOLERANCE_RANGE = { minimum: 0, maximum: 0.2 };
 const TOOLS: { name: MaskToolName; key: string; label: string; hint: string }[] = [
   { name: "brush", key: "b", label: "Brush", hint: "Drag to paint the Mask." },
   { name: "erase", key: "e", label: "Erase", hint: "Drag to clear the Mask." },
+  {
+    name: "polygon",
+    key: "g",
+    label: "Polygon",
+    hint: "Click the corners; click the first point or press Enter to close and fill. Backspace removes the last point, Esc drops it.",
+  },
+  {
+    name: "polygon-erase",
+    key: "x",
+    label: "Erase polygon",
+    hint: "Click the corners; click the first point or press Enter to close and clear. Backspace removes the last point, Esc drops it.",
+  },
   { name: "flood", key: "f", label: "Flood", hint: "Click to fill the region of one colour on the Plate." },
   {
     name: "click",
@@ -90,6 +102,10 @@ export function MasksPanel(props: {
         stroke(on, erase, size, points) {
           const { decide } = latest.current;
           decide("brush", { mask: on, erase, radius: size, points }, painter.current?.addMark({ kind: "stroke", mask: on, erase, radius: size, points }));
+        },
+        polygon(on, erase, points) {
+          const { decide } = latest.current;
+          decide("polygon", { mask: on, erase, points }, painter.current?.addMark({ kind: "polygon", mask: on, erase, points }));
         },
         point(kind, on, pixel: CanvasPixel, positive) {
           const { decide, tolerance: within } = latest.current;
@@ -316,7 +332,9 @@ export function MasksPanel(props: {
         Rebuild the Masks after each edit
       </label>
       <p className="hint">
-        <kbd>[</kbd> <kbd>]</kbd> change the brush size, <kbd>Z</kbd> zooms, <kbd>Space</kbd> pans, <kbd>Ctrl+Z</kbd> undoes.
+        <kbd>[</kbd> <kbd>]</kbd> change the brush size, <kbd>Z</kbd> zooms, hold <kbd>Space</kbd> and drag or use the arrow keys to pan, <kbd>Home</kbd> fits,{" "}
+        <kbd>Enter</kbd> closes a polygon, <kbd>Backspace</kbd> removes its last point, <kbd>Esc</kbd> drops it, <kbd>Ctrl+Z</kbd> undoes.
+        {tool.startsWith("polygon") && " A click with this tool places a point, so drag with Space held to pan."}
       </p>
       {unavailable && (
         <p className="reason" data-testid="mask-notice">

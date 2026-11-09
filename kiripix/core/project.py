@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 1
+PROJECT_TEMPLATE = """schema_version = 2
 
 [project]
 name = "{name}"
@@ -84,6 +84,14 @@ foreground = {{ derived = true }}
 # project = "C:/Workspace/my-game"   # the Godot project to export into
 root = "res://kiripix"         # everything Kiripix writes goes under here, Manifest included
 version = "4.7"                # the pinned Godot version (docs/versions.md in Kiripix)
+
+[character]
+height = 52                    # target height in px; a character's own `height` parameter overrides it
+# blender = "C:/Program Files/Blender Foundation/Blender 5.2/blender.exe"   # otherwise found on PATH
+
+[character.camera.top34_8]     # a camera preset, picked by name by a character's `camera` parameter
+elevation = 30                 # degrees above the ground plane
+directions = 8
 
 [providers]
 default = "import"             # import | openai | gemini | pixellab | local-sd

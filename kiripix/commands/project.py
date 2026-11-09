@@ -315,7 +315,8 @@ def next_step(arguments: NextInput, context: Context) -> Outcome[NextData]:
                             reason=failed[0].message, command=failed[0].fix, owner_action=failed[0].owner_action)
             break
         data = NextData(asset=asset.id, done=False, stage=state.stage, status=state.status, reason=state.reason)
-        waiting = graph.needs_input(spec) if state.status == "needs-input" and spec.run is not None else None
+        waiting = graph.needs_input(spec) if state.status == "needs-input" and (
+            spec.run is not None or spec.needs_input is not None) else None
         if waiting is not None:
             data.command, data.owner_action = waiting.command, waiting.owner_action
         elif state.status == "needs-input":

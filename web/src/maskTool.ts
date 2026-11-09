@@ -3,12 +3,14 @@
 // stroke is one brush Decision, a click is one flood or click Decision. A hover only asks the segment-preview Probe.
 
 import type { CanvasFrame, CanvasPixel, CanvasTool } from "./pixelCanvas";
+import { isTyping } from "./pixelCanvas";
 import type { MaskPixels } from "./walkTest";
 
-export type MaskToolName = "brush" | "erase" | "flood" | "click";
+export type MaskToolName = "brush" | "erase" | "polygon" | "polygon-erase" | "flood" | "click";
 
 export interface MaskGestures {
   stroke(mask: string, erase: boolean, radius: number, points: [number, number][]): void;
+  polygon?(mask: string, erase: boolean, points: [number, number][]): void;
   point(tool: "flood" | "click", mask: string, pixel: CanvasPixel, positive: boolean): void;
   // The Mask a click at the pixel would make, as runs of [y, x, length]; null when no preview can be made.
   preview(pixel: CanvasPixel, subtract: boolean): Promise<PreviewRuns | null>;
@@ -55,6 +57,7 @@ function tinted(width: number, height: number, set: (x: number, y: number) => bo
 // A gesture the Stage hasn't answered yet: drawn where the Owner made it, so a wait doesn't look like nothing happened.
 export type PendingMark =
   | { kind: "point"; x: number; y: number; positive: boolean; layer?: string }
+  | { kind: "polygon"; mask: string; erase: boolean; points: [number, number][] }
   | { kind: "stroke"; mask: string; erase: boolean; radius: number; points: [number, number][] };
 
 interface Overlay {
@@ -79,6 +82,7 @@ export class MaskTool implements CanvasTool {
   private preview: { image: HTMLCanvasElement; count: number; subtract: boolean } | null = null;
   private marks: { mark: PendingMark; image: HTMLCanvasElement | null }[] = [];
   private stroke: [number, number][] | null = null;
+  private draft: [number, number][] = []; // the polygon being built: nothing is recorded until it closes
   private strokeImage: HTMLCanvasElement | null = null;
   private stamped = 0; // how many of the stroke's points are on strokeImage
   private stamps = 0; // fillRects made for the stroke, and in the latest frame: what the tests count
@@ -119,7 +123,14 @@ export class MaskTool implements CanvasTool {
     const height = frame.height * frame.zoom;
     for (const entry of this.marks) {
       const { mark } = entry;
-      if (mark.kind === "stroke") {
+      if (mark.kind === "polygon") {
+        context.save();
+        context.globalAlpha = 0.45;
+        context.fillStyle = mark.erase ? "#ffffff" : this.colourOf(mark.mask);
+        this.trace(context, frame, mark.points, true);
+        context.fill();
+        context.restore();
+      } else if (mark.kind === "stroke") {
         if (!entry.image || entry.image.width !== frame.width || entry.image.height !== frame.height) {
           const image = document.createElement("canvas");
           image.width = frame.width;
@@ -159,6 +170,50 @@ export class MaskTool implements CanvasTool {
     }
   }
 
+  // The path through the centres of the points' pixels.
+  private trace(context: CanvasRenderingContext2D, frame: CanvasFrame, points: [number, number][], close: boolean): void {
+    context.beginPath();
+    points.forEach(([x, y], index) => {
+      const at: [number, number] = [frame.left + (x + 0.5) * frame.zoom, frame.top + (y + 0.5) * frame.zoom];
+      if (index === 0) context.moveTo(...at);
+      else context.lineTo(...at);
+    });
+    if (close) context.closePath();
+  }
+
+  private drawDraft(context: CanvasRenderingContext2D, frame: CanvasFrame): void {
+    const points = this.draft;
+    if (points.length === 0) return;
+    const colour = this.tool === "polygon-erase" ? "#ffffff" : this.colourOf(this.mask);
+    const next: [number, number][] = this.cursor ? [...points, [this.cursor.x, this.cursor.y]] : points;
+    context.save();
+    if (next.length >= 3) {
+      context.globalAlpha = 0.25;
+      context.fillStyle = colour;
+      this.trace(context, frame, next, true);
+      context.fill();
+    }
+    context.globalAlpha = 1;
+    context.lineWidth = 2;
+    context.strokeStyle = colour;
+    context.setLineDash([4, 3]);
+    this.trace(context, frame, next, false);
+    context.stroke();
+    context.setLineDash([]);
+    context.strokeStyle = "#000000";
+    context.lineWidth = 1;
+    const size = Math.max(frame.zoom, 6);
+    points.forEach(([x, y], index) => {
+      const cx = frame.left + (x + 0.5) * frame.zoom;
+      const cy = frame.top + (y + 0.5) * frame.zoom;
+      const half = index === 0 ? size : size / 2; // the first point is bigger: a click on it closes the polygon
+      context.fillStyle = index === 0 ? "#ffffff" : colour;
+      context.fillRect(cx - half / 2, cy - half / 2, half, half);
+      context.strokeRect(cx - half / 2 + 0.5, cy - half / 2 + 0.5, half, half);
+    });
+    context.restore();
+  }
+
   private text(context: CanvasRenderingContext2D, words: string, x: number, y: number, colour: string | CanvasGradient | CanvasPattern): void {
     context.font = "12px monospace";
     context.textBaseline = "top";
@@ -184,6 +239,7 @@ export class MaskTool implements CanvasTool {
   }
 
   setTool(tool: MaskToolName): void {
+    if (this.tool !== tool) this.draft = [];
     this.tool = tool;
     this.clearPreview();
   }
@@ -199,11 +255,39 @@ export class MaskTool implements CanvasTool {
 
   // Shift picks the negative click; the preview follows it without the pointer having to move.
   private readonly onKey = (event: KeyboardEvent): void => {
+    if (event.type === "keydown" && this.draft.length > 0 && this.polygonKey(event)) return;
     if (event.key !== "Shift" || this.shift === event.shiftKey) return;
     this.shift = event.shiftKey;
     if (this.cursor && this.tool === "click") this.ask(this.cursor);
     this.changed();
   };
+
+  // Enter closes the polygon, Backspace takes off its last point, Esc drops it.
+  private polygonKey(event: KeyboardEvent): boolean {
+    if (!this.polygonTool() || isTyping(event.target) || event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (event.key === "Enter") {
+      if (this.draft.length >= 3) this.close();
+    } else if (event.key === "Backspace") {
+      this.draft.pop();
+    } else if (event.key === "Escape") {
+      this.draft = [];
+    } else {
+      return false;
+    }
+    event.preventDefault();
+    this.changed();
+    return true;
+  }
+
+  private polygonTool(): boolean {
+    return this.tool === "polygon" || this.tool === "polygon-erase";
+  }
+
+  private close(): void {
+    const points = this.draft;
+    this.draft = [];
+    this.gestures.polygon?.(this.mask, this.tool === "polygon-erase", points);
+  }
 
   hover(pixel: CanvasPixel | null): void {
     this.cursor = pixel;
@@ -279,6 +363,13 @@ export class MaskTool implements CanvasTool {
 
   pointerUp(pixel: CanvasPixel): void {
     this.pointerMove(pixel);
+    if (this.polygonTool()) {
+      const first = this.draft[0];
+      const last = this.draft.at(-1);
+      if (first && this.draft.length >= 3 && first[0] === pixel.x && first[1] === pixel.y) this.close();
+      else if (!last || last[0] !== pixel.x || last[1] !== pixel.y) this.draft.push([pixel.x, pixel.y]);
+      return;
+    }
     const stroke = this.stroke;
     this.stroke = null;
     this.strokeImage = null;
@@ -344,6 +435,7 @@ export class MaskTool implements CanvasTool {
       context.drawImage(this.preview.image, frame.left, frame.top, width, height);
     }
     const painting = this.tool === "brush" || this.tool === "erase";
+    this.drawDraft(context, frame);
     if (this.stroke) {
       context.globalAlpha = 0.6;
       this.frameStamps = this.stamp(frame, this.stroke);
@@ -380,6 +472,7 @@ export class MaskTool implements CanvasTool {
     data.target = this.label;
     data.tool = this.tool;
     data.mask = this.mask;
+    data.polygonPoints = String(this.draft.length);
     data.radius = String(this.radius);
     data.opacity = String(this.opacity);
     data.strokeStamps = String(this.stamps);

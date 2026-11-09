@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: core-engineer
 type: ticket
@@ -37,10 +37,10 @@ The Probe records nothing and changes no status. A hook on the Stage, the way `S
 
 ## Acceptance criteria
 
-- [ ] CLI seam: on a room with Layers, `pixels`, `box`, `pieces` and `holes` match a Layer's PNG, for a Layer in several pieces and with a hole.
-- [ ] It answers while `layers` is in `needs-review`, and says so.
-- [ ] `sort` shows a line, `above` and `none`, each from the current journal, and follows an undo.
-- [ ] A `ysort` entry passed to `decide` is accepted as it stands, and `layer.no_ysort` doesn't fire once that Layer's line is built.
-- [ ] With no Layers, the answer is an empty list, not an error.
-- [ ] Nothing is written to the journals or the Stage outputs, and no Asset lock is taken.
-- [ ] The Probe's sample in `tests/cli/test_contract.py` passes.
+- [x] CLI seam: on a room with Layers, `pixels`, `box`, `pieces` and `holes` match a Layer's PNG, for a Layer in several pieces and with a hole.
+- [x] It answers while `layers` is in `needs-review`, and says so.
+- [x] `sort` shows a line, `above` and `none`, each from the current journal, and follows an undo.
+- [x] A `ysort` entry passed to `decide` is accepted as it stands, and `layer.no_ysort` doesn't fire once that Layer's line is built.
+- [x] With no Layers, the answer is an empty list, not an error.
+- [x] Nothing is written to the journals or the Stage outputs, and no Asset lock is taken.
+- [x] The Probe's sample in `tests/cli/test_contract.py` passes (the `probe` Command's sample; Probes share it).

@@ -36,3 +36,7 @@ Shading here is plain and flat; [0105](0105-m3-toon-shading.md) adds the toon lo
 - [ ] Marked `blender` test: the walk fixture at `top34_8` gives 8 directions × its frame count, each frame exactly the
       target size, alpha only 0 or 255, the normal pass the same size as the colour pass.
 - [ ] Timing for the fixture and for one real clip is recorded here (GPU and CPU).
+- [ ] The measurement from [0098](0098-m3-blender-renders-and-pinning.md): one clip of the walk fixture in one direction,
+      rendered twice on the GPU and once on the CPU with this Stage's settings, compared pixel by pixel per pass (GPU
+      against GPU, GPU against CPU). Record "equal" or the count of differing pixels per pass here, and add the result to
+      [ADR 0010](../docs/adr/0010-blender-renders-rebuild-and-are-not-pinned.md). It decides nothing; the ADR stands.

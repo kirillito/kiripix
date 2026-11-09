@@ -1,6 +1,6 @@
-"""SAM 2.1 (small) for click-to-segment, on ONNX Runtime with CUDA, falling back to the CPU.
+"""SAM 2.1 (small) for click- and box-to-segment, on ONNX Runtime with CUDA, falling back to the CPU.
 
-The encoder takes the image stretched to 1024 x 1024 and the decoder takes the clicks in those coordinates; it returns
+The encoder takes the image stretched to 1024 x 1024 and the decoder takes the clicks, or one box, in those coordinates; it returns
 three candidate masks as 256 x 256 logits with a score each. The best one is scaled to the input image, capped at
 `max_size` px on its longer side, and thresholded at 0. ONNX Runtime is imported only when the Runner loads, so nothing
 else pays for it.
@@ -32,7 +32,7 @@ def _weight(name: str, sha256: str, size: int) -> WeightFile:
 
 class Sam2(EmbeddingRunner):
     id = "sam2.1-small"
-    description = "SAM 2.1 (hiera small): click-to-segment."
+    description = "SAM 2.1 (hiera small): click- and box-to-segment."
     licence = "Apache-2.0"
     weights = (
         _weight(_ENCODER, "aacf1f7137bb6fffcf6bf166abcfabe28f57a76059254f3fb611c4a64a208119", 467440),
@@ -84,16 +84,23 @@ class Sam2(EmbeddingRunner):
 
     def decode(self, embedding: dict[str, np.ndarray], size: tuple[int, int], params: dict[str, Any],
                check_cancel: CheckCancel) -> np.ndarray:
-        """`params`: `points`, each [x, y, positive] in the image's pixels; `max_size`, the cap on the Mask's size."""
+        """`params`: `points`, each [x, y, positive] in the image's pixels, or `box`, [x0, y0, x1, y1] in the image's
+        pixels (one prompt either way; a box has no points); `max_size`, the cap on the Mask's size."""
         height, width = size
-        points = params["points"]
-        coordinates = np.array([[x * _SIZE / width, y * _SIZE / height] for x, y, _ in points], dtype=np.float32)
+        points = params.get("points", [])
+        coordinates = np.array([[x * _SIZE / width, y * _SIZE / height] for x, y, _ in points],
+                               dtype=np.float32).reshape(len(points), 2)
         labels = np.array([1 if positive else 0 for _, _, positive in points], dtype=np.int64)
+        boxes = np.zeros((1, 0, 4), dtype=np.float32)
+        if "box" in params:
+            x0, y0, x1, y1 = params["box"]
+            boxes = np.array([[[x0 * _SIZE / width, y0 * _SIZE / height, x1 * _SIZE / width, y1 * _SIZE / height]]],
+                             dtype=np.float32)
         feeds = {
             **embedding,
             "input_points": coordinates[None, None],
             "input_labels": labels[None, None],
-            "input_boxes": np.zeros((1, 0, 4), dtype=np.float32),
+            "input_boxes": boxes,
         }
         names = [output.name for output in self._decoder.get_outputs()]
         outputs = dict(zip(names, ort.run(self._decoder, feeds, check_cancel, "SAM 2")))

@@ -18,9 +18,10 @@ HASHES = {
     "fit": (
         "3f6bbcade137c4ca931606bad20184b1c720cf32f04199c848182daab9014515"
     ),
-    # Changed on purpose through its upstream `layers`: its inputs and `grow` (0043), then `difference` (0044).
+    # Changed on purpose through its upstream `layers`: its inputs and `grow` (0043), then `difference` (0044), then
+    # `min_piece` (0087).
     "palette": (
-        "3c9cd0a9bb8ebda3ddfb4c67af342b8bc38d3d9e81412dd56f1d0485ee9d3279"
+        "66f29b74117828e484bd0c782fcb2a1be5afcaba1e8f718e4e1562e048a40ad1"
     ),
 }
 

@@ -49,6 +49,11 @@ def trim(project: Kiripix, layer: str, points: list[list[int]], radius: int = 0)
     return project.json("decide", ROOM, "layers", "--decision", json.dumps({"decision": "trim", "data": data}))
 
 
+def add(project: Kiripix, layer: str, points: list[list[int]], radius: int = 0) -> dict[str, Any]:
+    data = {"layer": layer, "radius": radius, "points": points}
+    return project.json("decide", ROOM, "layers", "--decision", json.dumps({"decision": "add", "data": data}))
+
+
 def lift(project: Kiripix) -> dict[str, Any]:
     """One `run --rerun` of `layers`, which lands in needs-review."""
     return project.json("run", ROOM, "layers", "--rerun", expect=3)
@@ -259,6 +264,142 @@ def test_a_trim_on_a_layer_no_click_lifted_needs_the_owner_to_undo_it(project: K
     advice = project.json("next", ROOM)["data"]
 
     assert "ghost" in advice["reason"] and advice["owner_action"].startswith("Undo it")
+
+
+# add and min_piece (ticket 0087)
+
+
+def findings_of(project: Kiripix) -> list[str]:
+    return [f["code"] for f in project.json("check", ROOM)["findings"] if f["code"].startswith("layers.")]
+
+
+def test_an_add_puts_its_pixels_in_the_layer_and_takes_them_from_the_plate(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, "lamp", 8, 8)
+    lift(project)
+    accept(project)
+    before = alpha_of(folder, "lamp")
+    assert not before[20, 20]
+
+    add(project, "lamp", [[20, 20]], radius=1)
+    result = lift(project)
+
+    after = alpha_of(folder, "lamp")
+    assert after[19:22, 20].all() and after[20, 19:22].all() and (after & ~before).sum() == 5 and (before & ~after).sum() == 0
+    fit = rgba(folder / "work" / "fit" / "fit.png")
+    layer = rgba(out(folder) / "layer.lamp.png")
+    assert (layer[after] == fit[after]).all() and (layer[after][:, 3] == 255).all()
+    assert (np.asarray(Image.open(out(folder) / "foreground.png")) == after).all()
+    assert (recomposed(folder) == fit).all()
+    assert not [f for f in result["findings"] if f["code"].startswith("layers.")]
+    assert findings_of(project) == []
+    assert calls(project) == (1, 2), "the new hole is a fill of its own, the segmentation is not made again"
+
+
+def test_a_trim_after_an_add_takes_the_added_pixels_away_again(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, "lamp", 8, 8)
+    lift(project)
+    accept(project)
+    before = alpha_of(folder, "lamp")
+
+    add(project, "lamp", [[20, 20]], radius=1)
+    trim(project, "lamp", [[20, 20]], radius=1)
+    lift(project)
+
+    assert (alpha_of(folder, "lamp") == before).all()
+    assert (recomposed(folder) == rgba(folder / "work" / "fit" / "fit.png")).all()
+    assert findings_of(project) == []
+
+
+def test_an_add_that_needs_a_fill_stops_for_review_and_a_rebuild_with_it_pinned_makes_no_runner_call(
+        project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, "lamp", 8, 8)
+    lift(project)
+    accept(project)
+    add(project, "lamp", [[20, 20]], radius=1)
+
+    advice = project.json("next", ROOM)["data"]
+    assert advice["reason"] == "Runner not run yet" and advice["command"] == f"kiripix run {ROOM} layers --rerun"
+    lift(project)
+    assert stage_status(project, ROOM)["layers"] == "needs-review"
+    accept(project)
+
+    project.json("run", ROOM, "layers", "--force")
+
+    assert calls(project) == (1, 2)
+    assert alpha_of(folder, "lamp")[20, 20]
+    assert stage_status(project, ROOM)["layers"] == "done"
+
+
+def test_an_add_on_a_layer_no_click_lifted_needs_the_owner_to_undo_it(project: Kiripix) -> None:
+    built_room(project)
+    add(project, "ghost", [[1, 1]])
+
+    advice = project.json("next", ROOM)["data"]
+
+    assert "ghost" in advice["reason"] and advice["owner_action"].startswith("Undo it")
+
+
+def test_min_piece_sends_small_pieces_back_to_the_plate_and_leaves_larger_ones(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, "lamp", 8, 8)
+    add(project, "lamp", [[20, 20]], radius=0)  # a 1 px speck
+    add(project, "lamp", [[30, 28], [32, 28]], radius=0)  # two 1 px specks, 2 px apart
+    add(project, "lamp", [[40, 10], [41, 10], [40, 11], [41, 11]], radius=0)  # a piece of 4 px
+    add(project, "lamp", [[30, 4]], radius=1)  # a piece of 5 px, the brush's plus
+    lift(project)
+    accept(project)
+    made = calls(project)
+    full = alpha_of(folder, "lamp")
+    assert full[20, 20] and full[28, 30] and full[10:12, 40:42].all() and full[4, 30]
+
+    project.json("set", ROOM, "layers", "min_piece=5")
+    project.json("run", ROOM, "layers")
+
+    kept = alpha_of(folder, "lamp")
+    assert not kept[20, 20] and not kept[28, 30] and not kept[28, 32]
+    assert not kept[10:12, 40:42].any(), "a piece of 4 px goes"
+    assert kept[3:6, 30].all() and kept[4, 29:32].all(), "a piece of 5 px stays"
+    assert kept[5:12, 6:11].all(), "the lamp stays"
+    fit = rgba(folder / "work" / "fit" / "fit.png")
+    assert (rgba(out(folder) / "plate.png")[full & ~kept] == fit[full & ~kept]).all(), "back in the Plate, as fit has it"
+    assert (recomposed(folder) == fit).all()
+    assert (np.asarray(Image.open(out(folder) / "foreground.png")) == kept).all()
+    assert findings_of(project) == []
+    assert calls(project) == made, "min_piece makes no Runner call"
+
+
+def test_min_piece_counts_diagonal_neighbours_as_one_piece(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, "lamp", 8, 8)
+    add(project, "lamp", [[20, 20], [21, 21], [22, 22]], radius=0)  # 3 px joined diagonally
+    lift(project)
+    accept(project)
+
+    project.json("set", ROOM, "layers", "min_piece=3")
+    project.json("run", ROOM, "layers", "--force")
+    assert alpha_of(folder, "lamp")[20:23, 20:23].diagonal().all()
+
+    project.json("set", ROOM, "layers", "min_piece=4")
+    project.json("run", ROOM, "layers", "--force")
+    assert not alpha_of(folder, "lamp")[20:23, 20:23].any()
+
+
+def test_min_piece_0_and_a_room_that_never_set_it_build_the_same_and_ask_for_no_review(project: Kiripix) -> None:
+    folder = built_room(project)
+    click(project, "lamp", 8, 8)
+    lift(project)
+    accept(project)
+    built = {p.name: p.read_bytes() for p in out(folder).glob("*") if p.is_file() and not p.name.startswith(".")}
+
+    project.json("set", ROOM, "layers", "min_piece=0")
+    project.json("run", ROOM, "layers", "--force")
+
+    assert stage_status(project, ROOM)["layers"] == "done"
+    assert {p.name: p.read_bytes() for p in out(folder).glob("*") if p.is_file() and not p.name.startswith(".")} == built
+    assert calls(project) == (1, 1)
 
 
 # Checks

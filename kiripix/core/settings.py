@@ -90,6 +90,25 @@ class Providers(_Strict):
     budget_usd_month: float = Field(20, ge=0)
 
 
+class CameraPreset(_Strict):
+    """A camera for the `render` Stage, picked by name by an Asset's `camera` parameter."""
+
+    elevation: float = Field(30, gt=0, le=90)  # degrees above the ground plane
+    directions: Literal[4, 8] = 8
+
+
+def _default_cameras() -> dict[str, CameraPreset]:
+    return {"top34_8": CameraPreset(elevation=30, directions=8)}
+
+
+class CharacterSettings(_Strict):
+    """`[character]`: how characters are rendered, the same for every character in the Project."""
+
+    height: int = Field(52, gt=0)  # the target height in px; a character's own `height` parameter overrides it
+    blender: str | None = None  # the Blender executable; `PATH` when unset
+    camera: dict[str, CameraPreset] = Field(default_factory=_default_cameras)
+
+
 def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     top = MaskSet.model_validate(
         {
@@ -111,19 +130,20 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 1
+PROJECT_SCHEMA_VERSION = 2
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
     export: ExportSection = ExportSection()
     providers: Providers = Providers()
+    character: CharacterSettings = Field(default_factory=CharacterSettings)
 
 
 class AssetSettings(_Strict):
@@ -143,7 +163,12 @@ def _add_schema_version(document: dict[str, Any]) -> dict[str, Any]:
     return {"schema_version": 1, **document}
 
 
-PROJECT_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
+def _add_character_section(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 1 had no `[character]`; its defaults (height 52, the `top34_8` camera) apply."""
+    return {**document, "schema_version": 2}
+
+
+PROJECT_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version, 1: _add_character_section}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 

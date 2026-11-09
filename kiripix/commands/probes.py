@@ -16,10 +16,12 @@ from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core.assets import Asset, load_asset
 from kiripix.core.errors import fail
+from kiripix.core.layer_stats import layer_stats, piece_numbers
 from kiripix.core.project import find_project
-from kiripix.core.segmenting import flood_preview, segment_preview
+from kiripix.core.reach_probe import reach_report
+from kiripix.core.segmenting import click_preview, flood_preview, segment_preview
 from kiripix.ops import mask_runs
-from kiripix.recipes.base import ClickPoint
+from kiripix.recipes.base import BoxCorners, ClickPoint
 
 class ProbeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -27,8 +29,9 @@ class ProbeInput(BaseModel):
     name: str = Field(description="The Probe's name, such as segment-preview or echo.")
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
     args: list[str] = Field([], description="The Probe's own arguments. segment-preview takes clicks in target pixels: "
-                                            "x,y for a positive one and x,y,neg for a negative one. flood-preview takes "
-                                            "x,y,tolerance, one or more.")
+                                            "x,y for a positive one and x,y,neg for a negative one, as does click-preview; or one box, x0,y0,x1,y1, "
+                                            "the pixels from (x0, y0) to (x1, y1) both included. flood-preview takes "
+                                            "x,y,tolerance, one or more. layer-stats and reach take none.")
     cpu: bool = Field(False, description="Run any Runner on the CPU, without the GPU lock.")
     summary: bool = Field(False, description="Leave `runs` out of a Mask answer; `pixels` and `box` stay.")
 
@@ -61,25 +64,61 @@ def _echo(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, An
     return {"kind": asset.kind, "args": arguments.args}
 
 
-def _click_point(text: str, asset: Asset) -> ClickPoint:
+def _click_point(text: str, asset: Asset, probe_name: str = "segment-preview") -> ClickPoint:
     parts = text.split(",")
     sign = parts[2] if len(parts) == 3 else ""
     if len(parts) not in (2, 3) or sign not in ("", "neg") or not (parts[0].isdecimal() and parts[1].isdecimal()):
         raise fail("input.invalid", f"'{text}' isn't a click: give x,y for a positive one, or x,y,neg for a negative one",
-                   fix=f"kiripix probe segment-preview {asset.id} 10,12")
+                   fix=f"kiripix probe {probe_name} {asset.id} 10,12")
     return int(parts[0]), int(parts[1]), sign != "neg"
 
 
-@probe("segment-preview", summary="The Mask a click would make, as runs of [y, x, length], on the target grid.")
+def _box(text: str, asset: Asset) -> BoxCorners:
+    parts = text.split(",")
+    if len(parts) != 4 or not all(part.isdecimal() for part in parts):
+        raise fail("input.invalid", f"'{text}' isn't a box: give x0,y0,x1,y1 in target pixels, such as 10,12,40,30",
+                   fix=f"kiripix probe segment-preview {asset.id} 10,12,40,30")
+    x0, y0, x1, y1 = (int(part) for part in parts)
+    return x0, y0, x1, y1
+
+
+@probe("segment-preview", summary="The Mask a click, or a rough box x0,y0,x1,y1, would make, as runs of [y, x, length], on "
+                                  "the target grid. Several clicks are one prompt, unlike a lift (one call per click): use "
+                                  "click-preview for that.")
 def _segment_preview(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
     if not arguments.args:
-        raise fail("input.invalid", "segment-preview needs at least one click",
+        raise fail("input.invalid", "segment-preview needs at least one click, or a box",
                    fix=f"kiripix probe segment-preview {asset.id} 10,12")
-    points = [_click_point(text, asset) for text in arguments.args]
+    boxed = arguments.args[0].count(",") == 3
+    if boxed and len(arguments.args) > 1:
+        raise fail("input.invalid", "segment-preview takes one box, and no clicks with it",
+                   fix=f"kiripix probe segment-preview {asset.id} {arguments.args[0]}")
+    box = _box(arguments.args[0], asset) if boxed else None
+    points = [] if boxed else [_click_point(text, asset) for text in arguments.args]
     made = segment_preview(find_project(context.cwd), asset, points, keep_warm=context.via == "rest", cpu=arguments.cpu,
-                           wait=context.wait, command_line=context.command_line, progress=context.progress)
+                           wait=context.wait, command_line=context.command_line, progress=context.progress, box=box)
     return {
         **_mask_answer(made.mask, arguments),
+        "embedding": "computed" if made.computed else "cached",
+        "device": made.device,
+    }
+
+
+@probe("click-preview", summary="What a lift of these clicks would make: each click's Mask and their union, replayed "
+                                "in order, as a Layer or a Mask would be.")
+def _click_preview(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    if not arguments.args:
+        raise fail("input.invalid", "click-preview needs at least one click",
+                   fix=f"kiripix probe click-preview {asset.id} 10,12")
+    points = [_click_point(text, asset, "click-preview") for text in arguments.args]
+    made = click_preview(find_project(context.cwd), asset, points, keep_warm=context.via == "rest", cpu=arguments.cpu,
+                         wait=context.wait, command_line=context.command_line, progress=context.progress)
+    union = _mask_answer(made.union, arguments)
+    union["pieces"] = piece_numbers(made.union)
+    return {
+        "clicks": [{"x": x, "y": y, "positive": positive, **_mask_answer(mask, arguments)}
+                   for (x, y, positive), mask in zip(points, made.masks)],
+        "union": union,
         "embedding": "computed" if made.computed else "cached",
         "device": made.device,
     }
@@ -121,6 +160,21 @@ def _flood_preview(asset: Asset, arguments: ProbeInput, context: Context) -> dic
     regions = flood_preview(find_project(context.cwd), asset, floods)
     return {"floods": [{"x": x, "y": y, "tolerance": tolerance, **_mask_answer(region, arguments)}
                        for (x, y, tolerance), region in zip(floods, regions)]}
+
+
+@probe("layer-stats", summary="Each Layer's pixels, box, pieces, holes, partial pixels, sort and a suggested y-sort line.")
+def _layer_stats(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    if arguments.args:
+        raise fail("input.invalid", "layer-stats takes no arguments", fix=f"kiripix probe layer-stats {asset.id}")
+    return layer_stats(find_project(context.cwd), asset)
+
+
+@probe("reach", summary="What the reach Stage would report from the Masks as built (one awaiting review too) and the Markers "
+                        "placed now: which Spawns and Exits the Body reaches, the islands and the narrowest gaps.")
+def _reach(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    if arguments.args:
+        raise fail("input.invalid", "reach takes no arguments", fix=f"kiripix probe reach {asset.id}")
+    return reach_report(find_project(context.cwd), asset)
 
 
 class ProbeData(BaseModel):

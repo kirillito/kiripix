@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: imaging-engineer
 type: ticket
@@ -31,11 +31,11 @@ This ticket adds no UI. A brush that adds on the layer screen is a separate tick
 
 ## Acceptance criteria
 
-- [ ] CLI seam: with `min_piece` 8, a Layer's pieces under 8 px are gone and their pixels are back in the Plate; larger pieces are untouched.
-- [ ] `min_piece` 0, and a room that never set it, build the same output as before, with no new review.
-- [ ] `add` puts its stroke's pixels in the Layer, and a `trim` recorded after it takes them away again.
-- [ ] After `add` and `min_piece`, `layers.recompose_mismatch` and `layers.plate_hole` report nothing.
-- [ ] An `add` that needs a new fill stops with `needs-review` on a plain `run`'s rules, and a rebuild with the fill pinned makes no Runner call.
-- [ ] Golden seam: the piece-size Op, on a Mask with pieces either side of the limit.
-- [ ] Existing `click` and `trim` Decisions and their pinned results are untouched.
-- [ ] `describe room --stage layers` lists the parameter and the Decision, and the contract test passes.
+- [x] CLI seam: with `min_piece` 8, a Layer's pieces under 8 px are gone and their pixels are back in the Plate; larger pieces are untouched.
+- [x] `min_piece` 0, and a room that never set it, build the same output as before, with no new review.
+- [x] `add` puts its stroke's pixels in the Layer, and a `trim` recorded after it takes them away again.
+- [x] After `add` and `min_piece`, `layers.recompose_mismatch` and `layers.plate_hole` report nothing.
+- [x] An `add` that needs a new fill stops with `needs-review` on a plain `run`'s rules, and a rebuild with the fill pinned makes no Runner call.
+- [x] Golden seam: the piece-size Op, on a Mask with pieces either side of the limit.
+- [x] Existing `click` and `trim` Decisions and their pinned results are untouched.
+- [x] `describe room --stage layers` lists the parameter and the Decision, and the contract test passes.

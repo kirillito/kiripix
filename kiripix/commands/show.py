@@ -56,6 +56,8 @@ class ShowData(BaseModel):
     body: BodyOut = Field(description="The stand-in player, from kiripix.toml.")
     variants: list[VariantOut]
     picked: str | None
+    clip_sources: list[VariantOut] = Field(description="A character's animation files, named by file stem.")
+    rigged: VariantOut | None = Field(description="A character's rigged file.")
     stages: list[StageDetail]
     export_command: str | None = Field(
         None, description="While every Stage is done and the game doesn't have what is built: the Command that exports it.")
@@ -63,6 +65,8 @@ class ShowData(BaseModel):
     def text(self) -> str:
         lines = [f"{self.asset} ({self.kind})"]
         lines += [f"  variant {v.name}{' (picked)' if v.name == self.picked else ''}" for v in self.variants]
+        lines += [f"  clip source {c.name}" for c in self.clip_sources]
+        lines += [f"  rigged {self.rigged.file}"] if self.rigged is not None else []
         for stage in self.stages:
             params = ", ".join(f"{k}={v}" for k, v in stage.params.items())
             lines.append(f"  {stage.stage:<10} {stage.status}" + (f"  {params}" if params else ""))
@@ -119,6 +123,10 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         body=BodyOut(size=project.settings.body.size, dash=project.settings.body.dash),
         variants=[VariantOut(name=name, file=project.relative(path)) for name, path in variants.items()],
         picked=sources.picked(graph) if takes_variants else None,
+        clip_sources=[VariantOut(name=name, file=project.relative(path))
+                      for name, path in sources.clip_sources(asset).items()],
+        rigged=VariantOut(name=rigged_path.stem, file=project.relative(rigged_path))
+        if (rigged_path := sources.rigged(asset)) is not None else None,
         stages=stages,
         export_command=export_command(project, asset, cache, states),
     )

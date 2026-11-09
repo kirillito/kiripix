@@ -93,9 +93,13 @@ class PreviewInput(BaseModel):
 
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
     stage: str | None = Field(None, description="The Stage to preview; default is the last done Stage with an image.")
-    overlay: Literal["masks", "walkable", "reachable"] | None = Field(
+    overlay: Literal["masks", "walkable", "reachable", "layers"] | None = Field(
         None, description="Tint each Mask over the image, or the walkable ground (the place Stage's output), or the "
-                          "ground the Body can reach (the reach Stage's).")
+                          "ground the Body can reach (the reach Stage's), or each Layer's alpha (the layers Stage's "
+                          "output as built, one awaiting review too).")
+    layer: str | None = Field(None, description="With --overlay layers: tint only this Layer.")
+    brighten: float = Field(1.0, description="Multiply the image's colour by this before any tint, clipped; for looking "
+                                             "at a dark room. 1 changes nothing. Only the preview file sees it.")
     zoom: int = Field(4, ge=1, le=16, description="Whole-number zoom, nearest neighbour.")
     region: str | None = Field(None, description="x,y,width,height in target pixels: crop to it before the zoom.")
     grid: int | None = Field(None, ge=1, description="A line every N target pixels, from the room's origin, drawn "
@@ -107,6 +111,11 @@ class PreviewRegion(BaseModel):
     y: int
     width: int
     height: int
+
+
+class PreviewLayer(BaseModel):
+    id: str
+    colour: str = Field(description="The tint, as #rrggbb.")
 
 
 class PreviewData(BaseModel):
@@ -121,6 +130,11 @@ class PreviewData(BaseModel):
     region: PreviewRegion | None = Field(None, description="The target pixels shown: pixel (i, j) of the PNG is target "
                                                            "pixel (x + i // zoom, y + j // zoom).")
     grid: int | None = None
+    brighten: float = 1.0
+    layers: list[PreviewLayer] = Field(default_factory=list, description="The Layers tinted, each with its colour, when "
+                                                                           "the layers overlay was asked for.")
+    awaiting_review: bool | None = Field(None, description="For the layers overlay: whether the Layers Stage's build "
+                                                           "awaits the owner's review.")
 
     def text(self) -> str:
         return self.path
@@ -140,7 +154,7 @@ def preview(arguments: PreviewInput, context: Context) -> Outcome[PreviewData]:
     asset = load_asset(project, arguments.asset)
     cache = HashCache(project.state_dir)
     made = write_preview(project, asset, cache, arguments.stage, arguments.overlay, arguments.zoom,
-                         arguments.region, arguments.grid)
+                         arguments.region, arguments.grid, arguments.layer, arguments.brighten)
     cache.save()
     region = None
     if made.region is not None:
@@ -148,4 +162,6 @@ def preview(arguments: PreviewInput, context: Context) -> Outcome[PreviewData]:
         region = PreviewRegion(x=x, y=y, width=width, height=height)
     return Outcome(PreviewData(asset=asset.id, stage=made.stage, path=project.relative(made.path), width=made.width,
                                height=made.height, zoom=arguments.zoom, masks=made.masks, overlay=made.overlay,
-                               region=region, grid=made.grid), list(made.findings))
+                               region=region, grid=made.grid, brighten=arguments.brighten,
+                               layers=[PreviewLayer(id=i, colour=c) for i, c in made.layers],
+                               awaiting_review=made.awaiting_review), list(made.findings))

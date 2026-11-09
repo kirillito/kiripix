@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: ui-engineer
 type: ticket
@@ -47,11 +47,11 @@ ticket, nor is a zoom below 1x, which would break the integer-zoom rule.
 
 Playwright, on a room larger than the canvas:
 
-- [ ] A wheel step keeps the pixel under the pointer in place, to within one zoomed pixel.
-- [ ] A left drag on a screen with no tool under it moves the image; on the mask screen, the brush still paints and doesn't pan.
-- [ ] `Space` and drag, and a middle-button drag, move the image over a tool.
-- [ ] An arrow key moves the image; the same key in a text field or in the walk test doesn't.
-- [ ] Scrollbars appear only on an overflowing axis; dragging a thumb moves the image.
-- [ ] Panning far past an edge leaves part of the image on the canvas.
-- [ ] `Home` returns to the zoom and origin of the fit view.
-- [ ] Clicking a finding still centres its pixel, and clicks and brush strokes still land on the right pixel after zoom and pan.
+- [x] A wheel step keeps the pixel under the pointer in place, to within one zoomed pixel.
+- [x] A left drag on a screen with no tool under it moves the image; on the mask screen, the brush still paints and doesn't pan.
+- [x] `Space` and drag, and a middle-button drag, move the image over a tool.
+- [x] An arrow key moves the image; the same key in a text field or in the walk test doesn't.
+- [x] Scrollbars appear only on an overflowing axis; dragging a thumb moves the image.
+- [x] Panning far past an edge leaves part of the image on the canvas.
+- [x] `Home` returns to the zoom and origin of the fit view.
+- [x] Clicking a finding still centres its pixel, and clicks and brush strokes still land on the right pixel after zoom and pan.

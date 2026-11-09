@@ -498,7 +498,7 @@ export function LayersPanel(props: {
         Re-run the Runner after each click
       </label>
       <p className="hint">
-        <kbd>[</kbd> <kbd>]</kbd> change the brush size, <kbd>Z</kbd> zooms, <kbd>Space</kbd> pans, <kbd>Ctrl+Z</kbd> undoes.
+        <kbd>[</kbd> <kbd>]</kbd> change the brush size, <kbd>Z</kbd> zooms, hold <kbd>Space</kbd> and drag or use the arrow keys to pan, <kbd>Home</kbd> fits, <kbd>Ctrl+Z</kbd> undoes.
       </p>
       {unavailable && (
         <p className="reason" data-testid="layers-notice">

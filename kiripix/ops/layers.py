@@ -86,8 +86,12 @@ def cut_by_alpha(image: U8, alpha: BoolMask) -> U8:
     return result
 
 
-def connected_regions(mask: BoolMask) -> list[npt.NDArray[np.int64]]:
-    """The 4-connected regions of a binary Mask, each an (n, 2) array of (y, x) in raster order.
+_FOUR = ((-1, 0), (1, 0), (0, -1), (0, 1))
+_EIGHT = (*_FOUR, (-1, -1), (-1, 1), (1, -1), (1, 1))
+
+
+def connected_regions(mask: BoolMask, *, eight: bool = False) -> list[npt.NDArray[np.int64]]:
+    """The 4-connected regions of a binary Mask (8-connected with `eight`), each an (n, 2) array of (y, x) in raster order.
 
     Regions are ordered by their first pixel in raster order (top row first, then left to right), so the order is the
     same on every run.
@@ -95,6 +99,7 @@ def connected_regions(mask: BoolMask) -> list[npt.NDArray[np.int64]]:
     if mask.dtype != np.bool_ or mask.ndim != 2:
         raise ValueError("a Mask is a 2-D boolean array")
     height, width = mask.shape
+    steps = _EIGHT if eight else _FOUR
     seen = np.zeros_like(mask)
     regions: list[npt.NDArray[np.int64]] = []
     for y, x in np.argwhere(mask):
@@ -105,9 +110,49 @@ def connected_regions(mask: BoolMask) -> list[npt.NDArray[np.int64]]:
         while stack:
             cy, cx = stack.pop()
             found.append((cy, cx))
-            for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+            for dy, dx in steps:
+                ny, nx = cy + dy, cx + dx
                 if 0 <= ny < height and 0 <= nx < width and mask[ny, nx] and not seen[ny, nx]:
                     seen[ny, nx] = True
                     stack.append((ny, nx))
         regions.append(np.array(sorted(found), dtype=np.int64))
     return regions
+
+
+def remove_small_pieces(mask: BoolMask, min_piece: int) -> BoolMask:
+    """`mask` without its 8-connected pieces of fewer than `min_piece` pixels. 0 (or 1) removes nothing. The input is not
+    modified. A piece is 8-connected, the same as in the layer statistics, so what they count small is what goes."""
+    if mask.dtype != np.bool_ or mask.ndim != 2:
+        raise ValueError("a Mask is a 2-D boolean array")
+    if min_piece < 0:
+        raise ValueError(f"min_piece can't be negative, got {min_piece}")
+    result = mask.copy()
+    if min_piece <= 1:
+        return result
+    for piece in connected_regions(mask, eight=True):
+        if len(piece) < min_piece:
+            result[piece[:, 0], piece[:, 1]] = False
+    return result
+
+
+def enclosed_holes(mask: BoolMask) -> BoolMask:
+    """The pixels a binary Mask encloses without containing: clear pixels that can't reach the image edge through clear
+    pixels, moving up, down, left or right (so a gap one pixel wide, even a diagonal one, doesn't let a hole out of an
+    8-connected piece)."""
+    if mask.dtype != np.bool_ or mask.ndim != 2:
+        raise ValueError("a Mask is a 2-D boolean array")
+    height, width = mask.shape
+    outside = np.zeros_like(mask)
+    stack = [(y, x) for y in range(height) for x in range(width)
+             if (y in (0, height - 1) or x in (0, width - 1)) and not mask[y, x]]
+    for y, x in stack:
+        outside[y, x] = True
+    while stack:
+        cy, cx = stack.pop()
+        for dy, dx in _FOUR:
+            ny, nx = cy + dy, cx + dx
+            if 0 <= ny < height and 0 <= nx < width and not mask[ny, nx] and not outside[ny, nx]:
+                outside[ny, nx] = True
+                stack.append((ny, nx))
+    result: BoolMask = ~mask & ~outside
+    return result

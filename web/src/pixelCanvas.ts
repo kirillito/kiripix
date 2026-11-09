@@ -1,14 +1,34 @@
 // The canvas widget (ADR 0008): a plain class that owns its pixels and gestures, so a hover or a drag never goes through
-// React state. Integer zoom only, nearest-neighbour only (spec §11). `Z` zooms, `Space` and the middle button pan.
+// React state. Integer zoom only, nearest-neighbour only (spec §11). `Z` and the wheel zoom, a drag, `Space`, the middle button, the
+// arrow keys and the scrollbars pan, and `Home` returns to the fit view.
 
 const MAX_ZOOM = 16;
 const BEFORE_COLOUR = "#f2c14e";
+const BAR = 8; // a scrollbar's thickness, in canvas pixels
+const MIN_THUMB = 24;
+const KEEP = 96; // at most this much of the image always stays on the canvas, in canvas pixels
+const STEP = 32; // an arrow key pans by this much, in canvas pixels; Shift pans by four times as much
+const BAR_COLOUR = "rgba(200, 200, 210, 0.55)";
+
+// One scrollbar: its track and thumb along its axis, in canvas pixels.
+interface Bar {
+  track: number;
+  start: number;
+  length: number;
+}
 
 // A focused field takes the keys typed into it. A checkbox or a slider takes no letters, so the shortcuts still work there.
 export function isTyping(target: EventTarget | null): boolean {
   if (target instanceof HTMLInputElement) return !["checkbox", "range"].includes(target.type);
   return target instanceof HTMLElement && /^(SELECT|TEXTAREA)$/.test(target.tagName);
 }
+
+const ARROWS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
 
 function takesSpace(target: EventTarget | null): boolean {
   if (target instanceof HTMLInputElement) return target.type === "checkbox";
@@ -37,6 +57,7 @@ export interface CanvasTool {
   pointerMove?(pixel: CanvasPixel): void;
   pointerUp?(pixel: CanvasPixel): void;
   hover?(pixel: CanvasPixel | null): void; // the pixel under the pointer between gestures; null when it leaves the image
+  ownsArrowKeys?: boolean; // the arrow keys are this tool's, so they don't pan
 }
 
 // A checkerboard under the image, so transparent pixels read as transparent: screen-sized squares, not image pixels.
@@ -75,7 +96,8 @@ export class PixelCanvas {
   private panY = 0;
   private split = 0.5;
   private spaceHeld = false;
-  private gesture: "pan" | "split" | "tool" | null = null;
+  private gesture: "pan" | "split" | "tool" | "bar-x" | "bar-y" | null = null;
+  private grab = 0; // where on its thumb a scrollbar drag holds it
   private tools: CanvasTool[] = [];
   private active: CanvasTool | null = null;
   private gameFrame: [number, number] | null = null;
@@ -192,11 +214,90 @@ export class PixelCanvas {
     this.panX += this.element.width / 2 - (left + (this.focused.x + 0.5) * this.zoom);
     this.panY += this.element.height / 2 - (top + (this.focused.y + 0.5) * this.zoom);
     this.centrePending = false;
+    this.clamp();
   }
 
   private setZoom(zoom: number): void {
     this.zoom = Math.min(MAX_ZOOM, Math.max(1, Math.trunc(zoom)));
     this.element.dataset.zoom = String(this.zoom);
+  }
+
+  // Zooms so the image pixel under (x, y), in canvas pixels, stays under it.
+  private zoomAbout(zoom: number, x: number, y: number): void {
+    if (!this.after) return this.setZoom(zoom);
+    const [left, top] = this.origin();
+    const u = (x - left) / this.zoom;
+    const v = (y - top) / this.zoom;
+    this.setZoom(zoom);
+    this.panX = x - u * this.zoom - (this.element.width - this.after.naturalWidth * this.zoom) / 2;
+    this.panY = y - v * this.zoom - (this.element.height - this.after.naturalHeight * this.zoom) / 2;
+    this.clamp();
+    this.draw();
+  }
+
+  // Part of the image always stays on the canvas.
+  private clamp(): void {
+    if (!this.after) return;
+    const width = this.after.naturalWidth * this.zoom;
+    const height = this.after.naturalHeight * this.zoom;
+    const keep = Math.min(KEEP, this.element.width / 4, this.element.height / 4);
+    const limit = (size: number, extent: number): number => Math.max(0, (extent + size) / 2 - Math.min(keep, size));
+    const maxX = limit(width, this.element.width);
+    const maxY = limit(height, this.element.height);
+    this.panX = Math.min(maxX, Math.max(-maxX, this.panX));
+    this.panY = Math.min(maxY, Math.max(-maxY, this.panY));
+  }
+
+  private panBy(dx: number, dy: number): void {
+    this.panX += dx;
+    this.panY += dy;
+    this.clamp();
+    this.draw();
+  }
+
+  // The scrollbars: only on an axis the image overflows.
+  private bars(): { x: Bar | null; y: Bar | null } {
+    if (!this.after) return { x: null, y: null };
+    const [left, top] = this.origin();
+    const width = this.after.naturalWidth * this.zoom;
+    const height = this.after.naturalHeight * this.zoom;
+    const overflowX = width > this.element.width;
+    const overflowY = height > this.element.height;
+    const make = (size: number, extent: number, origin: number, other: boolean): Bar => {
+      const track = extent - (other ? BAR : 0);
+      const length = Math.min(track, Math.max(MIN_THUMB, Math.round((track * extent) / size)));
+      const start = Math.min(track - length, Math.max(0, Math.round((-origin / size) * track)));
+      return { track, start, length };
+    };
+    return {
+      x: overflowX ? make(width, this.element.width, left, overflowY) : null,
+      y: overflowY ? make(height, this.element.height, top, overflowX) : null,
+    };
+  }
+
+  // Which scrollbar is under the pointer, if any.
+  private barAt(event: PointerEvent): "bar-x" | "bar-y" | null {
+    const { x, y } = this.bars();
+    if (y && event.offsetX >= this.element.width - BAR && event.offsetY < y.track) return "bar-y";
+    if (x && event.offsetY >= this.element.height - BAR && event.offsetX < x.track) return "bar-x";
+    return null;
+  }
+
+  // Moves the thumb to follow the pointer at `position` along its track, which scrolls the image.
+  private dragBar(axis: "bar-x" | "bar-y", position: number): void {
+    if (!this.after) return;
+    const bar = this.bars()[axis === "bar-x" ? "x" : "y"];
+    if (!bar) return;
+    const start = Math.min(bar.track - bar.length, Math.max(0, position - this.grab));
+    if (axis === "bar-x") {
+      const width = this.after.naturalWidth * this.zoom;
+      this.panX = -(start / bar.track) * width - (this.element.width - width) / 2;
+    } else {
+      const height = this.after.naturalHeight * this.zoom;
+      this.panY = -(start / bar.track) * height - (this.element.height - height) / 2;
+    }
+    this.clamp();
+    this.draw();
   }
 
   private fit(): void {
@@ -212,6 +313,7 @@ export class PixelCanvas {
     if (this.element.width === clientWidth && this.element.height === clientHeight) return;
     this.element.width = clientWidth;
     this.element.height = clientHeight;
+    this.clamp();
     this.draw();
   }
 
@@ -273,6 +375,18 @@ export class PixelCanvas {
       this.element.dataset.origin = `${frame.left},${frame.top}`;
       for (const tool of this.tools) tool.draw(context, frame);
     }
+    this.drawBars(context);
+  }
+
+  private drawBars(context: CanvasRenderingContext2D): void {
+    const { x, y } = this.bars();
+    context.fillStyle = BAR_COLOUR;
+    if (x) context.fillRect(x.start, this.element.height - BAR, x.length, BAR);
+    if (y) context.fillRect(this.element.width - BAR, y.start, BAR, y.length);
+    for (const [name, bar] of [["scrollX", x], ["scrollY", y]] as const) {
+      if (bar) this.element.dataset[name] = `${bar.start},${bar.length},${bar.track}`;
+      else delete this.element.dataset[name];
+    }
   }
 
   private nearSplit(event: PointerEvent): boolean {
@@ -282,7 +396,15 @@ export class PixelCanvas {
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
-    if (event.button === 1 || this.spaceHeld) {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); // a press here takes the keys back from a focused button
+    const bar = event.button === 0 ? this.barAt(event) : null;
+    if (bar) {
+      this.gesture = bar;
+      const found = this.bars()[bar === "bar-x" ? "x" : "y"]!;
+      const at = bar === "bar-x" ? event.offsetX : event.offsetY;
+      this.grab = at >= found.start && at < found.start + found.length ? at - found.start : found.length / 2;
+      this.dragBar(bar, at);
+    } else if (event.button === 1 || this.spaceHeld) {
       this.gesture = "pan";
     } else if (this.nearSplit(event)) {
       this.gesture = "split";
@@ -297,9 +419,14 @@ export class PixelCanvas {
       this.active = inside
         ? (this.tools.find((tool) => tool.pointerDown?.(this.pixelAt(event, frame), frame)) ?? null)
         : null;
-      if (!this.active) return;
-      this.gesture = "tool";
-      this.draw();
+      if (this.active) {
+        this.gesture = "tool";
+        this.draw();
+      } else if (event.button === 0) {
+        this.gesture = "pan"; // a drag that no tool takes pans
+      } else {
+        return;
+      }
     }
     this.element.setPointerCapture(event.pointerId);
     event.preventDefault();
@@ -311,16 +438,18 @@ export class PixelCanvas {
       if (frame) this.active?.pointerMove?.(this.pixelAt(event, frame));
       this.draw();
     } else if (this.gesture === "pan") {
-      this.panX += event.movementX;
-      this.panY += event.movementY;
-      this.draw();
+      this.panBy(event.movementX, event.movementY);
+    } else if (this.gesture === "bar-x") {
+      this.dragBar("bar-x", event.offsetX);
+    } else if (this.gesture === "bar-y") {
+      this.dragBar("bar-y", event.offsetY);
     } else if (this.gesture === "split" && this.after) {
       const [left] = this.origin();
       this.split = Math.min(1, Math.max(0, (event.offsetX - left) / (this.after.naturalWidth * this.zoom)));
       this.draw();
     } else {
       this.element.style.cursor = this.spaceHeld ? "grab" : this.nearSplit(event) ? "ew-resize" : "default";
-      this.hoverAt(event);
+      this.hoverAt(this.barAt(event) ? null : event);
     }
   };
 
@@ -356,8 +485,7 @@ export class PixelCanvas {
 
   private readonly onWheel = (event: WheelEvent): void => {
     event.preventDefault();
-    this.setZoom(this.zoom + (event.deltaY < 0 ? 1 : -1));
-    this.draw();
+    this.zoomAbout(this.zoom + (event.deltaY < 0 ? 1 : -1), event.offsetX, event.offsetY);
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -368,8 +496,17 @@ export class PixelCanvas {
       event.preventDefault();
     } else if (event.code === "KeyZ") {
       const next = this.zoom + (event.shiftKey ? -1 : 1);
-      this.setZoom(next > MAX_ZOOM ? 1 : next);
+      this.zoomAbout(next > MAX_ZOOM ? 1 : next, this.element.width / 2, this.element.height / 2);
+    } else if (event.code === "Home") {
+      this.fit();
       this.draw();
+    } else if (event.key in ARROWS && this.after) {
+      if (event.target instanceof HTMLInputElement && event.target.type === "range") return; // a slider's arrows
+      if (this.tools.some((tool) => tool.ownsArrowKeys)) return; // the walk test walks with them
+      const [dx, dy] = ARROWS[event.key];
+      const step = event.shiftKey ? STEP * 4 : STEP;
+      this.panBy(-dx * step, -dy * step); // an arrow scrolls the view that way, so the image moves the other way
+      event.preventDefault();
     }
   };
 

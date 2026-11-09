@@ -23,7 +23,7 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ContextManager, Literal
+from typing import Any, ContextManager, Literal, TypeVar
 
 import numpy as np
 from pydantic import BaseModel
@@ -44,6 +44,8 @@ import kiripix.ops as ops_package
 import kiripix.recipes as recipes_package
 import kiripix.runners as runners_package
 from kiripix.runners import Device, RunnerError, pull, runners, weights_dir
+
+Hook = TypeVar("Hook")
 
 Status = Literal["todo", "stale", "done", "needs-input", "needs-review", "failed"]
 Outcome = Literal["done", "skipped", "failed", "needs-input", "needs-review", "cancelled"]
@@ -160,6 +162,17 @@ class AssetGraph:
                 owner_action=f"Remove [stages.{unknown[0]}] from {file}, or correct its spelling.",
                 position=Position(asset=asset.id, file=file, field=f"stages.{unknown[0]}"),
             )
+
+    def stage_with(self, hook: Callable[[StageSpec], Hook | None], does: str, code: str = "probe.not_supported",
+                   position: Position | None = None) -> tuple[StageSpec, Hook]:
+        """The first Stage of the Kind that has `hook` (such as `lambda s: s.layer_stats`), and that hook. A Kind with no
+        such Stage is refused with `code`, saying it has no Stage that `does`, as a Probe or a preview asks for one."""
+        for spec in self.kind.stages:
+            found = hook(spec)
+            if found is not None:
+                return spec, found
+        raise fail(code, f"a {self.asset.kind} has no Stage that {does}", fix="kiripix describe project",
+                   position=position)
 
     def spec(self, stage: str) -> StageSpec:
         spec = self.kind.stage(stage)

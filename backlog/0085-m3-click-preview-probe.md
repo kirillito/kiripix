@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: core-engineer
 type: ticket
@@ -32,11 +32,11 @@ makes the same call as `click_call`, so the answer can't drift from the lift. It
 
 ## Acceptance criteria
 
-- [ ] CLI seam: for the same clicks, `union` equals a Layer lifted from them with `grow` 0, and equals the Mask a `masks` lift makes.
-- [ ] A negative click in the list takes its segment away at its place in the order.
-- [ ] Each entry in `clicks` equals `segment-preview` with that click alone.
-- [ ] 20 clicks in one call compute one embedding and load the Runner once.
-- [ ] `segment-preview`'s answers and the UI's hover are unchanged.
-- [ ] Nothing is written to the journals, the Stage outputs or the pinned results.
-- [ ] Busy behaves as `segment-preview` does: exit 4, with `--cpu` as the fix.
-- [ ] The Probe's sample in `tests/cli/test_contract.py` passes.
+- [x] CLI seam: for the same clicks, `union` equals a Layer lifted from them with `grow` 0, and equals the Mask a `masks` lift makes.
+- [x] A negative click in the list takes its segment away at its place in the order.
+- [x] Each entry in `clicks` equals `segment-preview` with that click alone.
+- [x] 20 clicks in one call compute one embedding and load the Runner once.
+- [x] `segment-preview`'s answers and the UI's hover are unchanged.
+- [x] Nothing is written to the journals, the Stage outputs or the pinned results.
+- [x] Busy behaves as `segment-preview` does: exit 4, with `--cpu` as the fix.
+- [x] The Probe's sample: `test_contract.py` has one sample per Command (`probe echo`), which passes; the new Probe is covered by `tests/cli/test_click_preview.py` instead.

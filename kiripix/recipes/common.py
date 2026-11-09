@@ -31,6 +31,7 @@ from kiripix.ops import (
 )
 from kiripix.recipes.base import (
     PICK,
+    BoxCorners,
     ClickPoint,
     CurrentDecision,
     NeedsInput,
@@ -319,6 +320,43 @@ def click_call(group: list[CurrentDecision], grid: Grid, source: Path) -> Runner
         params=click_params(clicks, grid),
         decisions=[{"x": d.data["x"], "y": d.data["y"], "positive": True} for d in group],
     )
+
+
+# A `box` segments the object a rough box holds: one call like a click's, with `box` in place of `points`, in Source pixels
+# (the box's outer edges through the Grid transform). Its sign is the replay's, as a click's is (ticket 0079).
+
+
+def box_of(decision: CurrentDecision) -> BoxCorners:
+    data = decision.data
+    return int(data["x0"]), int(data["y0"]), int(data["x1"]), int(data["y1"])
+
+
+def box_problem(box: BoxCorners, width: int, height: int) -> str | None:
+    """Why a box can't be used on a `width` x `height` target, or None."""
+    x0, y0, x1, y1 = box
+    if x1 < x0 or y1 < y0:
+        return "runs backwards: x1 and y1 are not below x0 and y0"
+    if x1 >= width or y1 >= height:
+        return f"is outside the {width}x{height} Plate"
+    return None
+
+
+def box_params(box: BoxCorners, grid: Grid) -> dict[str, Any]:
+    x0, y0, x1, y1 = box
+    edges_x, edges_y = grid.edges_x(), grid.edges_y()
+    return {"box": [int(edges_x[x0]), int(edges_y[y0]), int(edges_x[x1 + 1]), int(edges_y[y1 + 1])],
+            "max_size": RUNNER_MAX_SIZE}
+
+
+def box_call(box: BoxCorners, grid: Grid, source: Path) -> RunnerCall:
+    """The SEGMENTER call of a box, positive or negative alike, as `click_call` does for a click."""
+    return RunnerCall(runner=SEGMENTER, image=source, params=box_params(box, grid),
+                      decisions=[{"box": list(box), "positive": True}])
+
+
+def lift_call(group: list[CurrentDecision], grid: Grid, source: Path) -> RunnerCall:
+    """The SEGMENTER call of a `click` or a `box` group."""
+    return box_call(box_of(group[0]), grid, source) if group[0].name == "box" else click_call(group, grid, source)
 
 
 def runner_mask_to_target(mask: Image.Image, read: tuple[Grid, dict[str, Any]]) -> np.ndarray:

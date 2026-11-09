@@ -11,6 +11,7 @@ from kiripix.recipes.base import (
     StageSpec,
     chain,
 )
+from kiripix.recipes.common import source_needs_input
 
 CHARACTER = KindSpec(
     name="character",
@@ -21,13 +22,14 @@ CHARACTER = KindSpec(
             description="Imports .glb, .fbx or .blend; normalises scale and the up axis.",
             inputs=StageInputs(files=["src/*"]),
             decisions=(PICK,),
-            owner_input="Picks or imports a Model.",
+            needs_input=source_needs_input,
+            owner_input="Imports a Model (kiripix import <id> <file.glb|.fbx|.blend>) and picks it.",
             available_from="M3",
         ),
         StageSpec(
             name="rig",
             description="Validates a humanoid rig, or guides the Mixamo round trip.",
-            owner_input="The Mixamo step, when used.",
+            owner_input="The Mixamo round trip, when used: kiripix import <id> <rigged.fbx> --role rigged.",
             available_from="M3",
         ),
         StageSpec(
@@ -52,19 +54,26 @@ CHARACTER = KindSpec(
                     },
                 ),
             ),
-            owner_input="Chooses clips.",
+            owner_input="Adds animation files (kiripix import <id> <file.fbx> --role clip-source) and chooses clips; a "
+                        "clip's source is its file stem.",
             available_from="M3",
         ),
         StageSpec(
             name="render",
             description="Headless Blender render at the target pixel size: colour, normal, depth and mask passes.",
+            inputs=StageInputs(settings=["character"]),
             params=(
                 ParamSpec(
+                    name="height",
+                    type="int",
+                    description="Target height in px; the Project's [character] height when unset.",
+                    minimum=1,
+                ),
+                ParamSpec(
                     name="camera",
-                    type="choice",
-                    description="Camera preset.",
+                    type="str",
+                    description="The camera preset, by name, from [character.camera] in kiripix.toml.",
                     default="top34_8",
-                    choices=["top34_4", "top34_8", "side", "battle"],
                 ),
             ),
             gpu=True,

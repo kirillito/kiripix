@@ -16,7 +16,7 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache
 from kiripix.core.images import load_rgba, save_png
 from kiripix.core.project import Project
-from kiripix.ops.preview import draw_grid, tint_mask, tint_masks
+from kiripix.ops.preview import TINTS, brighten, draw_grid, tint_mask, tint_masks
 from kiripix.ops.resample import upscale
 
 MASKS_STAGE = "masks"  # the Stage whose output holds one 1-bit PNG per Mask, named after it
@@ -33,6 +33,8 @@ class Preview:
     grid: int | None = None
     overlay: str | None = None
     findings: tuple[Finding, ...] = ()
+    layers: tuple[tuple[str, str], ...] = ()  # each tinted Layer's ID and its colour, as #rrggbb
+    awaiting_review: bool | None = None  # for the layers overlay: whether the `layers` build awaits the owner
 
 
 @dataclass(frozen=True)
@@ -111,8 +113,48 @@ def _masks(graph: AssetGraph, shape: tuple[int, ...]) -> dict[str, npt.NDArray[n
     return found
 
 
+def _layers(graph: AssetGraph, shape: tuple[int, ...],
+            only: str | None) -> tuple[list[tuple[str, tuple[int, int, int], npt.NDArray[np.bool_]]], bool, list[Finding]]:
+    """The Layers to tint as (ID, colour, alpha), from the `layers` output as built (one awaiting review too).
+
+    A Layer's colour comes from its place among all the Layers, so `only` keeps the colour it has in the whole view.
+    """
+    asset = graph.asset.id
+    spec, hooks = graph.stage_with(lambda s: s.layer_stats, "lifts Layers", code="preview.no_layers",
+                                   position=Position(asset=asset))
+    found, _ = hooks.read(graph.output_dir(spec), asset)
+    if not found:
+        raise fail("preview.no_layers", f"{asset} has no built Layers to overlay",
+                   fix=f"kiripix run {asset} {spec.name}", position=Position(asset=asset, stage=spec.name))
+    if only is not None and only not in [layer for layer, _ in found]:
+        names = ", ".join(layer for layer, _ in found)
+        raise fail("input.invalid", f"'{only}' is not a Layer of {asset}; the Layers are {names}",
+                   fix=f"kiripix preview {asset} --overlay layers --layer {found[0][0]}",
+                   position=Position(asset=asset, stage=spec.name))
+    chosen = []
+    for index, (layer, path) in enumerate(found):
+        if only is not None and layer != only:
+            continue
+        rgba = load_rgba(path, graph.project.relative(path))
+        if rgba.shape[:2] != shape[:2]:
+            raise fail("preview.overlay_size_mismatch",
+                       f"{path.name} is {rgba.shape[1]}x{rgba.shape[0]} but the image is {shape[1]}x{shape[0]}",
+                       fix=f"kiripix run {asset} {spec.name} --force", position=Position(asset=asset, stage=spec.name))
+        chosen.append((layer, TINTS[index % len(TINTS)], rgba[..., 3] > 0))
+    awaiting = graph.state(spec.name).status == "needs-review"
+    findings = []
+    if awaiting:
+        findings.append(Finding(
+            code="preview.layers_awaiting_review", severity="warning",
+            message=f"{asset} {spec.name} is awaiting review, so the layers overlay shows the build as it stands",
+            position=Position(asset=asset, stage=spec.name),
+            owner_action=f"Review {asset} {spec.name}, then accept it: kiripix accept {asset} {spec.name}"))
+    return chosen, awaiting, findings
+
+
 def write_preview(project: Project, asset: Asset, cache: HashCache, stage: str | None, overlay: str | None,
-                  factor: int, region: str | None = None, grid: int | None = None) -> Preview:
+                  factor: int, region: str | None = None, grid: int | None = None, layer: str | None = None,
+                  bright: float = 1.0) -> Preview:
     """Write the preview of `stage` (default: the last `done` Stage with an image) and say where it is."""
     graph = AssetGraph(project, asset, cache)
     if stage is None:
@@ -133,7 +175,14 @@ def write_preview(project: Project, asset: Asset, cache: HashCache, stage: str |
     assert spec.image is not None
     image_path = graph.output_dir(spec) / spec.image
     image = load_rgba(image_path, project.relative(image_path))
+    if layer is not None and overlay != "layers":
+        raise fail("input.invalid", "--layer needs --overlay layers", fix=f"kiripix preview {asset.id} --overlay layers "
+                   f"--layer {layer}", position=Position(asset=asset.id))
+    if bright <= 0:
+        raise fail("input.invalid", f"--brighten must be above 0, not {bright:g}",
+                   fix=f"kiripix preview {asset.id} --brighten 1", position=Position(asset=asset.id))
     box = parse_region(region, asset.id, image.shape[1], image.shape[0]) if region is not None else None
+    image = brighten(image, bright)
     masks = _masks(graph, image.shape) if overlay == "masks" else {}
     if masks:
         image = tint_masks(image, masks)
@@ -141,6 +190,13 @@ def write_preview(project: Project, asset: Asset, cache: HashCache, stage: str |
     if overlay in DERIVED:
         ground, findings = _derived(graph, overlay, image.shape)
         image = tint_mask(image, ground, DERIVED[overlay].tint)
+    tinted: list[tuple[str, str]] = []
+    awaiting = None
+    if overlay == "layers":
+        chosen, awaiting, findings = _layers(graph, image.shape, layer)
+        for name, colour, alpha in chosen:
+            image = tint_mask(image, alpha, colour)
+            tinted.append((name, "#%02x%02x%02x" % colour))
     origin = (0, 0)
     if box is not None:
         x, y, w, h = box
@@ -150,8 +206,11 @@ def write_preview(project: Project, asset: Asset, cache: HashCache, stage: str |
     if grid is not None:
         image = draw_grid(image, grid, factor, origin)
     suffix = f".{overlay}" if overlay is not None else ""
+    suffix += f".l{layer}" if layer is not None else ""
+    suffix += f".b{bright:g}".replace(".", "_") if bright != 1 else ""
     suffix += f".r{'_'.join(map(str, box))}" if box is not None else ""
     suffix += f".g{grid}" if grid is not None else ""
     path = project.state_dir / "previews" / f"{asset.id}.{spec.name}{suffix}.x{factor}.png"
     save_png(path, image)
-    return Preview(spec.name, path, image.shape[1], image.shape[0], sorted(masks), box, grid, overlay, tuple(findings))
+    return Preview(spec.name, path, image.shape[1], image.shape[0], sorted(masks), box, grid, overlay, tuple(findings),
+                   tuple(tinted), awaiting)

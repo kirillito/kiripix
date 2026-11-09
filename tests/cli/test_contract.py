@@ -47,6 +47,16 @@ def _imported(project: Kiripix) -> str:
     return str(project.json("import", "room.alley", "in.png")["data"]["variant"])
 
 
+def _character_files(project: Kiripix) -> None:
+    """A character with a Model, a clip source and the rigged file imported."""
+    fixtures = Path(__file__).parent.parent / "fixtures" / "characters"
+    shutil.copy(fixtures / "rigged.fbx", project.cwd / "rigged.fbx")
+    project.json("new", "character", "hero")
+    project.json("import", "character.hero", "rigged.fbx")
+    project.json("import", "character.hero", "rigged.fbx", "--role", "clip-source")
+    project.json("import", "character.hero", "rigged.fbx", "--role", "rigged")
+
+
 def _game_repo(project: Kiripix) -> None:
     """A Godot project that is a git repository, as the target."""
     if shutil.which("git") is None:
@@ -71,12 +81,12 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "redo": lambda p: (_undone(p), ["redo", "demo.a", "choose"])[1],
     "override": lambda p: (sketched(p), ["override", "sketch.a", "draw", "fix.png"])[1],
     "accept": lambda p: (in_review(p), ["accept", "sketch.a", "draw"])[1],
-    "import": lambda p: (_room_image(p), ["import", "room.alley", "in.png"])[1],
+    "import": lambda p: (_character_files(p), ["import", "character.hero", "rigged.fbx", "--role", "clip-source"])[1],
     "mask-import": lambda p: (_room_image(p), ["mask-import", "room.alley", "in.png"])[1],
     "plate-import": lambda p: (_room_image(p), ["plate-import", "room.alley", "in.png"])[1],
     "pick": lambda p: (_imported(p), ["pick", "room.alley", _imported(p)])[1],
     "check": lambda p: (make_demo(p), ["check", "demo.a"])[1],
-    "show": lambda p: (make_demo(p), ["show", "demo.a"])[1],
+    "show": lambda p: (_character_files(p), ["show", "character.hero"])[1],
     "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw", "--region", "0,0,4,4", "--grid", "2"])[1],
     "export": lambda p: (exportable_room(p), ["export", "room.alley"])[1],
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],

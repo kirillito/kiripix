@@ -16,11 +16,10 @@ choose which rule applies. We considered three options:
    the committed ones, and a difference stops export for the Owner. This needs a second pinning path just for export,
    and it fires on every intended change as well as on accidental ones.
 
-**Measurement: not yet made.** No Blender is installed on the development machine, and there is no fixture Model or
-`render` Stage yet. The plan is to render one clip of the fixture Model ([0100](../../backlog/0100-m3-character-test-fixtures.md))
+**Measurement: not yet made.** It needs the fixture Model and the `render` Stage's settings, and neither exists yet. The plan is to render one clip of the fixture Model ([0100](../../backlog/0100-m3-character-test-fixtures.md))
 on Blender 5.2, twice on the GPU and once on the CPU, with the `render` Stage's engine and settings, and to compare the
 frames pixel by pixel. The result tells how much a rebuild on another device can change. It doesn't decide the choice
-below, and it is recorded in ticket 0098 when it's made.
+below. It is part of the `render` ticket, [0104](../../backlog/0104-m3-render-stage.md), and is added here when it's made.
 
 We chose 2 (the Owner, 2026-11-07). Nothing reaches the game unseen: export writes into the game repo, and the Owner
 reviews that diff before committing it. That review is the guard that option 1 or 3 would add, and it already

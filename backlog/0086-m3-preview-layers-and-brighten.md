@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: core-engineer
 type: ticket
@@ -28,10 +28,10 @@ worth its own ticket for `ui-engineer`.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: `--overlay layers` writes a file, and its pixels differ from the fit image exactly where a Layer has alpha.
-- [ ] `--layer` tints that Layer only, and an unknown ID is refused with the Layers named.
-- [ ] It works while `layers` is in `needs-review`, and says so.
-- [ ] With no built Layers, the finding says so and names the fix.
-- [ ] Golden seam: the brighten Op, including clipping, and a factor of 1 returns the image unchanged.
-- [ ] `--brighten` changes no file outside `.kiripix/previews/`, and no status.
-- [ ] `tests/cli/test_contract.py` still passes with the new options.
+- [x] CLI seam: `--overlay layers` writes a file, and its pixels differ from the fit image exactly where a Layer has alpha.
+- [x] `--layer` tints that Layer only, and an unknown ID is refused with the Layers named.
+- [x] It works while `layers` is in `needs-review`, and says so.
+- [x] With no built Layers, the finding says so and names the fix.
+- [x] Golden seam: the brighten Op, including clipping, and a factor of 1 returns the image unchanged.
+- [x] `--brighten` changes no file outside `.kiripix/previews/`, and no status.
+- [x] `tests/cli/test_contract.py` still passes with the new options.

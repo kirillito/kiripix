@@ -10,10 +10,12 @@ from kiripix.ops import (
     Grid,
     connected_regions,
     cut_by_alpha,
+    enclosed_holes,
     grow_where_partial,
     mask_from_difference,
     partial_cells,
     recompose,
+    remove_small_pieces,
 )
 
 EXPECTED = Path(__file__).parent / "expected"
@@ -243,3 +245,89 @@ def test_connected_regions_of_an_empty_mask_and_the_same_order_every_time() -> N
 
     assert all((a == b).all() for a, b in zip(first, second, strict=True))
     assert sum(len(r) for r in first) == mask.sum()
+
+
+def eight_connected_mask() -> np.ndarray:
+    mask = np.zeros((9, 12), dtype=bool)
+    mask[0, 5] = True  # a lone pixel
+    mask[1:3, 0:3] = True  # a block
+    mask[3, 3] = True  # joined to the block only diagonally
+    mask[5:9, 6] = True  # a column on the bottom edge
+    mask[6, 7:9] = True
+    return mask
+
+
+def test_eight_connected_regions_join_diagonals(request: pytest.FixtureRequest) -> None:
+    mask = eight_connected_mask()
+
+    regions = connected_regions(mask, eight=True)
+
+    assert [len(r) for r in regions] == [1, 7, 6]
+    assert len(connected_regions(mask)) == 4
+    labels = np.zeros((9, 12, 4), dtype=np.uint8)
+    labels[..., 3] = 255
+    for region, colour in zip(regions, [RED, GREEN, BLUE], strict=True):
+        labels[region[:, 0], region[:, 1], :3] = colour
+    assert_golden(request, labels, "layers_regions_eight.png")
+
+
+# enclosed_holes
+
+
+def test_enclosed_holes(request: pytest.FixtureRequest) -> None:
+    mask = np.zeros((10, 12), dtype=bool)
+    mask[1:7, 1:7] = True
+    mask[3:5, 3:5] = False  # a closed hole of four pixels
+    mask[1:4, 8:12] = True  # a C shape against the right edge: its bay is open to the edge
+    mask[2, 10:12] = False
+    mask[7:10, 2:7] = True
+    mask[9, 3] = False  # a notch open to the bottom edge
+    mask[7, 3] = False  # and one above it, closed: a one-pixel hole under the first block
+
+    holes = enclosed_holes(mask)
+
+    assert_golden(request, holes, "layers_holes.png")
+    assert holes[3:5, 3:5].all() and not holes[9, 3] and holes[7, 3] and not holes[2, 10:12].any()
+
+
+def test_a_diagonal_gap_does_not_let_a_hole_out_and_an_empty_or_full_mask_has_none() -> None:
+    ring = np.zeros((5, 5), dtype=bool)
+    ring[1, 2] = ring[2, 1] = ring[2, 3] = ring[3, 2] = True  # the centre is reached only through diagonals
+
+    assert enclosed_holes(ring)[2, 2]
+    assert not enclosed_holes(np.zeros((4, 4), dtype=bool)).any()
+    assert not enclosed_holes(np.ones((4, 4), dtype=bool)).any()
+
+
+# remove_small_pieces
+
+
+def pieces_either_side_of_the_limit() -> np.ndarray:
+    mask = np.zeros((9, 14), dtype=bool)
+    mask[0, 0] = True  # 1 px
+    mask[2:4, 0:3] = True  # 6 px
+    mask[4, 3] = True  # joined to the 6 only diagonally: 7 px in all, under 8
+    mask[1:3, 6:10] = True  # 8 px, exactly the limit
+    mask[5:9, 5:9] = True  # 16 px
+    mask[6, 11:14] = True  # 3 px against the right edge
+    return mask
+
+
+def test_remove_small_pieces_drops_those_under_the_limit_and_keeps_the_rest(request: pytest.FixtureRequest) -> None:
+    mask = pieces_either_side_of_the_limit()
+    before = mask.copy()
+
+    kept = remove_small_pieces(mask, 8)
+
+    assert (mask == before).all(), "the input is not modified"
+    assert_golden(request, kept, "layers_small_pieces_removed.png")
+    assert int(kept.sum()) == 8 + 16 and kept[1:3, 6:10].all() and kept[5:9, 5:9].all()
+
+
+def test_remove_small_pieces_with_a_limit_of_0_or_1_changes_nothing_and_a_negative_one_is_refused() -> None:
+    mask = pieces_either_side_of_the_limit()
+
+    assert (remove_small_pieces(mask, 0) == mask).all() and (remove_small_pieces(mask, 1) == mask).all()
+    assert not remove_small_pieces(mask, 100).any()
+    with pytest.raises(ValueError):
+        remove_small_pieces(mask, -1)

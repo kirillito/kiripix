@@ -8,3 +8,7 @@ tests/golden/**/*.png filter=lfs diff=lfs merge=lfs -text
 *.md text eol=lf
 *.yml text eol=lf
 uv.lock text eol=lf
+
+# Character test fixtures (built by tests/fixtures/make_character_fixtures.py) are binary: keep them in git LFS.
+tests/fixtures/**/*.glb filter=lfs diff=lfs merge=lfs -text
+tests/fixtures/**/*.fbx filter=lfs diff=lfs merge=lfs -text

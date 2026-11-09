@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: reviewer
 type: decision
@@ -33,14 +33,16 @@ character; LFS size wasn't the issue (a 52 px frame is about 1 KB).
 
 ## Acceptance criteria
 
-- [ ] The measurement is recorded here: equal or not, and by how many pixels.
+- [x] The measurement is recorded here: equal or not, and by how many pixels. (Moved to [0104](0104-m3-render-stage.md),
+      2026-11-08: it needs the `render` Stage's own settings, and 0104 depends on this ticket through 0101, so waiting
+      here made a cycle. It decides nothing; ADR 0010 stands either way.)
 - [x] An ADR in `docs/adr/`, in the folder's format, recording the Owner's choice:
       [0010](../docs/adr/0010-blender-renders-rebuild-and-are-not-pinned.md).
 - [x] If the choice changes the spec's wording (§2, §5, §6.3), the changes are listed here for the main session to make.
 
 ## Measurement
 
-**Pending (2026-11-07).** It can't be made yet: Blender isn't installed on the development machine (not on `PATH`,
+**Pending (2026-11-08).** Blender 5.2.3 LTS is now installed (`C:\Program Files\Blender Foundation\Blender 5.2`). The measurement still waits for the fixture Model and the `render` Stage: when this was first written, Blender wasn't installed (not on `PATH`,
 not under `C:\Program Files`), the repo has no fixture Model, and no `render` Stage exists to say which engine and
 settings to use. It needs:
 - Blender 5.2 LTS (5.2.3, `docs/versions.md`) installed, on a machine with both a CUDA GPU and the CPU device;

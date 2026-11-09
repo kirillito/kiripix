@@ -172,16 +172,49 @@ class NeedsInput:
 NeedsInputFunction = Callable[[StageRun], NeedsInput | None]
 CheckFunction = Callable[[StageRun], list[Finding]]
 ClickPoint = tuple[int, int, bool]  # x and y in target pixels, and whether the click is a positive one
+BoxCorners = tuple[int, int, int, int]  # x0, y0, x1, y1 in target pixels: the pixels from (x0, y0) to (x1, y1), both included
 
 
 @dataclass(frozen=True)
 class SegmentHooks:
     """What the `segment-preview` Probe needs from a Stage that segments. `call` is the Runner call for clicks in target
-    pixels: None until what it needs upstream is built, and StageFailure for a point off the image. `to_target` maps the
-    Runner's result back to the target grid. A preview is never recorded or pinned."""
+    pixels: None until what it needs upstream is built, and StageFailure for a point off the image. `box_call` is the same
+    for a box (ticket 0079). `to_target` maps the Runner's result back to the target grid. A preview is never recorded or
+    pinned."""
 
     call: Callable[[StageRun, list[ClickPoint]], RunnerCall | None]
     to_target: Callable[[StageRun, np.ndarray], np.ndarray]
+    box_call: Callable[[StageRun, BoxCorners], RunnerCall | None] | None = None
+
+
+@dataclass(frozen=True)
+class LayerStatsHooks:
+    """What the `layer-stats` Probe needs from a Stage that lifts Layers, read from its output as built (including one
+    awaiting review). `read` gives the Layers in order, each as (ID, PNG file), and the IDs removed; it is called with the
+    Stage's output folder and the Asset ID, and an empty folder gives none. `sort_stage` is the Stage whose Decisions say
+    how each Layer sorts, and `sort` is its `StageSpec.sort` with the built Layers and the removed ones. `ysort` is a
+    suggested y-sort line as the `data` of a Decision of that Stage, from the Layer's ID, its left and right columns and
+    its lowest row. A Probe records nothing."""
+
+    read: Callable[[Path, str], tuple[list[tuple[str, Path]], list[str]]]
+    sort_stage: str
+    sort: Callable[[tuple[CurrentDecision, ...], list[str], list[str]], list[SortPosition]]
+    ysort: Callable[[str, int, int, int], dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class ReachHooks:
+    """What the `reach` Probe needs from a Stage that floods the Body over the Masks (ticket 0078). The Probe answers with
+    what the Stage reports, from the Masks as built (one awaiting review too) and the Markers a Stage's current Decisions
+    place now. `unsupported` says why the Stage can't answer for this Asset, or None. `targets` are the Markers it floods
+    from, given `marker_stage`'s Decisions. `report` is the Stage's own computation, handed the Stage's run (whose
+    `upstream` holds `masks_stage`) and those targets; the Stage and the Probe share it. A Probe records nothing."""
+
+    marker_stage: str
+    masks_stage: str
+    unsupported: Callable[[StageRun], str | None]
+    targets: Callable[[tuple[CurrentDecision, ...]], list[dict[str, Any]]]
+    report: Callable[[StageRun, list[dict[str, Any]]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -217,6 +250,8 @@ class StageSpec:
     after_overrides: StageFunction | None = None
     runner_calls: RunnerCallsFunction | None = None
     segment: SegmentHooks | None = None
+    layer_stats: LayerStatsHooks | None = None
+    reach: ReachHooks | None = None
     markers: Callable[[tuple[CurrentDecision, ...]], list[dict[str, Any]]] | None = None  # for `show`, before any build
     # Each Layer's sort position, from the Decisions alone, for `show` (the Exporter and the walk test read the built file).
     sort: Callable[[tuple[CurrentDecision, ...]], list[SortPosition]] | None = None
@@ -249,6 +284,23 @@ def chain(*stages: StageSpec) -> tuple[StageSpec, ...]:
 def point_decision(name: str, description: str, *, on_image: bool = False, **extra: dict[str, Any]) -> DecisionSpec:
     """A Decision placed at a target pixel, with any extra properties."""
     properties: dict[str, Any] = {"x": {"type": "integer", "minimum": 0}, "y": {"type": "integer", "minimum": 0}}
+    properties.update(extra)
+    return DecisionSpec(
+        name=name,
+        description=description,
+        entry_schema={
+            "type": "object",
+            "properties": properties,
+            "required": list(properties),
+            "additionalProperties": False,
+        },
+        on_image=on_image,
+    )
+
+
+def box_decision(name: str, description: str, *, on_image: bool = False, **extra: dict[str, Any]) -> DecisionSpec:
+    """A Decision on a box in target pixels, from (x0, y0) to (x1, y1), both pixels included, with any extra properties."""
+    properties: dict[str, Any] = {corner: {"type": "integer", "minimum": 0} for corner in ("x0", "y0", "x1", "y1")}
     properties.update(extra)
     return DecisionSpec(
         name=name,

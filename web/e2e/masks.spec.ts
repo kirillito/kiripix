@@ -463,3 +463,107 @@ test("with the room walled off by the UI, the Body still stops at the room's edg
   await expect(page.getByTestId("canvas")).toHaveAttribute("data-body", "8,16");
   await page.keyboard.up("ArrowLeft");
 });
+
+const HEXAGON: [number, number][] = [[10, 6], [20, 6], [24, 12], [20, 18], [10, 18], [6, 12]];
+
+async function clickAll(page: Page, points: [number, number][]): Promise<void> {
+  for (const [x, y] of points) await clickPixel(page, x, y);
+}
+
+test("six clicks and Enter record one polygon Decision with those points, the Mask shows it, and Ctrl+Z removes it", async ({
+  page,
+  segmentingStudio: studio,
+}) => {
+  builtRoom(studio);
+  await open(page, studio);
+  const canvas = page.getByTestId("canvas");
+  await page.keyboard.press("g");
+  await expect(canvas).toHaveAttribute("data-tool", "polygon");
+
+  await clickAll(page, HEXAGON);
+  await expect(canvas).toHaveAttribute("data-polygon-points", "6");
+  await page.waitForTimeout(200);
+  expect(decisions(studio)).toHaveLength(0); // nothing is recorded before it closes
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  expect(decisions(studio)).toHaveLength(1);
+  expect(decisions(studio)[0]).toMatchObject({ name: "polygon", data: { mask: "solid", erase: false, points: HEXAGON } });
+  await expect(canvas).toHaveAttribute("data-polygon-points", "0");
+  await expect.poll(async () => (await counts(page)).solid).toBeGreaterThan(100);
+  await page.screenshot({ path: "test-results/masks-polygon-tool.png" });
+
+  await page.keyboard.press("Control+z"); // one press
+  await expect(page.getByTestId("decision-count")).toHaveText("0 Decision(s)");
+  expect(decisions(studio)).toHaveLength(0);
+  await expect.poll(async () => (await counts(page)).solid).toBe(0);
+});
+
+test("clicking the first point closes the polygon, and a left click with the tool doesn't pan", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  const canvas = page.getByTestId("canvas");
+  await page.keyboard.press("g");
+  const origin = await canvas.getAttribute("data-origin");
+
+  await clickAll(page, [[10, 6], [20, 6], [20, 18]]);
+  expect(await canvas.getAttribute("data-origin")).toBe(origin);
+  await clickPixel(page, 10, 6);
+
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  expect(decisions(studio)[0]).toMatchObject({ name: "polygon", data: { points: [[10, 6], [20, 6], [20, 18]] } });
+});
+
+test("Esc drops the polygon and records nothing, and Backspace removes the last point", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  const canvas = page.getByTestId("canvas");
+  await page.keyboard.press("g");
+
+  await clickAll(page, HEXAGON.slice(0, 4));
+  await expect(canvas).toHaveAttribute("data-polygon-points", "4");
+  await page.keyboard.press("Backspace");
+  await expect(canvas).toHaveAttribute("data-polygon-points", "3");
+  await page.keyboard.press("Enter"); // the three that are left
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  expect(decisions(studio)[0].data.points).toEqual(HEXAGON.slice(0, 3));
+
+  await clickAll(page, HEXAGON.slice(0, 5));
+  await expect(canvas).toHaveAttribute("data-polygon-points", "5");
+  await page.keyboard.press("Escape");
+  await expect(canvas).toHaveAttribute("data-polygon-points", "0");
+  await page.keyboard.press("Enter"); // nothing to close
+  await page.waitForTimeout(300);
+  expect(decisions(studio)).toHaveLength(1);
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+});
+
+test("Enter with fewer than three points records nothing", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.keyboard.press("g");
+  await clickAll(page, HEXAGON.slice(0, 2));
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(300);
+  expect(decisions(studio)).toHaveLength(0);
+  await expect(page.getByTestId("canvas")).toHaveAttribute("data-polygon-points", "2");
+});
+
+test("the erase polygon clears the area, in one polygon Decision with erase on", async ({ page, segmentingStudio: studio }) => {
+  builtRoom(studio);
+  await open(page, studio);
+  await page.keyboard.press("g");
+  await clickAll(page, HEXAGON);
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
+  await expect.poll(async () => (await counts(page)).solid).toBeGreaterThan(100);
+
+  await page.keyboard.press("x");
+  await expect(page.getByTestId("canvas")).toHaveAttribute("data-tool", "polygon-erase");
+  await clickAll(page, [[4, 2], [28, 2], [28, 22], [4, 22]]);
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByTestId("decision-count")).toHaveText("2 Decision(s)");
+  expect(decisions(studio)[1]).toMatchObject({ name: "polygon", data: { mask: "solid", erase: true } });
+  await expect.poll(async () => (await counts(page)).solid).toBe(0);
+});

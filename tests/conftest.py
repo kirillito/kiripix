@@ -168,3 +168,35 @@ def in_review(project: Kiripix) -> None:
     project.json("run", "sketch.a")
     save_image(project.cwd / "assets" / "sketch" / "a" / "src" / "input.png", colour=(41, 173, 255, 255))
     project.json("run", "sketch.a", expect=3)
+
+
+def find_blender() -> tuple[str | None, str]:
+    """The Blender executable (`KIRIPIX_BLENDER`, else PATH) and, when there's none to use, the reason to skip."""
+    import re
+    import shutil
+
+    found = os.environ.get("KIRIPIX_BLENDER") or shutil.which("blender")
+    if not found:
+        return None, "Blender 5.2 not found: set KIRIPIX_BLENDER or put blender on PATH"
+    try:
+        out = subprocess.run([found, "--version"], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"Blender at {found} could not run: {error}"
+    match = re.search(r"Blender (\d+)\.(\d+)", out)
+    if not match or (match.group(1), match.group(2)) != ("5", "2"):
+        return None, f"Blender at {found} is {match.group(0) if match else 'of unknown version'}, not 5.2.x"
+    return found, ""
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """A test marked `blender` is skipped, with the reason, unless Blender 5.2.x is available."""
+    marked = [item for item in items if "blender" in item.keywords]
+    if not marked:
+        return
+    found, reason = find_blender()
+    if found:
+        os.environ["KIRIPIX_BLENDER"] = found
+        return
+    skip = pytest.mark.skip(reason=reason)
+    for item in marked:
+        item.add_marker(skip)

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: imaging-engineer
 type: ticket
@@ -17,6 +17,9 @@ character uses the fixed mapping. Pure, numpy only, golden-tested, exported from
 
 - `palette_subset(frames, palette, n)`: the n palette colours that best fit every opaque pixel of all the frames together, in
   OKLab, ties broken by palette order. One subset for the whole character, so no frame maps to a colour another frame lacks.
+  **Owner decision 2026-11-08: chosen greedily**, one colour at a time, each the one that lowers the total distance most;
+  not an exact search. So the subsets nest: the best 18 contain the best 16, and raising `colors` only adds colours, so
+  the pixels already mapped keep theirs. A swap pass on top is the fallback if a character looks wrong at 0110 or the gate.
 - Mapping and orphan cleanup reuse the room's Ops; only transparent pixels stay transparent, and alpha stays binary.
 - `quantise_normals(normal, levels)`: a normal pass quantised to its own levels per axis, never palette-mapped, renormalised.
 - `encode_normals(normal)`: the normal as Godot 4.7 expects in a `CanvasTexture`'s normal map. State the axis convention in
@@ -24,6 +27,6 @@ character uses the fixed mapping. Pure, numpy only, golden-tested, exported from
 
 ## Acceptance criteria
 
-- [ ] Golden tests for each Op, pixel-exact: a two-frame case where per-frame mapping would differ and the subset doesn't.
-- [ ] `quantise_normals` at 1 level per axis and at 255 levels; transparent pixels stay (0, 0, 0, 0).
-- [ ] `uv run lint-imports` passes.
+- [x] Golden tests for each Op, pixel-exact: a two-frame case where per-frame mapping would differ and the subset doesn't.
+- [x] `quantise_normals` at 1 level per axis and at 255 levels; transparent pixels stay (0, 0, 0, 0).
+- [x] `uv run lint-imports` passes.

@@ -131,7 +131,7 @@ def test_the_cli_is_never_warm(project: Kiripix) -> None:
     assert lines(project, "runner-calls.jsonl") == 2 and gpu_lock(project) is None, "each loads and unloads its own"
 
 
-@pytest.mark.parametrize("args", [[], ["nope"], ["1,2,3,4"], ["1,2,sideways"], ["99,0"], ["0,99"]])
+@pytest.mark.parametrize("args", [[], ["nope"], ["1,2,3,4,5"], ["1,2,sideways"], ["99,0"], ["0,99"]])
 def test_bad_points_are_refused(project: Kiripix, args: list[str]) -> None:
     built_room(project)
 

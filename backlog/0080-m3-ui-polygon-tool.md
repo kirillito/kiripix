@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: ui-engineer
 type: ticket
@@ -24,8 +24,8 @@ In `web/src/maskTool.ts` and the mask screen, beside `brush`, `erase`, `flood` a
 
 ## Acceptance criteria
 
-- [ ] Playwright: six clicks and Enter give one `polygon` Decision with those six points, and the Mask shows it.
-- [ ] Esc records nothing. Backspace removes the last point.
-- [ ] Undo removes the polygon in one press.
-- [ ] Erase form clears the area.
-- [ ] Keyboard flow matches the other tools on the screen.
+- [x] Playwright: six clicks and Enter give one `polygon` Decision with those six points, and the Mask shows it.
+- [x] Esc records nothing. Backspace removes the last point.
+- [x] Undo removes the polygon in one press.
+- [x] Erase form clears the area.
+- [x] Keyboard flow matches the other tools on the screen.

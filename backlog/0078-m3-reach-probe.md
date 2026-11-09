@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: core-engineer
 type: ticket
@@ -24,8 +24,8 @@ clicks, close this ticket.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: on a `done` room, the Probe's answer equals `report.json` from the `reach` Stage.
-- [ ] With a pending click that opens a way, the Probe shows the Marker reached while status stays `needs-review`.
-- [ ] Nothing is written to the journals or to the Stage outputs, and no Asset lock is taken.
-- [ ] With no Marker placed, the finding says so.
-- [ ] The Probe's sample in `tests/cli/test_contract.py` passes.
+- [x] CLI seam: on a `done` room, the Probe's `report` equals `report.json` from the `reach` Stage.
+- [x] With a pending click that opens a way, the Probe shows the Marker reached while status stays `needs-review`.
+- [x] Nothing is written to the journals or to the Stage outputs, and no Asset lock is taken.
+- [x] With no Marker placed, the finding says so.
+- [x] The Probe's sample in `tests/cli/test_contract.py` passes. (That file has one sample per Command, `probe echo`, not per Probe; the Probe is covered in `tests/cli/test_reach_probe.py`, as 0084 and 0085 were.)

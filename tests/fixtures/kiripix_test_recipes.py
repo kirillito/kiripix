@@ -253,7 +253,7 @@ def _fake_weight(sha256: str) -> WeightFile:
 
 class FakeSegmenter(EmbeddingRunner):
     """Deterministic: the Mask is capped at `max_size` as SAM 2's is. In it, a positive click sets a square reaching an
-    eighth of the longer side around it, and a negative click clears one half that size."""
+    eighth of the longer side around it, and a negative click clears one half that size. A box is the Mask itself."""
 
     id = SEGMENTER
     description = "A fake SAM 2 for the tests."
@@ -325,7 +325,10 @@ class FakeSegmenter(EmbeddingRunner):
         rows, columns = round(height * scale), round(width * scale)
         mask = np.zeros((rows, columns), dtype=np.bool_)
         reach = max(rows, columns) // 8
-        for x, y, positive in params["points"]:
+        if "box" in params:  # a box: the Mask is the box itself, its far edges excluded (they are Source pixel edges)
+            x0, y0, x1, y1 = params["box"]
+            mask[int(y0 * scale):int(y1 * scale), int(x0 * scale):int(x1 * scale)] = True
+        for x, y, positive in params.get("points", []):
             cx, cy = int(x * scale), int(y * scale)
             size = reach if positive else reach // 2
             mask[max(cy - size, 0):cy + size + 1, max(cx - size, 0):cx + size + 1] = positive

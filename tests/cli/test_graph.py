@@ -245,7 +245,7 @@ def test_next_returns_a_command_or_an_owner_action(project: Kiripix) -> None:
     finished = project.json("next", "demo.a")["data"]
 
     assert demo["stage"] == "copy" and demo["command"] == "kiripix run demo.a" and demo["owner_action"] is None
-    assert character["stage"] == "model" and character["command"] is None and "M3" in character["owner_action"]
+    assert character["stage"] == "model" and character["command"] == "kiripix import character.hero <file>"
     assert finished["done"] and finished["command"] is None and finished["owner_action"] is None
 
 

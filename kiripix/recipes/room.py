@@ -17,11 +17,14 @@ from kiripix.recipes.base import (
     PLATE,
     CheckSpec,
     ClickPoint,
+    BoxCorners,
     CurrentDecision,
     DecisionSpec,
     KindSpec,
     NeedsInput,
     ParamSpec,
+    LayerStatsHooks,
+    ReachHooks,
     RunnerCall,
     SegmentHooks,
     SortPosition,
@@ -29,6 +32,7 @@ from kiripix.recipes.base import (
     StageInputs,
     StageRun,
     StageSpec,
+    box_decision,
     chain,
     point_decision,
 )
@@ -52,11 +56,14 @@ from kiripix.ops import (
 )
 from kiripix.ops.masks import RGB, SIDES
 from kiripix.recipes.common import (
+    box_of,
+    box_params,
+    box_problem,
     check_fit,
     check_unchanged,
-    click_call,
     click_groups,
     click_params,
+    lift_call,
     read_grid,
     read_rgba,
     run_fit,
@@ -69,12 +76,13 @@ from kiripix.recipes.layers import (
     DECISIONS as LAYER_DECISIONS,
     DIFFERENCE,
     GROW,
+    MIN_PIECE,
     check_layers,
     needs_input as layers_needs_input,
     run_layers,
     runner_calls as layers_runner_calls,
 )
-from kiripix.recipes.layers import LAYER_ID, LAYERS_FILE, layer_file, read_layers, read_removed
+from kiripix.recipes.layers import LAYER_ID, LAYERS_FILE, layer_file, read_layer_files, read_layers, read_removed
 from kiripix.recipes.room_palette import (
     after_overrides as palette_after_overrides,
     check_room_palette,
@@ -172,6 +180,12 @@ def _masks_needs_input(run: StageRun) -> NeedsInput | None:
     undo = f"Undo it: kiripix undo {run.asset_id} {MASKS_STAGE}"
     for group in click_groups(run.decisions):
         first = group[0]
+        if first.name == "box":
+            problem = box_problem(box_of(first), read[0].width, read[0].height) if read is not None else None
+            if problem is not None:
+                x0, y0, x1, y1 = box_of(first)
+                return NeedsInput(f"the box ({x0}, {y0}) to ({x1}, {y1}) {problem}", owner_action=f"{undo}.")
+            continue
         if first.name != "click":
             continue
         for decision in group:
@@ -187,15 +201,15 @@ def _masks_runner_calls(run: StageRun) -> list[RunnerCall]:
     source = run.upstream["source"] / "source.png"
     if read is None or not source.is_file() or _masks_needs_input(run) is not None:
         return []
-    return [click_call(group, read[0], source) for group in click_groups(run.decisions)
-            if group[0].name == "click"]
+    return [lift_call(group, read[0], source) for group in click_groups(run.decisions)
+            if group[0].name in ("click", "box")]
 
 
 def _segmented(run: StageRun, group: list[CurrentDecision]) -> np.ndarray:
-    """The pinned result of a group of clicks, on the target grid."""
+    """The pinned result of a click or a box, on the target grid."""
     read = read_grid(run)
     assert read is not None  # `fit` is upstream, and built
-    path = run.pinned(click_call(group, read[0], run.upstream["source"] / "source.png"))
+    path = run.pinned(lift_call(group, read[0], run.upstream["source"] / "source.png"))
     with Image.open(path) as image:
         return runner_mask_to_target(image, read)
 
@@ -210,6 +224,18 @@ def _preview_call(run: StageRun, clicks: list[ClickPoint]) -> RunnerCall | None:
         if not (x < read[0].width and y < read[0].height):
             raise StageFailure(f"the point ({x}, {y}) is outside the {read[0].width}x{read[0].height} Plate")
     return RunnerCall(runner=SEGMENTER, image=source, params=click_params(clicks, read[0]), decisions=[])
+
+
+def _preview_box_call(run: StageRun, box: BoxCorners) -> RunnerCall | None:
+    """The call a `segment-preview` of a box makes: the call a `box` Decision makes, with no `decisions`."""
+    read = read_grid(run)
+    source = run.upstream["source"] / "source.png"
+    if read is None or not source.is_file():
+        return None
+    problem = box_problem(box, read[0].width, read[0].height)
+    if problem is not None:
+        raise StageFailure(f"the box ({box[0]}, {box[1]}) to ({box[2]}, {box[3]}) {problem}")
+    return RunnerCall(runner=SEGMENTER, image=source, params=box_params(box, read[0]), decisions=[])
 
 
 def _preview_to_target(run: StageRun, mask: np.ndarray) -> np.ndarray:
@@ -283,8 +309,8 @@ def _masks(run: StageRun) -> None:
     for group in click_groups(run.decisions):
         decision = group[0]
         data = decision.data
-        if decision.name == "click":
-            name = _decision_mask(run, view, str(data["mask"]), "click")
+        if decision.name in ("click", "box"):
+            name = _decision_mask(run, view, str(data["mask"]), decision.name)
             if data["positive"]:
                 masks[name] |= _segmented(run, group)
             else:
@@ -553,6 +579,11 @@ def _sort_positions(decisions: tuple[CurrentDecision, ...], layers: list[str] | 
     return positions
 
 
+def _ysort_line(layer: str, left: int, right: int, bottom: int) -> dict[str, Any]:
+    """A y-sort line along a Layer's lowest row, from its left to its right column: `data` for a `marker` Decision."""
+    return {"id": f"ysort.{layer}", "type": "ysort", "layer": layer, "x": left, "y": bottom, "x2": right, "y2": bottom}
+
+
 def _built_layers(run: StageRun) -> list[str]:
     layers_dir = run.upstream[LAYERS_STAGE]
     if not (layers_dir / LAYERS_FILE).is_file():
@@ -709,6 +740,10 @@ def _flood_targets(place_dir: Path) -> list[dict[str, Any]]:
     return [marker for marker in markers if marker["type"] in _ON_WALKABLE]
 
 
+def _flood_targets_of(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
+    return [marker for marker in _current_markers(decisions) if marker["type"] in _ON_WALKABLE]
+
+
 def _reach_needs_input(run: StageRun) -> NeedsInput | None:
     view = run.asset_params["view"]
     if view != "top":
@@ -747,13 +782,9 @@ def _main_group(targets: list[dict[str, Any]], regions: list[np.ndarray]) -> set
     return max(groups.values(), key=rank)
 
 
-def _reach(run: StageRun) -> None:
-    path = run.upstream["place"] / "walkable.png"
-    if not path.is_file():
-        raise StageFailure(f"reach floods over walkable, and the {run.asset_params['view']} view doesn't derive it; "
-                           "add walkable = { derived = true } under [masks] in kiripix.toml")
-    ground = _read_mask(path)
-    targets = _flood_targets(run.upstream["place"])
+def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+    """The Reachable Mask and the report, over `ground` (walkable) from `targets`, the Masks being `run.upstream`'s. The
+    `reach` Stage writes both; the `reach` Probe answers with the report."""
     width, height = run.settings["body"]["size"]
     footprint = (int(width), int(height))
     step, dash = int(run.params["step"]), int(run.settings["body"]["dash"])
@@ -766,7 +797,6 @@ def _reach(run: StageRun) -> None:
         regions.append(known if known is not None else
                        reachable(ground, [(int(marker["x"]), int(marker["y"]))], footprint, step, dash, solid))
     reached = np.logical_or.reduce(regions)
-    _write_mask(run.output_dir / "reachable.png", reached)
     run.check_cancel()
     main = _main_group(targets, regions)
     report = {
@@ -777,7 +807,33 @@ def _reach(run: StageRun) -> None:
         "islands": [vars(island) for island in walkable_islands(ground, reached)],
         "gaps": [vars(gap) for gap in narrowest_gaps(_no_walking(run), footprint)],
     }
+    return reached, report
+
+
+def _reach(run: StageRun) -> None:
+    path = run.upstream["place"] / "walkable.png"
+    if not path.is_file():
+        raise StageFailure(f"reach floods over walkable, and the {run.asset_params['view']} view doesn't derive it; "
+                           "add walkable = { derived = true } under [masks] in kiripix.toml")
+    reached, report = _reach_report(run, _flood_targets(run.upstream["place"]), _read_mask(path))
+    _write_mask(run.output_dir / "reachable.png", reached)
     (run.output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+
+def _reach_unsupported(run: StageRun) -> str | None:
+    view = run.asset_params["view"]
+    if view != "top":
+        return f"the {view} view's reachability is over platforms, which is not implemented until M5"
+    return None
+
+
+def _reach_probe(run: StageRun, targets: list[dict[str, Any]]) -> dict[str, Any]:
+    """The `reach` report from the Masks as built, with the walkable ground `place` would derive from them."""
+    if not (run.upstream[MASKS_STAGE] / "solid.png").is_file():
+        raise StageFailure(f"walkable is derived from the 'solid' Mask, and the {run.asset_params['view']} view "
+                           "doesn't define one; add it under [masks] in kiripix.toml")
+    width, height = run.settings["body"]["size"]
+    return _reach_report(run, targets, walkable(_no_walking(run), (int(width), int(height))))[1]
 
 
 def _check_reach(run: StageRun) -> list[Finding]:
@@ -940,11 +996,13 @@ ROOM = KindSpec(
             name="layers",
             description="Lifts foreground objects into named Layers and fills the Plate behind them: click an object "
                         "(a Runner segments it, a Runner inpaints the hole, both pinned), widen with `grow`, trim a rim "
-                        "with a brush. With no Decisions it is done, and the Plate is the fit image.",
+                        "or add pixels with a brush, drop specks with `min_piece`. With no Decisions it is done, and the Plate is the fit image. Judge a lift "
+                        "without looking: `kiripix probe layer-stats <asset>` gives each Layer's pixels, pieces "
+                        "(with the pixels of any speck), holes, sort and a ready y-sort line.",
             # `fit` first: the clicks and trims are made on its image. Not `gpu`: the Runner calls take the lock
             # themselves (D10), and a build only reads their pinned results.
             inputs=StageInputs(upstream=["fit", "source"]),
-            params=(GROW, DIFFERENCE),
+            params=(GROW, MIN_PIECE, DIFFERENCE),
             decisions=LAYER_DECISIONS,
             checks=(
                 CheckSpec(code="layers.recompose_mismatch", description="Plate and Layers recompose to the fit image."),
@@ -957,6 +1015,7 @@ ROOM = KindSpec(
             needs_input=layers_needs_input,
             check=check_layers,
             runner_calls=layers_runner_calls,
+            layer_stats=LayerStatsHooks(read=read_layer_files, sort_stage="place", sort=_sort_positions, ysort=_ysort_line),
         ),
         StageSpec(
             name="masks",
@@ -969,6 +1028,12 @@ ROOM = KindSpec(
                                "a negative one takes the object under it away from the Mask, whichever Decision put it there (a "
                                "later positive click, flood or brush can add it back). Needs `run --rerun`.",
                                on_image=True, mask={"type": "string"}, positive={"type": "boolean"}),
+                box_decision("box", "Segment the object a rough box holds, from (x0, y0) to (x1, y1) in target pixels, "
+                             "both pixels included: the Runner snaps the box to the object's edges. For an object a "
+                             "single click returns only a part of, or leaks from. A positive box adds the object to the "
+                             "Mask, a negative one takes it away, as a click does. One Runner call, pinned; needs "
+                             "`run --rerun`. Try it first: `kiripix probe segment-preview <asset> x0,y0,x1,y1`.",
+                             on_image=True, mask={"type": "string"}, positive={"type": "boolean"}),
                 _flood_decision(),
                 _border_decision(),
                 DecisionSpec(
@@ -1033,7 +1098,7 @@ ROOM = KindSpec(
             needs_input=_masks_needs_input,
             check=_check_masks,
             runner_calls=_masks_runner_calls,
-            segment=SegmentHooks(call=_preview_call, to_target=_preview_to_target),
+            segment=SegmentHooks(call=_preview_call, to_target=_preview_to_target, box_call=_preview_box_call),
         ),
         StageSpec(
             name="palette",
@@ -1090,6 +1155,8 @@ ROOM = KindSpec(
             run=_reach,
             needs_input=_reach_needs_input,
             check=_check_reach,
+            reach=ReachHooks(marker_stage="place", masks_stage=MASKS_STAGE, unsupported=_reach_unsupported,
+                             targets=_flood_targets_of, report=_reach_probe),
         ),
         StageSpec(
             name="export",

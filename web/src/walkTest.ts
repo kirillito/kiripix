@@ -54,6 +54,7 @@ export interface SortedLayers {
 }
 
 export class WalkTest implements CanvasTool {
+  readonly ownsArrowKeys = true;
   private readonly held = new Set<string>();
   private frameRequest = 0;
   private last = 0;

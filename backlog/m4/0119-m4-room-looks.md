@@ -2,6 +2,7 @@
 status: todo
 milestone: M4
 type: spec
+parent: 0127-m4-rooms-for-grid-battles.md
 ---
 
 # M4: room Looks
@@ -23,7 +24,7 @@ pipeline's most-used parts.
 - An edit is resized and registered to the Source, fitted with the room's Grid transform, mapped as the room is mapped,
   and cut to its region. Its pixels over a foreground Layer go to a piece at that Layer's depth.
 - Checks: on the palette, registered, drift outside the region reported, and the region shows a change.
-- `room.json` schema 3 carries the Looks; Godot gets hidden `Sprite2D`s and a disabled `StaticBody2D` per Look.
+- `room.json`'s next `schema_version` carries the Looks; Godot gets hidden `Sprite2D`s and a disabled `StaticBody2D` per Look.
 
 ## Order
 
@@ -31,9 +32,9 @@ pipeline's most-used parts.
    defaults below.
 2. [0121](0121-m4-look-variants.md) (core): edit Variants, `import --look`, `pick --look`.
 3. [0122](0122-m4-looks-stage.md) (imaging): the Stage, its Decisions and Checks.
-4. [0123](0123-m4-looks-export.md) (export): `room.json` schema 3 and the Godot scene.
+4. [0123](0123-m4-looks-export.md) (export): the next `room.json` schema and the Godot scene.
 5. [0124](0124-m4-ui-looks-screen.md) (UI): the looks screen.
-6. [0125](0125-m4-gen-a-look-edit.md) (Providers): `gen --look`, after M4's first Provider.
+6. [0125](../m5/0125-m5-gen-a-look-edit.md) (Providers): `gen --look`, after the first Provider. Moved to M5 on 2026-11-08: the rest of this ticket needs no Provider, so it stays in M4.
 
 ## User Stories
 

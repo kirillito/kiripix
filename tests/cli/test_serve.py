@@ -217,7 +217,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "redo": lambda a: {"asset": a[1], "stage": a[2]},
     "override": lambda a: {"asset": a[1], "stage": a[2], "png": a[3]},
     "accept": lambda a: {"asset": a[1], "stage": a[2]},
-    "import": lambda a: {"asset": a[1], "file": a[2]},
+    "import": lambda a: {"asset": a[1], "file": a[2], **({"role": a[a.index("--role") + 1]} if "--role" in a else {})},
     "mask-import": lambda a: {"asset": a[1], "png": a[2]},
     "plate-import": lambda a: {"asset": a[1], "png": a[2]},
     "pick": lambda a: {"asset": a[1], "variant": a[2]},

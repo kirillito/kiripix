@@ -1,14 +1,14 @@
 ---
 status: todo
-milestone: M4
+milestone: M5
 agent: ml-engineer
 type: ticket
-parent: 0119-m4-room-looks.md
+parent: ../m4/0119-m4-room-looks.md
 ---
 
-# M4: `gen --look`: make a Look's edit through a Provider
+# M5: `gen --look`: make a Look's edit through a Provider
 
-Spec §6.1 (Looks), §10.5 and §14 M4. Needs M4's first Provider with image editing, and [0121](0121-m4-look-variants.md).
+Spec §6.1 (Looks), §10.5 and §14 M5. Needs M5's first Provider with image editing, and [0121](../m4/0121-m4-look-variants.md). Moved from M4 on 2026-11-08, when M4 became rooms for grid battles.
 
 ## What to build
 

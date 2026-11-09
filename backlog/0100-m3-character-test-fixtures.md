@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: qa-engineer
 type: ticket
@@ -26,6 +26,14 @@ can't be used: its terms don't cover redistribution in a public test suite.
 
 ## Acceptance criteria
 
-- [ ] Running the script reproduces the fixtures; the command is in its docstring.
-- [ ] A marked test that only opens each fixture in Blender passes with Blender and is skipped without it, with a clear reason.
-- [ ] `uv run pytest` on a machine without Blender reports the skips and nothing else changes.
+- [x] Running the script reproduces the fixtures; the command is in its docstring.
+- [x] A marked test that only opens each fixture in Blender passes with Blender and is skipped without it, with a clear reason.
+- [x] `uv run pytest` on a machine without Blender reports the skips and nothing else changes.
+
+## Done
+
+Fixtures generated with Blender 5.2.3 and in `tests/fixtures/characters/` (`rigged.glb/.fbx`, `no_rig.glb/.fbx`; 108
+triangles; `root` bone at ground level, `mixamorig:*` names, `skin` and `cloth` materials, actions `idle` and `walk`).
+Script: `tests/fixtures/make_character_fixtures.py`; probe run inside Blender: `tests/fixtures/blender_probe.py`; test:
+`tests/cli/test_blender_fixtures.py`. The `blender` marker skips when Blender isn't in `KIRIPIX_BLENDER` or on PATH, or
+isn't 5.2.x. The `.gitattributes` lines are added; the owner runs `git lfs` staging when committing.

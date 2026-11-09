@@ -41,6 +41,20 @@ def tint_mask(image: U8, mask: npt.NDArray[np.bool_], colour: tuple[int, int, in
     return result
 
 
+def brighten(image: U8, factor: float) -> U8:
+    """`image` with its colour channels multiplied by `factor` and clipped to 255; alpha is never changed.
+
+    For looking at a dark room only. A factor of 1 returns the image unchanged.
+    """
+    if factor <= 0:
+        raise ValueError(f"the factor must be above 0, not {factor}")
+    result = image.copy()
+    if factor != 1:
+        scaled = np.round(image[..., :3].astype(np.float64) * factor)
+        result[..., :3] = np.clip(scaled, 0, 255).astype(np.uint8)
+    return result
+
+
 def draw_grid(image: U8, step: int, zoom: int, origin: tuple[int, int] = (0, 0), every: int = 5) -> U8:
     """A line on each boundary between target pixels whose coordinate is a multiple of `step`, on an image already zoomed.
 

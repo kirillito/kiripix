@@ -188,7 +188,15 @@ export function CanvasView(props: {
     [canvas, frameWidth, frameHeight],
   );
 
-  return <div className="canvas-host" ref={host} />;
+  return (
+    <div className="canvas-wrap">
+      <div className="canvas-host" ref={host} />
+      <p className="canvas-hint" data-testid="canvas-hint">
+        Hold <kbd>Space</kbd> and drag to pan, or use the arrow keys (<kbd>Shift</kbd> for more). The wheel zooms at the pointer,{" "}
+        <kbd>Z</kbd> at the centre, <kbd>Home</kbd> fits.
+      </p>
+    </div>
+  );
 }
 
 export function VariantGrid(props: {

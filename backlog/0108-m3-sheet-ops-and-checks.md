@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: imaging-engineer
 type: ticket
@@ -28,6 +28,6 @@ golden-tested.
 
 ## Acceptance criteria
 
-- [ ] Golden tests for `pack_atlas` (pivot alignment, an odd frame count) and for `feet_point` if built.
-- [ ] Each Check has a passing and a failing case, with the finding's code and position.
-- [ ] `uv run lint-imports` passes: `checks` imports only `ops`.
+- [x] Golden tests for `pack_atlas` (pivot alignment, an odd frame count). `feet_point` is not built: Q10 made it unnecessary (the feet are the ground point Blender reports per frame; `sheet.pivot_drift` reads the pivots it is given).
+- [x] Each Check has a passing and a failing case, with the finding's code and position.
+- [x] `uv run lint-imports` passes: `checks` imports only `ops`.
