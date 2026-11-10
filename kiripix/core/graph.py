@@ -119,17 +119,23 @@ class Failures:
             atomic.write_json(self._path, self._entries)
 
 
-def _lookup(document: dict[str, Any], known: dict[str, Any], dotted: str) -> Any:
-    """A setting by dotted path. `document` leaves out optional settings that aren't set; `known` holds every setting, so
-    an unset one is None and a name that isn't a setting at all (a typo in a StageSpec) is an error, not a silent None."""
+def _lookup(document: dict[str, Any], known: Callable[[], dict[str, Any]], dotted: str) -> Any:
+    """A setting by dotted path. `document` leaves out optional settings that aren't set; `known()` holds every setting
+    (asked only then, as it costs a dump), so an unset one is None and a name that isn't a setting at all (a typo in a
+    StageSpec) is an error, not a silent None."""
     value: Any = document
-    schema: Any = known
+    for part in dotted.split("."):
+        if not isinstance(value, dict) or part not in value:
+            break
+        value = value[part]
+    else:
+        return value
+    schema: Any = known()
     for part in dotted.split("."):
         if not isinstance(schema, dict) or part not in schema:
             raise KeyError(f"'{dotted}' is not a setting in kiripix.toml (a Stage's inputs name it)")
         schema = schema[part]
-        value = value.get(part) if isinstance(value, dict) else None
-    return value
+    return None
 
 
 def _recipes_code() -> list[list[Any]]:
@@ -160,7 +166,7 @@ class AssetGraph:
         self._calls: dict[str, list[RunnerCall]] = {}
         self._files: dict[str, dict[str, Path]] = {}
         self._settings = settings_document(project.settings)
-        self._known: dict[str, Any] = project.settings.model_dump(mode="json", by_alias=True)
+        self._known_settings: dict[str, Any] | None = None
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
         if unknown:
             file = project.relative(asset.dir / "asset.toml")
@@ -237,6 +243,12 @@ class AssetGraph:
 
     def palette_path(self) -> Path:
         return self.project.root / self.project.settings.project.palette
+
+    def _known(self) -> dict[str, Any]:
+        """Every setting, unset ones as None: asked only when a setting is missing from the document."""
+        if self._known_settings is None:
+            self._known_settings = self.project.settings.model_dump(mode="json", by_alias=True)
+        return self._known_settings
 
     def _setting_for_hash(self, name: str) -> Any:
         if name in COMPUTED_SETTINGS:  # not in kiripix.toml: worked out when asked, such as a tool's version (ADR 0010)
