@@ -4,6 +4,7 @@ resolution, and check sizes, passes, counts and the pivot, never pixels (ADR 001
 
 import json
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -190,8 +191,8 @@ def test_bands_outside_2_to_4_are_refused(project: Kiripix) -> None:
 def test_the_light_belongs_to_the_camera_preset(project: Kiripix) -> None:
     ready(project)
     path = project.cwd / "kiripix.toml"
-    path.write_text(path.read_text("utf-8").replace("elevation = 30", "elevation = 30\nlight_angle = 60\nlight_tilt = 20"),
-                    encoding="utf-8")
+    text = re.sub(r"(?m)^light_angle = -45\b", "light_angle = 60", path.read_text("utf-8"))
+    path.write_text(re.sub(r"(?m)^light_tilt = 35\b", "light_tilt = 20", text), encoding="utf-8")
     assert stage_status(project, HERO)["render"] == "todo"
 
     project.json("run", HERO, "render")
