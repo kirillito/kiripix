@@ -22,6 +22,8 @@ from typing import Any
 import numpy as np
 
 import kiripix.runners
+from kiripix.recipes import blender_launcher
+from kiripix.recipes.blender_launcher import set_launcher
 from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
 from kiripix.core.project_checks import register_project_check
@@ -78,6 +80,12 @@ def _concat(run: StageRun) -> None:
 
 def _hold(run: StageRun) -> None:
     (run.output_dir / "partial.txt").write_text("half", encoding="utf-8")
+    # `previous`: record what it held (the old out.txt, "none" when None); a `poke-previous` file makes it write there.
+    old = run.previous
+    saw = "none" if old is None else (old / "out.txt").read_text(encoding="utf-8")
+    (run.asset_dir / "saw-previous.txt").write_text(saw, encoding="utf-8")
+    if old is not None and (run.asset_dir / "poke-previous").exists():
+        (old / "poked.txt").write_text("x", encoding="utf-8")
     hold = run.asset_dir / "hold"
     if hold.exists():
         (run.asset_dir / "holding").write_text("", encoding="utf-8")
@@ -538,3 +546,120 @@ register_runner(TamperedWeights())
 # file is read at import.
 if Path("inpainter-b").exists():
     kiripix.runners.INPAINTER = OtherInpainter.id
+
+
+# The fake Blender (ticket 0101), in place of the process that runs `kiripix/blender/<script>.py`. Everything a test watches
+# is in the folder the Command runs in:
+# - blender-calls.jsonl: one line per call, with the script, its args and the `[character] blender` setting;
+# - blender-fails: while it exists, a call fails with the file's text;
+# - hold-blender: while it exists, a call marks `blender-holding` and waits in chunks, checking the cancel token.
+# It writes what each script would write, with fixed contents, so a test sees a Stage's own work apart from Blender's.
+
+
+class FakeBlender:
+    def run(self, script: str, args: dict[str, Any], *, executable: str | None, progress: Any,
+            check_cancel: Any) -> dict[str, Any]:
+        with Path("blender-calls.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"script": script, "args": args, "executable": executable}) + "\n")
+        progress(0, 1, "fake Blender")
+        hold = Path("hold-blender")
+        if hold.exists():
+            Path("blender-holding").write_text("", encoding="utf-8")
+            while hold.exists():
+                check_cancel()
+                time.sleep(0.05)  # stands in for a long Blender run
+        failing = Path("blender-fails")
+        if failing.exists():
+            raise StageFailure(failing.read_text(encoding="utf-8"))
+        if script == "validate_rig":
+            return self._validate_rig(Path(args["input"]))
+        if script == "read_actions":
+            return self._read_actions(Path(args["input"]))
+        if script == "render_frames":
+            return self._render_frames(args)
+        if script != "normalise_model":
+            raise StageFailure(f"the fake Blender has no script {script}")
+        Path(args["output"]).write_bytes(b"fake normalised model")
+        if args.get("still"):
+            from PIL import Image
+
+            Image.new("RGBA", (256, 256), (90, 140, 200, 255)).save(args["still"])  # a placeholder still
+        rigged = b"mixamorig" in Path(args["input"]).read_bytes()  # the rigged fixtures name their bones, the others don't
+        if not rigged and args.get("upload"):
+            Path(args["upload"]).write_bytes(b"fake upload for Mixamo")
+        return {
+            "height": args["height"],
+            "up": "+Z",
+            "facing": args.get("facing", "-y"),
+            "bounds": {"min": [-0.5, -0.25, 0.0], "max": [0.5, 0.25, args["height"]]},
+            "vertices": 100,
+            "upload": not rigged and bool(args.get("upload")),
+            "still": bool(args.get("still")),
+            "armature": "Armature" if rigged else None,
+            "bones": FAKE_BONES if rigged else [],
+            "actions": [{"name": "idle", "start": 0, "end": 24}, {"name": "walk", "start": 0, "end": 30}] if rigged else [],
+            # a file that names an `Icosphere` has a stray mesh that isn't skinned (tests/fixtures/characters/rigged_stray.glb)
+            "ignored": [{"name": "Icosphere", "vertices": 12}] if rigged and b"Icosphere" in Path(args["input"]).read_bytes()
+            else [],
+        }
+
+    @staticmethod
+    def _validate_rig(path: Path) -> dict[str, Any]:
+        """A rigged file whose content is JSON says what it holds ({"bones", "vertices", "size", "armature"}); any other
+        file, such as the Model's own `model.blend`, is the full Mixamo rig of the fake Model."""
+        found: dict[str, Any] = {"armature": "Armature", "bones": FAKE_BONES, "vertices": 100, "size": [1.0, 0.5, 2.0]}
+        try:
+            found.update(json.loads(path.read_bytes()))
+        except ValueError:
+            pass
+        return found
+
+    @staticmethod
+    def _render_frames(args: dict[str, Any]) -> dict[str, Any]:
+        """Every frame the real script would write, as flat PNGs of the right size and a fixed pivot."""
+        from PIL import Image
+
+        width, height = args["frame"]
+        frames: dict[str, Any] = {}
+        for clip in args["clips"]:
+            frames[clip["name"]] = {}
+            for direction in args["directions"]:
+                frames[clip["name"]][direction["name"]] = []
+                for index in range(len(clip["frames"])):
+                    for name, mode, colour in (("color", "RGBA", (200, 100, 50, 255)), ("normal", "RGBA", (128, 128, 255, 255)),
+                                               ("depth", "L", 90), ("mask", "L", 255)):
+                        path = Path(args["output"]) / name / clip["name"] / direction["name"] / f"{index:03d}.png"
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        image = Image.new(mode, (width, height), colour)
+                        if name == "color":  # two colours that differ by frame, so a palette has something to choose
+                            tint = (index * 13 + len(direction["name"]) * 29) % 90
+                            image.paste((200 - tint, 100 + tint, 50 + tint, 255), (width // 2, 0, width, height))
+                        image.save(path)
+                    frames[clip["name"]][direction["name"]].append({"pivot": list(args["pivot"])})
+        device = "cpu" if Path("blender-no-gpu").exists() else args["device"]  # as Blender falls back with no GPU
+        return {"device": device, "depth_range": [8.0, 12.0], "frames": frames}
+
+    @staticmethod
+    def _read_actions(path: Path) -> dict[str, Any]:
+        """A clip-source file whose content is JSON says what it holds ({"actions": [{"name", "start", "end", "travel"}],
+        "fps", "height"}); any other file, such as `model.blend`, holds the fake Model's `idle` (0-24) and `walk` (0-30),
+        in place, at 30 frames a second."""
+        found: dict[str, Any] = {
+            "armature": "Armature", "bones": FAKE_BONES, "fps": 30, "height": 2.0, "root": "root",
+            "actions": [{"name": "idle", "start": 0, "end": 24, "travel": 0.0},
+                        {"name": "walk", "start": 0, "end": 30, "travel": 0.0}]}
+        try:
+            found.update(json.loads(path.read_bytes()))
+        except ValueError:
+            pass
+        return found
+
+
+FAKE_BONES = ["root", *(f"mixamorig:{n}" for n in (
+    "Hips", "Spine", "Spine1", "Neck", "Head", "LeftShoulder", "LeftArm", "LeftForeArm", "RightShoulder", "RightArm",
+    "RightForeArm", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"))]
+
+
+set_launcher(FakeBlender())
+if Path("blender-version").exists():  # the fake reports another Blender version (ADR 0010: it is part of the hashes)
+    blender_launcher.BLENDER_VERSION = tuple(int(part) for part in Path("blender-version").read_text("utf-8").split("."))

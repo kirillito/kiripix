@@ -105,6 +105,7 @@ my-game-assets/
     room/queen_west_alley/
       asset.toml             kind and parameters (no stage status, ADR 0005)
       history.jsonl          append-only log of runs and generations
+      imported.jsonl         append-only: the file name each src/ file was imported with (outside src/, so a rename stales nothing)
       src/                   variants and the picked source (immutable once picked)
         looks/<look>/        a Look's edit Variants (outside src/*.png, so a new one never touches the Source)
       decisions/             one Decision journal per stage (<stage>.jsonl), plus Override PNGs
@@ -116,7 +117,7 @@ my-game-assets/
   .kiripix/                  hash cache, last-run failures, locks, Runner weights, backups, the cost ledger (git-ignored)
 ```
 
-**Committed:** `src/`, `decisions/`, `pinned/`, `out/`, `asset.toml` and `history.jsonl`. **Not committed:** `work/`
+**Committed:** `src/`, `decisions/`, `pinned/`, `out/`, `asset.toml`, `history.jsonl` and `imported.jsonl`. **Not committed:** `work/`
 and `.kiripix/`. Python dependencies are locked in `uv.lock`, because deterministic ops are bit-exact only on the same
 library versions. Data files the owner's work lives in have migrations; a Stage's rebuilt output, such as `room.json`,
 is refused when it's old, and the finding names the rebuild. Through M3 there are no production rooms, so any format
@@ -290,7 +291,7 @@ Grid transform, palette mapping and Layers exactly.
 **Building one,** in the `looks` Stage:
 1. **Resize** the edit to the Source's exact size, because an edit often comes back at another size.
 2. **Register:** estimate the edit's scale and shift against the Source outside the region, and undo them (`register`,
-   on by default). An image model rescales its redraw by up to about 1 % (trial 0063). The limits come from trial 0120.
+   on by default). An image model rescales its redraw by up to about 1 % (trial 0063). The limits come from trial 0128.
 3. **Fit** through the room's Grid transform: the same mode, scale and offsets.
 4. **Regrade**, optionally (`regrade`, default `none`). `outside` fits the edit's colours, in OKLab, to the Source's on
    the pixels outside the region, and applies that fit to the whole edit. It is off by default: an unlit Look's darkening
@@ -756,9 +757,9 @@ and the tokens used are recorded at each milestone, as the measure of goal 1 ("c
 
 **M4: rooms for grid battles.** Re-cut on 2026-11-08, when the game moved to tactical combat on a grid in the room (its
 DEC-048): rooms grow past one screen in both directions, and a battle area in the room becomes a grid of cells built from
-`solid`. The work is [0127](../backlog/m4/0127-m4-rooms-for-grid-battles.md).
+`solid`. The work is [0133](../backlog/m4/0133-m4-rooms-for-grid-battles.md).
 - A trial of a room extended in both directions, taken to export
-  ([0128](../backlog/m4/0128-m4-trial-room-extended-both-ways.md)): the corner join, SAM 2 at that size, the collision piece count.
+  ([0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md)): the corner join, SAM 2 at that size, the collision piece count.
 - `extend`, a preprocessing tool before `source`: Kiripix writes the canvas for the next piece, the Owner makes the piece in the
   image model's own UI (the budget is $0), and Kiripix joins it. No Provider is needed; from M5 `gen` may drive it. The trial
   [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md) found that the join needs three steps. Register: the model redraws
@@ -767,15 +768,15 @@ DEC-048): rooms grow past one screen in both directions, and a battle area in th
   piece also fails when too little of a subject is in the kept strip, so the tool must let the Owner choose the strip and retry.
 - The `area` Marker and its `Area2D`; the Masks and `room.json` exported into the game (§9).
 - Room Looks (§6.1, ADR 0009): the `looks` Stage, edits by `import --look`, and their export to Godot. Trial
-  [0120](../backlog/m4/0120-m4-room-look-edit-trial.md) comes first; the work is [0119](../backlog/m4/0119-m4-room-looks.md).
-- An optional SAM 2 crop on a large room, chosen by the Owner or an agent, only if the trial (0128) shows clicks get worse.
+  [0128](../backlog/m4/0128-m4-room-look-edit-trial.md) comes first; the work is [0127](../backlog/m4/0127-m4-room-looks.md).
+- An optional SAM 2 crop on a large room, chosen by the Owner or an agent, only if the trial (0134) shows clicks get worse.
 
 **M5: generation and agents.** Moved from M4 on 2026-11-08.
 - Providers (one API provider plus PixelLab), prompt templates, the style bible, the cost ledger and budget.
 - The MCP adapter, with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
   ([0062](../backlog/m2/0062-m2-claude-first-pass-trial.md)).
-- `gen --look` ([0125](../backlog/m5/0125-m5-gen-a-look-edit.md)), and `gen` driving `extend`.
-- The image-to-3D trial ([0126](../backlog/m5/0126-m5-image-to-3d-trial.md)).
+- `gen --look` ([0143](../backlog/m5/0143-m5-gen-a-look-edit.md)), and `gen` driving `extend`.
+- The image-to-3D trial ([0144](../backlog/m5/0144-m5-image-to-3d-trial.md)).
 
 **M6: side view.** Side-view Masks (one-way, ladder), the parallax split with depth, platform reachability.
 
@@ -847,10 +848,10 @@ answers that first, before the game's M09.
      texture gives the size.
 
    **Updated 2026-11-08, for the game's grid battles (DEC-048):** rooms now grow past one screen in both directions, often 2 x 2
-   screens. 0063 extended one direction per room; trial [0128](../backlog/m4/0128-m4-trial-room-extended-both-ways.md) joins a
+   screens. 0063 extended one direction per room; trial [0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md) joins a
    corner piece to two neighbours and takes the room to export. The join tool moves to M4 without a Provider, because the
    budget is $0 and the pieces are made in the image model's own UI anyway. `harbor_front`'s 1,533 collision pieces were an
-   anomaly of the brush tool at the time, and the Owner expects normal rooms to have far fewer; 0128 counts them on a full
+   anomaly of the brush tool at the time, and the Owner expects normal rooms to have far fewer; 0134 counts them on a full
    room, and a lighter collision export (one `ConcavePolygonShape2D` per Mask) is planned only if the count is high.
 8. **Room Looks beyond one picture and added collision** (§6.1, M4). Not settled: whether Looks stack or combine (an unbuilt
    station with the lamps off, Lost-and-Found's `relight`); whether a Look can take collision away (rubble cleared) or change

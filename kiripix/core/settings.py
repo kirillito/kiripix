@@ -95,6 +95,10 @@ class CameraPreset(_Strict):
 
     elevation: float = Field(30, gt=0, le=90)  # degrees above the ground plane
     directions: Literal[4, 8] = 8
+    # The key light, fixed to the camera so it sits in the same place on screen for every character: its angle round the view
+    # axis from the top of the screen (90 right, -45 upper left), and how far it leans toward the camera.
+    light_angle: float = Field(-45, ge=-180, le=180)
+    light_tilt: float = Field(35, ge=0, le=90)
 
 
 def _default_cameras() -> dict[str, CameraPreset]:
@@ -130,14 +134,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 2
+PROJECT_SCHEMA_VERSION = 3
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -168,7 +172,13 @@ def _add_character_section(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 2}
 
 
-PROJECT_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version, 1: _add_character_section}
+def _add_camera_light(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 2's camera presets had no key light; version 3 adds `light_angle` and `light_tilt` (ticket 0105), whose
+    defaults (-45 and 35) apply."""
+    return {**document, "schema_version": 3}
+
+
+PROJECT_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 

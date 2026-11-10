@@ -17,6 +17,7 @@ def test_init_creates_the_documented_layout(kpx: Kiripix) -> None:
     assert "*.png filter=lfs diff=lfs merge=lfs -text" in attributes
     assert "history.jsonl merge=union text eol=lf" in attributes
     assert "**/decisions/*.jsonl merge=union text eol=lf" in attributes
+    assert "imported.jsonl merge=union text eol=lf" in attributes
     ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "work/" in ignored and ".kiripix/" in ignored
 
@@ -25,7 +26,7 @@ def test_init_writes_defaults_that_load(kpx: Kiripix) -> None:
     kpx.json("init")
     settings = tomllib.loads((kpx.cwd / "kiripix.toml").read_text(encoding="utf-8"))
 
-    assert settings["schema_version"] == 2
+    assert settings["schema_version"] == 3
     assert settings["character"]["height"] == 52
     assert settings["project"]["tile"] == 16
     assert settings["project"]["palette"] == "style/palette.gpl"

@@ -16,9 +16,11 @@ from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core.assets import Asset, load_asset
 from kiripix.core.errors import fail
+from kiripix.core.file_inspect import inspect_file
 from kiripix.core.layer_stats import layer_stats, piece_numbers
 from kiripix.core.project import find_project
 from kiripix.core.reach_probe import reach_report
+from kiripix.core.graph import ProgressEvent
 from kiripix.core.segmenting import click_preview, flood_preview, segment_preview
 from kiripix.ops import mask_runs
 from kiripix.recipes.base import BoxCorners, ClickPoint
@@ -31,7 +33,7 @@ class ProbeInput(BaseModel):
     args: list[str] = Field([], description="The Probe's own arguments. segment-preview takes clicks in target pixels: "
                                             "x,y for a positive one and x,y,neg for a negative one, as does click-preview; or one box, x0,y0,x1,y1, "
                                             "the pixels from (x0, y0) to (x1, y1) both included. flood-preview takes "
-                                            "x,y,tolerance, one or more. layer-stats and reach take none.")
+                                            "x,y,tolerance, one or more. layer-stats and reach take none. inspect takes one file name.")
     cpu: bool = Field(False, description="Run any Runner on the CPU, without the GPU lock.")
     summary: bool = Field(False, description="Leave `runs` out of a Mask answer; `pixels` and `box` stay.")
 
@@ -175,6 +177,21 @@ def _reach(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, A
     if arguments.args:
         raise fail("input.invalid", "reach takes no arguments", fix=f"kiripix probe reach {asset.id}")
     return reach_report(find_project(context.cwd), asset)
+
+
+@probe("inspect", summary="What a character's file holds: its armature, bone names, frame rate and actions with their frame "
+                          "ranges. The file is a Model Variant, a clip source or `rigged`, by the name `show` gives it. "
+                          "Runs Blender once per file; the answer is cached.")
+def _inspect(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    if len(arguments.args) != 1:
+        raise fail("input.invalid", "inspect takes one file, by the name `show` gives it",
+                   fix=f"kiripix show {asset.id}")
+
+    def progress(done: int, total: int, message: str) -> None:
+        context.progress(ProgressEvent(event="probe_progress", stage=None, done=done, total=total, message=message))
+
+    return inspect_file(find_project(context.cwd), asset, arguments.args[0], progress=progress,
+                        check_cancel=context.cancel.check)
 
 
 class ProbeData(BaseModel):

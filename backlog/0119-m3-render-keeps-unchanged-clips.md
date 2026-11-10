@@ -1,10 +1,10 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: character-pipeline
 type: ticket
 parent: 0097-m3-characters.md
-depends_on: [0104-m3-render-stage.md]
+depends_on: [0104-m3-render-stage.md, 0126-m3-stage-reads-its-previous-output.md]
 ---
 
 # M3: `render` keeps the clips that didn't change
@@ -26,8 +26,8 @@ Not yet in 0097's wave table; it goes after 0104.
 
 ## Acceptance criteria
 
-- [ ] CLI seam on the fake renderer: add a clip, and only its frames are rendered (the fake counts them). A camera change
+- [x] CLI seam on the fake renderer: add a clip, and only its frames are rendered (the fake counts them). A camera change
       renders everything.
-- [ ] The output is byte-equal to a full rebuild's.
+- [x] The output is byte-equal to a full rebuild's.
 
 Budget: 200–350k tokens.

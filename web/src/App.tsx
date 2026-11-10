@@ -33,6 +33,7 @@ import { ABOVE_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } f
 import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
 import { LAYERS_DECISION, LAYERS_STAGE, LayersPanel } from "./layerScreen";
 import { layerIdOf } from "./sortView";
+import { CHARACTER_KIND, CHARACTER_SCREENS, CharacterScreen, type ImportRole } from "./characterScreens";
 import { WorkStrip, type Working } from "./workStrip";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
@@ -207,6 +208,8 @@ export function App() {
   const isLayers =
     current === LAYERS_STAGE && (description?.decisions.some((decision) => decision.name === LAYERS_DECISION) ?? false);
   const isReach = current === REACH_STAGE && show?.kind === "room";
+  const isCharacterScreen =
+    show?.kind === CHARACTER_KIND && current !== null && CHARACTER_SCREENS.includes(current) && description !== undefined;
   const isFootprint = description?.decisions.some((decision) => decision.name === FOOTPRINT_DECISION) ?? false;
 
   // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
@@ -332,9 +335,19 @@ export function App() {
     },
     [asset, busy, perform],
   );
-  const importFiles = async (files: File[]) => {
-    for (const file of files) await perform(() => callWithFile("import", { asset }, "file", file), `Importing ${file.name}`);
+  const importFiles = async (files: File[], role: ImportRole = "variant") => {
+    for (const file of files) {
+      await perform(() => callWithFile("import", { asset, role }, "file", file), `Importing ${file.name}`);
+    }
   };
+  // A character's Decisions (a `bone`, a `clip`): one `decide` each, nothing run after it.
+  const decideCharacter = useCallback(
+    (name: string, data: Record<string, unknown>, label: string) => {
+      const decision = JSON.stringify({ decision: name, data });
+      void perform(() => call("decide", { asset, stage: current, decision }), label);
+    },
+    [asset, current, perform],
+  );
   const step = useCallback(
     (command: "undo" | "redo") => {
       if (!busy) void perform(
@@ -442,6 +455,8 @@ export function App() {
   const problemsShown = readable(data.problems, [...stageChecks, ...noticeShown]);
   const wantsReview = detail?.status === "needs-review";
   const wantsRerun = next?.stage === detail?.stage && !!next?.command?.includes("--rerun");
+  // The rig screen lists the Mixamo steps itself, so the panel doesn't say them twice.
+  const stepsShown = isCharacterScreen && current === "rig" && !!next?.owner_action && next.stage === detail?.stage;
   const asking = pressing([...stageChecks, ...noticeShown, ...problemsShown]);
   const nextLine =
     next && next.stage === detail?.stage && next.owner_action
@@ -508,6 +523,20 @@ export function App() {
       <main>
         {!asset || !show ? (
           <StatusBoard status={data.status} filter={filter} onOpen={open} />
+        ) : isCharacterScreen && detail && description ? (
+          <CharacterScreen
+            key={`${asset}/${current}`}
+            stage={current ?? ""}
+            show={show}
+            detail={detail}
+            description={description}
+            ownerAction={next && next.stage === detail.stage ? next.owner_action : null}
+            refreshes={data.refreshes}
+            disabled={busy}
+            onPick={pick}
+            onImport={(files, role) => void importFiles(files, role)}
+            decide={decideCharacter}
+          />
         ) : isSource ? (
           <VariantGrid show={show} onPick={pick} onImport={(files) => void importFiles(files)} />
         ) : (
@@ -526,7 +555,7 @@ export function App() {
             <h1 data-testid="stage-title">{detail.stage}</h1>
             <p>{description.description}</p>
             {detail.reason && <p className="reason">{detail.reason}</p>}
-            {(nextLine || (next && next.stage === detail.stage && next.command)) && (
+            {(nextLine || (next && next.stage === detail.stage && next.command)) && !stepsShown && (
               <div className="next-line" data-testid="next-hint">
                 <span>{nextLine ?? <code>{next?.command}</code>}</span>
                 {!cancellable && wantsReview && (
@@ -614,7 +643,7 @@ export function App() {
                 />
               ))}
             </fieldset>
-            {!isSource && image && (
+            {!isSource && !isCharacterScreen && image && (
               <label className="toggle">
                 <input
                   type="checkbox"

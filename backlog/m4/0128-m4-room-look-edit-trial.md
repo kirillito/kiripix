@@ -3,7 +3,7 @@ status: todo
 milestone: M4
 agent: none
 type: trial
-parent: 0119-m4-room-looks.md
+parent: 0127-m4-room-looks.md
 ---
 
 # M4: trial: what does an image model's edit of a room really change?
@@ -31,4 +31,4 @@ For each edit, measured with numpy in a scratch script, outside the part meant t
 ## Acceptance criteria
 
 - [ ] Three edits measured, the numbers recorded in this ticket.
-- [ ] A recommendation for `register`'s limits, the drift tolerance and `regrade`'s default, written into 0122.
+- [ ] A recommendation for `register`'s limits, the drift tolerance and `regrade`'s default, written into 0130.

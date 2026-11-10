@@ -3,13 +3,13 @@ status: todo
 milestone: M4
 agent: imaging-engineer
 type: ticket
-parent: 0127-m4-rooms-for-grid-battles.md
+parent: 0133-m4-rooms-for-grid-battles.md
 ---
 
 # M4: join Ops: register, tone and seam a piece onto a Source
 
 Spec §14 (M4) and §16 (open decision 7). Trial [0063](../m2/0063-m2-multi-screen-source-trial.md) found that a join needs three
-steps, and all three are needed. [0128](0128-m4-trial-room-extended-both-ways.md) adds corner pieces. Pure Ops in `kiripix/ops`:
+steps, and all three are needed. [0134](0134-m4-trial-room-extended-both-ways.md) adds corner pieces. Pure Ops in `kiripix/ops`:
 numpy in and out, no I/O.
 
 ## What to build

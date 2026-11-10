@@ -8,8 +8,9 @@ Run it from the repository root; it overwrites the files in `tests/fixtures/char
 
 Writes:
 - `rigged.glb`, `rigged.fbx`: a tiny humanoid (about 100 triangles), Mixamo-style bone names (`mixamorig:Hips`, ...)
-  under a `root` bone at ground level (the pivot is the ground point under it), two coloured parts (a `skin`
-  and a `cloth` material), and two short actions: `idle` (stationary) and `walk` (the feet move in place).
+  under a `root` bone at ground level (the pivot is the ground point under it), three coloured parts (a `skin`, a `cloth` and a red `nose` material, the nose on the face's -Y side), and two short actions: `idle` (stationary) and `walk` (the feet move in place).
+- `rigged_stray.glb`: `rigged.glb` plus an `Icosphere` mesh that isn't skinned (what the glTF exporter writes for a bone's
+  custom shape), far taller than the figure, for the `model.unskinned_mesh` warning (ticket 0120).
 - `no_rig.glb`, `no_rig.fbx`: the same body parts with no armature, for the `rig` Stage's "no rig" path.
 
 The geometry is made here from boxes, so the files carry no third-party licence. Everything is deterministic.
@@ -58,9 +59,12 @@ PARTS = [
     ("leg_r", "mixamorig:RightUpLeg", "cloth", (-0.1, 0, 0.5), (0.12, 0.12, 0.9)),
     ("foot_l", "mixamorig:LeftFoot", "skin", (0.1, -0.05, 0.04), (0.12, 0.3, 0.08)),
     ("foot_r", "mixamorig:RightFoot", "skin", (-0.1, -0.05, 0.04), (0.12, 0.3, 0.08)),
+    # the front: a red nose block on the face's -Y side, so the Model's facing can be seen (ticket 0122); it sticks out 3 cm
+    # beyond the head and stays within the feet's reach, so the height and the footprint don't change
+    ("nose", "mixamorig:Head", "nose", (0, -0.13, 1.56), (0.1, 0.06, 0.1)),
 ]
 
-COLOURS = {"skin": (0.9, 0.7, 0.55, 1.0), "cloth": (0.15, 0.35, 0.8, 1.0)}
+COLOURS = {"skin": (0.9, 0.7, 0.55, 1.0), "cloth": (0.15, 0.35, 0.8, 1.0), "nose": (0.8, 0.02, 0.02, 1.0)}
 
 
 def clear_scene() -> None:
@@ -187,7 +191,14 @@ def export(folder: Path, stem: str, with_animation: bool) -> None:
                              bake_anim_use_nla_strips=False, add_leaf_bones=False)
 
 
-def build_rigged(folder: Path) -> None:
+def add_stray_mesh() -> None:
+    """An unskinned, unparented sphere above the figure, as a glTF export writes a bone's custom shape."""
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=1.0, location=(0, 0, 2.0))
+    bpy.context.active_object.name = "Icosphere"
+
+
+def build_rigged(folder: Path, stray: bool = False) -> None:
     clear_scene()
     mats = materials()
     mesh = body(mats)
@@ -196,6 +207,11 @@ def build_rigged(folder: Path) -> None:
     modifier = mesh.modifiers.new("Armature", "ARMATURE")
     modifier.object = rig
     actions(rig)
+    if stray:
+        add_stray_mesh()
+        bpy.ops.export_scene.gltf(filepath=str(folder / "rigged_stray.glb"), export_format="GLB", export_yup=True,
+                                  export_animation_mode="ACTIONS")
+        return
     export(folder, "rigged", True)
 
 
@@ -211,6 +227,7 @@ def main() -> None:
     folder = Path(given[0]) if given else Path(__file__).resolve().parent / "characters"
     folder.mkdir(parents=True, exist_ok=True)
     build_rigged(folder)
+    build_rigged(folder, stray=True)
     build_no_rig(folder)
 
 

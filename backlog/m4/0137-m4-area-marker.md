@@ -3,7 +3,7 @@ status: todo
 milestone: M4
 agent: core-engineer
 type: ticket
-parent: 0127-m4-rooms-for-grid-battles.md
+parent: 0133-m4-rooms-for-grid-battles.md
 ---
 
 # M4: an `area` Marker: a box on the room with a stable ID
@@ -30,7 +30,7 @@ areas.
 ## Acceptance criteria
 
 - [ ] CLI seam on a test room: each finding above, an area moved by a second Decision, and `undo`.
-- [ ] The ID is frozen once exported, as other Marker IDs are (checked once [0132](0132-m4-export-area.md) exports it).
+- [ ] The ID is frozen once exported, as other Marker IDs are (checked once [0138](0138-m4-export-area.md) exports it).
 - [ ] `describe room --stage place` shows the schema, and its contract sample passes.
 
 Budget: 200–300k tokens.

@@ -3,8 +3,8 @@ status: todo
 milestone: M4
 agent: godot-export
 type: ticket
-parent: 0127-m4-rooms-for-grid-battles.md
-depends_on: [0131-m4-area-marker.md]
+parent: 0133-m4-rooms-for-grid-battles.md
+depends_on: [0137-m4-area-marker.md]
 ---
 
 # M4: export an `area` Marker to Godot

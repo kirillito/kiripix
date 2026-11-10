@@ -3,16 +3,16 @@ status: todo
 milestone: M4
 agent: godot-export
 type: ticket
-parent: 0119-m4-room-looks.md
+parent: 0127-m4-room-looks.md
 ---
 
 # M4: export a room's Looks
 
-Spec §9 (the Room row, Looks); ADR 0009. Needs [0122](0122-m4-looks-stage.md).
+Spec §9 (the Room row, Looks); ADR 0009. Needs [0130](0130-m4-looks-stage.md).
 
 ## What to build
 
-- `room.json`'s next `schema_version` (after [0131](0131-m4-area-marker.md) and [0134](0134-m4-export-masks-and-room-json.md), whichever lands last): `looks`, each with `id`, `condition`, `file`, `box`, `pieces` (`layer`, `file`) and `collision`
+- `room.json`'s next `schema_version` (after [0137](0137-m4-area-marker.md) and [0140](0140-m4-export-masks-and-room-json.md), whichever lands last): `looks`, each with `id`, `condition`, `file`, `box`, `pieces` (`layer`, `file`) and `collision`
   (`solid` shapes, as for the room). An old `room.json` is refused and the finding names the rebuild (no production
   rooms through M3).
 - **The scene:**

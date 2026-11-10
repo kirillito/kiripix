@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 2
+PROJECT_TEMPLATE = """schema_version = 3
 
 [project]
 name = "{name}"
@@ -92,6 +92,8 @@ height = 52                    # target height in px; a character's own `height`
 [character.camera.top34_8]     # a camera preset, picked by name by a character's `camera` parameter
 elevation = 30                 # degrees above the ground plane
 directions = 8
+light_angle = -45              # the toon key light: degrees round the view from the top, -45 = upper left
+light_tilt = 35                # and toward the camera
 
 [providers]
 default = "import"             # import | openai | gemini | pixellab | local-sd
@@ -131,6 +133,7 @@ GITATTRIBUTES = [
     "*.blend filter=lfs diff=lfs merge=lfs -text",
     "history.jsonl merge=union text eol=lf",
     "**/decisions/*.jsonl merge=union text eol=lf",
+    "imported.jsonl merge=union text eol=lf",
 ]
 
 GITIGNORE = ["work/", ".kiripix/", ".env"]

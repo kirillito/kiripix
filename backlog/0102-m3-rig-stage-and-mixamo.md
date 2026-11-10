@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: character-pipeline
 type: ticket
@@ -25,7 +25,7 @@ ticket; until the Owner answers, they get a finding and nothing else.
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake: a rigged fixture goes `done`; an unrigged one is `needs-input` with exit 3 and the steps in its
+- [x] CLI seam, on the fake: a rigged fixture goes `done`; an unrigged one is `needs-input` with exit 3 and the steps in its
       `owner_action`; adding the rigged file makes it `done`.
-- [ ] A rigged file made from another Model fails `rig.model_mismatch`.
-- [ ] Marked `blender` test on [0100](0100-m3-character-test-fixtures.md)'s two fixtures.
+- [x] A rigged file made from another Model fails `rig.model_mismatch`.
+- [x] Marked `blender` test on [0100](0100-m3-character-test-fixtures.md)'s two fixtures.

@@ -9,6 +9,8 @@ caller holds the Asset lock.
 
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
 from kiripix.checks import Position
 from kiripix.core import atomic, editing, journal
 from kiripix.core.assets import Asset
@@ -76,10 +78,62 @@ def _model_suffix(asset: Asset, file: Path, shown: str) -> str:
     return suffix
 
 
+IMPORTED_FILE = "imported.jsonl"  # in the Asset folder, not `src/`: a Stage hashes `src/*`, and a name isn't an input
+IMPORTED_SCHEMA_VERSION = 1
+
+
+class ImportedName(BaseModel):
+    """One line of `imported.jsonl`: the file name a stored file was imported with. The newest line for a file wins."""
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int
+    file: str  # the stored file, relative to the Asset folder, with forward slashes
+    imported_as: str
+
+
+def _relative(asset: Asset, path: Path) -> str:
+    return path.relative_to(asset.dir).as_posix()
+
+
+def imported_names(asset: Asset) -> dict[str, str]:
+    """The original file name of each stored file (key: its path relative to the Asset folder), from `imported.jsonl`.
+    A file imported before the record existed isn't listed."""
+    path = asset.dir / IMPORTED_FILE
+    if not path.is_file():
+        return {}
+    names: dict[str, str] = {}
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = ImportedName.model_validate_json(line)
+        except ValidationError as error:
+            raise fail("import.record_invalid", f"{asset.id}/{IMPORTED_FILE} line {number} is not valid: {error.errors()[0]['msg']}",
+                       owner_action=f"Fix or remove line {number} of {IMPORTED_FILE} in {asset.id}.") from None
+        if entry.schema_version != IMPORTED_SCHEMA_VERSION:
+            raise fail("import.record_invalid", f"{asset.id}/{IMPORTED_FILE} line {number} has schema_version "
+                       f"{entry.schema_version}; this Kiripix reads {IMPORTED_SCHEMA_VERSION}",
+                       owner_action="Update Kiripix.")
+        names[entry.file] = entry.imported_as
+    return names
+
+
+def imported_as(asset: Asset, path: Path) -> str | None:
+    return imported_names(asset).get(_relative(asset, path))
+
+
 def import_file(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path, bool]:
     """Add a file to the Asset in a role. Returns its name, its path, and whether anything new was stored.
+    Records the name the file was imported with (the newer name, if the same content comes again)."""
+    name, path, created = _import(asset, file, shown, role)
+    if imported_as(asset, path) != file.name:
+        atomic.append_jsonl_many(asset.dir / IMPORTED_FILE, [
+            {"schema_version": IMPORTED_SCHEMA_VERSION, "file": _relative(asset, path), "imported_as": file.name}])
+    return name, path, created
 
-    A character takes Models (`.glb`, `.fbx`, `.blend`) and a room or Prop images; the wrong one is refused with
+
+def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path, bool]:
+    """A character takes Models (`.glb`, `.fbx`, `.blend`) and a room or Prop images; the wrong one is refused with
     the Kind that takes it."""
     data = _read_for_import(file, shown)
     position = Position(asset=asset.id, file=shown)

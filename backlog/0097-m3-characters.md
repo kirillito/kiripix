@@ -114,7 +114,7 @@ Not decided here. A ticket that depends on one says so, and stops until it's ans
 |---|---|---|
 | Q1 | **Answered 2026-11-07: not pinned.** A render is deterministic work, with the Blender version and render settings among its inputs (above). | [0098](0098-m3-blender-renders-and-pinning.md), every Stage that runs Blender |
 | Q2 | **Answered 2026-11-07: a 1 px silhouette from the object mask,** in `finish` after `palette` (above). Inverted hull only if the Owner dislikes it in 0106; Freestyle isn't tried. | [0106](0106-m3-outline-method-trial.md) |
-| Q3 | **Answered 2026-11-07: deferred to M4.** The Owner's rule was M3 only if under 1M tokens; the estimate was 0.7 to 1.2M, and the models that fit 8 GB rig badly. The trial is now [0126](m5/0126-m5-image-to-3d-trial.md), in M5, beside Providers (moved from M4 on 2026-11-08). | 0126 |
+| Q3 | **Answered 2026-11-07: deferred to M4.** The Owner's rule was M3 only if under 1M tokens; the estimate was 0.7 to 1.2M, and the models that fit 8 GB rig badly. The trial is now [0144](m5/0144-m5-image-to-3d-trial.md), in M5, beside Providers (moved from M4 on 2026-11-08). | 0144 |
 | Q4 | **Answered 2026-11-07: a Quaternius character (CC0),** not a blocky or toy-like one. Its base body and outfit are separate meshes on one skeleton, so they are joined into one `.blend` in Blender first; that file is the Model Kiripix imports. Upload it to Mixamo once first to check that it rigs cleanly. Which character and outfit is still the Owner's pick. | the gate, 0106 |
 | Q5 | **Answered 2026-11-07:** snake_case verbs (`attack`, not `attack_1`) and `<clip>_<dir>` with compass suffixes (above). | 0103, 0104, 0113 |
 | Q6 | **Answered 2026-11-07: all 8 directions are rendered,** none mirrored, so an asymmetric character stays right. | 0104 |
@@ -171,16 +171,17 @@ Child tickets: [0098](0098-m3-blender-renders-and-pinning.md) to [0116](0116-m3-
 | 4 | 0102 |
 | 5 | 0103, 0114 |
 | 6 | 0104 |
-| 7 | 0105, 0110 |
-| 8 | 0106 (the trial), then 0109 |
+| 7 | 0105, 0110; 0126 (core hook), then 0119; 0120, 0121, 0122 (found in 0104 and 0114, added 2026-11-09); 0123 and 0124 alongside |
+| 8 | 0106 (the trial), then 0109; 0125 once 0122 to 0124 are done |
 | 9 | 0111 |
-| 10 | 0112, then 0115 |
+| 10 | 0112, then 0115 (after 0125) |
 | 11 | 0113 |
 | 12 | 0116 |
 | 13 | 0117, the gate |
 
 **Don't run these at the same time, because they edit the same files:**
-- The UI tickets 0080, 0082, 0083, 0092, 0093, 0114 and 0115 (`web/src/App.tsx` and the canvas).
-- 0101 to 0105 and 0110 to 0112 (`kiripix/recipes/character.py`); they are chained anyway.
+- The UI tickets 0080, 0082, 0083, 0092, 0093, 0114, 0125 and 0115 (`web/src/App.tsx` and the canvas).
+- 0101 to 0105, 0110 to 0112, 0119 and 0120 to 0122 (`kiripix/recipes/character.py` and `kiripix/blender/`).
+- 0123 and 0103's `read_actions.py`: 0123 extends it, so not alongside a ticket that changes `clips`.
 - 0107, 0108 and 0109 (`kiripix/ops/__init__.py`).
 - 0096 and 0113 (`kiripix/export/`).

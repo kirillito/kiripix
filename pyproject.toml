@@ -68,6 +68,16 @@ check_untyped_defs = true
 module = "onnxruntime"  # ships no type stubs
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["bpy", "bpy_extras", "bpy_extras.*", "mathutils"]  # only Blender has them: the scripts in kiripix/blender run inside it
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "kiripix.blender.*"  # bpy is untyped here
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_unimported = false
+
 # The import rule (spec §13). Layers: a module may import the layers below it, never above.
 [tool.importlinter]
 root_package = "kiripix"
@@ -85,6 +95,23 @@ layers = [
     "kiripix.checks",
     "kiripix.ops",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Nothing imports the bpy scripts (they run only inside Blender)"
+type = "forbidden"
+source_modules = [
+    "kiripix.cli",
+    "kiripix.server",
+    "kiripix.commands",
+    "kiripix.export",
+    "kiripix.core",
+    "kiripix.recipes",
+    "kiripix.runners",
+    "kiripix.providers",
+    "kiripix.checks",
+    "kiripix.ops",
+]
+forbidden_modules = ["kiripix.blender"]
 
 [[tool.importlinter.contracts]]
 name = "Adapters use only commands"

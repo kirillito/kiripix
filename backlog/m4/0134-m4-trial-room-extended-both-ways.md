@@ -3,7 +3,7 @@ status: todo
 milestone: M4
 agent: none
 type: trial
-parent: 0127-m4-rooms-for-grid-battles.md
+parent: 0133-m4-rooms-for-grid-battles.md
 ---
 
 # M4: trial: a room extended in both directions, taken to export

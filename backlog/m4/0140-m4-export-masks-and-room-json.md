@@ -3,7 +3,7 @@ status: todo
 milestone: M4
 agent: godot-export
 type: ticket
-parent: 0127-m4-rooms-for-grid-battles.md
+parent: 0133-m4-rooms-for-grid-battles.md
 ---
 
 # M4: the Masks as images, and `room.json`, in the game
@@ -17,7 +17,7 @@ from them is lossy at a cell's edge.
 
 - The room's `export` Stage copies the `solid` and `pit` Masks into `out/export/masks/`, and the Exporter writes them beside the
   scene as `masks/solid.png` and `masks/pit.png`: 1-bit, at the room's size. `room.json` goes beside them, and lists the Mask files.
-- Once Looks are exported ([0123](0123-m4-looks-export.md)), each Look's own `solid` goes in the same folder as
+- Once Looks are exported ([0131](0131-m4-looks-export.md)), each Look's own `solid` goes in the same folder as
   `masks/<look>.solid.png`.
 - The scene's root gets `metadata/kiripix_room` with the `res://` path of `room.json`, so the game finds everything from the scene.
 - The Manifest lists the new files, so ownership, `--force`, `--adopt` and `--prune` apply to them.

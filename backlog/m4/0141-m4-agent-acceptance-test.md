@@ -3,8 +3,8 @@ status: todo
 milestone: M4
 agent: qa-engineer
 type: ticket
-parent: 0127-m4-rooms-for-grid-battles.md
-depends_on: [0131-m4-area-marker.md, 0132-m4-export-area.md, 0134-m4-export-masks-and-room-json.md, 0130-m4-extend-commands.md]
+parent: 0133-m4-rooms-for-grid-battles.md
+depends_on: [0137-m4-area-marker.md, 0138-m4-export-area.md, 0140-m4-export-masks-and-room-json.md, 0136-m4-extend-commands.md]
 ---
 
 # M4: the agent acceptance test takes a room with an area

@@ -74,6 +74,8 @@ export interface ShowData {
   body: Body;
   variants: { name: string; file: string }[];
   picked: string | null;
+  clip_sources: { name: string; file: string }[]; // a character's animation files, by file stem
+  rigged: { name: string; file: string } | null; // a character's rigged file
   stages: StageDetail[];
 }
 
@@ -101,7 +103,9 @@ export interface StageDescription {
   name: string;
   description: string;
   params: ParamSpec[];
-  decisions: { name: string; description: string; entry_schema?: { properties?: Record<string, { minimum?: number; maximum?: number; pattern?: string }> } }[];
+  decisions: { name: string; description: string; entry_schema?: {
+      properties?: Record<string, { minimum?: number; maximum?: number; pattern?: string; enum?: string[] }>;
+    } }[];
   checks: { code: string; description: string }[];
   owner_input: string | null;
   implemented: boolean;

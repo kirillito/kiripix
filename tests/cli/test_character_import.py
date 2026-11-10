@@ -158,9 +158,23 @@ def test_an_old_settings_file_migrates_in_memory_and_the_stage_takes_a_height(pr
     assert project.json("status")["ok"]
     assert path.read_text(encoding="utf-8") == old
     render = {s["name"]: s for s in project.json("describe", "character")["data"]["kinds"][0]["stages"]}["render"]
-    assert {p["name"] for p in render["params"]} == {"height", "camera"}
+    assert {p["name"] for p in render["params"]} == {"height", "camera", "bands", "shadow"}
     project.json("set", HERO, "render", "height=40")
     assert project.json("show", HERO)["data"]["stages"][3]["params"]["height"] == 40
+
+
+def test_a_version_2_settings_file_migrates_in_memory_and_gets_the_default_light(project: Kiripix) -> None:
+    path = project.cwd / "kiripix.toml"
+    text = path.read_text(encoding="utf-8")
+    assert "schema_version = 3" in text  # ticket 0105 added the key light to the camera presets
+    old = text.replace("schema_version = 3", "schema_version = 2")
+    for key in ("light_angle", "light_tilt"):
+        old = "\n".join(line for line in old.splitlines() if not line.startswith(key)) + "\n"
+    path.write_text(old, encoding="utf-8")
+    hero(project)
+
+    assert project.json("status")["ok"]
+    assert path.read_text(encoding="utf-8") == old  # migrated in memory only; the file is the Owner's
 
 
 def test_the_character_settings_are_written_by_init_and_checked(project: Kiripix) -> None:
@@ -176,3 +190,43 @@ def test_the_character_settings_are_written_by_init_and_checked(project: Kiripix
     assert finding["code"] == "config.unknown_key" and finding["position"]["field"] == "character.hieght"
     path.write_text(text.replace("elevation = 30", "elevation = 0"), encoding="utf-8")
     assert project.json("status", expect=1)["findings"][0]["code"] == "config.invalid"
+
+
+def test_show_gives_each_file_its_imported_name_and_size(project: Kiripix) -> None:
+    folder = hero(project, "rigged.fbx")
+    shutil.copy(FIXTURES / "rigged.fbx", project.cwd / "hero_v2.fbx")
+    expected = (FIXTURES / "rigged.fbx").stat().st_size
+    project.json("import", HERO, "hero_v2.fbx")
+    project.json("import", HERO, "rigged.fbx", "--role", "clip-source")
+    project.json("import", HERO, "hero_v2.fbx", "--role", "rigged")
+
+    data = project.json("show", HERO)["data"]
+    assert [(v["imported_as"], v["size"]) for v in data["variants"]] == [("hero_v2.fbx", expected)]
+    assert [(c["name"], c["imported_as"], c["size"]) for c in data["clip_sources"]] == [("rigged", "rigged.fbx", expected)]
+    assert (data["rigged"]["imported_as"], data["rigged"]["size"]) == ("hero_v2.fbx", expected)
+    assert not (folder / "src" / "imported.jsonl").exists()
+
+    # the same content under a new name records the newer name, and nothing is rebuilt for it
+    before = model_hash(project)
+    shutil.copy(FIXTURES / "rigged.fbx", project.cwd / "hero_old.fbx")
+    assert not project.json("import", HERO, "hero_old.fbx")["data"]["created"]
+    assert project.json("show", HERO)["data"]["variants"][0]["imported_as"] == "hero_old.fbx"
+    assert model_hash(project) == before
+
+
+def test_a_project_from_before_the_record_gives_null(project: Kiripix) -> None:
+    folder = hero(project, "rigged.fbx")
+    project.json("import", HERO, "rigged.fbx")
+    (folder / "imported.jsonl").unlink()
+
+    result = project.json("show", HERO)["data"]["variants"][0]
+    assert result["imported_as"] is None and result["size"] > 0
+
+
+def test_an_image_variant_has_its_imported_name(project: Kiripix) -> None:
+    project.json("new", "prop", "crate")
+    Image.new("RGBA", (8, 8), (200, 0, 0, 255)).save(project.cwd / "crate_v3.png")
+    project.json("import", "prop.crate", "crate_v3.png")
+
+    variant = project.json("show", "prop.crate")["data"]["variants"][0]
+    assert variant["imported_as"] == "crate_v3.png" and variant["size"] > 0

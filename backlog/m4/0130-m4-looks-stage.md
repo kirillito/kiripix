@@ -3,13 +3,13 @@ status: todo
 milestone: M4
 agent: imaging-engineer
 type: ticket
-parent: 0119-m4-room-looks.md
+parent: 0127-m4-room-looks.md
 ---
 
 # M4: the `looks` Stage
 
-Spec §6.1 (the `looks` row and Looks); ADR 0009. After [0120](0120-m4-room-look-edit-trial.md)'s numbers, and with
-[0121](0121-m4-look-variants.md)'s Variants.
+Spec §6.1 (the `looks` row and Looks); ADR 0009. After [0128](0128-m4-room-look-edit-trial.md)'s numbers, and with
+[0129](0129-m4-look-variants.md)'s Variants.
 
 ## What to build
 

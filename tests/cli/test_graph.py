@@ -206,7 +206,17 @@ def test_a_stage_that_needs_input_stops_the_run_with_exit_3(project: Kiripix) ->
     assert result["data"]["results"] == [{**result["data"]["results"][0], "stage": "model", "outcome": "needs-input"}]
     finding = result["findings"][0]
     assert finding["code"] == "stage.needs_input"
-    assert finding["fix"] is None and "M3" in finding["owner_action"]
+    assert finding["fix"] == "kiripix import character.hero <file>" and finding["owner_action"] is None
+
+
+def test_a_stage_not_built_yet_says_until_when(project: Kiripix) -> None:
+    project.json("new", "character", "hero")
+
+    finish = next(s for s in project.json("status", "--kind", "character")["data"]["assets"][0]["stages"]
+              if s["stage"] == "finish")
+
+    assert finish == {"stage": "finish", "status": "needs-input",
+                      "reason": "the character Stage 'finish' is not implemented until M3"}
 
 
 def test_status_filters_by_kind(project: Kiripix) -> None:
@@ -217,7 +227,7 @@ def test_status_filters_by_kind(project: Kiripix) -> None:
 
     assert [a["asset"] for a in assets] == ["character.hero"]
     assert assets[0]["stages"][0] == {"stage": "model", "status": "needs-input",
-                                      "reason": "the character Stage 'model' is not implemented until M3"}
+                                      "reason": "no Source picked"}
 
 
 def test_status_with_an_unknown_kind(project: Kiripix) -> None:
@@ -282,3 +292,46 @@ def test_progress_streams_on_stderr_and_stdout_stays_one_object(project: Kiripix
     assert {"event", "stage", "done", "total", "message"} <= set(events[0])
     assert ("stage_start", "copy") == (events[0]["event"], events[0]["stage"])
     assert any(e["event"] == "stage_progress" and e["message"] == "held" for e in events)
+
+
+def _tree(folder: object) -> dict[str, bytes]:
+    from pathlib import Path
+    root = Path(str(folder))
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def test_a_stage_sees_its_previous_output_only_on_a_rebuild(project: Kiripix) -> None:
+    folder = make_demo(project)
+    saw = folder / "saw-previous.txt"
+
+    project.json("run", "demo.a")
+    assert saw.read_text(encoding="utf-8") == "none"
+
+    project.json("run", "demo.a", "hold", "--force")
+    assert saw.read_text(encoding="utf-8") == "held"  # the first build's out.txt
+
+
+def test_a_stage_writing_to_previous_does_not_survive_the_swap(project: Kiripix) -> None:
+    folder = make_demo(project)
+    project.json("run", "demo.a")
+    (folder / "poke-previous").write_text("", encoding="utf-8")
+
+    project.json("run", "demo.a", "hold", "--force")
+
+    assert not (folder / "work" / "hold" / "poked.txt").exists()
+    assert not [p for p in (folder / "work").iterdir() if p.name.startswith(".tmp")]
+
+
+def test_an_interrupted_rebuild_leaves_the_old_output_byte_equal(project: Kiripix) -> None:
+    from test_locks import wait_for
+    folder = make_demo(project)
+    project.json("run", "demo.a")
+    before = _tree(folder / "work" / "hold")
+    (folder / "hold").write_text("", encoding="utf-8")
+    process = project.popen("run", "demo.a", "hold", "--force")
+    wait_for(folder / "holding")
+
+    process.kill()
+    process.wait()
+
+    assert _tree(folder / "work" / "hold") == before

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: ui-engineer
 type: ticket

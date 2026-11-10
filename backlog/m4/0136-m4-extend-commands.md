@@ -3,8 +3,8 @@ status: todo
 milestone: M4
 agent: core-engineer
 type: ticket
-parent: 0127-m4-rooms-for-grid-battles.md
-depends_on: [0129-m4-join-ops.md]
+parent: 0133-m4-rooms-for-grid-battles.md
+depends_on: [0135-m4-join-ops.md]
 ---
 
 # M4: `extend`: the canvas for the next piece, and the join into a Variant
@@ -17,7 +17,7 @@ Provider. This tool doesn't wait for Providers. From M5, `gen` may drive it.
 - `kiripix extend <id> canvas --side east|south|west|north [--keep N]` writes the canvas to paste into the image model and prints
   its path. The canvas is the kept strip of the current joined image (`--keep` Source px, default a third of the canvas) and a
   flat fill, at `[extend] canvas` in `kiripix.toml` (default 1376 x 768). The first canvas starts from the room's picked Source.
-- `kiripix extend <id> add <png> --side …` registers, tones and seams the piece with [0129](0129-m4-join-ops.md)'s Ops, and reports
+- `kiripix extend <id> add <png> --side …` registers, tones and seams the piece with [0135](0135-m4-join-ops.md)'s Ops, and reports
   the residual, the gain and the seam. When registration misses its limit, it records nothing and returns a finding. The
   finding's `owner_action` is to keep a wider strip or make the piece again (0063: a piece fails when too little of a subject
   is in the strip).

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: character-pipeline
 type: ticket
@@ -26,8 +26,9 @@ from [0098](0098-m3-blender-renders-and-pinning.md).
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake: `run` builds `model`, `next` names `rig`, a cancelled run leaves the Stage `todo`.
-- [ ] Without Blender, the finding names the setting and the version; exit 1.
-- [ ] Marked `blender` test: each fixture from [0100](0100-m3-character-test-fixtures.md) normalises to the same height and
+- [x] CLI seam, on the fake: `run` builds `model`, `next` names `rig`, a cancelled run leaves the Stage `todo`.
+- [x] Without Blender, the finding names the setting and the version; exit 1.
+- [x] Marked `blender` test: each fixture from [0100](0100-m3-character-test-fixtures.md) normalises to the same height and
       up axis, and `model.json` lists its bones and actions.
-- [ ] `uv run lint-imports` passes with the new contract.
+- [x] `uv run lint-imports` passes with the new contract.
+

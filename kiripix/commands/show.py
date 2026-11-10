@@ -9,7 +9,7 @@ from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.decisions import DecisionOut, current_decisions
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core import sources
-from kiripix.core.assets import load_asset
+from kiripix.core.assets import Asset, load_asset
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project, find_project
@@ -25,7 +25,10 @@ class ShowInput(BaseModel):
 
 class VariantOut(BaseModel):
     name: str
-    file: str = Field(description="The image, relative to the Project.")
+    file: str = Field(description="The file, relative to the Project.")
+    imported_as: str | None = Field(
+        description="The file name it was imported with, or null if it was imported before Kiripix recorded names.")
+    size: int = Field(description="The stored file's size in bytes.")
 
 
 class StageDetail(BaseModel):
@@ -75,6 +78,11 @@ class ShowData(BaseModel):
         return "\n".join(lines)
 
 
+def _variant(project: Project, asset: Asset, names: dict[str, str], name: str, path: Path) -> VariantOut:
+    return VariantOut(name=name, file=project.relative(path),
+                      imported_as=names.get(path.relative_to(asset.dir).as_posix()), size=path.stat().st_size)
+
+
 def _outputs(project: Project, folder: Path) -> list[str]:
     if not (folder / STAMP_FILE).is_file():
         return []
@@ -115,17 +123,18 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         ))
     takes_variants = sources.takes_pick(graph)
     variants = sources.variants(asset) if takes_variants else {}
+    names = sources.imported_names(asset)
     data = ShowData(
         asset=asset.id,
         kind=asset.kind,
         params=dict(asset.settings.params),
         resolution=project.settings.project.resolution,
         body=BodyOut(size=project.settings.body.size, dash=project.settings.body.dash),
-        variants=[VariantOut(name=name, file=project.relative(path)) for name, path in variants.items()],
+        variants=[_variant(project, asset, names, name, path) for name, path in variants.items()],
         picked=sources.picked(graph) if takes_variants else None,
-        clip_sources=[VariantOut(name=name, file=project.relative(path))
+        clip_sources=[_variant(project, asset, names, name, path)
                       for name, path in sources.clip_sources(asset).items()],
-        rigged=VariantOut(name=rigged_path.stem, file=project.relative(rigged_path))
+        rigged=_variant(project, asset, names, rigged_path.stem, rigged_path)
         if (rigged_path := sources.rigged(asset)) is not None else None,
         stages=stages,
         export_command=export_command(project, asset, cache, states),

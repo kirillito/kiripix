@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: character-pipeline
 type: ticket
@@ -25,6 +25,6 @@ Spec §6.3 (palette) and ADR 0004 ("`palette` means the same thing in every Reci
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake renderer's frames: `run` maps every frame; every pixel is in the subset; alpha only 0 or 255.
-- [ ] Changing the Project palette makes `palette` stale and everything below it, and leaves `render` alone.
-- [ ] Changing `orphan_size` rebuilds only `palette` down.
+- [x] CLI seam, on the fake renderer's frames: `run` maps every frame; every pixel is in the subset; alpha only 0 or 255.
+- [x] Changing the Project palette makes `palette` stale and everything below it, and leaves `render` alone.
+- [x] Changing `orphan_size` rebuilds only `palette` down.

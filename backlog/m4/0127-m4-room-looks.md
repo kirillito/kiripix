@@ -2,7 +2,7 @@
 status: todo
 milestone: M4
 type: spec
-parent: 0127-m4-rooms-for-grid-battles.md
+parent: 0133-m4-rooms-for-grid-battles.md
 ---
 
 # M4: room Looks
@@ -28,13 +28,13 @@ pipeline's most-used parts.
 
 ## Order
 
-1. [0120](0120-m4-room-look-edit-trial.md): trial: what an image model's edit of a ch01 room really changes. Sets the
+1. [0128](0128-m4-room-look-edit-trial.md): trial: what an image model's edit of a ch01 room really changes. Sets the
    defaults below.
-2. [0121](0121-m4-look-variants.md) (core): edit Variants, `import --look`, `pick --look`.
-3. [0122](0122-m4-looks-stage.md) (imaging): the Stage, its Decisions and Checks.
-4. [0123](0123-m4-looks-export.md) (export): the next `room.json` schema and the Godot scene.
-5. [0124](0124-m4-ui-looks-screen.md) (UI): the looks screen.
-6. [0125](../m5/0125-m5-gen-a-look-edit.md) (Providers): `gen --look`, after the first Provider. Moved to M5 on 2026-11-08: the rest of this ticket needs no Provider, so it stays in M4.
+2. [0129](0129-m4-look-variants.md) (core): edit Variants, `import --look`, `pick --look`.
+3. [0130](0130-m4-looks-stage.md) (imaging): the Stage, its Decisions and Checks.
+4. [0131](0131-m4-looks-export.md) (export): the next `room.json` schema and the Godot scene.
+5. [0132](0132-m4-ui-looks-screen.md) (UI): the looks screen.
+6. [0143](../m5/0143-m5-gen-a-look-edit.md) (Providers): `gen --look`, after the first Provider. Moved to M5 on 2026-11-08: the rest of this ticket needs no Provider, so it stays in M4.
 
 ## User Stories
 

@@ -90,7 +90,9 @@ class StageInputs(BaseModel):
     """What a Stage's input hash covers.
 
     `files` are globs relative to the Asset folder; `upstream` names earlier Stages; `settings` names project settings
-    by dotted path into `kiripix.toml` (`body`, `project.tile`), where `palette` means the palette file's contents.
+    by dotted path into `kiripix.toml` (`body`, `project.tile`), where `palette` means the palette file's contents, or a
+    computed setting (`computed_setting`). `given` names settings the Stage is given but that don't count as inputs, such
+    as where a tool is installed: moving it must not make anything stale. Both reach the Stage in `StageRun.settings`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -98,10 +100,29 @@ class StageInputs(BaseModel):
     files: list[str] = []
     upstream: list[str] = []
     settings: list[str] = []
+    given: list[str] = []
+
+
+COMPUTED_SETTINGS: dict[str, Callable[[], Any]] = {}
+
+
+def computed_setting(name: str, value: Callable[[], Any]) -> None:
+    """Declare a setting that isn't in `kiripix.toml` but is worked out when asked, such as the version of a tool a Stage
+    runs (ADR 0010). A Stage lists it in `StageInputs.settings`, so a change makes the Stage stale."""
+    COMPUTED_SETTINGS[name] = value
 
 
 class StageFailure(Exception):
-    """Raised by a Stage's run function when it can't produce its output."""
+    """Raised by a Stage's run function when it can't produce its output. The finding is `stage.failed`, with a `fix` that
+    runs the Stage again, unless the failure gives its own `code` or an `owner_action`: something only the Owner can do,
+    such as installing Blender, and no agent can fix by running the Stage again. A `fix` is a command that does."""
+
+    def __init__(self, message: str, *, code: str | None = None, owner_action: str | None = None,
+                 fix: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.owner_action = owner_action
+        self.fix = fix
 
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -151,9 +172,20 @@ class StageRun:
     # Raises if the Command was cancelled. Call it between chunks of work (tiles, frames, batches); `progress` calls it
     # too. A Stage never catches what it raises.
     check_cancel: Callable[[], None] = lambda: None
+    # The run was asked for `--cpu`: it holds no GPU lock, so a Stage that can use the GPU (Blender) must stay off it.
+    cpu: bool = False
     # The file of a call's pinned result, which core has made sure exists before the Stage runs. A Stage never calls a
     # Runner itself: it reads what was pinned.
     pinned: Callable[[RunnerCall], Path] = _no_pinned_results
+    # The Stage's own last complete output folder (it holds its stamp), or None on a first build or when that folder is
+    # missing or half-made. READ-ONLY: copy from it into `output_dir`, never write to it. It is set whether or not the
+    # stamp's input hash still matches, so a Stage that reuses old output must check its own finer-grained keys. It is
+    # not an input: it never enters a hash, and a Stage that ignores it behaves as before.
+    previous: Path | None = None
+    # The run was asked for `--force`: "don't trust the cache". A Stage that reuses its `previous` output must build everything.
+    forced: bool = False
+    # A Stage appends a short sentence about what it did (what it reused); core gives them as the run's message when it is done.
+    notes: list[str] = field(default_factory=list)
 
 
 StageFunction = Callable[[StageRun], None]

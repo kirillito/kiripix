@@ -21,6 +21,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ContextManager, Literal, TypeVar
@@ -39,7 +40,7 @@ from kiripix.core.locks import GPU_LOCK, asset_lock, hold
 from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
-from kiripix.recipes.base import CurrentDecision, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
+from kiripix.recipes.base import COMPUTED_SETTINGS, CurrentDecision, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
 import kiripix.ops as ops_package
 import kiripix.recipes as recipes_package
 import kiripix.runners as runners_package
@@ -118,10 +119,16 @@ class Failures:
             atomic.write_json(self._path, self._entries)
 
 
-def _lookup(document: dict[str, Any], dotted: str) -> Any:
+def _lookup(document: dict[str, Any], known: dict[str, Any], dotted: str) -> Any:
+    """A setting by dotted path. `document` leaves out optional settings that aren't set; `known` holds every setting, so
+    an unset one is None and a name that isn't a setting at all (a typo in a StageSpec) is an error, not a silent None."""
     value: Any = document
+    schema: Any = known
     for part in dotted.split("."):
-        value = value[part]
+        if not isinstance(schema, dict) or part not in schema:
+            raise KeyError(f"'{dotted}' is not a setting in kiripix.toml (a Stage's inputs name it)")
+        schema = schema[part]
+        value = value.get(part) if isinstance(value, dict) else None
     return value
 
 
@@ -153,6 +160,7 @@ class AssetGraph:
         self._calls: dict[str, list[RunnerCall]] = {}
         self._files: dict[str, dict[str, Path]] = {}
         self._settings = settings_document(project.settings)
+        self._known: dict[str, Any] = project.settings.model_dump(mode="json", by_alias=True)
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
         if unknown:
             file = project.relative(asset.dir / "asset.toml")
@@ -231,15 +239,19 @@ class AssetGraph:
         return self.project.root / self.project.settings.project.palette
 
     def _setting_for_hash(self, name: str) -> Any:
+        if name in COMPUTED_SETTINGS:  # not in kiripix.toml: worked out when asked, such as a tool's version (ADR 0010)
+            return COMPUTED_SETTINGS[name]()
         if name == "palette":
             path = self.palette_path()
             return {"file": self.project.settings.project.palette,
                     "hash": self.cache.file_hash(path) if path.is_file() else None}
-        return _lookup(self._settings, name)
+        return _lookup(self._settings, self._known, name)
 
     def settings(self, spec: StageSpec) -> dict[str, Any]:
-        return {name: self.palette_path() if name == "palette" else _lookup(self._settings, name)
-                for name in spec.inputs.settings}
+        """What a Stage is given (`StageRun.settings`): its hashed `settings`, plus its `given` ones, which aren't inputs."""
+        hashed = {name: self.palette_path() if name == "palette" else self._setting_for_hash(name)
+                  for name in spec.inputs.settings}
+        return {**hashed, **{name: _lookup(self._settings, self._known, name) for name in spec.inputs.given}}
 
     def input_hash(self, stage: str) -> str:
         if stage not in self._hashes:
@@ -499,7 +511,8 @@ def _remove_leftovers(asset: Asset) -> None:
 
 class _Runner:
     def __init__(self, graph: AssetGraph, progress: ProgressSink, wait: float, command_line: str,
-                 cpu: bool = False, keep_warm: bool = False) -> None:
+                 cpu: bool = False, keep_warm: bool = False, force: bool = False) -> None:
+        self.force = force
         self.graph = graph
         self.progress = progress
         self.wait = wait
@@ -508,6 +521,7 @@ class _Runner:
         self.keep_warm = keep_warm
         self.gpu_unused: str | None = None  # a call just made left the GPU unused, and why
         self.runner_seconds: dict[str, float] = {}  # per Stage: what its Runner calls took, less any wait for a lock
+        self.failure_findings: dict[str, tuple[str | None, str | None, str | None]] = {}  # per Stage: a failure's code, owner_action, fix
         self._lock_wait = 0.0
         self._loaded_seconds: dict[str, float] = {}  # per Runner: its load, until its first call's history entry
 
@@ -698,6 +712,8 @@ class _Runner:
 
         try:
             context = graph.stage_run(spec, building, progress=report)
+            old = final if (final / STAMP_FILE).is_file() else None
+            context = replace(context, cpu=self.cpu, previous=old, forced=self.force, notes=[])
             with self._hold_gpu(spec.name, spec.gpu):
                 spec.run(context)
             cancel.check()
@@ -714,13 +730,14 @@ class _Runner:
             _swap_into_place(building, final)
             graph.forget_hashes()
             graph.failures.clear(spec.name)
-            outcome = result("done")
+            outcome = result("done", "; ".join(context.notes) or None)
         except (KeyboardInterrupt, cancel.Cancelled):
             self._history(spec, params, result("cancelled", "cancelled by the user"))
             raise
         except KiripixError:
             raise  # busy GPU: not a Stage failure
         except StageFailure as error:
+            self.failure_findings[spec.name] = (error.code, error.owner_action, error.fix)
             outcome = result("failed", str(error))
         except Exception as error:  # noqa: BLE001 - a Stage's own bug is that Stage's failure
             outcome = result("failed", f"{type(error).__name__}: {error}")
@@ -776,7 +793,7 @@ def run_asset(
         specs = [spec]
     else:
         specs = list(graph.kind.stages)
-    runner = _Runner(graph, progress, wait, command_line, cpu, keep_warm)
+    runner = _Runner(graph, progress, wait, command_line, cpu, keep_warm, force)
     results: list[StageRunResult] = []
     findings: list[Finding] = []
     exit_code = ExitCode.OK
@@ -847,15 +864,19 @@ def run_asset(
             exit_code = _worse(exit_code, ExitCode.CHECK_FAILED)
         if outcome.outcome == "failed":
             results.append(outcome)
+            code, owner_action, own_fix = runner.failure_findings.pop(spec.name, (None, None, None))
             findings.append(
                 Finding(
-                    code="stage.failed",
+                    code=code or "stage.failed",
                     message=f"{asset.id} {spec.name} failed: {outcome.message}",
                     position=Position(asset=asset.id, stage=spec.name),
-                    fix=f"kiripix run {asset.id} {spec.name}",
+                    # A finding carries exactly one of fix and owner_action; the owner's action wins.
+                    fix=None if owner_action else (own_fix or f"kiripix run {asset.id} {spec.name}"),
+                    owner_action=owner_action,
                 )
             )
-            exit_code = _worse(exit_code, ExitCode.ERROR)
+            # A failure only the Owner can clear (Blender missing, a rig to make) needs the Owner, not another run.
+            exit_code = _worse(exit_code, ExitCode.NEEDS_OWNER if owner_action else ExitCode.ERROR)
             break
         after = graph.state(spec.name)
         if after.status == "needs-review":  # replayed clicks or Overrides onto a changed image
