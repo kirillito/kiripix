@@ -63,6 +63,7 @@ from kiripix.recipes.common import (
     IMPORT_DIR,
     box_of,
     box_problem,
+    padded_click,
     check_unchanged,
     click_groups,
     lift_call,
@@ -321,7 +322,8 @@ def needs_input(run: StageRun) -> NeedsInput | None:
                 return NeedsInput(f"the box on {layer} can't be used with a plate Decision, which lifts by the "
                                   f"difference between two images", owner_action=f"{undo}.")
             corners = box_of(first)
-            problem = box_problem(corners, read[0].width, read[0].height) if read is not None else None
+            problem = (box_problem(corners, read[0].width, read[0].height, read[0].pad_right, read[0].pad_bottom)
+                       if read is not None else None)
             if problem is not None:
                 return NeedsInput(f"the box ({corners[0]}, {corners[1]}) to ({corners[2]}, {corners[3]}) {problem}",
                                   owner_action=f"{undo}.")
@@ -331,6 +333,9 @@ def needs_input(run: StageRun) -> NeedsInput | None:
             if read is not None and not (x < read[0].width and y < read[0].height):
                 return NeedsInput(f"the click at ({x}, {y}) is outside the {read[0].width}x{read[0].height} fit image",
                                   owner_action=f"{undo}.")
+            if read is not None and padded_click(read[0], x, y):
+                return NeedsInput(f"the click at ({x}, {y}) is in the padded strip of the fit image, which has no "
+                                  "Source pixels", owner_action=f"{undo}.")
     if png_hash is not None and read is not None:
         return _missed_click(run, read, png_hash, undo)
     return None

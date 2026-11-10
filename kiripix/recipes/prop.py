@@ -350,11 +350,13 @@ PROP = KindSpec(
         ),
         StageSpec(
             name="fit",
-            description="Grid snap or downscale; alpha goes to the target grid by majority vote.",
+            description="Grid snap or downscale; alpha goes to the target grid by majority vote. A grid output smaller "
+                        "than the brief is padded right and bottom with transparent pixels (`fit.padded`).",
             inputs=StageInputs(upstream=["cutout", "brief"]),
             params=FIT_PARAMS,
             checks=(
                 CheckSpec(code="fit.size_mismatch", description="The output has the brief's exact size."),
+                CheckSpec(code="fit.padded", description="The grid output was padded up to the brief (info)."),
                 CheckSpec(code="image.partial_alpha", description="Alpha is binary."),
             ),
             available_from="M2",

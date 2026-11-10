@@ -108,7 +108,8 @@ def test_grid_transform_round_trips_through_json() -> None:
     ratio = Grid.to_size(1920, 1088, 480, 272)
     fractional = Grid.to_size(10, 7, 4, 3)
 
-    assert uniform.to_json() == {"scale_x": 4, "scale_y": 4, "offset_x": 3, "offset_y": 2, "width": 480, "height": 272}
+    assert uniform.to_json() == {"scale_x": 4, "scale_y": 4, "offset_x": 3, "offset_y": 2, "width": 480, "height": 272,
+                                "pad_right": 0, "pad_bottom": 0}
     assert ratio.to_json()["scale_x"] == 4
     assert fractional.to_json()["scale_x"] == "5/2" and fractional.to_json()["scale_y"] == "7/3"
     assert all(Grid.from_json(g.to_json()) == g for g in (uniform, ratio, fractional))

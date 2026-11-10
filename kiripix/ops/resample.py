@@ -36,6 +36,24 @@ class Grid:
     offset_y: int
     width: int
     height: int
+    pad_right: int = 0  # target columns at the right with no Source pixels (transparent), counted in `width`
+    pad_bottom: int = 0  # the same at the bottom, counted in `height`
+
+    @property
+    def cells_x(self) -> int:
+        """The columns that have Source pixels: `width` less the padding."""
+        return self.width - self.pad_right
+
+    @property
+    def cells_y(self) -> int:
+        return self.height - self.pad_bottom
+
+    def padded_to(self, width: int, height: int) -> "Grid":
+        """The same grid padded on the right and bottom up to width x height cells (never smaller than it is now)."""
+        if width < self.width or height < self.height:
+            raise ValueError(f"can't pad a {self.width}x{self.height} grid down to {width}x{height}")
+        return Grid(self.scale_x, self.scale_y, self.offset_x, self.offset_y, width, height,
+                    self.pad_right + width - self.width, self.pad_bottom + height - self.height)
 
     @staticmethod
     def uniform(scale: int, offset_x: int, offset_y: int, source_width: int, source_height: int) -> "Grid":
@@ -77,30 +95,34 @@ class Grid:
         return Grid(scale, scale, offset_x, offset_y, width, height)
 
     def edges_x(self) -> IntArray:
-        """The Source columns where each cell starts, plus where the last one ends: `width + 1` values."""
-        return _edges(self.scale_x, self.offset_x, self.width)
+        """The Source columns where each cell starts, plus where the last one ends: `width + 1` values. A padded cell
+        has no Source pixels: it starts and ends where the last real cell ends."""
+        return _edges(self.scale_x, self.offset_x, self.cells_x, self.pad_right)
 
     def edges_y(self) -> IntArray:
-        return _edges(self.scale_y, self.offset_y, self.height)
+        return _edges(self.scale_y, self.offset_y, self.cells_y, self.pad_bottom)
 
     def to_json(self) -> dict[str, Any]:
         """A whole scale is a number; a ratio is the string "numerator/denominator"."""
         return {"scale_x": _scale_json(self.scale_x), "scale_y": _scale_json(self.scale_y),
-                "offset_x": self.offset_x, "offset_y": self.offset_y, "width": self.width, "height": self.height}
+                "offset_x": self.offset_x, "offset_y": self.offset_y, "width": self.width, "height": self.height,
+                "pad_right": self.pad_right, "pad_bottom": self.pad_bottom}
 
     @staticmethod
     def from_json(data: dict[str, Any]) -> "Grid":
         return Grid(Fraction(data["scale_x"]), Fraction(data["scale_y"]), int(data["offset_x"]),
-                    int(data["offset_y"]), int(data["width"]), int(data["height"]))
+                    int(data["offset_y"]), int(data["width"]), int(data["height"]),
+                    int(data.get("pad_right", 0)), int(data.get("pad_bottom", 0)))
 
 
 def _scale_json(scale: Fraction) -> int | str:
     return scale.numerator if scale.denominator == 1 else f"{scale.numerator}/{scale.denominator}"
 
 
-def _edges(scale: Fraction, offset: int, count: int) -> IntArray:
+def _edges(scale: Fraction, offset: int, count: int, pad: int = 0) -> IntArray:
     k = np.arange(count + 1, dtype=np.int64)
-    return offset + (k * scale.numerator) // scale.denominator
+    edges: IntArray = offset + (k * scale.numerator) // scale.denominator
+    return np.concatenate([edges, np.full(pad, edges[-1], dtype=np.int64)]) if pad else edges
 
 
 def _cell_index(edges: IntArray, length: int) -> IntArray:
@@ -147,11 +169,14 @@ def point_to_target(grid: Grid, x: float, y: float) -> tuple[int, int]:
     """The target pixel a Source point falls in, clamped to the grid (a point outside it snaps to the nearest cell)."""
     tx = int(np.searchsorted(grid.edges_x(), x, side="right")) - 1  # the cells' own edges, so cells and points agree
     ty = int(np.searchsorted(grid.edges_y(), y, side="right")) - 1
-    return min(max(tx, 0), grid.width - 1), min(max(ty, 0), grid.height - 1)
+    return min(max(tx, 0), grid.cells_x - 1), min(max(ty, 0), grid.cells_y - 1)
 
 
 def target_centre(grid: Grid, tx: int, ty: int) -> tuple[float, float]:
-    """The Source point at the centre of target pixel (tx, ty): where a click on that pixel lands in the Source."""
+    """The Source point at the centre of target pixel (tx, ty): where a click on that pixel lands in the Source. A padded
+    cell has no Source pixels, so it raises a ValueError."""
+    if tx >= grid.cells_x or ty >= grid.cells_y:
+        raise ValueError(f"the pixel ({tx}, {ty}) is in the padded strip, which has no Source pixels")
     edges_x, edges_y = grid.edges_x(), grid.edges_y()
     return float(edges_x[tx] + edges_x[tx + 1]) / 2, float(edges_y[ty] + edges_y[ty + 1]) / 2
 
@@ -164,8 +189,11 @@ def sample_nearest(image: U8, grid: Grid) -> U8:
     _check_size(image, grid)
     edges_x, edges_y = grid.edges_x(), grid.edges_y()
     columns, rows = (edges_x[:-1] + edges_x[1:]) // 2, (edges_y[:-1] + edges_y[1:]) // 2
-    sampled = image[rows[:, None], columns[None, :]]
-    return _binarise(sampled)
+    sampled = image[np.minimum(rows, image.shape[0] - 1)[:, None], np.minimum(columns, image.shape[1] - 1)[None, :]]
+    result = _binarise(sampled)
+    result[grid.cells_y:, :] = 0  # padding is transparent: alpha 0, RGB 0
+    result[:, grid.cells_x:] = 0
+    return result
 
 
 SEPARATION = 0.05  # OKLab lightness gap between a cell's dark and light groups, from which it holds an edge or a line

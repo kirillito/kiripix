@@ -249,13 +249,25 @@ def test_choosing_chroma_after_matting_needs_no_pinned_result(project: Kiripix) 
 
 def test_the_fit_is_the_briefs_exact_size_and_a_mismatch_is_a_finding_with_a_fix(project: Kiripix) -> None:
     built_prop(project)
-    project.json("set", PROP, "brief", "width=16", "height=16")
+    project.json("set", PROP, "brief", "width=4", "height=4")
     upto(project, "fit")
 
     result = project.json("run", PROP, "fit", expect=2)
 
     [finding] = result["findings"]
-    assert finding["code"] == "fit.size_mismatch" and finding["fix"] == f"kiripix set {PROP} fit scale=2"
+    assert finding["code"] == "fit.size_mismatch" and finding["fix"] == f"kiripix set {PROP} fit scale=8"
+
+
+def test_a_grid_smaller_than_the_brief_is_padded_transparent_for_a_prop_too(project: Kiripix) -> None:
+    folder = built_prop(project)
+    project.json("set", PROP, "brief", "width=16", "height=16")
+    upto(project, "fit")
+
+    result = project.json("run", PROP, "fit")
+
+    fitted = read(work(folder, "fit", "fit.png"))
+    assert fitted.shape == (16, 16, 4) and (fitted[8:] == 0).all() and (fitted[:, 8:] == 0).all()
+    assert [f["code"] for f in result["findings"]] == ["fit.padded"]
 
 
 def test_downscale_fit_keeps_alpha_binary_and_the_brief_size(project: Kiripix) -> None:

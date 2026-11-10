@@ -58,6 +58,8 @@ from kiripix.ops.masks import RGB, SIDES
 from kiripix.recipes.common import (
     box_of,
     box_params,
+    padded_click,
+    whole_tiles,
     box_problem,
     check_fit,
     check_unchanged,
@@ -107,7 +109,7 @@ def _brief(run: StageRun) -> None:
 
 def _whole_tiles(size: int, tile: int) -> int:
     """Rounded up, so that a room asked to fill the screen still does."""
-    return -(-size // tile) * tile
+    return whole_tiles(size, tile)
 
 
 def _check_brief(run: StageRun) -> list[Finding]:
@@ -181,7 +183,8 @@ def _masks_needs_input(run: StageRun) -> NeedsInput | None:
     for group in click_groups(run.decisions):
         first = group[0]
         if first.name == "box":
-            problem = box_problem(box_of(first), read[0].width, read[0].height) if read is not None else None
+            problem = (box_problem(box_of(first), read[0].width, read[0].height, read[0].pad_right, read[0].pad_bottom)
+                       if read is not None else None)
             if problem is not None:
                 x0, y0, x1, y1 = box_of(first)
                 return NeedsInput(f"the box ({x0}, {y0}) to ({x1}, {y1}) {problem}", owner_action=f"{undo}.")
@@ -193,6 +196,9 @@ def _masks_needs_input(run: StageRun) -> NeedsInput | None:
             if read is not None and not (x < read[0].width and y < read[0].height):
                 return NeedsInput(f"the click at ({x}, {y}) is outside the {read[0].width}x{read[0].height} Plate",
                                   owner_action=f"{undo}.")
+            if read is not None and padded_click(read[0], x, y):
+                return NeedsInput(f"the click at ({x}, {y}) is in the padded strip of the fit image, which has no "
+                                  "Source pixels", owner_action=f"{undo}.")
     return None
 
 
@@ -223,6 +229,9 @@ def _preview_call(run: StageRun, clicks: list[ClickPoint]) -> RunnerCall | None:
     for x, y, _ in clicks:
         if not (x < read[0].width and y < read[0].height):
             raise StageFailure(f"the point ({x}, {y}) is outside the {read[0].width}x{read[0].height} Plate")
+        if padded_click(read[0], x, y):
+            raise StageFailure(f"the point ({x}, {y}) is in the padded strip of the fit image, which has no "
+                               "Source pixels")
     return RunnerCall(runner=SEGMENTER, image=source, params=click_params(clicks, read[0]), decisions=[])
 
 
@@ -232,7 +241,7 @@ def _preview_box_call(run: StageRun, box: BoxCorners) -> RunnerCall | None:
     source = run.upstream["source"] / "source.png"
     if read is None or not source.is_file():
         return None
-    problem = box_problem(box, read[0].width, read[0].height)
+    problem = box_problem(box, read[0].width, read[0].height, read[0].pad_right, read[0].pad_bottom)
     if problem is not None:
         raise StageFailure(f"the box ({box[0]}, {box[1]}) to ({box[2]}, {box[3]}) {problem}")
     return RunnerCall(runner=SEGMENTER, image=source, params=box_params(box, read[0]), decisions=[])
@@ -340,8 +349,14 @@ def _masks(run: StageRun) -> None:
             masks.update(_split_import(run, view, str(data["png"]), (width, height)))
     (run.output_dir / FLOODS_FILE).write_text(json.dumps(floods, indent=1) + "\n", encoding="utf-8")
     cell = int(run.params["snap_cell"])
+    read = read_grid(run)
+    strip = np.zeros((height, width), dtype=np.bool_)  # the padded cells `fit` added: solid, derived from grid.json
+    if read is not None:
+        strip[:, read[0].cells_x:] = True
+        strip[read[0].cells_y:, :] = True
     for name, mask in masks.items():
-        _write_mask(run.output_dir / f"{name}.png", snap_cell(mask, cell) if cell > 1 else mask)
+        written = snap_cell(mask, cell) if cell > 1 else mask
+        _write_mask(run.output_dir / f"{name}.png", written | strip if name == "solid" else written)
 
 
 def _split_import(run: StageRun, view: _ViewMasks, png_hash: str,
@@ -353,14 +368,20 @@ def _split_import(run: StageRun, view: _ViewMasks, png_hash: str,
                            f"missing; undo it with kiripix undo {run.asset_id} {MASKS_STAGE}")
     check_unchanged(path, png_hash)
     image = read_rgba(path)
-    if (image.shape[1], image.shape[0]) != size:
+    if image.shape[1] > size[0] or image.shape[0] > size[1]:
         raise StageFailure(f"the imported image is {image.shape[1]}x{image.shape[0]} but the Plate is "
                            f"{size[0]}x{size[1]}; paint it at the Plate's size")
     try:
         split = split_painted(image, view.colours)
     except ValueError as error:
         raise StageFailure(f"the imported image {path.name}: {error}") from None
-    return {name: mask for name, mask in split.items() if name in view.painted}
+    result = {}
+    for name, mask in split.items():
+        if name in view.painted:
+            full = np.zeros((size[1], size[0]), dtype=np.bool_)  # an image smaller than the Plate (the fit before it was
+            full[:mask.shape[0], :mask.shape[1]] = mask           # padded) is "off" right and bottom: coordinates kept
+            result[name] = full
+    return result
 
 
 # A flood that fills fewer pixels than this is probably a miss on painted art, which has no two equal colours.
@@ -982,10 +1003,14 @@ ROOM = KindSpec(
         StageSpec(
             name="fit",
             description="Grid detection, or a downscale at one scale on both axes that crops the rest, to the target size; "
-                        "records the Grid transform. Palette-free.",
+                        "a grid output smaller than the brief is padded right and bottom with transparent pixels "
+                        "(`fit.padded`; `masks` makes the strip solid). Records the Grid transform. Palette-free.",
             inputs=StageInputs(upstream=["source", "brief"]),
             params=FIT_PARAMS,
-            checks=(CheckSpec(code="fit.size_mismatch", description="The output has the brief's exact size."),),
+            checks=(
+                CheckSpec(code="fit.size_mismatch", description="The output has the brief's exact size."),
+                CheckSpec(code="fit.padded", description="The grid output was padded up to the brief (info)."),
+            ),
             owner_input="Tunes the grid.",
             available_from="M1",
             image="fit.png",

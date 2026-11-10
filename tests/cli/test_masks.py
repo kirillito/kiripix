@@ -485,11 +485,11 @@ def test_mask_import_refuses_an_asset_without_a_masks_stage(project: Kiripix) ->
 
 def test_an_import_of_the_wrong_size_or_missing_file_fails_the_stage(project: Kiripix) -> None:
     built_room(project)
-    mask_import(project, np.zeros((8, 8, 4), dtype=np.uint8))
+    mask_import(project, np.zeros((64, 64, 4), dtype=np.uint8))
 
     result = project.json("run", ROOM, "masks", expect=1)
 
-    assert "8x8" in result["findings"][-1]["message"] and f"{WIDTH}x{HEIGHT}" in result["findings"][-1]["message"]
+    assert "64x64" in result["findings"][-1]["message"] and f"{WIDTH}x{HEIGHT}" in result["findings"][-1]["message"]
     project.json("undo", ROOM, "masks")
     decide(project, "import", {"png": "0" * 64})
     result = project.json("run", ROOM, "masks", expect=1)

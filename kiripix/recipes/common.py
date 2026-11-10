@@ -5,6 +5,7 @@ which Stage is upstream stays with the Recipe."""
 import hashlib
 import json
 import shutil
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -131,6 +132,8 @@ def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False) -> None:
                     if scale > 0 else detect_grid(source))
         except ValueError as error:
             raise StageFailure(str(error)) from None
+        if grid.width < target_width or grid.height < target_height:  # pad right and bottom, so no coordinate moves
+            grid = grid.padded_to(max(grid.width, target_width), max(grid.height, target_height))
         fitted = sample_nearest(source, grid)
         if vote_alpha:
             fitted = alpha_by_vote(fitted, source, grid)
@@ -167,32 +170,85 @@ def _cropped(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
     ]
 
 
+def whole_tiles(size: int, tile: int) -> int:
+    """`size` rounded up to whole tiles."""
+    return -(-size // tile) * tile
+
+
+def _padded(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
+    """An info finding when `fit` padded the grid output up to the brief (grid mode only)."""
+    right, bottom = int(grid.get("pad_right", 0)), int(grid.get("pad_bottom", 0))
+    if not (right or bottom):
+        return []
+    said = " and ".join(f"{amount} px on the {side}" for amount, side in ((right, "right"), (bottom, "bottom")) if amount)
+    return [
+        Finding(
+            code="fit.padded",
+            severity="info",
+            message=f"fit padded the {int(grid['width']) - right}x{int(grid['height']) - bottom} grid output up to the "
+                    f"brief's {grid['width']}x{grid['height']} with transparent pixels, {said}",
+            position=Position(asset=run.asset_id, stage="fit", field="stages.fit.offset_x"),
+            owner_action="Nothing is needed for the room to work. If the strip shouldn't be there, widen the Source or "
+                         f"move the offset: kiripix set {run.asset_id} fit offset_x=<smaller> offset_y=<smaller>.",
+        )
+    ]
+
+
 def check_fit(run: StageRun) -> list[Finding]:
     grid = json.loads((run.output_dir / "grid.json").read_text(encoding="utf-8"))
     width, height = int(grid["width"]), int(grid["height"])
     target_width, target_height = brief_size(run)
     if (width, height) == (target_width, target_height):
-        return _cropped(run, grid) if grid["mode"] == "downscale" else []
+        return _cropped(run, grid) if grid["mode"] == "downscale" else _padded(run, grid)
     source_width, source_height = grid["source"]
     asset = run.asset_id
     ratio = source_width // target_width if target_width else 0
-    if source_width == ratio * target_width and source_height == ratio * target_height and ratio >= 1:
+    detected = int(run.params["scale"]) == 0
+    extra = ""
+    exact = source_width == ratio * target_width and source_height == ratio * target_height and ratio >= 1
+    if grid["mode"] == "grid" and not (exact and int(run.params["scale"]) != ratio):
+        if detected and Fraction(grid["scale_x"]) == 1 and Fraction(grid["scale_y"]) == 1:
+            fix = f"kiripix set {asset} fit mode=downscale"  # detection found no grid: the grid itself is wrong
+        else:
+            # The grid output is larger than the brief on an axis (a smaller one is padded): a brief that holds it
+            # pads the rest. An Owner who'd rather crop takes the offsets that cut the extra off the left and top.
+            brief = json.loads((run.upstream["brief"] / "brief.json").read_text(encoding="utf-8"))
+            tile = int(brief.get("tile", 1))
+            fix = (f"kiripix set {asset} brief width={whole_tiles(max(width, target_width), tile)} "
+                   f"height={whole_tiles(max(height, target_height), tile)}")
+            crops = []
+            for name, size, target, scale, offset in (("x", width, target_width, grid["scale_x"], grid["offset_x"]),
+                                                      ("y", height, target_height, grid["scale_y"], grid["offset_y"])):
+                if size > target:
+                    crops.append(f"offset_{name}={int(offset + (size - target) * Fraction(scale))}")
+            if crops:
+                extra = ("; to crop to the brief instead (a grid crops only from the left and top): "
+                         f"kiripix set {asset} fit {' '.join(crops)}")
+    else:
         fix = f"kiripix set {asset} fit scale={ratio}"
         if int(run.params["offset_x"]) or int(run.params["offset_y"]):
             fix += " offset_x=0 offset_y=0"
-        if grid["mode"] == "grid" and int(run.params["scale"]) == ratio:  # already that: the grid isn't the problem
-            fix = f"kiripix set {asset} fit mode=downscale"
-    else:
-        fix = f"kiripix set {asset} fit mode=downscale"
+    if grid["mode"] != "grid":
+        fix = _downscale_fix(run, asset, exact, ratio)
     return [
         Finding(
             code="fit.size_mismatch",
-            message=f"the fit image is {width}x{height}, the brief asks for {target_width}x{target_height}",
+            message=f"the fit image is {width}x{height}, the brief asks for {target_width}x{target_height}{extra}",
             position=Position(asset=asset, stage="fit", field="stages.fit.scale"
                               if grid["mode"] == "grid" else "stages.fit.mode"),
             fix=fix,
         )
     ]
+
+
+def _downscale_fix(run: StageRun, asset: str, exact: bool, ratio: int) -> str:
+    """The fix when `downscale` mode misses the brief (a Source smaller than it): as before."""
+    if exact:
+        fix = f"kiripix set {asset} fit scale={ratio}"
+        if int(run.params["offset_x"]) or int(run.params["offset_y"]):
+            fix += " offset_x=0 offset_y=0"
+        return fix
+    return f"kiripix set {asset} fit mode=downscale"
 
 
 # palette: the image mapped to the palette in OKLab (ADR 0004), then orphan pixels removed.
@@ -305,7 +361,12 @@ def click_groups(decisions: tuple[CurrentDecision, ...]) -> list[list[CurrentDec
 
 
 def click_params(clicks: list[ClickPoint], grid: Grid) -> dict[str, Any]:
-    points = [[*target_centre(grid, x, y), positive] for x, y, positive in clicks]
+    try:
+        points = [[*target_centre(grid, x, y), positive] for x, y, positive in clicks]
+    except ValueError:
+        x, y = next((x, y) for x, y, _ in clicks if padded_click(grid, x, y))
+        raise StageFailure(f"the click at ({x}, {y}) is in the padded strip of the fit image (the right "
+                           f"{grid.pad_right} and bottom {grid.pad_bottom} px), which has no Source pixels") from None
     return {"points": points, "max_size": RUNNER_MAX_SIZE}
 
 
@@ -331,14 +392,23 @@ def box_of(decision: CurrentDecision) -> BoxCorners:
     return int(data["x0"]), int(data["y0"]), int(data["x1"]), int(data["y1"])
 
 
-def box_problem(box: BoxCorners, width: int, height: int) -> str | None:
-    """Why a box can't be used on a `width` x `height` target, or None."""
+def box_problem(box: BoxCorners, width: int, height: int, pad_right: int = 0, pad_bottom: int = 0) -> str | None:
+    """Why a box can't be used on a `width` x `height` target, or None. A box that only overlaps the padded strip is
+    clipped to the cells with Source pixels; one that starts in it has none."""
     x0, y0, x1, y1 = box
     if x1 < x0 or y1 < y0:
         return "runs backwards: x1 and y1 are not below x0 and y0"
     if x1 >= width or y1 >= height:
         return f"is outside the {width}x{height} Plate"
+    if x0 >= width - pad_right or y0 >= height - pad_bottom:
+        return (f"starts in the padded strip (the right {pad_right} and bottom {pad_bottom} px), "
+                "which has no Source pixels")
     return None
+
+
+def padded_click(grid: Grid, x: int, y: int) -> bool:
+    """Whether target pixel (x, y) is in the padded strip."""
+    return x >= grid.cells_x or y >= grid.cells_y
 
 
 def box_params(box: BoxCorners, grid: Grid) -> dict[str, Any]:
