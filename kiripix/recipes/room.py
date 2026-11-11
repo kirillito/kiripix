@@ -637,7 +637,7 @@ def _place(run: StageRun) -> None:
              "sort": [position.model_dump() for position in sort]}
     (run.output_dir / MARKERS_FILE).write_text(json.dumps(built, indent=2) + "\n", encoding="utf-8")
     if "walkable" not in _view_masks(run).derived:
-        return  # the side view's reachability is over platforms (M5)
+        return  # the side view's reachability is over platforms (not planned yet)
     path = run.upstream[MASKS_STAGE] / "solid.png"
     if not path.is_file():
         raise StageFailure(f"walkable is derived from the 'solid' Mask, and the {run.asset_params['view']} view "
@@ -752,8 +752,11 @@ def _check_place(run: StageRun) -> list[Finding]:
     return findings
 
 
-# reach: the Body's flood over walkable from each Spawn and Exit (top view; the side view's platforms are M5). A Marker
-# is cut off when it isn't in the largest group of Markers that reach each other.
+# reach: the Body's flood over walkable from each Spawn and Exit (top view; the side view's platforms are not planned yet).
+# A Marker is cut off when it isn't in the largest group of Markers that reach each other.
+
+SIDE_VIEW_REACH = ("the {view} view's reachability is over platforms, which is not planned yet "
+                   "(side view is under \"Later\" in the spec's milestones)")
 
 
 def _flood_targets(place_dir: Path) -> list[dict[str, Any]]:
@@ -768,15 +771,17 @@ def _flood_targets_of(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, 
 def _reach_needs_input(run: StageRun) -> NeedsInput | None:
     view = run.asset_params["view"]
     if view != "top":
-        reason = f"the {view} view's reachability is over platforms, which is not implemented until M5"
-        return NeedsInput(reason, owner_action=f"Wait for M5 to finish {run.asset_id}: {reason}.")
+        reason = SIDE_VIEW_REACH.format(view=view)
+        return NeedsInput(reason, owner_action=f"Make {run.asset_id} a top-view room, or wait until side view is "
+                                               f"planned: {reason}.")
     place_dir = run.upstream["place"]
     if not (place_dir / MARKERS_FILE).is_file() or _flood_targets(place_dir):
         return None
-    example = json.dumps({"decision": "marker", "data": {"id": "spawn.main", "type": "spawn", "x": 0, "y": 0}})
+    # Where the Body starts is the owner's choice, so the owner_action names no command an agent could run with a guessed
+    # position (the M3 acceptance run, 2026-11-11).
     return NeedsInput("no Spawn or Exit is placed, so the Body has nowhere to start from",
-                      owner_action=f"Place a Spawn or an Exit on walkable ground: kiripix decide {run.asset_id} place "
-                                   f"--decision '{example}'")
+                      owner_action="Place a Spawn or an Exit on walkable ground (a `marker` Decision on `place`): where "
+                                   "the Body starts is your choice.")
 
 
 def _spot_in(mask: np.ndarray, marker: dict[str, Any]) -> bool:
@@ -844,7 +849,7 @@ def _reach(run: StageRun) -> None:
 def _reach_unsupported(run: StageRun) -> str | None:
     view = run.asset_params["view"]
     if view != "top":
-        return f"the {view} view's reachability is over platforms, which is not implemented until M5"
+        return SIDE_VIEW_REACH.format(view=view)
     return None
 
 

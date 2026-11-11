@@ -34,7 +34,7 @@ pipeline's most-used parts.
 3. [0130](0130-m4-looks-stage.md) (imaging): the Stage, its Decisions and Checks.
 4. [0131](0131-m4-looks-export.md) (export): the next `room.json` schema and the Godot scene.
 5. [0132](0132-m4-ui-looks-screen.md) (UI): the looks screen.
-6. [0143](../m5/0143-m5-gen-a-look-edit.md) (Providers): `gen --look`, after the first Provider. Moved to M5 on 2026-11-08: the rest of this ticket needs no Provider, so it stays in M4.
+6. [0143](../m6/0143-m6-gen-a-look-edit.md) (Providers): `gen --look`, after the first Provider. Moved to M5 on 2026-11-08 (M6 since 2026-11-11): the rest of this ticket needs no Provider, so it stays in M4.
 
 ## User Stories
 

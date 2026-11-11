@@ -149,9 +149,12 @@ def check_character_sheet(run: StageRun) -> list[Finding]:
     if not (run.output_dir / SHEET_FILE).is_file():
         return []
     fix = f"kiripix run {run.asset_id} finish --force"
+    # The pivots and the cell come from `render`, which fixes a stationary clip's pivot (ticket 0154) and sizes the cell to
+    # every pose (0155): rendering again is what changes them.
+    rerender = f"kiripix run {run.asset_id} render --force"
     frames, names = _frames(run, document, normals=False)
     stationary = {str(c["name"]) for c in document["clips"] if c["stationary"]}
-    findings = (check_pivot_drift(frames, stationary, fix) + check_frame_overflow(frames, cell, fix, cell_pivot)
+    findings = (check_pivot_drift(frames, stationary, rerender) + check_frame_overflow(frames, cell, rerender, cell_pivot)
                 + check_frame_count(frames, expected, fix, list(document["directions"])) + check_empty_frame(frames, fix))
     for finding in findings:
         if finding.position is None:

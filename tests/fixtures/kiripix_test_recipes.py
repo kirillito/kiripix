@@ -14,6 +14,7 @@ It also replaces SAM 2 with a fake Runner (at the end), so that no test ever dow
 
 import hashlib
 import json
+import math
 import shutil
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ import numpy as np
 
 import kiripix.runners
 from kiripix.recipes import blender_launcher
+from kiripix.recipes import render as render_recipe
 from kiripix.recipes.blender_launcher import set_launcher
 from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
@@ -615,10 +617,33 @@ class FakeBlender:
         return found
 
     @staticmethod
+    def _measure(args: dict[str, Any]) -> dict[str, Any]:
+        """Where each frame lands (ticket 0155): a figure `height` px tall and half as wide, standing on the pivot, unless
+        `blender-reach` (JSON {<clip>: [left, top, right, bottom]}) says how far a clip reaches; and `under` from `_sway`."""
+        tall = args["model_height"] * math.cos(math.radians(args["elevation"])) * args["px_per_unit"]
+        reach = json.loads(Path("blender-reach").read_text("utf-8")) if Path("blender-reach").exists() else {}
+        frames: dict[str, Any] = {}
+        for clip in args["clips"]:
+            bounds = reach.get(clip["name"], [-tall / 4, -tall, tall / 4, 0.0])
+            frames[clip["name"]] = {d["name"]: [{"bounds": bounds, "under": FakeBlender._sway(clip, index)}
+                                                for index in range(len(clip["frames"]))] for d in args["directions"]}
+        return {"frames": frames}
+
+    @staticmethod
+    def _sway(clip: dict[str, Any], index: int) -> list[float]:
+        """The point under the root, from the point the camera orbits: still, unless `blender-sway` exists; then a clip without
+        root motion sways 0.6 px right on every odd frame, as Mixamo's idle sways the hips (ticket 0154)."""
+        if Path("blender-sway").exists() and not clip["root_motion"] and index % 2:
+            return [0.6, 0.0]
+        return [0.0, 0.0]
+
+    @staticmethod
     def _render_frames(args: dict[str, Any]) -> dict[str, Any]:
-        """Every frame the real script would write, as flat PNGs of the right size and a fixed pivot."""
+        """Every frame the real script would write, as flat PNGs of the right size, with the pivot where the root is."""
         from PIL import Image
 
+        if args.get("measure"):
+            return FakeBlender._measure(args)
         width, height = args["frame"]
         frames: dict[str, Any] = {}
         for clip in args["clips"]:
@@ -635,7 +660,9 @@ class FakeBlender:
                             tint = (index * 13 + len(direction["name"]) * 29) % 90
                             image.paste((200 - tint, 100 + tint, 50 + tint, 255), (width // 2, 0, width, height))
                         image.save(path)
-                    frames[clip["name"]][direction["name"]].append({"pivot": list(args["pivot"])})
+                    under = FakeBlender._sway(clip, index)
+                    frames[clip["name"]][direction["name"]].append(
+                        {"pivot": [args["pivot"][0] + under[0], args["pivot"][1] + under[1]]})
         device = "cpu" if Path("blender-no-gpu").exists() else args["device"]  # as Blender falls back with no GPU
         return {"device": device, "depth_range": [8.0, 12.0], "frames": frames}
 
@@ -661,5 +688,7 @@ FAKE_BONES = ["root", *(f"mixamorig:{n}" for n in (
 
 
 set_launcher(FakeBlender())
+if Path("render-format").exists():  # an older Kiripix's render.json format (tickets 0154, 0155)
+    render_recipe.RENDER_SCHEMA_VERSION = int(Path("render-format").read_text("utf-8"))
 if Path("blender-version").exists():  # the fake reports another Blender version (ADR 0010: it is part of the hashes)
     blender_launcher.BLENDER_VERSION = tuple(int(part) for part in Path("blender-version").read_text("utf-8").split("."))

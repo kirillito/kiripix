@@ -22,7 +22,7 @@ description already names "polygon", and spec §6.1 says that it isn't built yet
   isn't `on_image`, like `brush` and `border`, so a changed Plate doesn't send it to `needs-review`.
 - It replays in journal order with the other Decisions.
 - `describe` then tells the truth, and spec §6.1 loses "A polygon tool isn't built yet". This ticket adds no UI;
-  [0080](../0080-m3-ui-polygon-tool.md) does that.
+  [0080](../m3/0080-m3-ui-polygon-tool.md) does that.
 
 ## Acceptance criteria
 

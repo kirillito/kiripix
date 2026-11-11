@@ -62,13 +62,28 @@ def clip_decisions(run: StageRun) -> list[CurrentDecision]:
 def clips_needs_input(run: StageRun) -> NeedsInput | None:
     if clip_decisions(run):
         return None
-    sources = sorted(_clip_files(run))
-    example = {"decision": "clip", "data": {"name": "idle", "source": sources[0] if sources else "<action or clip source>",
-                                            "start": 0, "end": 24, "fps": 12, "loop": True, "stationary": True}}
+    # Which animations the game plays, and which frames of which action each one is, is the owner's choice, so this is an
+    # owner_action, not a command an agent could fill in with guessed values (the M3 acceptance run, 2026-11-11).
     return NeedsInput(
         "no clips: add a `clip` Decision for each animation the game plays "
         "(name, source, start, end, fps, loop; stationary optional)",
-        command=f"kiripix decide {run.asset_id} clips --decision '{json.dumps(example)}'")
+        owner_action=f"Choose the animations the game plays: one `clip` Decision on `clips` each, with its name, source, "
+                     f"start and end frames, frame rate in the game, and whether it loops. {_sources_known(run)}")
+
+
+def _sources_known(run: StageRun) -> str:
+    """The sources a clip can name, as far as is known without reading a file in Blender."""
+    known = [f"clip source {stem}" for stem in sorted(_clip_files(run))]
+    try:
+        rig = json.loads((run.upstream["rig"] / "rig.json").read_text(encoding="utf-8"))
+        if rig["source"] == "rigged":
+            known.append(f"the rigged file's actions (kiripix probe inspect {run.asset_id} rigged lists them)")
+        else:
+            model = json.loads((run.upstream["model"] / "model.json").read_text(encoding="utf-8"))
+            known += [f"action {a['name']} (frames {a['start']} to {a['end']})" for a in model["actions"]]
+    except (OSError, ValueError, KeyError):
+        pass
+    return f"Sources: {'; '.join(known)}." if known else "Import an animation file as a clip source first."
 
 
 def _clip_files(run: StageRun) -> dict[str, Path]:

@@ -27,7 +27,12 @@ def render_json(folder: Path) -> dict[str, Any]:
 
 
 def render_calls(project: Kiripix) -> list[dict[str, Any]]:
-    return [c for c in calls(project) if c["script"] == "render_frames"]
+    return [c for c in calls(project) if c["script"] == "render_frames" and not c["args"].get("measure")]
+
+
+def measure_calls(project: Kiripix) -> list[dict[str, Any]]:
+    """The calls that measure where the poses land, before a render sizes its cell (ticket 0155)."""
+    return [c for c in calls(project) if c["script"] == "render_frames" and c["args"].get("measure")]
 
 
 def ready(project: Kiripix, *clips: dict[str, Any]) -> Path:
@@ -50,7 +55,7 @@ def test_run_writes_every_clip_direction_and_frame_and_render_json(project: Kiri
 
     assert [(r["stage"], r["outcome"]) for r in result["data"]["results"]] == [("render", "done")]
     document = render_json(folder)
-    assert document["schema_version"] == 1 and document["camera"] == "top34_8" and document["height"] == 52
+    assert document["schema_version"] == 2 and document["camera"] == "top34_8" and document["height"] == 52
     assert document["frame"] == {"width": 78, "height": 78} and document["directions"] == DIRECTIONS
     assert document["pivot"] == [39.0, 72.0] and document["depth_range"] == [8.0, 12.0]
     assert [c["name"] for c in document["clips"]] == ["hit", "idle"]
@@ -448,6 +453,101 @@ def test_progress_events_say_how_many_were_reused(project: Kiripix) -> None:
     assert any(e["event"] == "stage_progress" and "reused 16" in e["message"] for e in events)
 
 
+# pivots and the cell (tickets 0154, 0155)
+
+
+def test_a_stationary_clip_whose_root_sways_has_one_pivot(project: Kiripix) -> None:
+    folder = ready(project)
+    (project.cwd / "blender-sway").write_text("", encoding="utf-8")  # the root sways 0.6 px on odd frames
+
+    project.json("run", HERO, "render")
+
+    by_name = {c["name"]: c for c in render_json(folder)["clips"]}
+    idle = {tuple(f["pivot"]) for frames in by_name["idle"]["directions"].values() for f in frames}
+    hit = {tuple(f["pivot"]) for frames in by_name["hit"]["directions"].values() for f in frames}
+    assert idle == {(39.0, 72.0)}  # the cell's pivot, where the feet are, not the point under the swaying hips
+    assert hit == {(39.0, 72.0), (39.6, 72.0)}  # a clip that isn't stationary still reports the root
+
+
+def test_a_kept_stationary_clip_gets_the_cells_pivot_too(project: Kiripix) -> None:
+    folder = ready(project)
+    (project.cwd / "blender-sway").write_text("", encoding="utf-8")
+    project.json("run", HERO, "render")
+    path = folder / "work" / "render" / "render.json"
+    document = json.loads(path.read_text("utf-8"))
+    for frames in document["clips"][1]["directions"].values():  # idle, as an older render left it
+        frames[1]["pivot"] = [39.6, 72.0]
+    path.write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
+    add_walk_and_run(project)
+
+    project.json("run", HERO, "render")
+
+    assert rendered(project) == ["walk"]
+    idle = render_json(folder)["clips"][1]
+    assert {tuple(f["pivot"]) for frames in idle["directions"].values() for f in frames} == {(39.0, 72.0)}
+
+
+def test_poses_that_fit_keep_the_default_cell_and_their_bounds_are_kept(project: Kiripix) -> None:
+    folder = ready(project)
+
+    project.json("run", HERO, "render")
+
+    [measured] = measure_calls(project)
+    assert [c["name"] for c in measured["args"]["clips"]] == ["hit", "idle"] and measured["args"]["frame"] == [78, 78]
+    document = render_json(folder)
+    assert document["frame"] == {"width": 78, "height": 78} and document["pivot"] == [39.0, 72.0]
+    assert all(len(c["bounds"]) == 4 and c["measure_key"] for c in document["clips"])
+
+
+def test_a_clip_that_reaches_past_the_cell_grows_it(project: Kiripix) -> None:
+    folder = ready(project)
+    # the hit lunges: 10.2 px below the feet and 40.5 px to the right, past the default 78 x 78 cell's 6 and 39
+    (project.cwd / "blender-reach").write_text(json.dumps({"hit": [-13.0, -52.0, 40.5, 10.2]}), encoding="utf-8")
+
+    project.json("run", HERO, "render")
+
+    document = render_json(folder)
+    # 11 px below the feet for the pose, 1 for the outline; 41 + 1 either side of the centre column; the rest above
+    assert document["frame"] == {"width": 84, "height": 84} and document["pivot"] == [42.0, 72.0]
+    assert render_calls(project)[-1]["args"]["frame"] == [84, 84]
+    assert Image.open(folder / "work" / "render" / "color" / "idle" / "s" / "000.png").size == (84, 84)
+
+
+def test_a_pivot_that_follows_the_root_is_room_the_cell_makes_too(project: Kiripix) -> None:
+    folder = ready(project)
+    (project.cwd / "blender-sway").write_text("", encoding="utf-8")  # sheet moves the hit's odd frames 1 px left
+    (project.cwd / "blender-reach").write_text(json.dumps({"hit": [-38.2, -52.0, 13.0, 0.0]}), encoding="utf-8")
+
+    project.json("run", HERO, "render")
+
+    # 39 px left of the pivot as rendered, 40 once sheet shifts the frame, and 1 for the outline
+    assert render_json(folder)["frame"] == {"width": 82, "height": 82}
+
+
+def test_only_changed_clips_are_measured_again(project: Kiripix) -> None:
+    ready(project)
+    project.json("run", HERO, "render")
+    add_walk_and_run(project)
+
+    project.json("run", HERO, "render")
+
+    assert [[c["name"] for c in m["args"]["clips"]] for m in measure_calls(project)] == [["hit", "idle"], ["walk"]]
+    project.json("run", HERO, "render", "--force")
+    assert [c["name"] for c in measure_calls(project)[-1]["args"]["clips"]] == ["hit", "idle", "walk"]
+
+
+def test_a_cell_that_grows_renders_every_clip_again(project: Kiripix) -> None:
+    folder = ready(project)
+    project.json("run", HERO, "render")
+    (project.cwd / "blender-reach").write_text(json.dumps({"walk": [-13.0, -52.0, 39.5, 0.0]}), encoding="utf-8")
+    add_walk_and_run(project)
+
+    project.json("run", HERO, "render")
+
+    assert rendered(project) == ["hit", "idle", "walk"]  # the kept frames were the old cell's size
+    assert render_json(folder)["frame"]["width"] == 82
+
+
 # the real Blender
 
 
@@ -732,3 +832,18 @@ def test_a_kept_clip_is_byte_equal_to_a_full_rebuild_on_the_real_blender(project
     assert len(incremental) > 100
     project.json("run", HERO, "render", "--cpu", "--force", test_recipes=False, timeout=1800)
     assert tree(folder) == incremental
+
+
+
+def test_a_render_from_an_older_kiripix_is_stale_and_so_is_everything_after_it(project: Kiripix) -> None:
+    ready(project)
+    (project.cwd / "render-format").write_text("1", encoding="utf-8")  # built before 0154 and 0155
+    project.json("run", HERO, "render")
+    project.json("run", HERO, "palette")
+    (project.cwd / "render-format").unlink()
+
+    status = stage_status(project, HERO)
+
+    assert status["render"] == "stale" and status["palette"] == "stale"
+    project.json("run", HERO, "render")
+    assert rendered(project) == ["hit", "idle"]  # the clips' keys hold the format too: nothing is kept

@@ -5,9 +5,8 @@ consistent, game-ready pixel art: rooms with Layers and Masks, props, and animat
 and one resolution per game, and it is built to be driven equally well by you from the terminal or by an AI coding
 agent.
 
-> **Status: Milestone 3 (characters) is in progress.** M0 (the skeleton), M1 (a room, end to end) and M2 (Layers and
-> props) are done. Rooms and props go all the way from an imported image to a Godot scene. Characters run from
-> `model` through `rig`, `clips`, `render` and `palette`; `finish`, `sheet` and `export` are still being built (see
+> **Status: Milestone 4 (rooms for grid battles) is next.** M0 (the skeleton), M1 (a room, end to end), M2 (Layers and
+> props) and M3 (characters) are done. Rooms, props and characters go all the way to a Godot scene (see
 > [What's not built yet](#whats-not-built-yet)). Everything below describes what Kiripix does now.
 
 - [Install](#install)
@@ -146,7 +145,10 @@ kiripix run character.courier
 `rig` validates a humanoid rig, or walks you through the Mixamo round trip; `next` tells you which file to bring back.
 `render` runs Blender headless with an orthographic camera preset from `kiripix.toml` (top-down 3/4, 8 directions by
 default) at the target pixel height, with toon shading, and `palette` gives the character one palette across all its
-frames. `kiripix describe character` lists every clip field and Check.
+frames. `finish` draws a 1 px outline in a palette colour and lines the normal map up with the colour frames, `sheet` packs
+both into atlases with the feet at a fixed pivot, and `kiripix export` writes a `SpriteFrames`, a `CanvasTexture` with
+the normal map, and an `AnimatedSprite2D` scene whose animations are `<clip>_<dir>`, such as `walk_sw`.
+`kiripix describe character` lists every clip field and Check.
 
 ## How Kiripix thinks
 
@@ -345,12 +347,11 @@ and `out/`. Don't commit `work/` or `.kiripix/`; `init` writes a `.gitignore` an
 
 These are designed in [the spec](docs/KIRIPIX_SPEC.md) but don't exist yet:
 
-- **M3, characters (in progress):** the `finish` (outline, normal map), `sheet` and character `export` Stages, a still
-  of the Model on its screen, and the UI's frame strip and player. Today a character runs through `palette`.
 - **M4, rooms for grid battles:** rooms larger than one screen in both directions (`extend`), the `area` Marker, the
   Masks and `room.json` exported into the game, and room Looks (a door open or shut).
-- **M5, generation and agents:** `gen` and its Providers, the cost ledger, and the MCP adapter.
-- **M6, side view:** side-view Masks (`oneway`, `ladder`), the parallax split and platform reachability.
+- **M5, character layers:** hair styles and outfits rendered as layers over a body.
+- **M6, generation and agents:** `gen` and its Providers, the cost ledger, and the MCP adapter.
+- **Later, side view:** side-view Masks (`oneway`, `ladder`), the parallax split and platform reachability.
 
 `kiripix describe <kind>` marks each unbuilt Stage with the milestone it arrives in, so it is the quickest way to
 check.

@@ -17,7 +17,7 @@ Kiripix's pinned calls record which Runner made each result, so those Assets can
 
 Notes:
 - **Depth Anything V2:** Base, Large and Giant are non-commercial; Small is Apache-2.0. Prefer Small where its quality
-  is enough (M5's depth-assisted parallax split), so fewer Assets would need rebuilding before a sale.
+  is enough (side view's depth-assisted parallax split, planned for later), so fewer Assets would need rebuilding before a sale.
 - **SAM 2, as Kiripix downloads it:** the upstream checkpoints are Apache-2.0, but Kiripix needs ONNX, and Meta publishes
   none. `runners/sam2.py` pins the conversion `onnx-community/sam2.1-hiera-small-ONNX` at one commit, by each file's
   hash. That repo (2026-11-03) states no licence of its own; a conversion of Apache-2.0 weights stays under Apache-2.0.

@@ -9,7 +9,7 @@ parent: 0127-m4-room-looks.md
 # M4: the looks screen
 
 Spec §6.1 (Looks) and §11; ADR 0009. Needs [0130](0130-m4-looks-stage.md). Follows M3's usability work
-([0092](../0092-m3-ui-layer-screen-legible.md), [0093](../0093-m3-ui-findings-a-person-can-read.md)), so build on what those set.
+([0092](../m3/0092-m3-ui-layer-screen-legible.md), [0093](../m3/0093-m3-ui-findings-a-person-can-read.md)), so build on what those set.
 
 ## What to build
 

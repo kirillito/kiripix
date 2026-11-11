@@ -118,4 +118,4 @@ def test_a_side_view_room_and_a_prop_are_refused_and_arguments_too(project: Kiri
     assert project.json("probe", "reach", "prop.bench", expect=1)["findings"][0]["code"] == "probe.not_supported"
     project.json("new", "room", "bridge", "--view", "side")
     [finding] = project.json("probe", "reach", "room.bridge", expect=1)["findings"]
-    assert finding["code"] in ("probe.not_ready", "probe.not_supported") and "M5" in finding["message"]
+    assert finding["code"] in ("probe.not_ready", "probe.not_supported") and "not planned yet" in finding["message"]

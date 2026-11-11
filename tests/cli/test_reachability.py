@@ -55,7 +55,8 @@ def test_a_room_with_no_spawn_or_exit_needs_the_owner_to_place_one(project: Kiri
     assert stage_status(project, ROOM)["reach"] == "needs-input"
     advice = project.json("next", ROOM)["data"]
     assert advice["stage"] == "reach" and "Spawn or Exit" in advice["reason"]
-    assert advice["command"] is None and f"kiripix decide {ROOM} place" in advice["owner_action"]
+    assert advice["command"] is None and "Spawn or an Exit" in advice["owner_action"]
+    assert "kiripix decide" not in advice["owner_action"], "where the Body starts is the owner's: no command to guess into"
 
     place(project, "spawn.main", "spawn")
     project.json("run", ROOM, expect=3)  # stops at export, which has no target
@@ -76,7 +77,7 @@ def test_a_side_view_room_waits_for_m5(project: Kiripix) -> None:
     project.json("run", side, expect=3)
 
     assert stage_status(project, side)["reach"] == "needs-input"
-    assert "M5" in project.json("next", side)["data"]["reason"]
+    assert "not planned yet" in project.json("next", side)["data"]["reason"]
 
 
 # the Reachable Mask and the report

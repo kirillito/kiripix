@@ -10,7 +10,7 @@ depends_on: [0135-m4-join-ops.md]
 # M4: `extend`: the canvas for the next piece, and the join into a Variant
 
 Spec §14 (M4) and §16 (open decision 7). The budget is $0, so the Owner makes pieces in the image model's own UI, not through a
-Provider. This tool doesn't wait for Providers. From M5, `gen` may drive it.
+Provider. This tool doesn't wait for Providers. From M6, `gen` may drive it.
 
 ## What to build
 

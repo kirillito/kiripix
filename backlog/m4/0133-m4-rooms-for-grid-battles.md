@@ -23,7 +23,7 @@ cell's edge. Large rooms are joined by hand, and no room has been extended in bo
 ## Solution
 
 The Owner decided on 2026-11-08 that M4 is about current issues and preparing rooms for combat. Generation, agents and side view move
-to later milestones (M5 and M6).
+to later milestones (M5 and M6; since 2026-11-11, generation is M6 and side view is under Later).
 
 - **Large rooms:** a trial of a room extended in both directions and taken to export. Then the join tool, without a Provider:
   Kiripix writes the canvas for the next piece, and joins the piece the Owner made in the image model's own UI.
@@ -71,4 +71,4 @@ to later milestones (M5 and M6).
 - Polygon areas. A box is enough for M05; a polygon comes when a room needs one.
 - A lighter collision export. The Owner expects normal rooms to have far fewer pieces than `harbor_front` (an anomaly from
   the old brush tool). 0134 counts them on a full room, and a ticket follows only if the count is high.
-- Providers, `gen`, MCP and image-to-3D (M5); side view (M6).
+- Providers, `gen`, MCP and image-to-3D (M6); side view (Later). Palette ramps per part are in M4 ([0147](0147-m4-character-palette-ramps.md)).

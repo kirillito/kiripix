@@ -19,7 +19,7 @@ Spec §6.1 (the `looks` row and Looks); ADR 0009. After [0128](0128-m4-room-look
 - **The build,** per Look: resize to the Source, register (`register`), fit through the room's Grid transform, regrade
   (`regrade`: `none` or `outside`), map the whole image with the `palette` Stage's parameters and Ops, then cut the region.
   Write the Look's image cropped to the region's box, one piece per foreground Layer the region meets (the pixels in
-  that Layer's alpha), and its `solid`. If [0094](../0094-m3-palette-stage-muddies-rooms.md) changes the mapping, Looks
+  that Layer's alpha), and its `solid`. If [0094](../m3/0094-m3-palette-stage-muddies-rooms.md) changes the mapping, Looks
   follow it, because they call the same code.
 - **Replay:** a refit or a Layer change sends `difference` regions and registration to `needs-review`; a palette change
   rebuilds them to `done`. No Looks, `done`.

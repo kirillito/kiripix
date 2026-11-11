@@ -250,7 +250,7 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | **palette** | Maps the whole composite once to the palette in OKLab (strict, or with optional ordered dithering) and removes orphan pixels. Each foreground Layer is that mapped image cut by its alpha; the Plate is the same image with only its inpainted areas mapped separately. | Tunes 2–3 sliders, with a before/after view | Every pixel on the palette; Plate + Layers still recompose exactly |
 | **looks** | The room's other Looks (see Looks, below). Each is an edit of the Source, picked as a Variant of that Look. It is resized to the Source, registered to it, fitted with the room's Grid transform, optionally regraded, mapped to the palette as `palette` maps the room, and cut to its region. The region's pixels over a foreground Layer become a piece at that Layer's depth. A Look may have its own `solid` Mask. With no Looks the Stage is `done`. M4. | Imports or generates an edit, names the Condition, draws the region; paints `solid` where the Look blocks | Every pixel on the palette; the edit registers to the Source; drift outside the region is reported; the region shows a change |
 | **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines, areas (a box, optionally snapped to a `cell` from the room's top-left corner; Kiripix gives an area no meaning, and the game decides what it's for, such as a battle area, M4). | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag; a sloped line sorts at its mean y, with a warning if its ends differ by more than half a tile; an area lies inside the room and holds walkable ground, and with a `cell`, the cells a Mask leaves between a quarter and three quarters blocked are listed (info) |
-| **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, M6+). Warns when no walkable part of an area is reachable. Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
+| **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, Later). Warns when no walkable part of an area is reachable. Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
 | **export** | Writes the Godot scene (see §9). | — | Export target set; Project checks (see below) |
 
 **palette reads `layers`, not `masks`**: its upstream is the Plate and the Layers, so a Mask edit never rebuilds the
@@ -283,7 +283,7 @@ Grid transform, palette mapping and Layers exactly.
 
 **Making one.**
 - A `look` Decision gives the Look an ID and a Condition.
-- Its edit is added with `kiripix import <id> <png> --look <look>`. From M5, `gen <id> --look <look>` makes one with an
+- Its edit is added with `kiripix import <id> <png> --look <look>`. From M6, `gen <id> --look <look>` makes one with an
   edit prompt ("Edit this image. Keep everything exactly the same except: …"). An edit can also be painted by hand on a
   copy of the Source.
 - `pick <id> <variant> --look <look>` chooses the edit, and records the hash of the room's Source it was made on.
@@ -361,7 +361,7 @@ pixel size (52 px tall in the Toronto RPG), so the recipe has no `fit`.
 | **model** | Imports `.glb`, `.fbx` or `.blend`; optional image-to-3D (a local Runner if one fits 8 GB, or a Provider). Normalises scale and the up axis. | Picks or imports |
 | **rig** | Validates a humanoid rig, or guides the Mixamo auto-rig round trip (the tool shows the steps and picks up the downloaded file). Rigify for non-humanoids. | Mixamo step, when used |
 | **clips** | Maps named clips (`idle`, `walk`, `run`, `attack`, `hit`, `ko`, `cast`…) to animation sources, with frame range, frame rate and loop flag. Clip IDs are snake_case verbs; a variant is named for what it is (`attack_kick`), not numbered. | Chooses clips |
-| **render** | Blender headless. Orthographic camera from a preset: top-down 3/4 at 4 or 8 directions (all rendered, none mirrored, so an asymmetric character stays right), side view. Battle clips use the same camera as walking, because the game fights in the room. Directions are named `s sw w nw n ne e se` from the screen's view, `s` facing the camera. Rendered at the target pixel size, no anti-aliasing, toon shading. Passes: colour, normal, depth and an object mask. Frames are subsampled to the clip's frame rate. Renders aren't pinned: they rebuild as deterministic work, with the Blender version and render settings among the Stage's inputs. | Tunes the camera preset once per project |
+| **render** | Blender headless. Orthographic camera from a preset: top-down 3/4 at 4 or 8 directions (all rendered, none mirrored, so an asymmetric character stays right), side view. Battle clips use the same camera as walking, because the game fights in the room. Directions are named `s sw w nw n ne e se` from the screen's view, `s` facing the camera. Rendered at the target pixel size, no anti-aliasing, toon shading, in one square cell per character, grown from 1.5 x its height until every pose of every clip fits with a pixel to spare for the outline, so no pose is cut. A stationary clip's pivot is the same pixel in every frame (the feet, not the swaying hips). Passes: colour, normal, depth and an object mask. Frames are subsampled to the clip's frame rate. Renders aren't pinned: they rebuild as deterministic work, with the Blender version and render settings among the Stage's inputs. | Tunes the camera preset once per project |
 | **palette** | One palette per character across all frames (a project-palette subset), orphan cleanup. | — |
 | **finish** | Outline, drawn after mapping, in a palette colour: a 1 px silhouette from the object mask (§16, decision 3); outline consistency across frames. The normal pass is quantised to its own levels (not palette-mapped) and aligned to the colour frames. | — |
 | **sheet** | Packs frames into an atlas with a fixed pivot (the feet) per frame, plus frame metadata. | — |
@@ -437,7 +437,7 @@ review, so a swap can never change an exported asset silently.
 | Background matting | BiRefNet | Chroma key |
 | Depth (parallax, normals) | Depth Anything V2 (the small model; check licences of larger ones) | Manual depth planes |
 | Inpainting (plate holes) | LaMa | OpenCV Telea or PatchMatch for small holes (OpenCV isn't a dependency yet); an edit API for large ones |
-| Image-to-3D (optional) | Decide at M5, after testing which fit 8 GB, beside Providers (deferred from M3) | Bought or hand-made models |
+| Image-to-3D (optional) | Decide at M6, after testing which fit 8 GB, beside Providers (deferred from M3) | Bought or hand-made models |
 
 ONNX Runtime with CUDA is preferred to keep installs small, with PyTorch where a model needs it. The core works with
 no GPU: Runners run on CPU, slower. Because results are pinned, the device that produced one doesn't matter.
@@ -761,7 +761,7 @@ DEC-048): rooms grow past one screen in both directions, and a battle area in th
 - A trial of a room extended in both directions, taken to export
   ([0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md)): the corner join, SAM 2 at that size, the collision piece count.
 - `extend`, a preprocessing tool before `source`: Kiripix writes the canvas for the next piece, the Owner makes the piece in the
-  image model's own UI (the budget is $0), and Kiripix joins it. No Provider is needed; from M5 `gen` may drive it. The trial
+  image model's own UI (the budget is $0), and Kiripix joins it. No Provider is needed; from M6 `gen` may drive it. The trial
   [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md) found that the join needs three steps. Register: the model redraws
   the kept strip and scales the whole piece by up to about 1 %, so a plain shift leaves a step. Tone: the redrawn strip's
   brightness differs, so match it row by row. Seam: take the least-difference path through the overlap, with a short blend. A
@@ -770,17 +770,25 @@ DEC-048): rooms grow past one screen in both directions, and a battle area in th
 - Room Looks (§6.1, ADR 0009): the `looks` Stage, edits by `import --look`, and their export to Godot. Trial
   [0128](../backlog/m4/0128-m4-room-look-edit-trial.md) comes first; the work is [0127](../backlog/m4/0127-m4-room-looks.md).
 - An optional SAM 2 crop on a large room, chosen by the Owner or an agent, only if the trial (0134) shows clicks get worse.
+- First in M4: **palette ramps per part** for characters ([0147](../backlog/m4/0147-m4-character-palette-ramps.md); open
+  decision 9, the game's DEC-053). A part is a Blender material; `render` writes a material pass, the character `palette`
+  gives each swappable part its own ramp of palette colours that nothing else uses, and the export gives the game each
+  part's ramp in `character.json` and as `ramps.png`.
 
-**M5: generation and agents.** Moved from M4 on 2026-11-08.
+**M5: character layers.** Added on 2026-11-11 for the game's customizable MC (its DEC-052, needed by its M10): hair styles
+and outfits rendered once each as layers over a body, with the body as a holdout, on the body's clips, camera, frames and
+pivots, so the cost adds per layer and no combination is rendered. A trial comes first
+([0153](../backlog/m5/0153-m5-character-layer-trial.md)); the work is [0152](../backlog/m5/0152-m5-character-layers.md).
+
+**M6: generation and agents.** Moved from M4 on 2026-11-08, and from M5 on 2026-11-11.
 - Providers (one API provider plus PixelLab), prompt templates, the style bible, the cost ledger and budget.
 - The MCP adapter, with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
   ([0062](../backlog/m2/0062-m2-claude-first-pass-trial.md)).
-- `gen --look` ([0143](../backlog/m5/0143-m5-gen-a-look-edit.md)), and `gen` driving `extend`.
-- The image-to-3D trial ([0144](../backlog/m5/0144-m5-image-to-3d-trial.md)).
+- `gen --look` ([0143](../backlog/m6/0143-m6-gen-a-look-edit.md)), and `gen` driving `extend`.
+- The image-to-3D trial ([0144](../backlog/m6/0144-m6-image-to-3d-trial.md)).
 
-**M6: side view.** Side-view Masks (one-way, ladder), the parallax split with depth, platform reachability.
-
-**Later:** tileset recipe (autotile rules; see below), portraits, VFX sheets, UI icons, a batch view for
+**Later:** side view (side-view Masks: one-way, ladder; the parallax split with depth; platform reachability; the lowest
+priority, moved here from M7 on 2026-11-11), tileset recipe (autotile rules; see below), portraits, VFX sheets, UI icons, a batch view for
 whole districts, normal maps for painted backgrounds, "promote to Prop" for a room's foreground Layer, renaming exported
 IDs with aliases. (Battle backgrounds were dropped on 2026-11-08: the game fights in the room, and its DEC-048 rejects
 separate battle maps.)
@@ -816,10 +824,11 @@ answers that first, before the game's M09.
 2. ~~The UI framework~~: decided 2026-11-02, React with TypeScript and Vite (ADR 0008).
 3. ~~The outline method for 3D renders~~: decided 2026-11-07 by the owner: a 1 px silhouette from the render's object mask,
    drawn in `finish`. The mask is exact, so the line has no isolated pixels; Blender's own lines (inverted hull, Freestyle)
-   are sized in scene units and break up at 52 px. Trial [0106](../backlog/0106-m3-outline-method-trial.md) confirms it on a
-   real character and settles inner lines.
-4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (M5, deferred from M3).
-5. Which API provider comes first (M5).
+   are sized in scene units and break up at 52 px. Trial [0106](../backlog/m3/0106-m3-outline-method-trial.md) confirmed it on a
+   real character (`character.mc02`, 2026-11-11): the silhouette is kept and inner lines are out. On the idle it has no
+   flicker on still parts; inner lines would add a third more line pixels.
+4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (M6, deferred from M3).
+5. Which API provider comes first (M6).
 6. Licence for Kiripix itself, if it's ever published.
 7. ~~How a multi-screen room is made~~: decided 2026-11-06 by the owner, after the trial
    [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects
@@ -840,10 +849,10 @@ answers that first, before the game's M09.
    - **SAM 2:** its encoder stretches the whole image to 1024 x 1024, but on these rooms clicks were accurate and no worse than
      on a single-screen room, so a crop around the click isn't needed yet.
    - **`fit`:** grid mode doesn't fit an AI painting, so these rooms use `downscale`, which must keep one scale on both axes
-     ([0081](../backlog/0081-m3-downscale-keeps-one-scale.md)).
+     ([0081](../backlog/m3/0081-m3-downscale-keeps-one-scale.md)).
    - **The rest:** `reach` and `export` stay under a second at 1024 x 320, though on test Masks, so its collision piece count
      (530) is a lower bound. Pieces follow the Masks' edges, not the room's width. The canvas needs better navigation
-     ([0082](../backlog/0082-m3-ui-canvas-navigation.md)).
+     ([0082](../backlog/m3/0082-m3-ui-canvas-navigation.md)).
    - **In the game:** a scrolling camera is the game's work. The exported scene has no room size or camera limits, but the Plate's
      texture gives the size.
 
@@ -859,27 +868,24 @@ answers that first, before the game's M09.
    whether a soft edge is allowed with binary alpha. Each waits for a room that needs it. (2026-11-08: a boss phase that moves a
    bench doesn't need a Look to take collision away. The bench is a Prop, and the game moves it.)
 
-9. **Character customization** (2026-11-11; the game's DEC-013 and DEC-027, and its TECHNICAL.md "Player avatar"): the
-   player picks gender, skin colour, hair and clothes, for a main character with 3 classes. The game asks Kiripix for
-   per-part layer renders by its M03 ("The MC, from 3D"), with a fallback: a single-layer render then, and the paper-doll
-   test moved to its M10. A full render of a character with about 15 clips takes about 10 minutes (mc02's first
-   run: 70 ms a frame at 52 px, plus `palette` and `finish`), so rendering every combination is out. The direction, not yet
-   designed:
-   - **Colours by palette swap, with no extra render.** Skin, hair and each clothing colour are swapped by a shader in the
-     game. This needs each part to own its own set of palette colours (a ramp), so a swap touches nothing else. Kiripix's
-     character `palette` already maps every frame to palette indices, but picks the subset across the whole character; the
-     rule that each part keeps its own ramp is the open part, and it shapes every character made from now on.
-   - **Hair and outfits as layers.** Each is rendered once as its own sprite layer, with the same clips and camera, and the
-     game stacks the layers on the body, so the cost adds up rather than multiplies. Blender renders a layer with the body as
-     a holdout, so a layer holds only what shows. Not settled: outfits that change the silhouette (a long coat), and whether
-     the outline and the normal map are made per layer or in the game.
-   - **Gender and class as whole bodies,** each rendered in full: 2 x 3 = 6 bodies is about an hour.
-   Not in M3 or M4, so the game's fallback applies. The palette rule is the part to settle first.
+9. **Character customization**, narrowed on 2026-11-11 (the game's DEC-013, DEC-027 and DEC-051 to DEC-054). The player
+   picks gender, skin colour, hair, clothes and a class. Rendering every combination is out: a full body with about 15 clips is
+   about 10 minutes of rendering (mc02: 70 ms a frame at 52 px, plus `palette` and `finish`). Decided:
+   - **Colours by palette swap in the game,** with no extra render. Each swappable part (a Blender material, or several) owns a
+     ramp of palette colours that no other part, fixed colour or the outline uses (M4,
+     [0147](../backlog/m4/0147-m4-character-palette-ramps.md)).
+   - **Gender as whole bodies** (2). **A class changes only the battle clips** (3 sets per body, the weapon in the frames), not
+     the body, the exploration clips or the outfits; one character holds them all, by clip name.
+   - **Camera:** `top34_8` for every character; the game changed its own rule to match.
+   - **Outfits are whole-body variants** until hair styles and outfits become **layers** (M5,
+     [0152](../backlog/m5/0152-m5-character-layers.md)), rendered with the body as a holdout.
+   Still open, for M5's trial: outfits that change the silhouette (a long coat), the outline and the normal map per layer or in
+   the game, and how Kiripix holds a layer.
 
 ## Changes since v0.4
 
-- Open decision 9: character customization (2026-11-11). Colours by palette swap in the game, hair and outfits as layers,
-  bodies per gender and class.
+- Open decision 9: character customization (2026-11-11), narrowed the same day. Palette ramps per part come first in M4.
+- A new M5, character layers (2026-11-11). Generation and agents move to M6; side view moves to Later, as the lowest priority.
 - M4 is re-cut as "rooms for grid battles" (2026-11-08, after the game's DEC-048). Generation and agents move to M5, side view
   to M6.
 - A new `area` Marker: a box with a stable ID, optionally on a cell grid, exported as an `Area2D`.

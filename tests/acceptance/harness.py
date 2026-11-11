@@ -480,8 +480,9 @@ def run_acceptance(agent: Agent, setup: Setup, budget: int, dry_run: bool, max_u
         if state.done:
             break
         # The agent's own report counts too: the owner answers it if the fixture has something for this Stage. When `next`
-        # offered a command instead, the tool told the agent two things, so the report says so.
-        asked = not state.needs_owner and "owner" in turn.final_text.lower()
+        # offered a command instead, the tool told the agent two things, so the report says so. Any stop before the end
+        # counts as a report, however it is worded: in the M3 run (2026-11-11) the agent asked "you", not "the owner".
+        asked = not state.needs_owner
         if state.needs_owner or asked:
             owner_turns += 1
             did = owner.step(state, only_this_stage=asked) if owner_turns <= MAX_OWNER_TURNS else None

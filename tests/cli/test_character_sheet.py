@@ -85,7 +85,27 @@ def test_an_idle_whose_pivot_moves_fails_pivot_drift_and_names_the_frame(project
 
     [finding] = findings(project, "sheet.pivot_drift")
     assert finding["position"]["field"] == "idle/s/2" and finding["position"]["file"] == "color/idle/s/002.png"
-    assert finding["position"]["stage"] == "sheet" and finding["fix"] and "frame 2" in finding["message"]
+    assert finding["position"]["stage"] == "sheet" and "frame 2" in finding["message"]
+    assert finding["fix"] == "kiripix run character.hero render --force"  # the pivots are render's (ticket 0154)
+
+
+def test_a_stationary_clip_whose_root_sways_has_no_pivot_drift(project: Kiripix) -> None:
+    (project.cwd / "blender-sway").write_text("", encoding="utf-8")  # the fake root sways 0.6 px on odd frames
+    finished(project, border=3)
+
+    project.json("run", HERO, "sheet")
+
+    assert project.json("check", HERO)["findings"] == []
+
+
+def test_a_clip_that_reaches_past_the_default_cell_fits_the_grown_one(project: Kiripix) -> None:
+    (project.cwd / "blender-reach").write_text(json.dumps({"hit": [-13.0, -52.0, 40.5, 10.2]}), encoding="utf-8")
+    folder = finished(project, border=3)
+
+    project.json("run", HERO, "sheet")
+
+    assert load(folder)["cell"] == {"width": 84, "height": 84} and load(folder)["pivot"] == {"x": 42, "y": 72}
+    assert project.json("check", HERO)["findings"] == []
 
 
 def test_a_moving_pivot_in_a_clip_that_is_not_stationary_is_not_drift(project: Kiripix) -> None:
@@ -116,6 +136,7 @@ def test_a_frame_too_large_for_the_cell_is_reported_with_its_box(project: Kiripi
 
     [finding] = findings(project, "sheet.frame_overflow")
     assert finding["position"]["field"] == "hit/n/0" and finding["position"]["width"] == CELL + 10
+    assert finding["fix"] == "kiripix run character.hero render --force"  # render sizes the cell (ticket 0155)
 
 
 def test_a_missing_frame_gives_a_frame_count_finding(project: Kiripix) -> None:

@@ -47,11 +47,13 @@ def test_no_clips_is_needs_input_with_the_decisions_shape(project: Kiripix) -> N
     [finding] = result["findings"]
     assert finding["code"] == "stage.needs_input"
     text = json.dumps(finding)
-    assert "kiripix decide character.hero clips --decision" in text
     for field in ("name", "source", "start", "end", "fps", "loop"):
         assert field in text
     assert stage_status(project, HERO)["clips"] == "needs-input"
-    assert project.json("next", HERO)["data"]["stage"] == "clips"
+    nxt = project.json("next", HERO)["data"]
+    assert nxt["stage"] == "clips"
+    assert nxt["command"] is None, "which clips the game plays is the owner's choice: no command to guess values into"
+    assert nxt["owner_action"] and "Sources:" in nxt["owner_action"]
 
 
 def test_three_clips_build_clips_json_with_the_sampled_frames_and_undo_removes_one(project: Kiripix) -> None:

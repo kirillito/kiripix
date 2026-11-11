@@ -13,6 +13,10 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
                   toward the camera>}}, "output": <folder to write the frames into>}
 result: {"device": <what rendered>, "depth_range": [<near>, <far>], "frames": {<clip>: {<direction>: [{"pivot": [x, y]}]}}}
 
+With `"measure": true` in args nothing is rendered or written (ticket 0155): the result is where each frame lands, for sizing
+the cell, `{"frames": {<clip>: {<direction>: [{"bounds": [left, top, right, bottom], "under": [x, y]}]}}}` in px from the
+point the camera orbits (`measure_poses`).
+
 Files, per clip, direction and frame (index from 0, three digits): `color/<clip>/<dir>/<index>.png` (RGBA, 8 bit),
 `normal/...` (RGBA: the camera-space normal as (v + 1) / 2 * 255, X right, Y up, Z toward the camera),
 `depth/...` (gray, 16 bit: 0 at `depth_range[0]`, 65535 at `[1]` and in the background; distance along the view axis,
@@ -443,7 +447,8 @@ def pose(armature, frame) -> None:
     bpy.context.view_layer.update()
 
 
-def render(args: dict) -> dict:
+def open_posable(args: dict):
+    """The rig's file opened and normalised: its armature, in the pose position, and its root bone's name."""
     progress(0, 1, "opening the file")
     open_rig(Path(args["rig_file"]))
     armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
@@ -452,7 +457,91 @@ def render(args: dict) -> dict:
     armature = armatures[0]
     armature.data.pose_position = "POSE"
     normalise(float(args["model_height"]))
-    root_bone = find_root(armature, list(args.get("root", [])))
+    return armature, find_root(armature, list(args.get("root", [])))
+
+
+def rendered_collections() -> set:
+    """The collections whose objects render: not excluded from the view layer and not hidden from renders, with their
+    parents. The glTF importer puts objects it doesn't want, such as a bone shape's `Icosphere`, in an excluded one."""
+    found: set = set()
+
+    def walk(layer) -> None:
+        if layer.exclude or layer.collection.hide_render:
+            return
+        found.add(layer.collection)
+        for child in layer.children:
+            walk(child)
+
+    walk(bpy.context.view_layer.layer_collection)
+    return found
+
+
+def posed_points() -> np.ndarray:
+    """Every vertex of every mesh that renders, in the current pose, in world space: an (n, 3) array."""
+    graph = bpy.context.evaluated_depsgraph_get()
+    shown = rendered_collections()
+    found = []
+    for obj in bpy.data.objects:
+        if obj.type != "MESH" or obj.hide_render or not any(c in shown for c in obj.users_collection):
+            continue
+        evaluated = obj.evaluated_get(graph)
+        mesh = evaluated.to_mesh()
+        try:
+            co = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+            mesh.vertices.foreach_get("co", co)
+        finally:
+            evaluated.to_mesh_clear()
+        matrix = np.array(evaluated.matrix_world, dtype=np.float64)
+        found.append(co.reshape(-1, 3).astype(np.float64) @ matrix[:3, :3].T + matrix[:3, 3])
+    if not found:
+        raise ValueError("the file has no mesh")
+    return np.concatenate(found)
+
+
+def measure_poses(args: dict) -> dict:
+    """Where every frame of every clip lands on screen, without rendering (ticket 0155), so that `render` can size one cell
+    that holds every pose. Per clip, direction and frame: `bounds`, the mesh's extent [left, top, right, bottom] in px from
+    the point the camera orbits (x right, y down), and `under`, the point under the root from that point, in px: the pivot
+    `render` reports is the cell's pivot plus `under`. The camera is the render's own, so these are the frames' pixels."""
+    armature, root_bone = open_posable(args)
+    setup = set_up_scene(args, armature, root_bone)
+    ground, turntable, camera = setup["ground"], setup["turntable"], setup["camera"]
+    scale = float(args["px_per_unit"])
+    directions = args["directions"]
+    total = sum(len(c["frames"]) for c in args["clips"]) * len(directions)
+    done = 0
+    found: dict = {}
+    for clip in args["clips"]:
+        assign(armature, action_for(clip))
+        found[clip["name"]] = {d["name"]: [] for d in directions}
+        for frame in clip["frames"]:
+            pose(armature, frame)
+            points = posed_points()
+            head = armature.matrix_world @ armature.pose.bones[root_bone].head
+            under = Vector((head.x, head.y, 0.0))
+            centre = under if clip.get("root_motion", False) else ground
+            turntable.location = centre
+            offsets = points - np.array(centre)
+            for direction in directions:
+                progress(done, total, f"measuring {clip['name']} {direction['name']}")
+                turntable.rotation_euler.z = -math.radians(float(direction["yaw"]))
+                bpy.context.view_layer.update()
+                axes = np.array(camera.matrix_world.to_3x3(), dtype=np.float64)
+                xs, ys = offsets @ axes[:, 0] * scale, -(offsets @ axes[:, 1]) * scale
+                root = np.array(under - centre)
+                found[clip["name"]][direction["name"]].append({
+                    "bounds": [round(float(xs.min()), 3), round(float(ys.min()), 3),
+                               round(float(xs.max()), 3), round(float(ys.max()), 3)],
+                    "under": [round(float(root @ axes[:, 0] * scale), 3), round(float(-(root @ axes[:, 1]) * scale), 3)]})
+                done += 1
+    progress(total, total, "done")
+    return {"frames": found}
+
+
+def render(args: dict) -> dict:
+    if args.get("measure"):
+        return measure_poses(args)
+    armature, root_bone = open_posable(args)
 
     output = Path(args["output"])
     scratch = output / ".scratch"

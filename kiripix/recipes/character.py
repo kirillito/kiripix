@@ -21,7 +21,7 @@ from kiripix.recipes.blender_launcher import VERSION_SETTING as BLENDER_VERSION_
 from kiripix.recipes.character_finish import check_character_finish, run_character_finish
 from kiripix.recipes.character_palette import check_character_palette, run_character_palette
 from kiripix.recipes.character_sheet import check_character_sheet, run_character_sheet
-from kiripix.recipes.render import run_render
+from kiripix.recipes.render import FORMAT_SETTING as RENDER_FORMAT_SETTING, run_render
 from kiripix.recipes.blender_launcher import launch
 from kiripix.recipes.common import picked, source_needs_input, variants
 from kiripix.recipes.character_export import check_character_export, export_needs_input, run_character_export
@@ -154,7 +154,8 @@ CHARACTER = KindSpec(
             name="render",
             description="Headless Blender render at the target pixel size: colour, normal, depth and mask passes.",
             inputs=StageInputs(upstream=["model", "rig", "clips"], files=["src/clips/*"],
-                               settings=["character.camera", "character.height", BLENDER_VERSION_SETTING],
+                               settings=["character.camera", "character.height", BLENDER_VERSION_SETTING,
+                                         RENDER_FORMAT_SETTING],
                                given=[BLENDER_SETTING]),
             params=(
                 ParamSpec(
