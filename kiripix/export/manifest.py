@@ -5,17 +5,20 @@ Manifest lists it and it still has the recorded hash. `.import` sidecars are God
 looks at them.
 """
 
+import json
 from importlib import metadata
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from kiripix.core import atomic
 from kiripix.core.errors import fail
 
 MANIFEST_DIR = "manifest"
-MANIFEST_SCHEMA_VERSION: Literal[1] = 1
+# 2: `ids.clips`, each exported animation name of a character (ticket 0113). A version 1 Manifest is migrated on read: it
+# lists the same files and the IDs it froze, so refusing it would lose the freeze; its `clips` are empty.
+MANIFEST_SCHEMA_VERSION: Literal[2] = 2
 
 
 class ExportedIds(BaseModel):
@@ -26,12 +29,13 @@ class ExportedIds(BaseModel):
     markers: list[str]
     layers: list[str]
     masks: list[str]
+    clips: list[str] = Field(default_factory=list)  # a character's animations, `<clip>_<dir>`
 
 
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = MANIFEST_SCHEMA_VERSION
+    schema_version: Literal[2] = MANIFEST_SCHEMA_VERSION
     kiripix_version: str
     asset: str
     exported: bool
@@ -40,6 +44,29 @@ class Manifest(BaseModel):
     files: dict[str, str]  # each file as `res://...`, with its SHA-256
     # Only while an export is writing: the hash each file had before it. So one that was stopped can be run again.
     replacing: dict[str, str] | None = None
+    # Set when it was read from an older schema, so that an export rewrites the file once, though nothing else changed.
+    _migrated: bool = PrivateAttr(default=False)
+
+    @property
+    def migrated(self) -> bool:
+        return self._migrated
+
+    @classmethod
+    def from_value(cls, value: Any) -> "Manifest":
+        """Validate a decoded Manifest, migrating one from an older schema version first (a newer one fails validation)."""
+        migrated = isinstance(value, dict) and value.get("schema_version") == 1
+        if migrated:
+            value = migrate_v1(value)
+        manifest = cls.model_validate(value)
+        manifest._migrated = migrated
+        return manifest
+
+
+def migrate_v1(value: dict[str, Any]) -> dict[str, Any]:
+    """Schema 1 to 2: `ids` gains `clips`, empty. Pure."""
+    ids = value.get("ids")
+    ids = {**ids, "clips": ids.get("clips", [])} if isinstance(ids, dict) else ids
+    return {**value, "schema_version": 2, "ids": ids}
 
 
 def kiripix_version() -> str:
@@ -61,11 +88,11 @@ def read_manifest(path: Path, shown: str) -> Manifest | None:
     """The Manifest at `path`; None when there is none. `shown` is its `res://` path, for messages."""
     try:
         data = path.read_bytes()
-        return Manifest.model_validate_json(data)
+        return Manifest.from_value(json.loads(data))
     except FileNotFoundError:
         return None
-    except (OSError, ValidationError) as error:
-        if isinstance(error, ValidationError) and has_conflict_markers(data):
+    except (OSError, ValidationError, ValueError) as error:
+        if isinstance(error, ValueError) and has_conflict_markers(data):
             raise fail("export.manifest_conflicted", f"the Manifest {shown} has git conflict markers in it",
                        fix="kiripix manifest repair") from None
         raise fail("export.manifest_invalid", f"the Manifest {shown} can't be read: {error}",

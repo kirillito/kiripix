@@ -11,6 +11,13 @@ depends_on: [0104-m3-render-stage.md]
 
 Spec §6.3 (render: "toon shading") and §1 (a Sea of Stars-like look). Story 8 of [0097](0097-m3-characters.md).
 
+Moved to M5 on 2026-11-10 and back to M3 on 2026-11-11, once a real Model existed.
+
+**The real Model (2026-11-11):** `character.mc02` in the art Project (`urban-mystery-club-art`), built by a scripted
+Blender session from the Quaternius base (`c:\Homespace\[assets]\mc02\`) and rigged by Mixamo, with `idle`, `walk` and
+`attack`. The Owner will still revise it; these choices are about the rendering, not its details, so a revised Model only
+needs a look at its new frames.
+
 ## What to build
 
 - A toon material applied at render time over the Model's own colours: its base colour kept, light quantised to a few bands,

@@ -142,9 +142,10 @@ def test_the_manifest_records_the_ids_the_files_and_their_hashes(project: Kiripi
     project.json("export", ROOM)
 
     record = manifest(project)
-    assert record["schema_version"] == 1 and record["kiripix_version"]
+    assert record["schema_version"] == 2 and record["kiripix_version"]
     assert record["asset"] == ROOM and record["exported"] is True and record["counter"] == 1
-    assert record["ids"] == {"markers": ["spawn.main"], "layers": ["plate"], "masks": ["pit", "solid"]}
+    assert record["ids"] == {"markers": ["spawn.main"], "layers": ["plate"], "masks": ["pit", "solid"],
+                           "clips": []}
     assert sorted(record["files"]) == ["res://kiripix/room/alley/alley.tscn", "res://kiripix/room/alley/plate.png"]
     assert all(re.fullmatch("[0-9a-f]{64}", value) for value in record["files"].values())
 
@@ -391,9 +392,9 @@ def test_a_failed_check_stops_export_before_anything_is_written(project: Kiripix
 
 
 def test_a_kind_with_no_exporter_is_refused(project: Kiripix) -> None:
-    project.json("new", "character", "hero")
+    project.json("new", "demo", "a")
 
-    [finding] = project.json("export", "character.hero", expect=1)["findings"]
+    [finding] = project.json("export", "demo.a", expect=1)["findings"]
 
     assert finding["code"] == "export.not_available"
 

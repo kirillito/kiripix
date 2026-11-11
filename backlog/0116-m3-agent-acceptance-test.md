@@ -27,3 +27,18 @@ was for M2.
 - [ ] The dry run passes in `uv run pytest tests/acceptance`.
 - [ ] One real run on the cheap model, recorded under `docs/acceptance/` with `--milestone m3`, compared in its Notes with
       M2's 16,941 fresh tokens. Note how much of the rise is the character. A failure is filed as a ticket in `backlog/`.
+
+## Notes
+
+- Harness built and the dry run passes (`uv run pytest tests/acceptance`, 29 passed). The character runs on the fake Blender
+  end to end: `sheet.empty_frame`, `sheet.pivot_drift` and `check --all` come out clean on its opaque frames.
+- The task prompt keeps every line it had; it gains one paragraph naming `character.hero` and its Model file, and its last
+  sentence now says "the room and the character".
+- The real run is not done yet (it spends money on the external API). The Owner runs it with:
+
+  ```
+  uv run python -m tests.acceptance.run --milestone m3
+  ```
+
+  then ticks the second box once the report is in `docs/acceptance/`, compares its fresh tokens with M2's 16,941 and notes
+  how much of the rise is the character (the commands from `import character.hero` on, in the report's command table).

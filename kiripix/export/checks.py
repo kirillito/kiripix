@@ -15,18 +15,19 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project
 from kiripix.core.project_checks import register_project_check
-from kiripix.export.godot import EXPORTED_MARKER_TYPES, room_ids
+from kiripix.export.godot import EXPORTED_MARKER_TYPES, animation_name, room_ids
 from kiripix.export.manifest import ExportedIds, Manifest, read_manifest
 from kiripix.export.room import EXPORT_STAGE, ROOM_FILE, ROOM_SCHEMA_VERSION
 from kiripix.export.target import resolve_target
+from kiripix.recipes.clips import CLIP, DIRECTIONS
 
-EXPORTERS = frozenset({"room", "prop"})  # the Kinds that have an exporter
+EXPORTERS = frozenset({"room", "prop", "character"})  # the Kinds that have an exporter
 
 
 def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
     """The IDs the Asset would export now. Markers come from the Decisions, so a rename fails before anything is run
     again. A room's Masks and Layers come from the built export when there is one, and otherwise are taken as unchanged.
-    A prop exports no Marker, Layer or Mask ID to freeze."""
+    A prop exports no Marker, Layer or Mask ID to freeze. A character's clip animations come from its `clip` Decisions."""
     markers: set[str] = set()
     for spec in graph.kind.stages:
         if spec.markers is not None:
@@ -42,7 +43,13 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
         if room.get("schema_version") == ROOM_SCHEMA_VERSION:
             built = room_ids(room)
             layers, masks = built.layers, built.masks
-    return ExportedIds(markers=sorted(markers), layers=layers, masks=masks)
+    clips = manifest.ids.clips
+    if graph.asset.kind == "character":
+        # a clip's name is its ID, and its animations are the clip in each direction: from the Decisions, so that a clip
+        # taken away fails before anything is run again
+        clips = sorted(animation_name(str(d.data["name"]), direction)
+                       for d in graph.replay("clips").current if d.name == CLIP.name for direction in DIRECTIONS)
+    return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips)
 
 
 def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Finding]:
@@ -63,14 +70,16 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     where = ", ".join(sorted(res for res in manifest.files if res.endswith(".tscn"))) or shown
     found: list[Finding] = []
     for noun, was, is_now in (("Marker", manifest.ids.markers, now.markers), ("Layer", manifest.ids.layers, now.layers),
-                              ("Mask", manifest.ids.masks, now.masks)):
+                              ("Mask", manifest.ids.masks, now.masks), ("clip animation", manifest.ids.clips, now.clips)):
         for gone in sorted(set(was) - set(is_now)):
             found.append(Finding(
                 code="export.id_frozen",
                 message=f"{asset.id}: the {noun} ID '{gone}' was exported in {where} (Manifest {shown}, export "
                         f"{manifest.counter}), so it can't be renamed or removed",
                 position=Position(asset=asset.id, file=shown),
-                owner_action=f"Put '{gone}' back (undo the change, or place a {noun} with that ID again): the game "
+                owner_action=f"Put '{gone}' back (undo the change, or decide the clip again under its old name): the game "
+                             "refers to it. Adding new IDs is always fine." if noun == "clip animation" else
+                             f"Put '{gone}' back (undo the change, or place a {noun} with that ID again): the game "
                              "refers to it. Adding new IDs is always fine."))
     return found
 

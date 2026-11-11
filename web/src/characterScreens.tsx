@@ -1,9 +1,10 @@
 // A character's first three Stages (spec §6.3, §11): the Model, the rig and the clips. They have no image to draw on, so each
 // is a screen of files and a form, and the Stage panel beside it stays the shared one (params, Decisions, Checks, the
-// primary action). Everything here is a Command: `import` with a role, `pick`, and `decide` for a `bone` or a `clip`.
+// primary action). Everything here is a Command: `import` with a role, `pick`, `decide` for a `bone` or a `clip`, and the
+// read-only `inspect` Probe, which lists a file's actions and bones (it starts Blender, so it is shown and can be cancelled).
 
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { fileUrl, type ShowData, type StageDescription, type StageDetail } from "./api";
+import { call, cancelJob, fileUrl, type Envelope, type FileEntry, type ShowData, type StageDescription, type StageDetail } from "./api";
 
 export const CHARACTER_KIND = "character";
 export const MODEL_STAGE = "model";
@@ -36,12 +37,12 @@ interface ClipsDocument {
   clips: { name: string; frames: number[]; root_motion: boolean; stationary: boolean }[];
 }
 
-function outputOf(detail: StageDetail | undefined, name: string): string | null {
+export function outputOf(detail: StageDetail | undefined, name: string): string | null {
   return detail?.outputs.find((path) => path.endsWith(`/${name}`)) ?? null;
 }
 
 // A file the Stage built, read through the file route. It is read again whenever `key` changes (every refresh).
-function useDocument<T>(path: string | null, key: unknown): T | null {
+export function useDocument<T>(path: string | null, key: unknown): T | null {
   const [found, setFound] = useState<{ path: string; value: T } | null>(null);
   useEffect(() => {
     if (!path) return;
@@ -57,21 +58,112 @@ function useDocument<T>(path: string | null, key: unknown): T | null {
   return path && found?.path === path ? found.value : null;
 }
 
-// A file's size from the file route's headers alone: the body is never read.
-function useSize(path: string): number | null {
-  const [size, setSize] = useState<{ path: string; bytes: number } | null>(null);
+// What the `inspect` Probe says a character's file holds (ticket 0123).
+interface FileRead {
+  file: string;
+  armature: string | null;
+  bones: string[];
+  fps: number;
+  actions: { name: string; short: string; start: number; end: number }[];
+}
+
+const INSPECT_PROBE = "inspect";
+// Answers are kept for the page's life: a file's stored name holds its content hash, so a name never means another file.
+const fileReads = new Map<string, FileRead>();
+
+// Reads the named files with the Probe, one at a time (each starts Blender, which is slow the first time). `reading` names
+// the file being read; `cancel` stops the read and the ones after it, and `retry` starts again.
+function useFileReads(asset: string, files: { name: string; path: string }[], enabled: boolean) {
+  const [, tick] = useState(0);
+  const [state, setState] = useState<{ reading: string | null; stopped: boolean; failed: string | null }>({
+    reading: null,
+    stopped: false,
+    failed: null,
+  });
+  const job = useRef<string | null>(null);
+  const [round, setRound] = useState(0);
+  const key = files.map((file) => `${file.name}=${file.path}`).join("|");
   useEffect(() => {
-    const abort = new AbortController();
-    fetch(fileUrl(path, 0), { headers: { Range: "bytes=0-0" }, signal: abort.signal })
-      .then((response) => {
-        const total = /\/(\d+)$/.exec(response.headers.get("content-range") ?? "")?.[1] ?? response.headers.get("content-length");
-        if (total) setSize({ path, bytes: Number(total) });
-        abort.abort();
-      })
-      .catch(() => undefined);
-    return () => abort.abort();
-  }, [path]);
-  return size?.path === path ? size.bytes : null;
+    if (!enabled) return;
+    let live = true;
+    const wanted = files.filter((file) => !fileReads.has(`${asset}/${file.path}`));
+    if (wanted.length === 0) {
+      setState({ reading: null, stopped: false, failed: null });
+      return;
+    }
+    void (async () => {
+      let failed: string | null = null; // a file that can't be read doesn't stop the others
+      for (const file of wanted) {
+        if (!live) return;
+        const id = crypto.randomUUID();
+        job.current = id;
+        setState({ reading: file.name, stopped: false, failed: null });
+        let result: Envelope<{ result: FileRead }>;
+        try {
+          result = await call("probe", { name: INSPECT_PROBE, asset, args: [file.name] }, id);
+        } catch {
+          job.current = null;
+          failed ??= `Couldn't read ${file.name}.`;
+          continue;
+        }
+        job.current = null;
+        if (!live) return;
+        if (!result.ok || !result.data) {
+          if (result.findings.some((finding) => finding.code === "run.cancelled")) {
+            setState({ reading: null, stopped: true, failed: null });
+            return;
+          }
+          failed ??= result.findings[0]?.message ?? `Couldn't read ${file.name}.`;
+          continue;
+        }
+        fileReads.set(`${asset}/${file.path}`, result.data.result);
+        tick((count) => count + 1);
+      }
+      if (live) setState({ reading: null, stopped: false, failed });
+    })();
+    return () => {
+      live = false;
+      if (job.current) void cancelJob(job.current);
+      job.current = null;
+    };
+    // `files` is read through `key`: a new array each render must not start another read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset, key, enabled, round]);
+  const read = (path: string): FileRead | null => fileReads.get(`${asset}/${path}`) ?? null;
+  return {
+    read,
+    reading: state.reading,
+    stopped: state.stopped,
+    failed: state.failed,
+    cancel: () => {
+      if (job.current) void cancelJob(job.current);
+    },
+    retry: () => setRound((count) => count + 1),
+  };
+}
+
+// Shows that a file is being read, and lets the Owner stop it.
+function ReadingNote(props: { reads: ReturnType<typeof useFileReads> }) {
+  const { reads } = props;
+  if (reads.reading)
+    return (
+      <p className="hint file-reading" data-testid="file-reading">
+        Reading {reads.reading} (the first read takes a few seconds)…{" "}
+        <button data-testid="file-reading-cancel" onClick={reads.cancel}>
+          Cancel
+        </button>
+      </p>
+    );
+  if (reads.stopped || reads.failed)
+    return (
+      <p className="hint" data-testid="file-read-stopped">
+        {reads.stopped ? "Reading was cancelled." : reads.failed}{" "}
+        <button className="link" data-testid="file-read-retry" onClick={reads.retry}>
+          Read again
+        </button>
+      </p>
+    );
+  return null;
 }
 
 function readableSize(bytes: number): string {
@@ -138,9 +230,13 @@ function ModelScreen(props: {
 }) {
   const { show, detail, refreshes } = props;
   const model = useDocument<ModelDocument>(outputOf(detail, "model.json"), refreshes);
+  const still = outputOf(detail, "still.png");
   return (
     <div className="character-screen" data-testid="model-screen">
       <h2>Models</h2>
+      {still && model && (
+        <img className="model-still" data-testid="model-still" alt={`The picked Model, ${model.source}`} src={fileUrl(still, refreshes)} />
+      )}
       {show.variants.length === 0 ? (
         <p className="hint">No Model yet.</p>
       ) : (
@@ -166,19 +262,22 @@ function ModelScreen(props: {
 }
 
 function ModelRow(props: {
-  variant: { name: string; file: string };
+  variant: FileEntry;
   index: number;
   picked: boolean;
   bounds: ModelDocument["bounds"] | null;
   onPick: (variant: string) => void;
 }) {
   const { variant, index, picked, bounds } = props;
-  const size = useSize(variant.file);
+  const size = variant.size ?? null;
   return (
     <li>
       <button className="variant model-row" data-testid={`variant-${variant.name}`} aria-pressed={picked} onClick={() => props.onPick(variant.name)}>
         {index < 9 && <kbd>{index + 1}</kbd>}
-        <span className="model-name">{basename(variant.file)}</span>
+        <span className="model-name" data-testid={`variant-name-${variant.name}`}>
+          {variant.imported_as ?? basename(variant.file)}{" "}
+          {variant.imported_as && <small title="The stored file">{basename(variant.file)}</small>}
+        </span>
         <span data-testid={`variant-size-${variant.name}`}>{size === null ? "" : readableSize(size)}</span>
         <span data-testid={`variant-bounds-${variant.name}`}>
           {bounds ? `bounds ${bounds.max.map((top, axis) => (top - bounds.min[axis]).toFixed(2)).join(" × ")}` : ""}
@@ -226,6 +325,11 @@ function RigScreen(props: {
   const [bone, setBone] = useState("");
   const chosenRole = role || roles[0] || "";
   const steps = ownerAction ? numberedSteps(ownerAction) : null;
+  // The bones to choose from are the rig's: the rigged file's if there is one, else the picked Model's.
+  const rigFile = show.rigged ?? show.variants.find((variant) => variant.name === show.picked) ?? null;
+  const formShown = (detail.status === "failed" || mapped.length > 0) && roles.length > 0;
+  const reads = useFileReads(show.asset, rigFile ? [{ name: rigFile.name, path: rigFile.file }] : [], formShown && rigFile !== null);
+  const bones = rigFile ? (reads.read(rigFile.file)?.bones ?? []) : [];
   return (
     <div className="character-screen" data-testid="rig-screen">
       <h2>Rig</h2>
@@ -280,7 +384,8 @@ function RigScreen(props: {
       <FileDrop testid="rigged-drop" accept={MODEL_FILES} onFiles={(files) => props.onImport(files.slice(0, 1), "rigged")}>
         Drop the rigged file that came back from Mixamo here. Or
       </FileDrop>
-      {(detail.status === "failed" || mapped.length > 0) && roles.length > 0 && (
+      {formShown && <ReadingNote reads={reads} />}
+      {formShown && (
         <fieldset disabled={props.disabled} className="bone-form">
           <h2>Map a bone</h2>
           <p className="hint">For a rig that doesn't use Mixamo's bone names: say which bone has each role.</p>
@@ -296,7 +401,18 @@ function RigScreen(props: {
           </div>
           <div className="param">
             <label htmlFor="bone-name">Bone</label>
-            <input id="bone-name" data-testid="bone-name" value={bone} onChange={(event) => setBone(event.target.value)} />
+            {bones.length > 0 ? (
+              <select id="bone-name" data-testid="bone-name" value={bone} onChange={(event) => setBone(event.target.value)}>
+                <option value="">Choose a bone</option>
+                {bones.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input id="bone-name" data-testid="bone-name" value={bone} onChange={(event) => setBone(event.target.value)} />
+            )}
           </div>
           <button
             data-testid="bone-add"
@@ -346,13 +462,50 @@ function ClipsScreen(props: {
   const built = useDocument<ClipsDocument>(outputOf(detail, "clips.json"), refreshes);
   const rig = useDocument<RigDocument>(outputOf(show.stages.find((entry) => entry.stage === RIG_STAGE), "rig.json"), refreshes);
   const model = useDocument<ModelDocument>(outputOf(show.stages.find((entry) => entry.stage === MODEL_STAGE), "model.json"), refreshes);
-  // The Model's own actions are the rig's only while the rig is the Model's own. A rigged file's actions are listed nowhere
-  // until `clips` has run, so they are typed.
-  const actions = rig && rig.source === "model" && model ? model.actions : [];
-  const known = [
-    ...show.clip_sources.map((entry) => ({ name: entry.name, start: null as number | null, end: null as number | null })),
-    ...actions.map((action) => ({ name: action.name, start: action.start as number | null, end: action.end as number | null })),
-  ];
+  // The Model's own actions are the rig's only while the rig is the Model's own; a rigged file's come from the Probe, as
+  // do each animation file's.
+  const actions = !show.rigged && rig && rig.source === "model" && model ? model.actions : [];
+  const files = [...(show.rigged ? [show.rigged] : []), ...show.clip_sources].map((entry) => ({ name: entry.name, path: entry.file }));
+  const reads = useFileReads(show.asset, files, files.length > 0);
+  interface Known {
+    value: string;
+    label: string;
+    start: number | null;
+    end: number | null;
+    fps: number | null;
+  }
+  // A clip source names an animation file by its stem, and `stem/<full action name>` when the file holds several actions. An
+  // action of the rigged file is named by its full name. `clips` reads `stem/...` as a clip source whenever the stem is one, so
+  // a rigged action whose name is (or starts with) a clip source's stem can't be named, and isn't offered.
+  const known: Known[] = [];
+  for (const entry of show.clip_sources) {
+    const found = reads.read(entry.file);
+    if (!found || found.actions.length === 0) {
+      known.push({ value: entry.name, label: entry.name, start: null, end: null, fps: null });
+    } else if (found.actions.length === 1) {
+      const only = found.actions[0];
+      known.push({ value: entry.name, label: `${entry.name} (${only.start}–${only.end})`, start: only.start, end: only.end, fps: found.fps });
+    } else {
+      for (const action of found.actions) {
+        known.push({
+          value: `${entry.name}/${action.name}`,
+          label: `${entry.name}, ${action.short} (${action.start}–${action.end})`,
+          start: action.start,
+          end: action.end,
+          fps: found.fps,
+        });
+      }
+    }
+  }
+  const riggedRead = show.rigged ? reads.read(show.rigged.file) : null;
+  const stems = new Set(show.clip_sources.map((entry) => entry.name));
+  for (const action of riggedRead?.actions ?? []) {
+    if (stems.has(action.name.split("/")[0])) continue;
+    known.push({ value: action.name, label: `rigged file, ${action.short} (${action.start}–${action.end})`, start: action.start, end: action.end, fps: riggedRead?.fps ?? null });
+  }
+  for (const action of actions) {
+    known.push({ value: action.name, label: `the Model, ${action.name} (${action.start}–${action.end})`, start: action.start, end: action.end, fps: null });
+  }
   const clips = detail.decisions.filter((decision) => decision.name === CLIP_DECISION).map((decision) => decision.data as unknown as ClipData);
   const pattern = description.decisions.find((entry) => entry.name === CLIP_DECISION)?.entry_schema?.properties?.name?.pattern;
   const namePattern = pattern ? new RegExp(pattern) : null;
@@ -364,10 +517,13 @@ function ClipsScreen(props: {
   const [fps, setFps] = useState("12");
   const [loop, setLoop] = useState(true);
   const [stationary, setStationary] = useState(false);
+  const [sourceFps, setSourceFps] = useState<number | null>(null); // the source file's, shown as a hint: the clip's is the game's
 
   function chooseSource(value: string) {
     setSource(value);
-    const action = known.find((entry) => entry.name === value && entry.start !== null);
+    const chosen = known.find((entry) => entry.value === value);
+    setSourceFps(chosen?.fps ?? null);
+    const action = known.find((entry) => entry.value === value && entry.start !== null);
     if (action && action.start !== null && action.end !== null) {
       setStart(String(action.start));
       setEnd(String(action.end));
@@ -426,6 +582,7 @@ function ClipsScreen(props: {
         </table>
       )}
 
+      <ReadingNote reads={reads} />
       <fieldset disabled={props.disabled} className="clip-form">
         <h2>Add a clip</h2>
         <div className="param">
@@ -443,7 +600,9 @@ function ClipsScreen(props: {
           />
           <datalist id="clip-sources">
             {known.map((entry) => (
-              <option key={entry.name} value={entry.name} />
+              <option key={entry.value} value={entry.value}>
+                {entry.label}
+              </option>
             ))}
           </datalist>
         </div>
@@ -458,6 +617,11 @@ function ClipsScreen(props: {
         <div className="param">
           <label htmlFor="clip-fps">Frame rate</label>
           <input id="clip-fps" data-testid="clip-fps" type="number" min={1} value={fps} onChange={(event) => setFps(event.target.value)} />
+          {sourceFps !== null && (
+            <small className="hint" data-testid="clip-source-fps">
+              The source plays at {sourceFps} frames a second.
+            </small>
+          )}
         </div>
         <label className="toggle">
           <input type="checkbox" data-testid="clip-loop" checked={loop} onChange={(event) => setLoop(event.target.checked)} />
@@ -489,7 +653,7 @@ function ClipsScreen(props: {
         <ul data-testid="clip-sources">
           {show.clip_sources.map((entry) => (
             <li key={entry.name} data-testid={`clip-source-${entry.name}`}>
-              {entry.name} <small>{basename(entry.file)}</small>
+              {entry.name} <small>{entry.imported_as ?? basename(entry.file)}</small>
             </li>
           ))}
         </ul>
@@ -502,9 +666,9 @@ function ClipsScreen(props: {
           The Model's own actions: {actions.map((action) => `${action.name} (${action.start}–${action.end})`).join(", ")}.
         </p>
       )}
-      {rig?.source === "rigged" && (
-        <p className="hint" data-testid="rigged-actions-note">
-          The rigged file's actions aren't listed before the clips are built: type the action's name as the source.
+      {riggedRead && riggedRead.actions.length > 0 && (
+        <p className="hint" data-testid="rigged-actions">
+          The rigged file's actions: {riggedRead.actions.map((action) => `${action.short} (${action.start}–${action.end})`).join(", ")}.
         </p>
       )}
     </div>

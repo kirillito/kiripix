@@ -1,7 +1,8 @@
 """The Exporter (spec §9, ADR 0003): writes engine files from an Asset's final outputs, under the Manifest's rules.
 
-A room's or prop's `export` Stage leaves engine-free outputs in `out/export/`: a room's mapped Plate and `room.json` with
-its shapes and Markers, a prop's sprite and `prop.json` with its origin and collision shapes. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
+A room's, prop's or character's `export` Stage leaves engine-free outputs in `out/export/`: a room's mapped Plate and
+`room.json` with its shapes and Markers, a prop's sprite and `prop.json` with its origin and collision shapes, a
+character's two atlases and `character.json` with its clips. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
 
 The game's work is never overwritten (ADR 0003). A file is written only if the Manifest lists it and it still has the
 listed hash. `force` backs up and overwrites an owned file the game changed; `adopt` backs up and takes over a file the
@@ -23,7 +24,10 @@ from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
 from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, frozen_layer_findings, pairing_findings
-from kiripix.export.godot import prop_ids, prop_scene, room_ids, room_scene
+from kiripix.export.character import COLOR_FILE, NORMAL_FILE, read_character
+from kiripix.export.godot import (
+    character_frames, character_ids, character_scene, character_texture, prop_ids, prop_scene, room_ids, room_scene,
+)
 from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
 from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
@@ -96,8 +100,26 @@ def _prop_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
     return files, prop_ids(prop)
 
 
+def _character_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
+    """The files of a character's export, by `res://` path, and the IDs they carry: both atlases, the CanvasTexture over
+    them, the SpriteFrames over that, and the scene."""
+    character = read_character(graph)
+    name = graph.asset.id.split(".", 1)[1]
+    folder = f"{target.root}/{graph.kind.name}/{name}"
+    colour, normal = f"{folder}/{COLOR_FILE}", f"{folder}/{NORMAL_FILE}"
+    texture, frames = f"{folder}/texture.tres", f"{folder}/frames.tres"
+    files = {
+        f"{folder}/{name}.tscn": character_scene(character, name, frames).encode("utf-8"),
+        frames: character_frames(character, texture).encode("utf-8"),
+        texture: character_texture(colour, normal).encode("utf-8"),
+        colour: (built_dir(graph) / COLOR_FILE).read_bytes(),
+        normal: (built_dir(graph) / NORMAL_FILE).read_bytes(),
+    }
+    return files, character_ids(character)
+
+
 _FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget], tuple[dict[str, bytes], ExportedIds]]] = {
-    "room": _room_files, "prop": _prop_files}
+    "room": _room_files, "prop": _prop_files, "character": _character_files}
 
 
 def _hashes(files: dict[str, bytes]) -> dict[str, str]:
@@ -151,7 +173,7 @@ def _conflict(res: str, current: str | None, wanted: str, manifest: Manifest | N
 def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget, options: ExportOptions) -> _Plan:
     """What exporting the Asset would do, or the refusal why not. Writes nothing."""
     if asset.kind not in _FILES_BY_KIND:
-        raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms and props can",
+        raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms, props and characters can",
                    fix="kiripix describe project")
     frozen = frozen_findings(project, asset, cache)
     if frozen:
@@ -181,7 +203,8 @@ def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget,
     counter = (manifest.counter if manifest is not None else 0) + (0 if same_files else 1)
     record = Manifest(kiripix_version=kiripix_version(), asset=asset.id, exported=True, counter=counter, ids=ids,
                       files=hashes)
-    settled = manifest is not None and same_files and manifest.ids == ids and not manifest.replacing
+    settled = (manifest is not None and same_files and manifest.ids == ids and not manifest.replacing
+               and not manifest.migrated)
     result = ExportResult(asset.id, manifest_res, counter, changed=changed, unmanaged=unmanaged)
     result.unchanged = [res for res in files if on_disk[res] == hashes[res]]
     if options.dry_run:
@@ -269,7 +292,7 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
     after the exports are written. Returns the results and the findings of the call."""
     for asset in assets or []:
         if asset.kind not in _FILES_BY_KIND:
-            raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms and props can",
+            raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms, props and characters can",
                        fix="kiripix describe project")
     target = resolve_target(project)
     prunes = plan_prune(project, target, None, options.force) if prune else []

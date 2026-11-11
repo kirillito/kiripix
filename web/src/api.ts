@@ -66,16 +66,24 @@ export interface Body {
   dash: number;
 }
 
+// A stored file: `imported_as` is the name it was imported with (null before Kiripix recorded names), `size` is in bytes.
+export interface FileEntry {
+  name: string;
+  file: string;
+  imported_as?: string | null;
+  size?: number;
+}
+
 export interface ShowData {
   asset: string;
   kind: string;
   params: Record<string, Scalar>;
   resolution: [number, number];
   body: Body;
-  variants: { name: string; file: string }[];
+  variants: FileEntry[];
   picked: string | null;
-  clip_sources: { name: string; file: string }[]; // a character's animation files, by file stem
-  rigged: { name: string; file: string } | null; // a character's rigged file
+  clip_sources: FileEntry[]; // a character's animation files, by file stem
+  rigged: FileEntry | null; // a character's rigged file
   stages: StageDetail[];
 }
 

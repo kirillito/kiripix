@@ -1,7 +1,7 @@
 """Branch merges of the Manifest (spec §9, ADR 0003, ticket 0049).
 
 When two game branches export the same Asset, git can't merge its Manifest by text. `kiripix manifest merge` is the git
-merge driver that does: the counter is the higher plus one, the IDs are the union (an ID frozen on either branch stays
+merge driver that does: the counter is the higher plus one, the IDs (Markers, Layers, Masks, clips) are the union (an ID frozen on either branch stays
 frozen), `exported` is either's, and `files` keeps ours, with theirs in `replacing` so the next export accepts either.
 `manifest install` sets the driver up in the game's clone; `manifest repair` applies the same rule to a Manifest that was
 committed with conflict markers in it (GitHub never runs a custom driver).
@@ -45,7 +45,7 @@ def merge_manifests(ours: Manifest, theirs: Manifest) -> Manifest:
             replacing[res] = hashed
     ids = ExportedIds(markers=_union(ours.ids.markers, theirs.ids.markers),
                       layers=_union(ours.ids.layers, theirs.ids.layers),
-                      masks=_union(ours.ids.masks, theirs.ids.masks))
+                      masks=_union(ours.ids.masks, theirs.ids.masks), clips=_union(ours.ids.clips, theirs.ids.clips))
     return Manifest(kiripix_version=ours.kiripix_version, asset=ours.asset, exported=ours.exported or theirs.exported,
                     counter=max(ours.counter, theirs.counter) + 1, ids=ids, files=files, replacing=replacing or None)
 
@@ -61,7 +61,7 @@ def _parse(data: bytes, side: str, shown: str) -> Manifest:
         raise _unreadable(shown, side, f"its schema_version {version} is newer than this Kiripix reads "
                                        f"({MANIFEST_SCHEMA_VERSION}); upgrade Kiripix")
     try:
-        return Manifest.model_validate(value)
+        return Manifest.from_value(value)
     except ValidationError as error:
         raise _unreadable(shown, side, str(error)) from None
 

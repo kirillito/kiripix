@@ -34,6 +34,7 @@ import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
 import { LAYERS_DECISION, LAYERS_STAGE, LayersPanel } from "./layerScreen";
 import { layerIdOf } from "./sortView";
 import { CHARACTER_KIND, CHARACTER_SCREENS, CharacterScreen, type ImportRole } from "./characterScreens";
+import { FRAME_STAGES, FrameScreen, frameOf, type FrameFocus } from "./frameScreen";
 import { WorkStrip, type Working } from "./workStrip";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
@@ -104,6 +105,7 @@ export function App() {
   const [rebuild, setRebuild] = useState(true);
   const [layersRebuild, setLayersRebuild] = useState(false); // each rebuild is a Runner call, so it's the Owner's to ask for
   const [focusLayer, setFocusLayer] = useState<{ layer: string; count: number } | null>(null); // a `layer.no_ysort` jump
+  const [focusFrame, setFocusFrame] = useState<FrameFocus | null>(null); // a frame finding's jump
   const [, setRefocus] = useState(0); // one more render, to run the focus effect when a finding is on this Stage
   const canvas = useRef<PixelCanvas>(null);
 
@@ -210,6 +212,7 @@ export function App() {
   const isReach = current === REACH_STAGE && show?.kind === "room";
   const isCharacterScreen =
     show?.kind === CHARACTER_KIND && current !== null && CHARACTER_SCREENS.includes(current) && description !== undefined;
+  const isFrames = show?.kind === CHARACTER_KIND && current !== null && FRAME_STAGES.includes(current) && description !== undefined;
   const isFootprint = description?.decisions.some((decision) => decision.name === FOOTPRINT_DECISION) ?? false;
 
   // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
@@ -427,6 +430,7 @@ export function App() {
     setStage(stageName);
     setNotice([]);
     setFocusLayer(null);
+    setFocusFrame(null);
   }
 
   // Children's effects run first, so the canvas has already started on the new Stage's image when this one focuses it.
@@ -441,6 +445,8 @@ export function App() {
     // The canvas focuses one pixel: a box (an open edge) is focused at its middle.
     if (x != null && y != null) jumpTo.current = { x: x + Math.floor((width ?? 1) / 2), y: y + Math.floor((height ?? 1) / 2) };
     const layer = finding.code === "layer.no_ysort" ? layerIdOf(finding.position?.file ?? "") : undefined;
+    const framed = show?.kind === CHARACTER_KIND ? frameOf(finding) : null;
+    if (framed) setFocusFrame((before) => ({ ...framed, count: (before?.count ?? 0) + 1 }));
     if (layer) setFocusLayer((before) => ({ layer, count: (before?.count ?? 0) + 1 }));
     if (where && where !== current) setStage(where);
     else setRefocus((count) => count + 1);
@@ -536,6 +542,16 @@ export function App() {
             onPick={pick}
             onImport={(files, role) => void importFiles(files, role)}
             decide={decideCharacter}
+          />
+        ) : isFrames && detail ? (
+          <FrameScreen
+            key={`${asset}/${current}`}
+            stage={current ?? ""}
+            show={show}
+            detail={detail}
+            refreshes={data.refreshes}
+            imageVersion={imageVersion}
+            focus={focusFrame}
           />
         ) : isSource ? (
           <VariantGrid show={show} onPick={pick} onImport={(files) => void importFiles(files)} />
@@ -643,7 +659,7 @@ export function App() {
                 />
               ))}
             </fieldset>
-            {!isSource && !isCharacterScreen && image && (
+            {!isSource && !isCharacterScreen && !isFrames && image && (
               <label className="toggle">
                 <input
                   type="checkbox"

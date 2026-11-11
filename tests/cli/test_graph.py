@@ -209,14 +209,12 @@ def test_a_stage_that_needs_input_stops_the_run_with_exit_3(project: Kiripix) ->
     assert finding["fix"] == "kiripix import character.hero <file>" and finding["owner_action"] is None
 
 
-def test_a_stage_not_built_yet_says_until_when(project: Kiripix) -> None:
+def test_every_character_stage_is_built_by_m3(project: Kiripix) -> None:
     project.json("new", "character", "hero")
 
-    finish = next(s for s in project.json("status", "--kind", "character")["data"]["assets"][0]["stages"]
-              if s["stage"] == "finish")
+    stages = project.json("status", "--kind", "character")["data"]["assets"][0]["stages"]
 
-    assert finish == {"stage": "finish", "status": "needs-input",
-                      "reason": "the character Stage 'finish' is not implemented until M3"}
+    assert [s["stage"] for s in stages if "not implemented" in (s["reason"] or "")] == []
 
 
 def test_status_filters_by_kind(project: Kiripix) -> None:

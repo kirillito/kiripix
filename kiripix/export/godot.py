@@ -191,3 +191,74 @@ def prop_scene(prop: dict[str, Any], name: str, sprite_path: str) -> str:
                   for index, shape in enumerate(shapes)]
     sprite = f'[ext_resource type="Texture2D" path="{sprite_path}" id="sprite"]\n'
     return GENERATED + "\n" + "\n".join(["[gd_scene load_steps=2 format=3]\n", sprite, *nodes])
+
+
+# a character (spec §9): a CanvasTexture of the two atlases, a SpriteFrames over it, and a scene with an AnimatedSprite2D
+
+SPRITE = "Sprite"  # a character's AnimatedSprite2D: its place is stable, because the game finds it by its path
+
+
+def animation_name(clip: str, direction: str) -> str:
+    return f"{clip}_{direction}"
+
+
+def character_animations(character: dict[str, Any]) -> list[tuple[dict[str, Any], str, list[dict[str, Any]]]]:
+    """Each animation as (clip, direction, frames): clips in `character.json`'s order, directions in the sheet's order."""
+    return [(clip, direction, clip["directions"][direction]) for clip in character["clips"]
+            for direction in character["directions"] if direction in clip["directions"]]
+
+
+def character_ids(character: dict[str, Any]) -> ExportedIds:
+    """Every ID a character's export carries into the game: its animation names. These are what the Manifest freezes."""
+    names = sorted(animation_name(clip["name"], direction) for clip, direction, _ in character_animations(character))
+    return ExportedIds(markers=[], layers=[], masks=[], clips=names)
+
+
+def character_texture(colour_path: str, normal_path: str) -> str:
+    """The CanvasTexture: the colour atlas as diffuse and the normal atlas as its normal map, filtered for pixel art."""
+    return GENERATED + "\n" + "\n".join([
+        "[gd_resource type=\"CanvasTexture\" load_steps=3 format=3]\n",
+        f'[ext_resource type="Texture2D" path="{colour_path}" id="colour"]\n',
+        f'[ext_resource type="Texture2D" path="{normal_path}" id="normal"]\n',
+        _section("[resource]", 'diffuse_texture = ExtResource("colour")', 'normal_texture = ExtResource("normal")',
+                 "texture_filter = 1"),
+    ])
+
+
+def character_frames(character: dict[str, Any], texture_path: str) -> str:
+    """The SpriteFrames: one animation per clip and direction, each frame an AtlasTexture region of the CanvasTexture.
+    Every frame lasts one frame time of its animation, whose speed is the clip's frame rate."""
+    animations = character_animations(character)
+    atlases: list[str] = []
+    entries: list[str] = []
+    for clip, direction, frames in animations:
+        name = animation_name(clip["name"], direction)
+        listed = []
+        for frame in frames:
+            ident = f"{name}_{frame['index']}"
+            rect = frame["rect"]
+            atlases.append(_section(f'[sub_resource type="AtlasTexture" id="{ident}"]', 'atlas = ExtResource("texture")',
+                                    f"region = Rect2({rect['x']}, {rect['y']}, {rect['width']}, {rect['height']})"))
+            listed.append(f'{{\n"duration": 1.0,\n"texture": SubResource("{ident}")\n}}')
+        entries.append("{\n\"frames\": [" + ", ".join(listed) + "],\n"
+                       f"\"loop\": {'true' if clip['loop'] else 'false'},\n\"name\": &\"{name}\",\n"
+                       f"\"speed\": {int(clip['fps'])}.0\n}}")
+    header = f'[gd_resource type="SpriteFrames" load_steps={len(atlases) + 2} format=3]'
+    texture = f'[ext_resource type="CanvasTexture" path="{texture_path}" id="texture"]\n'
+    return GENERATED + "\n" + "\n".join([
+        header + "\n", texture, *atlases, _section("[resource]", "animations = [" + ", ".join(entries) + "]")])
+
+
+def character_scene(character: dict[str, Any], name: str, frames_path: str) -> str:
+    """The scene's text. The root sits at the character's feet, so the game y-sorts it by its position, and the
+    AnimatedSprite2D is drawn offset so that the pivot pixel of the cell is the root's own place."""
+    pivot = character["pivot"]
+    first = character_animations(character)[0]
+    nodes = [
+        _node(name, "Node2D", None, f"metadata/kiripix_id = {_text(str(character['asset']))}"),
+        _node(SPRITE, "AnimatedSprite2D", ".", 'sprite_frames = ExtResource("frames")',
+              f'animation = &"{animation_name(first[0]["name"], first[1])}"', "centered = false",
+              f"offset = Vector2({-pivot['x']}, {-pivot['y']})"),
+    ]
+    frames = f'[ext_resource type="SpriteFrames" path="{frames_path}" id="frames"]\n'
+    return GENERATED + "\n" + "\n".join(["[gd_scene load_steps=2 format=3]\n", frames, *nodes])

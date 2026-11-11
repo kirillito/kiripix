@@ -2,6 +2,7 @@
 // a temporary Project. Blender is the fake one of tests/fixtures (the `segmentingStudio` fixture loads it); what only the
 // real Blender can show (a real Model's bounds, a real rigged file's actions) is covered by the Python `blender` tests.
 
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test, type Studio } from "./harness";
@@ -98,7 +99,7 @@ test("a rig missing a bone gets a bone Decision from the form", async ({ page, s
   await expect(page.getByTestId("notice")).toContainText("rig.bone_missing");
 
   await page.getByTestId("bone-role").selectOption("spine");
-  await page.getByTestId("bone-name").fill("Torso");
+  await page.getByTestId("bone-name").selectOption("Torso"); // from the rig's bones, as the Probe reads them
   await page.getByTestId("bone-add").click();
   await expect(page.getByTestId("bone-decisions")).toContainText("spine → Torso");
   expect(decisions(studio, "rig")).toEqual([{ role: "spine", bone: "Torso" }]);
@@ -134,6 +135,65 @@ test("two clips are recorded and one is undone", async ({ page, segmentingStudio
   await page.getByTestId("run").click();
   await expect(stage(page, "clips")).toHaveAttribute("data-status", "done");
   await expect(page.getByTestId("clip-row-walk")).toContainText("10"); // the built frame count
+});
+
+test("a Model is listed by the name it was imported with, and the picked one shows its still", async ({ page, segmentingStudio: studio }) => {
+  studio.kiripix("new", "character", "hero");
+  const variant = studio.json("import", HERO, studio.write("hero_v2.fbx", Buffer.from("mixamorig fake model"))).data.variant as string;
+  studio.kiripix("pick", HERO, variant);
+  studio.run(HERO);
+  await open(page, studio, "model");
+  await expect(page.getByTestId(`variant-name-${variant}`)).toContainText("hero_v2.fbx");
+  await expect(page.getByTestId(`variant-size-${variant}`)).toHaveText("20 B");
+  const still = page.getByTestId("model-still");
+  await expect(still).toBeVisible();
+  await expect.poll(() => still.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(256);
+});
+
+test("choosing an action of an animation file fills its range, and the read can be cancelled", async ({ page, segmentingStudio: studio }) => {
+  rigged(studio);
+  const actions = [
+    { name: "Armature|wave", start: 1, end: 31, travel: 0 },
+    { name: "Armature|nod", start: 3, end: 9, travel: 0 },
+  ];
+  studio.kiripix("import", HERO, studio.write("greet.fbx", Buffer.from(JSON.stringify({ actions, fps: 24 }))), "--role", "clip-source");
+  // Blender is held, so the first read shows that it is reading, and is cancelled.
+  const hold = join(studio.cwd, "hold-blender");
+  writeFileSync(hold, "");
+  await open(page, studio, "clips");
+  await expect(page.getByTestId("file-reading")).toContainText("greet");
+  await page.getByTestId("file-reading-cancel").click();
+  await expect(page.getByTestId("file-read-stopped")).toContainText("cancelled");
+  rmSync(hold);
+  await page.getByTestId("file-read-retry").click();
+  await expect(page.getByTestId("file-reading")).toHaveCount(0);
+
+  // Pick from what the box offers: its options are the sources the Owner can choose, by the name `clips` resolves.
+  const offered = await page.locator("#clip-sources option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+  expect(offered).toEqual(expect.arrayContaining(["greet/Armature|wave", "greet/Armature|nod"]));
+  await page.getByTestId("clip-fps").fill("15");
+  await page.getByTestId("clip-source").fill("greet/Armature|nod");
+  await expect(page.getByTestId("clip-start")).toHaveValue("3");
+  await expect(page.getByTestId("clip-end")).toHaveValue("9");
+  await expect(page.getByTestId("clip-fps")).toHaveValue("15"); // the game's frame rate, not the source's
+  await expect(page.getByTestId("clip-source-fps")).toContainText("24");
+  await page.getByTestId("clip-name").fill("nod");
+  await page.getByTestId("clip-add").click();
+  await expect(page.getByTestId("clip-row-nod")).toContainText("3–9");
+});
+
+test("a rigged file's action is offered as a clip source", async ({ page, segmentingStudio: studio }) => {
+  importModel(studio, "no_rig.glb");
+  studio.run(HERO);
+  const actions = [{ name: "Armature|dance", start: 2, end: 20, travel: 0 }];
+  studio.kiripix("import", HERO, studio.write("rigged_dance.fbx", Buffer.from(JSON.stringify({ actions }))), "--role", "rigged");
+  await open(page, studio, "clips");
+  await expect(page.getByTestId("rigged-actions")).toContainText("dance (2–20)");
+  const offered = await page.locator("#clip-sources option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+  expect(offered).toEqual(["Armature|dance"]);
+  await page.getByTestId("clip-source").fill(offered[0]);
+  await expect(page.getByTestId("clip-start")).toHaveValue("2");
+  await expect(page.getByTestId("clip-end")).toHaveValue("20");
 });
 
 test("a clip name that ends in a direction is stopped, an animation file is dropped, and an agent's clip shows", async ({

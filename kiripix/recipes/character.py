@@ -18,10 +18,13 @@ from kiripix.recipes.base import (
 )
 from kiripix.recipes.blender_launcher import SETTING as BLENDER_SETTING
 from kiripix.recipes.blender_launcher import VERSION_SETTING as BLENDER_VERSION_SETTING
+from kiripix.recipes.character_finish import check_character_finish, run_character_finish
 from kiripix.recipes.character_palette import check_character_palette, run_character_palette
+from kiripix.recipes.character_sheet import check_character_sheet, run_character_sheet
 from kiripix.recipes.render import run_render
 from kiripix.recipes.blender_launcher import launch
 from kiripix.recipes.common import picked, source_needs_input, variants
+from kiripix.recipes.character_export import check_character_export, export_needs_input, run_character_export
 from kiripix.recipes.clips import CLIP, check_clips, clips_needs_input, run_clips
 from kiripix.recipes.rig import BONE, UPLOAD, rig_needs_input, run_rig
 
@@ -211,28 +214,49 @@ CHARACTER = KindSpec(
         StageSpec(
             name="finish",
             description="Outline after mapping; the normal pass quantised and aligned to the colour frames.",
-            params=(ParamSpec(name="outline_colour", type="int", description="Palette index.", default=0, minimum=0),),
-            checks=(CheckSpec(code="normal.size_mismatch", description="Normal map size equals the colour frame's."),),
+            inputs=StageInputs(upstream=["palette", "render"], settings=["palette"]),
+            params=(
+                ParamSpec(name="outline", type="bool", description="Draw a 1 px outline round the silhouette.", default=True),
+                ParamSpec(name="outline_colour", type="int", minimum=0, default=0,
+                          description="The outline's colour: an index into the Project palette."),
+                ParamSpec(name="placement", type="choice", choices=["outside", "edge"], default="outside",
+                          description="outside: the outline is the pixels around the silhouette, which keeps its own "
+                                      "(none where it touches the frame's edge); edge: it is the silhouette's edge pixels."),
+                ParamSpec(name="normal_levels", type="int", minimum=1, maximum=256, default=8,
+                          description="The normal pass keeps this many values per axis."),
+            ),
+            checks=(
+                CheckSpec(code="normal.size_mismatch", description="Normal map size equals the colour frame's."),
+                CheckSpec(code="palette.off_palette", description="Every colour pixel, outline included, is a Project palette colour."),
+            ),
+            run=run_character_finish,
+            check=check_character_finish,
             available_from="M3",
         ),
         StageSpec(
             name="sheet",
             description="Packs frames into an atlas with a fixed pivot per frame.",
+            inputs=StageInputs(upstream=["finish", "clips"]),
             checks=(
                 CheckSpec(code="sheet.pivot_drift", description="The feet don't move in a stationary clip."),
                 CheckSpec(code="sheet.frame_overflow", description="Every frame fits its cell."),
                 CheckSpec(code="sheet.frame_count", description="Frame counts match the clip."),
                 CheckSpec(code="sheet.empty_frame", description="No frame is empty."),
             ),
+            run=run_character_sheet,
+            check=check_character_sheet,
             available_from="M3",
         ),
         StageSpec(
             name="export",
             description="SpriteFrames, a CanvasTexture with the normal map, and an AnimatedSprite2D scene.",
-            inputs=StageInputs(settings=["export.godot"]),
+            inputs=StageInputs(upstream=["sheet"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),),
             output_root="out",
             available_from="M3",
+            run=run_character_export,
+            needs_input=export_needs_input,
+            check=check_character_export,
         ),
     ),
 )

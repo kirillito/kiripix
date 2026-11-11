@@ -156,18 +156,18 @@ def test_pick_of_an_unknown_variant_fails(project: Kiripix) -> None:
     assert result["findings"][0]["code"] == "pick.unknown_variant" and name in result["findings"][0]["message"]
 
 
-def test_brief_import_pick_run_leaves_brief_and_source_done_and_fit_next(project: Kiripix) -> None:
+def test_brief_import_pick_run_builds_up_to_reach(project: Kiripix) -> None:
     folder = make_room(project)
     project.json("set", ROOM, "brief", "width=480", "height=272")
     name = variant(project)
     project.json("pick", ROOM, name)
 
-    project.json("run", ROOM, expect=2)  # fit reports size_mismatch: the 4x4 Variant is not the brief size
+    project.json("run", ROOM, expect=3)  # fit pads the 4x4 Variant up to the brief (0146); reach then needs a Spawn
 
     status = stage_status(project, ROOM)
-    assert status["brief"] == "done" and status["source"] == "done"
+    assert status["brief"] == "done" and status["source"] == "done" and status["fit"] == "done"
     assert (folder / "work" / "source" / "source.png").read_bytes() == (folder / "src" / f"{name}.png").read_bytes()
-    assert project.json("next", ROOM)["data"]["stage"] == "fit"
+    assert project.json("next", ROOM)["data"]["stage"] == "reach"
 
 
 def test_without_a_variant_source_needs_input_and_next_says_import(project: Kiripix) -> None:
@@ -224,14 +224,14 @@ def test_importing_and_picking_a_second_variant_makes_source_and_below_stale(pro
     make_room(project)
     project.json("set", ROOM, "brief", "width=480", "height=272")
     project.json("pick", ROOM, variant(project))
-    project.json("run", ROOM, expect=2)
+    project.json("run", ROOM, expect=3)  # reach needs a Spawn
 
     project.json("pick", ROOM, variant(project, "other.png", (41, 173, 255, 255)))
 
     status = stage_status(project, ROOM)
     assert status["brief"] == "done" and status["source"] == "stale"
-    assert set(status.values()) - {"done", "stale"} == {"needs-input"}  # the Stages below aren't built in M1 yet
-    project.json("run", ROOM, expect=2)
+    assert set(status.values()) - {"done", "stale"} == {"needs-input"}  # reach and export, which wait for a Spawn
+    project.json("run", ROOM, expect=3)
     assert stage_status(project, ROOM)["source"] == "done"
 
 

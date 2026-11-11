@@ -51,7 +51,10 @@ path = "hatch_build.py"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["blender: needs Blender 5.2.x (KIRIPIX_BLENDER or PATH); skipped without it"]
+markers = [
+    "blender: needs Blender 5.2.x (KIRIPIX_BLENDER or PATH); skipped without it",
+    "godot: needs Godot 4.7.x (KIRIPIX_GODOT or PATH); skipped without it",
+]
 
 [tool.mypy]
 python_version = "3.12"

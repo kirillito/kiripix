@@ -16,7 +16,7 @@ from kiripix.ops.colour import (
 )
 from kiripix.ops.character import encode_normals, palette_subset, quantise_normals
 from kiripix.ops.chroma import chroma_key, key_fringe
-from kiripix.ops.cleanup import add_outline, remove_orphans
+from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
 from kiripix.ops.compose import overlay
 from kiripix.ops.geometry import NavigationPolygon, Outline, collision_shapes, contours, navigation_polygon, simplify
 from kiripix.ops.layers import (
@@ -77,6 +77,7 @@ __all__ = [
     "PaletteEntry",
     "PaletteSuggestion",
     "PaletteSyntaxError",
+    "Placement",
     "Rect",
     "add_outline",
     "alpha_by_vote",
@@ -103,7 +104,9 @@ __all__ = [
     "mask_to_source",
     "mask_to_target",
     "nearest_index",
+    "outline_mask",
     "overlay",
+    "paint_outline",
     "narrowest_gaps",
     "navigation_polygon",
     "SIDES",

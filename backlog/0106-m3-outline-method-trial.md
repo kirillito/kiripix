@@ -12,6 +12,15 @@ depends_on: [0105-m3-toon-shading.md]
 Spec §16, open decision 3 ("inverted hull, Freestyle or a post-process edge pass (M3, by test)"), §6.3 (finish) and ADR 0004.
 Story 11 of [0097](0097-m3-characters.md).
 
+Moved to M5 on 2026-11-10 and back to M3 on 2026-11-11. Meanwhile [0109](0109-m3-outline-op.md) and
+[0111](0111-m3-finish-stage.md) built the silhouette alone, placed outside it. This trial confirms that on the real Model and
+decides inner lines; if they're wanted, it adds a follow-up ticket for them.
+
+**The real Model (2026-11-11):** `character.mc02` in the art Project (`urban-mystery-club-art`), built by a scripted
+Blender session from the Quaternius base (`c:\Homespace\[assets]\mc02\`) and rigged by Mixamo, with `idle`, `walk` and
+`attack`. The Owner will still revise it; these choices are about the rendering, not its details, so a revised Model only
+needs a look at its new frames.
+
 ADR 0004 draws outlines in `finish`, after `palette`, in a palette colour, as a **line Mask**: a binary image of where the
 outline goes, which `finish` paints in one palette colour.
 
@@ -30,7 +39,7 @@ methods. Freestyle isn't tried.
 3. **Only if the Owner dislikes the result:** try the inverted hull (a back-face shell rendered as its own mask pass) on the
    same frames.
 4. Prototype code lives in the trial's own folder under `.kiripix/` or the scratchpad, not in `kiripix/`. Production code is
-   [0109](0109-m3-outline-op.md) and [0111](0111-m3-finish-stage.md).
+   [0109](0109-m3-outline-op.md) and [0111](0111-m3-finish-stage.md), both built with the silhouette only.
 
 ## What to record, in this ticket
 

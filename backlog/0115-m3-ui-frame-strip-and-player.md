@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: ui-engineer
 type: ticket
@@ -25,6 +25,6 @@ Spec §11 (Character: "a frame strip with onion skin, a direction picker and a c
 
 ## Acceptance criteria
 
-- [ ] Playwright, on the fake renderer: step through a clip, switch direction by key, play at the clip's speed, and click a
+- [x] Playwright, on the fake renderer: step through a clip, switch direction by key, play at the clip's speed, and click a
       `sheet.pivot_drift` finding to land on its frame.
-- [ ] No canvas smoothing anywhere; zoom stays integer.
+- [x] No canvas smoothing anywhere; zoom stays integer.

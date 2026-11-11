@@ -22,3 +22,10 @@ then `accept`, then a y-sort line on `place`). The Runners are fakes (0037's D16
 loads the fakes from `tests/fixtures` and removes the test Kinds, so `describe` shows only the real ones. The harness's own
 calls get `KIRIPIX_TEST_RECIPES`; the agent gets it only through the `kiripix` and `kpx` shims first on its PATH. A pass also
 needs the Layer in the export's Manifest. Use `--milestone m2` for that record.
+
+**M3 and later.** The task also names a character, `character.hero`, created but empty, and the file of its 3D Model
+(`tests/fixtures/characters/rigged.glb`, copied outside the Project): the agent imports it, so `rig` needs no Mixamo.
+The renderer is the fake Blender that `tests/fixtures/kiripix_test_recipes.py` sets, reached the same way as the fake
+Runners. The stand-in owner's three `clip` Decisions (idle, walk, attack) are the `character.hero` entries of
+`owner.json`. A pass also needs every `<clip>_<dir>` animation in the character's Manifest, both Assets' exports
+up to date, and `check --all` clean. Use `--milestone m3` for that record.

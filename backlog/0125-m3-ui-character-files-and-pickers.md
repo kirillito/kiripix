@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: ui-engineer
 type: ticket
@@ -24,8 +24,23 @@ them; this one uses what they add. Don't run it alongside 0115: both edit `web/s
 
 ## Acceptance criteria
 
-- [ ] e2e on the fake Blender: a Model imported as `hero_v2.fbx` is listed by that name. Choosing a clip source's action
+- [x] e2e on the fake Blender: a Model imported as `hero_v2.fbx` is listed by that name. Choosing a clip source's action
       fills its range. A bone is picked from a list.
-- [ ] `npm run build` passes.
+- [x] `npm run build` passes.
+
+
+## How it was built
+
+- `web/src/api.ts`: a `FileEntry` type (`imported_as`, `size`) for `show`'s Variants, clip sources and rigged file.
+- `web/src/characterScreens.tsx`: the Model rows show `imported_as` (the stored hash name stays beside it) and `size` from
+  `show`; the Range request is gone. The picked Model shows `still.png` at its own size (pixelated). `useFileReads` runs the
+  `inspect` Probe one file at a time with a job id, keeps answers for the page's life, and cancels the job through the cancel
+  route when the Owner presses Cancel or leaves the screen; a file that fails doesn't stop the others. The Clips source box lists
+  each clip source's actions (`stem`, or `stem/<full action name>` when the file has several) and the rigged file's (its full
+  name; one named like a clip source's stem is not offered, because `clips` would read it as that source). Choosing one fills
+  start and end only; the source's frame rate is a hint, since the clip's `fps` is the game's. The Rig "Map a bone"
+  form picks from the Probe's bone names, and falls back to a typed name while there are none.
+- `web/e2e/character.spec.ts`: the `hero_v2.fbx` name and still, the action pick with a held, cancelled and retried read, and the
+  bone picked from a list.
 
 Budget: 60–120k tokens.

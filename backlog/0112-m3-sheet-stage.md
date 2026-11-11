@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M3
 agent: character-pipeline
 type: ticket
@@ -22,6 +22,13 @@ Spec §6.3 (sheet, Checks). Story 13 of [0097](0097-m3-characters.md). Q10 and Q
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake: `run` writes both atlases and `sheet.json`; the frames' rectangles line up between them.
-- [ ] A fake idle whose pivot moves fails `sheet.pivot_drift` with exit 2, and the finding names the frame.
-- [ ] A fake frame that is empty, and one too large for the cell, each give their finding.
+- [x] CLI seam, on the fake: `run` writes both atlases and `sheet.json`; the frames' rectangles line up between them.
+- [x] A fake idle whose pivot moves fails `sheet.pivot_drift` with exit 2, and the finding names the frame.
+- [x] A fake frame that is empty, and one too large for the cell, each give their finding.
+
+## Done
+
+`kiripix/recipes/character_sheet.py`; tests in `tests/cli/test_character_sheet.py`. No Stage params (pivot tolerance 0). The cell is
+render's frame size with the pivot at render's pivot (rounded); atlas file names `color.png`, `normal.png`, plus `sheet.json`
+in `work/sheet/`. The Checks re-read `finish`'s frames (the atlas has cut off an overflow) and `clips.json` for expected counts.
+Frame findings: `position.field` = `clip/direction/index`, `position.file` = the frame's colour file in `finish`.

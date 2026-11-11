@@ -188,15 +188,41 @@ def find_blender() -> tuple[str | None, str]:
     return found, ""
 
 
+def find_godot() -> tuple[str | None, str]:
+    """The Godot 4.7 executable (`KIRIPIX_GODOT`, else PATH) and, when there's none to use, the reason to skip."""
+    import re
+    import shutil
+
+    found = os.environ.get("KIRIPIX_GODOT") or shutil.which("godot") or shutil.which("godot4")
+    if not found:
+        return None, "Godot 4.7 not found: set KIRIPIX_GODOT or put godot on PATH"
+    try:
+        out = subprocess.run([found, "--version"], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"Godot at {found} could not run: {error}"
+    if not re.match(r"4\.7\.", out):
+        return None, f"Godot at {found} is {out.strip() or 'of unknown version'}, not 4.7.x"
+    return found, ""
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """A test marked `blender` is skipped, with the reason, unless Blender 5.2.x is available."""
+    """A test marked `blender` is skipped, with the reason, unless Blender 5.2.x is available; one marked `godot`, unless
+    Godot 4.7.x is."""
     marked = [item for item in items if "blender" in item.keywords]
-    if not marked:
-        return
-    found, reason = find_blender()
-    if found:
-        os.environ["KIRIPIX_BLENDER"] = found
-        return
-    skip = pytest.mark.skip(reason=reason)
-    for item in marked:
-        item.add_marker(skip)
+    if marked:
+        found, reason = find_blender()
+        if found:
+            os.environ["KIRIPIX_BLENDER"] = found
+        else:
+            skip = pytest.mark.skip(reason=reason)
+            for item in marked:
+                item.add_marker(skip)
+    marked = [item for item in items if "godot" in item.keywords]
+    if marked:
+        found, reason = find_godot()
+        if found:
+            os.environ["KIRIPIX_GODOT"] = found
+        else:
+            skip = pytest.mark.skip(reason=reason)
+            for item in marked:
+                item.add_marker(skip)

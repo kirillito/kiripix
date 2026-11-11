@@ -27,6 +27,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RECIPES = "acceptance_recipes"  # FIXTURES/acceptance_recipes.py: the fake Runners and nothing else
 RECIPE_PATH = (FIXTURES, Path(__file__).resolve().parents[1] / "fixtures")  # it imports tests/fixtures' fakes
 ASSET = "room.alley"
+CHARACTER = "character.hero"
+ASSETS = (ASSET, CHARACTER)
+MODEL = Path(__file__).resolve().parents[1] / "fixtures" / "characters" / "rigged.glb"  # pre-rigged: `rig` needs no Mixamo
+CLIPS = ("idle", "walk", "attack")  # the stand-in owner's `clip` Decisions (fixtures/owner.json)
+DIRECTIONS = ("s", "sw", "w", "nw", "n", "ne", "e", "se")
 LAYER = "crate"  # the Layer the stand-in owner lifts (fixtures/owner.json)
 WIDTH, HEIGHT = 48, 32
 TOOL_NAMES = ("kiripix", "kpx")
@@ -35,6 +40,12 @@ GAME_FILES = (
     "kiripix/room/alley/plate.png",
     f"kiripix/room/alley/layer.{LAYER}.png",
     "kiripix/manifest/room.alley.json",
+    "kiripix/character/hero/hero.tscn",
+    "kiripix/character/hero/frames.tres",
+    "kiripix/character/hero/texture.tres",
+    "kiripix/character/hero/color.png",
+    "kiripix/character/hero/normal.png",
+    "kiripix/manifest/character.hero.json",
 )
 CARRY_ON = "Done, carry on."
 
@@ -47,8 +58,11 @@ command's exit code is shown to you.
 The Project has one room, {ASSET}. Its image is already imported. Take it from import to export: get it exported into \
 the Godot project, and get `kiripix check --all` to pass.
 
+The Project also has one character, {CHARACTER}, with nothing imported yet. Its 3D Model is the file "{{model}}". Take the \
+character from import of that Model to export as well, beside the room.
+
 Some things only the game's owner can decide or approve. When you reach one, stop and say what you need. The owner \
-will do it and tell you when to carry on. You are done when the room is exported and `kiripix check --all` passes.
+will do it and tell you when to carry on. You are done when the room and the character are exported and `kiripix check --all` passes.
 """
 
 
@@ -241,6 +255,11 @@ class Setup:
     game: Path
     variant: str  # the imported Variant
     shims: Path  # the agent's `kiripix` and `kpx`, with the fake Runners
+    model: Path  # the character's 3D Model, outside the Project: the agent imports it
+
+    @property
+    def task(self) -> str:
+        return TASK.replace("{model}", self.model.as_posix())
 
 
 def make_setup(root: Path) -> Setup:
@@ -248,7 +267,7 @@ def make_setup(root: Path) -> Setup:
 
     Already done when the agent starts: `init`, `new`, `import`, the brief's size (the owner's own spec of the room,
     which `import` can't know) and the export target (a Project setting only the owner edits). Everything from the
-    Source's Pick to `export` is left to the agent and the owner.
+    Source's Pick to `export` is left to the agent and the owner. The character is only created: its import is the agent's.
     """
     project, game = root / "project", root / "game"
     project.mkdir(parents=True)
@@ -266,7 +285,10 @@ def make_setup(root: Path) -> Setup:
     Image.fromarray(room_image(), "RGBA").save(source)
     variant = str(kiripix(project, env, "import", ASSET, str(source)).json["data"]["variant"])
     kiripix(project, env, "set", ASSET, "brief", f"width={WIDTH}", f"height={HEIGHT}")
-    return Setup(root, project, game, variant, make_shims(root / "bin"))
+    kiripix(project, env, "new", "character", "hero")  # nothing imported: the agent starts the character from its Model
+    model = root / "hero.glb"
+    shutil.copyfile(MODEL, model)
+    return Setup(root, project, game, variant, make_shims(root / "bin"), model)
 
 
 # What the Project is waiting on
@@ -274,6 +296,7 @@ def make_setup(root: Path) -> Setup:
 
 @dataclass
 class NextState:
+    asset: str
     done: bool
     stage: str | None
     status: str | None
@@ -289,12 +312,18 @@ class NextState:
         if self.done:
             return "done"
         wanted = self.command or self.owner_action or "nothing named"
-        return f"{self.stage} is {self.status} ({self.reason}); next names: {wanted}"
+        return f"{self.asset} {self.stage} is {self.status} ({self.reason}); next names: {wanted}"
 
 
-def ask_next(setup: Setup, asset: str = ASSET) -> NextState:
-    data = kiripix(setup.project, project_env(), "next", asset, expect=None).json["data"]
-    return NextState(data["done"], data["stage"], data["status"], data["reason"], data["command"], data["owner_action"])
+def ask_next(setup: Setup, asset: str | None = None) -> NextState:
+    """What `next` says for `asset`; with none, for the first Asset (the room, then the character) that is not done."""
+    for name in ([asset] if asset else list(ASSETS)):
+        data = kiripix(setup.project, project_env(), "next", name, expect=None).json["data"]
+        state = NextState(name, data["done"], data["stage"], data["status"], data["reason"], data["command"],
+                          data["owner_action"])
+        if not state.done:
+            return state
+    return state
 
 
 # The stand-in owner
@@ -306,7 +335,7 @@ class StandInOwner:
     def __init__(self, setup: Setup, fixture: Path = FIXTURES / "owner.json") -> None:
         data = json.loads(fixture.read_text("utf-8"))
         self.setup = setup
-        self.asset: str = data["asset"]
+        self.asset: str = data["asset"]  # the one an entry belongs to unless it has its own `asset`
         self.entries: list[dict[str, Any]] = data["decisions"]
         self.applied: set[int] = set()
 
@@ -315,22 +344,23 @@ class StandInOwner:
 
         `only_this_stage` is for an agent's own report, when `next` isn't waiting on the owner: the owner answers an
         entry tagged for this Stage and doesn't volunteer the others."""
-        env, project = owner_env(), self.setup.project
+        env, project, asset = owner_env(), self.setup.project, state.asset
         if state.status == "needs-review" and state.stage:
-            call = kiripix(project, env, "accept", self.asset, state.stage, expect=None)
-            return [f"accept {self.asset} {state.stage}: exit {call.code}"]
+            call = kiripix(project, env, "accept", asset, state.stage, expect=None)
+            return [f"accept {asset} {state.stage}: exit {call.code}"]
         did: list[str] = []
-        pending = [(i, e) for i, e in enumerate(self.entries) if i not in self.applied]
+        pending = [(i, e) for i, e in enumerate(self.entries)
+                   if i not in self.applied and e.get("asset", self.asset) == asset]
         for index, entry in ([p for p in pending if p[1].get("when_stage") == state.stage]
                              or [p for p in pending if "when_stage" not in p[1] and not only_this_stage]):
             self.applied.add(index)
             if "pick" in entry:
-                call = kiripix(project, env, "pick", self.asset, self.setup.variant, expect=None)
-                did.append(f"pick {self.asset} {self.setup.variant}: exit {call.code}")
+                call = kiripix(project, env, "pick", asset, self.setup.variant, expect=None)
+                did.append(f"pick {asset} {self.setup.variant}: exit {call.code}")
                 continue
             decision = json.dumps({"decision": entry["decision"], "data": entry["data"]})
-            call = kiripix(project, env, "decide", self.asset, entry["stage"], "--decision", decision, expect=None)
-            did.append(f"decide {self.asset} {entry['stage']} {entry['decision']}: exit {call.code}")
+            call = kiripix(project, env, "decide", asset, entry["stage"], "--decision", decision, expect=None)
+            did.append(f"decide {asset} {entry['stage']} {entry['decision']}: exit {call.code}")
         return did or None
 
 
@@ -348,23 +378,35 @@ class Verification:
         return self.exported and self.check_clean
 
 
+def manifest_ids(setup: Setup, asset: str, kind: str) -> list[str]:
+    """The IDs of `kind` an Asset's Manifest in the Godot project freezes; none when there is no Manifest."""
+    manifest = setup.game / "kiripix" / "manifest" / f"{asset}.json"
+    try:
+        return list(json.loads(manifest.read_text("utf-8"))["ids"][kind])
+    except (OSError, ValueError, KeyError):
+        return []
+
+
 def verify(setup: Setup) -> Verification:
     """The harness's own check of the Project and the Godot folder. Ignores whatever the agent said."""
     env, details = project_env(), []
     missing = [name for name in GAME_FILES if not (setup.game / name).is_file()]
-    details.append(f"missing in the Godot project: {missing}" if missing else "all four exported files are in the Godot project")
-    manifest = setup.game / "kiripix" / "manifest" / "room.alley.json"
-    try:
-        frozen = list(json.loads(manifest.read_text("utf-8"))["ids"]["layers"])
-    except (OSError, ValueError, KeyError):
-        frozen = []
+    details.append(f"missing in the Godot project: {missing}" if missing else "all the exported files are in the Godot project")
+    frozen = manifest_ids(setup, ASSET, "layers")
     listed = LAYER in frozen
     details.append(f"the Manifest lists the Layer `{LAYER}`" if listed else f"the Manifest does not list the Layer `{LAYER}`: {frozen}")
     missing += [] if listed else [f"Manifest id layers/{LAYER}"]
-    dry = kiripix(setup.project, env, "export", ASSET, "--dry-run", expect=None)
-    pending = dry.json["data"] or {}
-    stale = [] if dry.code == 0 else [f"export --dry-run exit {dry.code}"]
-    stale += list(pending.get("would_write", [])) + list(pending.get("changed", [])) + list(pending.get("unmanaged", []))
+    animations = manifest_ids(setup, CHARACTER, "clips")
+    absent = [f"{clip}_{d}" for clip in CLIPS for d in DIRECTIONS if f"{clip}_{d}" not in animations]
+    details.append(f"the character's Manifest lists every clip ({', '.join(CLIPS)}) in all {len(DIRECTIONS)} directions"
+                   if not absent else f"the character's Manifest lacks the animations {absent}; it lists {animations}")
+    missing += [f"Manifest id clips/{name}" for name in absent]
+    stale: list[str] = []
+    for name in ASSETS:
+        dry = kiripix(setup.project, env, "export", name, "--dry-run", expect=None)
+        pending = dry.json["data"] or {}
+        stale += [] if dry.code == 0 else [f"{name}: export --dry-run exit {dry.code}"]
+        stale += list(pending.get("would_write", [])) + list(pending.get("changed", [])) + list(pending.get("unmanaged", []))
     details.append(f"export --dry-run: nothing left to write" if not stale else f"export --dry-run still finds: {stale}")
     exported = not missing and not stale
     check = kiripix(setup.project, env, "check", "--all", expect=None)
@@ -419,7 +461,7 @@ def run_acceptance(agent: Agent, setup: Setup, budget: int, dry_run: bool, max_u
 
     env = agent_env(shim_dir=setup.shims)
     assert_no_instructions_above(setup.project)
-    turn = agent.start(TASK, setup.project, env, budget)
+    turn = agent.start(setup.task, setup.project, env, budget)
     while True:
         turns += 1
         usage.add(turn.usage)
@@ -492,13 +534,16 @@ class ScriptedAgent:
                  "fake Runners (D16) through the shims `kiripix` and `kpx`, not the agent's env"]
     MAX_STEPS = 40
 
-    def __init__(self, asset: str = ASSET) -> None:
-        self.asset = asset
+    def __init__(self, assets: tuple[str, ...] = ASSETS) -> None:
+        self.assets = assets
+        self.model = ""
         self.cwd = Path()
         self.env: Mapping[str, str] = {}
 
     def start(self, task: str, cwd: Path, env: Mapping[str, str], budget_left: int) -> AgentTurn:
-        assert self.asset in task, "the task must name the Asset, as the real agent's does"
+        assert all(asset in task for asset in self.assets), "the task must name the Assets, as the real agent's does"
+        quoted = re.search(r'the file "([^"]+)"', task)  # all it is told of the Model's place
+        self.model = quoted.group(1) if quoted else ""
         assert_agent_env_clean(env)
         self.cwd, self.env = cwd, env
         return self._follow_next()
@@ -522,20 +567,26 @@ class ScriptedAgent:
     def _follow_next(self) -> AgentTurn:
         turn, previous = AgentTurn(), None
         for _ in range(self.MAX_STEPS):
-            asked = self._run(turn, f"kiripix next {self.asset} --json")
-            data = json.loads(asked.output)["data"]
-            if data["done"]:
+            for asset in self.assets:  # in the task's order: the room, then the character
+                data = json.loads(self._run(turn, f"kiripix next {asset} --json").output)["data"]
+                if not data["done"]:
+                    break
+            else:
                 self._run(turn, "kiripix check --all --json")
                 turn.final_text = "done"
                 return turn
             if data["command"] is None:  # the owner's to do, or nothing is named: stop and say so
                 turn.final_text = data["owner_action"] or f"stuck at {data['stage']}: {data['reason']}"
                 return turn
-            if data["command"] == previous:
+            command = data["command"].replace("<file>", f'"{self.model}"')  # the one blank the task fills in
+            if re.search(r"<[^<>]+>", command):  # a template with a blank only the owner can fill: say so and stop
+                turn.final_text = f"I need the owner's decision at {data['stage']}: {data['reason']}"
+                return turn
+            if command == previous:
                 turn.final_text = f"`{data['command']}` did not move the project on"
                 return turn
-            previous = data["command"]
-            self._run(turn, data["command"])
+            previous = command
+            self._run(turn, command)
         turn.error = f"scripted agent gave up after {self.MAX_STEPS} steps"
         return turn
 

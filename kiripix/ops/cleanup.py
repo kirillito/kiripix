@@ -1,6 +1,7 @@
 """Cleanup Ops (spec §7): orphan pixel removal. Pure numpy; deterministic."""
 
 from collections import Counter, deque
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -67,20 +68,50 @@ def remove_orphans(rgba: U8, orphan_size: int) -> U8:
     return out
 
 
-def add_outline(rgba: U8, colour: tuple[int, int, int]) -> U8:
-    """Give every transparent pixel that touches an opaque one along an edge (4-adjacent) the colour `colour`, opaque.
+Placement = Literal["outside", "edge"]
 
-    The outline is clipped at the canvas: nothing grows beyond it, so a shape that touches the edge has no outline there.
-    Opaque pixels are not changed; a pixel counts as opaque from alpha 1, and a transparent one is alpha 0.
+
+def outline_mask(mask: npt.NDArray[np.bool_], placement: Placement = "outside") -> npt.NDArray[np.bool_]:
+    """The 1 px line Mask of a silhouette Mask: binary, the same shape, 4-connected (no diagonal-only growth).
+
+    `"outside"`: the empty pixels that touch the silhouette along an edge, so the line grows around it. It is clipped at
+    the canvas: a shape that touches the frame's edge has no line there.
+    `"edge"`: the silhouette's own pixels that touch an empty pixel along an edge, so the shape keeps its size. The
+    canvas beyond the frame counts as empty, so a shape touching the frame's edge has its line there too.
+    The line depends only on the silhouette pixels and their four neighbours, so a part that doesn't move between
+    frames gets the same line in each, wherever its neighbours differ elsewhere.
+    """
+    if mask.ndim != 2:
+        raise ValueError("expected an (H, W) Mask")
+    if placement not in ("outside", "edge"):
+        raise ValueError(f"placement is 'outside' or 'edge', not {placement!r}")
+    shape = mask.astype(bool)
+    padded = np.pad(shape, 1, constant_values=False)
+    up, down = padded[:-2, 1:-1], padded[2:, 1:-1]
+    left, right = padded[1:-1, :-2], padded[1:-1, 2:]
+    if placement == "outside":
+        return np.asarray(~shape & (up | down | left | right))
+    return np.asarray(shape & ~(up & down & left & right))
+
+
+def paint_outline(rgba: U8, line: npt.NDArray[np.bool_], colour: tuple[int, int, int]) -> U8:
+    """Paint the line Mask `line` in the one colour `colour`, opaque. Everything else is unchanged; the input is not."""
+    if rgba.ndim != 3 or rgba.shape[2] != 4:
+        raise ValueError("expected an (H, W, 4) RGBA image")
+    if line.shape != rgba.shape[:2]:
+        raise ValueError(f"the line Mask is {line.shape[1]} x {line.shape[0]} but the image is {rgba.shape[1]} x {rgba.shape[0]}")
+    out = rgba.copy()
+    out[line.astype(bool)] = (*colour, 255)
+    return out
+
+
+def add_outline(rgba: U8, colour: tuple[int, int, int], placement: Placement = "outside") -> U8:
+    """Outline the image's silhouette (alpha from 1 up) in `colour`: `paint_outline` of `outline_mask`.
+
+    By default (`"outside"`) every transparent pixel that touches an opaque one along an edge (4-adjacent) becomes
+    `colour`, opaque, clipped at the canvas, and opaque pixels are not changed. `"edge"` paints the silhouette's own
+    border pixels instead.
     """
     if rgba.ndim != 3 or rgba.shape[2] != 4:
         raise ValueError("expected an (H, W, 4) RGBA image")
-    opaque = rgba[..., 3] > 0
-    near = np.zeros_like(opaque)
-    near[1:, :] |= opaque[:-1, :]
-    near[:-1, :] |= opaque[1:, :]
-    near[:, 1:] |= opaque[:, :-1]
-    near[:, :-1] |= opaque[:, 1:]
-    out = rgba.copy()
-    out[near & ~opaque] = (*colour, 255)
-    return out
+    return paint_outline(rgba, outline_mask(rgba[..., 3] > 0, placement), colour)

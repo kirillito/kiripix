@@ -44,8 +44,8 @@ def init_game(project: Kiripix) -> Path:
 def manifest_text(counter: int = 1, markers: tuple[str, ...] = ("spawn.main",), files: dict[str, str] | None = None,
                   **extra: Any) -> str:
     value: dict[str, Any] = {
-        "schema_version": 1, "kiripix_version": "0.1.0", "asset": "room.alley", "exported": True, "counter": counter,
-        "ids": {"markers": list(markers), "layers": [], "masks": ["solid"]},
+        "schema_version": 2, "kiripix_version": "0.1.0", "asset": "room.alley", "exported": True, "counter": counter,
+        "ids": {"markers": list(markers), "layers": [], "masks": ["solid"], "clips": []},
         "files": files if files is not None else {TSCN: "sha256:aa"}, **extra}
     return json.dumps(value, indent=2) + "\n"
 
@@ -83,7 +83,7 @@ def test_exported_is_either_and_files_are_ours_with_theirs_in_replacing(kpx: Kir
     assert merged["exported"] is True
     assert merged["files"] == {TSCN: "sha256:ours", png: "sha256:same", extra: "sha256:t"}
     assert merged["replacing"] == {TSCN: "sha256:theirs"}
-    assert merged["schema_version"] == 1
+    assert merged["schema_version"] == 2
 
 
 def test_the_merge_needs_no_project_and_is_byte_stable(kpx: Kiripix) -> None:
@@ -108,7 +108,7 @@ def test_a_missing_base_is_fine(kpx: Kiripix) -> None:
 @pytest.mark.parametrize("broken", [
     "not json at all",
     '{"schema_version": 1}',
-    manifest_text().replace('"schema_version": 1', '"schema_version": 2'),
+    manifest_text().replace('"schema_version": 2', '"schema_version": 3'),
     manifest_text().replace("room.alley", "room.other"),
     "",
 ])
@@ -131,11 +131,47 @@ def test_an_unreadable_ours_exits_1_and_leaves_it_unchanged(kpx: Kiripix) -> Non
 
 
 def test_a_newer_schema_version_is_named(kpx: Kiripix) -> None:
-    newer = manifest_text().replace('"schema_version": 1', '"schema_version": 2')
+    newer = manifest_text().replace('"schema_version": 2', '"schema_version": 3')
 
     result = kpx.json(*sides(kpx.cwd, manifest_text(), newer), expect=1)
 
     assert "newer" in result["findings"][0]["message"] and "upgrade" in result["findings"][0]["message"]
+
+
+def test_a_version_1_manifest_is_migrated_with_no_clips_and_the_merge_unions_the_clips(kpx: Kiripix) -> None:
+    old = json.loads(manifest_text(2))
+    old["schema_version"] = 1
+    del old["ids"]["clips"]
+    new = json.loads(manifest_text(3))
+    new["ids"]["clips"] = ["idle_s", "walk_s"]
+    other = json.loads(manifest_text(3))
+    other["ids"]["clips"] = ["attack_s", "idle_s"]
+
+    kpx.json(*sides(kpx.cwd, json.dumps(old), json.dumps(new)))
+    migrated = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
+    assert migrated["schema_version"] == 2 and migrated["ids"]["clips"] == ["idle_s", "walk_s"]
+
+    kpx.json(*sides(kpx.cwd, json.dumps(new), json.dumps(other)))
+    merged = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
+    assert merged["ids"]["clips"] == ["idle_s", "walk_s", "attack_s"]
+
+
+def test_a_version_1_manifest_is_migrated_with_no_clips_and_the_merge_unions_the_clips(kpx: Kiripix) -> None:
+    old = json.loads(manifest_text(2))
+    old["schema_version"] = 1
+    del old["ids"]["clips"]
+    new = json.loads(manifest_text(3))
+    new["ids"]["clips"] = ["idle_s", "walk_s"]
+    other = json.loads(manifest_text(3))
+    other["ids"]["clips"] = ["attack_s", "idle_s"]
+
+    kpx.json(*sides(kpx.cwd, json.dumps(old), json.dumps(new)))
+    migrated = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
+    assert migrated["schema_version"] == 2 and migrated["ids"]["clips"] == ["idle_s", "walk_s"]
+
+    kpx.json(*sides(kpx.cwd, json.dumps(new), json.dumps(other)))
+    merged = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
+    assert merged["ids"]["clips"] == ["idle_s", "walk_s", "attack_s"]
 
 
 def test_a_missing_file_exits_1(kpx: Kiripix) -> None:

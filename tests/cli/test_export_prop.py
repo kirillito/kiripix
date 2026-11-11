@@ -159,7 +159,7 @@ def test_an_unlisted_file_is_adopted_and_a_dry_run_writes_nothing(project: Kirip
 def test_a_prop_freezes_no_id_so_its_body_can_go_and_a_deleted_prop_can_be_pruned(project: Kiripix) -> None:
     exportable_prop(project)
     project.json("export", PROP)
-    assert manifest(project)["ids"] == {"markers": [], "layers": [], "masks": []}
+    assert manifest(project)["ids"] == {"markers": [], "layers": [], "masks": [], "clips": []}
 
     project.json("decide", PROP, "footprint", "--decision", decision([], ORIGIN))
     project.json("run", PROP)

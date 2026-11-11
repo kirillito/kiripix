@@ -105,6 +105,23 @@ def test_dry_run_lifts_the_layer_through_next_and_the_owner_reviews_it(dry_run: 
     assert "layer.crate.png" in scene
 
 
+def test_dry_run_takes_the_character_from_import_of_its_model_to_export_with_its_clips(dry_run: tuple[Setup, Outcome]) -> None:
+    setup, outcome = dry_run
+
+    ran = [c.command for c in outcome.commands]
+    assert any(c.startswith("kiripix import character.hero") and "hero.glb" in c for c in ran), "the agent imported the Model"
+    assert any(c.startswith("kiripix export character.hero") for c in ran)
+    assert not any("--role" in c or "mixamo" in c.lower() for c in ran), "the pre-rigged Model needs no Mixamo round trip"
+    clips = [i for i in outcome.interventions if "decide character.hero clips clip" in i]
+    assert len(clips) == 1 and clips[0].count(": exit 0") == 3, "the owner made the three clips in one go"
+    assert outcome.verification and any("lists every clip (idle, walk, attack)" in d for d in outcome.verification.details)
+    for name in ("hero.tscn", "frames.tres", "texture.tres", "color.png", "normal.png"):
+        assert (setup.game / "kiripix" / "character" / "hero" / name).is_file()
+    manifest = json.loads((setup.game / "kiripix" / "manifest" / "character.hero.json").read_text("utf-8"))
+    assert {f"{c}_{d}" for c in ("idle", "walk", "attack") for d in ("s", "sw", "w", "nw", "n", "ne", "e", "se")} == set(
+        manifest["ids"]["clips"])
+
+
 def test_the_agent_sees_only_the_real_kinds_and_runners_though_the_fakes_are_loaded(setup: Setup) -> None:
     env = agent_env(shim_dir=setup.shims)
 
@@ -118,6 +135,7 @@ def test_the_agent_sees_only_the_real_kinds_and_runners_though_the_fakes_are_loa
     runners = run._run(turn, "kiripix runners --json").output
 
     assert "demo" not in described and "sketch" not in described and "layered" not in described
+    assert "character" in described, "the real Kinds include the character"
     assert "fake.tampered" not in runners and "inpainter-b" not in runners
     assert "KIRIPIX_TEST" not in "".join(env)
 
@@ -142,7 +160,7 @@ def test_an_agent_that_stops_with_nothing_for_the_owner_is_lost_at_a_named_step(
     outcome = run_acceptance(StoppedAgent(), setup, BUDGET, dry_run=True)
 
     assert not outcome.passed
-    assert outcome.failure_step and outcome.failure_step.startswith("brief")  # the first Stage that is not done
+    assert outcome.failure_step and outcome.failure_step.startswith("room.alley brief")  # the first Stage that is not done
     assert "lost" in (outcome.failure_reason or "")
 
 
@@ -159,7 +177,7 @@ def test_the_owner_answers_what_the_agent_reports_and_the_contradiction_is_recor
     outcome = run_acceptance(AskingAgent(), setup, BUDGET, dry_run=True)
 
     assert any("pick room.alley" in i and "the agent asked the owner" in i for i in outcome.interventions)
-    assert outcome.failure_step and outcome.failure_step.startswith("source is todo"), "the Pick moved it on"
+    assert outcome.failure_step and outcome.failure_step.startswith("room.alley source is todo"), "the Pick moved it on"
     assert not any("decide" in i for i in outcome.interventions), "the Masks and Markers wait until they are asked for"
     assert "Still stuck." in render(outcome, "m1", datetime.date(2026, 11, 4)), "the closing message is in the report"
 
@@ -171,7 +189,7 @@ def test_the_owner_volunteers_nothing_when_the_agent_asks_at_a_stage_with_no_ent
 
     outcome = run_acceptance(Asks(), setup, BUDGET, dry_run=True)
 
-    assert not outcome.interventions and outcome.failure_step and outcome.failure_step.startswith("brief")
+    assert not outcome.interventions and outcome.failure_step and outcome.failure_step.startswith("room.alley brief")
 
 
 def test_exceeding_the_token_budget_ends_the_run_as_a_failure(setup: Setup) -> None:
