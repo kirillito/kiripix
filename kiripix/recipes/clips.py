@@ -6,7 +6,9 @@ A clip's `source` is a clip-source file's stem (`walk` for `src/clips/walk.<hash
 several actions), else the name of an action in the rig's file (the Model's own `model.blend`, or the rigged file the Mixamo
 round trip brought back). A clip-source file wins over an action of the same name.
 
-Blender is asked once per file, for its actions and how far the root travels in each; the Stage does the rest.
+Blender is asked once per file, for its actions, how far the root travels in each, and the foot bones' height and speed at
+each frame; the Stage does the rest, among it the frames where a foot plants (`find_plants`, ticket 0172), listed per clip in
+`events`: the same on every direction, as a direction is only the camera's view of one action.
 """
 
 import hashlib
@@ -21,7 +23,10 @@ from kiripix.checks import Finding, Position
 from kiripix.recipes.base import CurrentDecision, DecisionSpec, NeedsInput, StageFailure, StageRun
 from kiripix.recipes.blender_launcher import launch
 
-CLIPS_SCHEMA_VERSION = 1
+# 2: each clip's `events` ({"foot": [index into `frames`, ...]}, ticket 0172); refused when older
+CLIPS_SCHEMA_VERSION = 2
+PLANT_HEIGHT = 0.03  # a foot within this fraction of the rig's height of the clip's lowest foot point is on the ground
+PLANT_SPEED = 0.25  # with root motion, a planted foot moves less than this many rig heights a second
 CLIP_SOURCES = "src/clips/"
 ROOT_MOTION_RATIO = 0.1  # the root travels more than this fraction of the rig's height: root motion
 HASH_LENGTH = 16  # hex digits of the SHA-256, as a Variant's name
@@ -121,10 +126,58 @@ def sample_frames(start: int, end: int, source_fps: float, fps: int, loop: bool)
     return frames
 
 
-def _read(run: StageRun, cache: dict[Path, dict[str, Any]], path: Path, root: list[str]) -> dict[str, Any]:
+def _at(frames: list[float], values: list[float], frame: float) -> float:
+    """`values` at `frame`, linear between the two samples round it, and the end sample outside them."""
+    if frame <= frames[0]:
+        return values[0]
+    for index in range(1, len(frames)):
+        if frame <= frames[index]:
+            span = frames[index] - frames[index - 1]
+            weight = (frame - frames[index - 1]) / span if span else 1.0
+            return values[index - 1] + (values[index] - values[index - 1]) * weight
+    return values[-1]
+
+
+def find_plants(feet: dict[str, Any], rig_height: float, start: int, end: int, game_frames: list[float | int], loop: bool,
+                root_motion: bool) -> list[int]:
+    """The indexes into `game_frames` where a foot plants. `feet` is `read_actions`' `feet` of the action.
+
+    A foot is on the ground at a game frame when its height is within `PLANT_HEIGHT` of the rig's height above the clip's
+    lowest foot point (either foot, within the clip's `start` and `end`) and, with root motion, when it also moves slower than
+    `PLANT_SPEED` rig heights a second (with the root in place, the planted foot slides back at the walk's speed, so speed says
+    nothing). A plant is the first frame of a run on the ground where the foot stops falling: the next frame is not lower. A
+    loop's run goes on over the seam, and a foot on the ground all clip long, an idle's, never plants."""
+    sides = [side for side in ("left", "right") if side in feet]
+    frames = [float(f) for f in feet.get("frames", [])]
+    if not sides or not frames or rig_height <= 0 or not game_frames:
+        return []
+    inside = [i for i, f in enumerate(frames) if start <= f <= end] or list(range(len(frames)))
+    lowest = min(feet[side]["z"][i] for side in sides for i in inside)
+    plants: set[int] = set()
+    count = len(game_frames)
+    for side in sides:
+        heights = [_at(frames, feet[side]["z"], float(f)) for f in game_frames]
+        speeds = [_at(frames, feet[side]["speed"], float(f)) for f in game_frames]
+        down = [h <= lowest + PLANT_HEIGHT * rig_height and (not root_motion or s <= PLANT_SPEED * rig_height)
+                for h, s in zip(heights, speeds, strict=True)]
+        if all(down):
+            continue
+        for i in range(count):
+            before = down[(i - 1) % count] if loop else (down[i - 1] if i else False)
+            if not down[i] or before:
+                continue
+            j = i  # the run's first frame where the next is not lower: where the foot has come to rest
+            while j + 1 < count and down[j + 1] and heights[j + 1] < heights[j] - 1e-9:
+                j += 1
+            plants.add(j)
+    return sorted(plants)
+
+
+def _read(run: StageRun, cache: dict[Path, dict[str, Any]], path: Path, root: list[str],
+          feet: dict[str, str]) -> dict[str, Any]:
     if path not in cache:
         run.check_cancel()
-        cache[path] = launch(run, "read_actions", {"input": str(path), "root": root})
+        cache[path] = launch(run, "read_actions", {"input": str(path), "root": root, "feet": feet})
     return cache[path]
 
 
@@ -167,6 +220,8 @@ def run_clips(run: StageRun) -> None:
 
     rig_file, rig = _rig(run)
     root = ["root", str(rig["mapping"].get("hips", "hips"))]
+    mapping = rig["mapping"]
+    feet = {side: str(mapping[key]) for side, key in (("left", "left_foot"), ("right", "right_foot")) if key in mapping}
     files = _clip_files(run)
     cache: dict[Path, dict[str, Any]] = {}
     missing: list[str] = []
@@ -181,7 +236,7 @@ def run_clips(run: StageRun) -> None:
             path, wanted = files[stem], (action_name or None)
         else:
             path, wanted = rig_file, source
-        found = _read(run, cache, path, root)
+        found = _read(run, cache, path, root, feet)
         action, why = _action(found, wanted, stem)
         if action is None:
             where = f"the clip source {stem}" if path != rig_file else "the rig's file"
@@ -194,6 +249,8 @@ def run_clips(run: StageRun) -> None:
                                 f"{action['start']}-{action['end']}")
             continue
         travel = float(action["travel"]) / float(found["height"]) if found["height"] else 0.0
+        looping, in_place = bool(data["loop"]), travel <= ROOT_MOTION_RATIO
+        frames = sample_frames(start, end, float(found["fps"]), int(data["fps"]), looping)
         clips.append({
             "name": name,
             "source": source,
@@ -207,7 +264,9 @@ def run_clips(run: StageRun) -> None:
             "stationary": bool(data.get("stationary", False)),
             "root_travel": round(travel, 4),
             "root_motion": travel > ROOT_MOTION_RATIO,
-            "frames": sample_frames(start, end, float(found["fps"]), int(data["fps"]), bool(data["loop"])),
+            "frames": frames,
+            "events": {"foot": find_plants(action.get("feet") or {}, float(found["height"]), start, end, frames, looping,
+                                           not in_place)},
         })
     if missing:
         raise StageFailure("a clip's source can't be found: " + "; ".join(missing), code="clips.source_missing",

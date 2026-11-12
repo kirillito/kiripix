@@ -65,7 +65,7 @@ def test_three_clips_build_clips_json_with_the_sampled_frames_and_undo_removes_o
 
     assert [(r["stage"], r["outcome"]) for r in result["data"]["results"]] == [("clips", "done")]
     document = clips_json(folder)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     by_name = {c["name"]: c for c in document["clips"]}
     assert list(by_name) == ["hit", "idle", "walk"]  # sorted by name
     # idle: 24 source frames at 30 fps, 12 fps samples every 2.5 frames; a loop stops before its end

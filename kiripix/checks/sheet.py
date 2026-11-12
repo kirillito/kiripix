@@ -29,6 +29,7 @@ class SheetFrame:
     image: np.ndarray  # RGBA
     pivot: tuple[int, int]
     normal: np.ndarray | None = None
+    feet: tuple[int, int] | None = None  # the measured lowest point of the frame (a sprite's); `pivot` is compared when None
 
 
 def _where(f: SheetFrame, x: int | None = None, y: int | None = None) -> Position:
@@ -40,7 +41,7 @@ def _name(f: SheetFrame) -> str:
 
 
 def check_pivot_drift(frames: list[SheetFrame], stationary: set[str], fix: str, tolerance: int = 0) -> list[Finding]:
-    """In each stationary clip and direction, a frame whose pivot is further than `tolerance` px (on either axis)
+    """In each stationary clip and direction, a frame whose feet (its `feet` when it has them, else its pivot) are further than `tolerance` px (on either axis)
     from the first frame's. Clips not in `stationary` are not checked."""
     findings: list[Finding] = []
     first: dict[tuple[str, str], SheetFrame] = {}
@@ -50,10 +51,11 @@ def check_pivot_drift(frames: list[SheetFrame], stationary: set[str], fix: str, 
         ref = first.setdefault((f.clip, f.direction), f)
         if ref is f:
             continue
-        dx, dy = f.pivot[0] - ref.pivot[0], f.pivot[1] - ref.pivot[1]
+        here, there = f.feet or f.pivot, ref.feet or ref.pivot
+        dx, dy = here[0] - there[0], here[1] - there[1]
         if max(abs(dx), abs(dy)) > tolerance:
             findings.append(Finding(
-                code="sheet.pivot_drift", position=_where(f, *f.pivot), fix=fix,
+                code="sheet.pivot_drift", position=_where(f, *here), fix=fix,
                 message=f"{_name(f)}: the feet moved ({dx:+d}, {dy:+d}) px from frame {ref.index} in a stationary "
                         f"clip (tolerance {tolerance} px)"))
     return findings

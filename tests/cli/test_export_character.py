@@ -61,8 +61,9 @@ def test_the_stage_leaves_both_atlases_and_character_json_in_out_export(project:
     sheet = json.loads((folder / "work" / "sheet" / "sheet.json").read_text("utf-8"))
 
     assert sorted(p.name for p in out.iterdir() if p.name != ".stage.json") == ["character.json", "color.png", "normal.png"]
-    assert character == {"schema_version": 3, "asset": HERO, "files": {"color": "color.png", "normal": "normal.png"},
-                         **{key: sheet[key] for key in ("cell", "pivot", "atlas", "directions", "clips")}, "parts": [], "rows": []}
+    assert character == {"schema_version": 4, "asset": HERO, "files": {"color": "color.png", "normal": "normal.png"},
+                         **{key: sheet[key] for key in ("cell", "pivot", "atlas", "directions")},
+                         "clips": [{**c, "events": {"foot": []}} for c in sheet["clips"]], "parts": [], "rows": []}
     for name in ("color.png", "normal.png"):
         assert (out / name).read_bytes() == (folder / "work" / "sheet" / name).read_bytes()
 
@@ -259,7 +260,7 @@ def test_character_json_lists_each_part_dark_to_light_in_palettes_order(project:
 
     character = built(folder)
 
-    assert character["schema_version"] == 3
+    assert character["schema_version"] == 4
     assert character["parts"] == [{key: part[key] for key in ("name", "materials", "row", "shared", "indexes", "rgb")}
                                   for part in palette_parts(folder)]
     assert [(p["name"], p["row"], p["shared"]) for p in character["parts"]] == [("cloth", 0, False), ("skin", 1, False)]

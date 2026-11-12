@@ -31,14 +31,35 @@ else:
 
 from kiripix.checks import Finding, PartCounts, Position, check_conformance, check_part_vanishes
 from kiripix.checks.sheet import SheetFrame, check_normal_size
-from kiripix.ops import Placement, add_outline, conformance, encode_normals, quantise_normals
-from kiripix.recipes.base import StageFailure, StageRun
+from kiripix.ops import (
+    Placement,
+    add_outline,
+    conformance,
+    encode_normals,
+    height_from_alpha,
+    normals_from_height,
+    quantise_normals,
+)
+from kiripix.recipes.base import CheckFunction, ParamSpec, StageFailure, StageFunction, StageRun
 from kiripix.recipes.character_palette import RENDER_FILE, _colour_files
 from kiripix.recipes.common import palette_rgb, read_rgba, write_rgba
 
 FINISH_SCHEMA_VERSION = 1
 FINISH_FILE = "finish.json"
 FLAT = (128, 128, 255, 255)  # a normal facing the camera, as `encode_normals` writes it
+
+
+def normals_params(default: str = "pass") -> tuple[ParamSpec, ParamSpec]:
+    """The `normals` and `relief` parameters, for a Recipe that declares them (the sprite's `finish`, ticket 0176, which has no
+    normal pass and defaults to `height`). The character doesn't: a new parameter would change its hashes, and it reads `pass`
+    when `normals` isn't declared, which is also what they default to here."""
+    return (
+        ParamSpec(name="normals", type="choice", choices=["pass", "height", "flat"], default=default,
+                  description="pass: the normal pass of the frame Stage; height: normals from a rounded height of the "
+                              "silhouette; flat: every opaque pixel faces the camera."),
+        ParamSpec(name="relief", type="float", minimum=0.0, maximum=1.0, default=0.0,
+                  description="With normals=height, the share of the colour frame's lightness in the height, 0 to 1."),
+    )
 
 
 def _document(run: StageRun) -> dict[str, Any]:
@@ -95,6 +116,36 @@ def _refuse_a_ramp_colour(run: StageRun, palette: np.ndarray, index: int, rgb: t
                        fix=f"kiripix set {run.asset_id} finish outline_colour={free}")
 
 
+def _normals_mode(run: StageRun) -> str:
+    mode = str(run.params.get("normals", "pass"))
+    if mode not in ("pass", "height", "flat"):
+        raise StageFailure(f"normals must be pass, height or flat, not {mode!r}", fix=f"kiripix set {run.asset_id} finish normals=pass")
+    return mode
+
+
+def _lightness(colour: np.ndarray) -> np.ndarray:
+    """Each pixel's luma, 0 to 1."""
+    rgb = colour[..., :3].astype(np.float64)
+    return np.asarray((rgb @ np.array([0.2126, 0.7152, 0.0722])) / 255.0)
+
+
+def _flat_frame(colour: np.ndarray) -> np.ndarray:
+    """`normals=flat`: every opaque pixel of the final colour frame faces the camera. Already quantised and encoded."""
+    out = np.zeros(colour.shape, dtype=np.uint8)
+    out[colour[..., 3] > 0] = np.array(FLAT, dtype=np.uint8)
+    return out
+
+
+def _height_pass(mapped: np.ndarray, relief: float) -> np.ndarray:
+    """`normals=height`: a raw normal pass from the mapped colour frame's silhouette (before the outline), for
+    `_normal_frame` to quantise, encode and cut."""
+    alpha = np.where(mapped[..., 3] > 0, 255, 0).astype(np.uint8)
+    height = height_from_alpha(alpha)
+    if relief > 0:
+        height = (1.0 - relief) * height + relief * _lightness(mapped) * (alpha > 0)
+    return cast("np.ndarray", normals_from_height(height, alpha))
+
+
 def _normal_frame(normal: np.ndarray, colour: np.ndarray, levels: int) -> np.ndarray:
     """The quantised, encoded normal pass cut by the colour frame's alpha: an opaque colour pixel with no normal under it (the
     outline) faces the camera."""
@@ -105,8 +156,9 @@ def _normal_frame(normal: np.ndarray, colour: np.ndarray, levels: int) -> np.nda
     return out
 
 
-def run_character_finish(run: StageRun) -> None:
+def _run_finish(run: StageRun, source: str) -> None:
     document = _document(run)
+    mode, relief = _normals_mode(run), float(run.params.get("relief", 0.0))
     palette = palette_rgb(run)
     outline = _outline_colour(run, palette)
     levels, placement = int(run.params["normal_levels"]), str(run.params["placement"])
@@ -115,24 +167,29 @@ def run_character_finish(run: StageRun) -> None:
         run.check_cancel()
         run.progress(number, len(files), f"finishing {clip}/{direction}/{index:03d}")
         colour = read_rgba(run.upstream["palette"] / name)
+        mapped = colour
         if outline is not None:
             colour = add_outline(colour, outline[1], cast(Placement, placement))
         try:
-            normal = read_rgba(run.upstream["render"] / _normal_name(name))
-            if normal.shape != colour.shape:
-                finished = normal  # not the colour frame's size: `normal.size_mismatch` says so, there is no cut to make
+            if mode == "flat":
+                finished = _flat_frame(colour)
             else:
-                finished = _normal_frame(normal, colour, levels)
+                normal = _height_pass(mapped, relief) if mode == "height" else read_rgba(run.upstream[source] / _normal_name(name))
+                if normal.shape != colour.shape:
+                    finished = normal  # not the colour frame's size: `normal.size_mismatch` says so, there is no cut to make
+                else:
+                    finished = _normal_frame(normal, colour, levels)
         except ValueError as error:
             raise StageFailure(f"{clip}/{direction} frame {index}: can't quantise the normal pass: {error}") from None
         except OSError:
-            raise StageFailure(f"render has no normal pass for {clip}/{direction} frame {index}; "
-                               f"run render again") from None
+            raise StageFailure(f"{source} has no normal pass for {clip}/{direction} frame {index}; "
+                               f"run {source} again") from None
         for target, image in ((run.output_dir / name, colour), (run.output_dir / _normal_name(name), finished)):
             target.parent.mkdir(parents=True, exist_ok=True)
             write_rgba(target, image)
     shutil.copyfile(run.upstream["palette"] / RENDER_FILE, run.output_dir / RENDER_FILE)
     drawn = {"schema_version": FINISH_SCHEMA_VERSION, "normal_levels": levels,
+             **({} if mode == "pass" else {"normals": mode}),
              "outline": None if outline is None else {"colour": outline[0], "rgb": list(outline[1]), "placement": placement}}
     (run.output_dir / FINISH_FILE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
 
@@ -145,11 +202,11 @@ def _read_labels(path: Path) -> np.ndarray:
         return np.asarray(image.convert("L"), dtype=np.uint8).copy()
 
 
-def _vanishing_parts(run: StageRun, document: dict[str, Any], frames: list[SheetFrame]) -> list[Finding]:
+def _vanishing_parts(run: StageRun, source: str, document: dict[str, Any], frames: list[SheetFrame]) -> list[Finding]:
     """`sheet.part_vanishes` (ticket 0159): each material's pixels per finished frame, counted where the final colour frame is
     opaque, from the material pass `render` wrote. Nothing when the pass isn't there to read."""
     names = {int(m["index"]): str(m["name"]) for m in document.get("materials", [])}
-    render = run.upstream.get("render")
+    render = run.upstream.get(source)
     if not names or render is None:
         return []
     watch = [w.strip() for w in str(run.params.get("watch_parts", "")).split(",") if w.strip()]
@@ -174,7 +231,7 @@ def _vanishing_parts(run: StageRun, document: dict[str, Any], frames: list[Sheet
     return findings
 
 
-def check_character_finish(run: StageRun) -> list[Finding]:
+def _check_finish(run: StageRun, source: str) -> list[Finding]:
     """`normal.size_mismatch` on every frame, and `palette.off_palette` on the colour frames against the Project palette."""
     out = run.output_dir
     try:
@@ -196,9 +253,18 @@ def check_character_finish(run: StageRun) -> list[Finding]:
         frames.append(SheetFrame(clip, direction, index, colour, (0, 0), read_rgba(normal_path)))
         findings += check_conformance(conformance(colour, palette), name, fix=fix)
     findings += check_normal_size(frames, fix)
-    findings += _vanishing_parts(run, document, frames)
+    findings += _vanishing_parts(run, source, document, frames)
     for finding in findings:
         if finding.position is None:
             finding.position = Position()
         finding.position.asset, finding.position.stage = run.asset_id, "finish"
     return findings
+
+
+def finish_stage(frames: str = "render") -> tuple[StageFunction, CheckFunction]:
+    """The Stage's `run` and `check` for a Recipe whose frame list, normal frames and material frames are in the Stage named
+    `frames` (the character's `render`, a sprite's `fit`; ticket 0176). The Stage must list it and `palette` upstream."""
+    return (lambda run: _run_finish(run, frames)), (lambda run: _check_finish(run, frames))
+
+
+run_character_finish, check_character_finish = finish_stage("render")

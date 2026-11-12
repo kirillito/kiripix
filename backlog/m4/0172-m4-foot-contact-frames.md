@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -34,9 +34,16 @@ all 8 directions: one list per clip, not per direction. That's per clip x 4 bodi
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake Blender: a walk whose fake foot heights touch the ground twice gives two `foot` frames, and an idle
+- [x] CLI seam, on the fake Blender: a walk whose fake foot heights touch the ground twice gives two `foot` frames, and an idle
       none; the events reach `character.json`.
-- [ ] Marked `blender` test on the fixture rig: a two-step clip gives two plants.
-- [ ] On mc02: walk and run's `foot` frames, laid out as a strip with the plants marked, checked by eye; path listed here.
+- [x] Marked `blender` test on the fixture rig: a two-step clip gives two plants.
+- [x] On mc02: walk and run's `foot` frames, laid out as a strip with the plants marked, checked by eye; path listed here.
 
 Budget: 100–180k tokens.
+
+## Done (2026-11-12)
+
+- **Tolerance:** a foot is on the ground within 3 % of the rig's height (`PLANT_HEIGHT`) of the clip's lowest foot point (the ankle bone's head, either foot, inside the clip's frames); with root motion it also moves slower than 0.25 rig heights a second (`PLANT_SPEED`). A plant is the first frame of a run on the ground where the foot stops falling (the next frame isn't lower); a loop's run goes on over the seam; a foot down all clip long never plants. Chosen from mc02's walk: the ankle only rises about 5 % of the height there, so height alone is a weak gate and the speed does the work.
+- `read_actions.py` takes `feet` and answers each action's `feet` (height and speed per sampled frame); `clips.py` `find_plants`; `CLIPS_SCHEMA_VERSION` 2; export reads `clips` as an upstream and `character.json` is `schema_version` 4.
+- Tests: `tests/cli/test_foot_events.py` (fake Blender, and the marked test on the fixture rig).
+- **mc02 eye-check:** walk's plants are game frames 5 and 11 (source 13.5 and 28.5), half a cycle apart, each where the foot's speed has just dropped to about nothing (left foot still from source 12, right from 28). Strip, facing s and e, enlarged x3 and captioned: `C:\Homespace\urban-mystery-club-art\.kiripix\trials\0172-foot\foot_strip_walk.png`. mc02 has no `run` clip (idle, attack and walk only), so the run was not checked; idle and attack have no plant.

@@ -2,12 +2,13 @@
 `sheet`'s `sheet.json` and atlases only, and leaves in `out/export/`:
 
     color.png, normal.png   the two atlases, copied
-    character.json          {"schema_version": 2, "asset": "character.hero",
+    character.json          {"schema_version": 4, "asset": "character.hero",
                              "files": {"color": "color.png", "normal": "normal.png"},
                              "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # from the cell's top left
                              "atlas": {"width": 858, "height": 936},
                              "directions": ["s", "sw", ...],
                              "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
+                                        "events": {"foot": [0, 5]},   # frames (the same in every direction) where a foot plants
                                         "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78,
                                                                                      "height": 78}}, ...]}}],
                              "parts": [{"name": "skin", "materials": ["skin"], "row": 0, "shared": true,
@@ -29,11 +30,13 @@ from typing import Any
 from kiripix.checks import Finding, Position
 from kiripix.recipes.base import NeedsInput, StageFailure, StageRun
 from kiripix.recipes.character_palette import PALETTE_FILE, PALETTE_SCHEMA_VERSION
+from kiripix.recipes.clips import CLIPS_SCHEMA_VERSION
 from kiripix.recipes.character_sheet import COLOR_ATLAS, NORMAL_ATLAS, SHEET_FILE, SHEET_SCHEMA_VERSION
 
 # 2: `parts`, each swappable part's ramp from `palette` (`[]` without parts)
 # 3: each part's `row` and `shared`, in row order, and `rows`, the Project ramp table's (ticket 0169); refused when older
-CHARACTER_SCHEMA_VERSION = 3
+# 4: each clip's `events`, from `clips` (ticket 0172)
+CHARACTER_SCHEMA_VERSION = 4
 CHARACTER_FILE = "character.json"
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -69,6 +72,14 @@ def run_character_export(run: StageRun) -> None:
     if palette.get("schema_version") != PALETTE_SCHEMA_VERSION:
         raise StageFailure(f"{PALETTE_FILE} has schema_version {palette.get('schema_version')}; this Kiripix reads "
                            f"{PALETTE_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} palette --force")
+    try:
+        built: dict[str, Any] = json.loads((run.upstream["clips"] / "clips.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise StageFailure("clips has no clips.json; run it again", fix=f"kiripix run {run.asset_id} clips --force") from None
+    if built.get("schema_version") != CLIPS_SCHEMA_VERSION:
+        raise StageFailure(f"clips.json has schema_version {built.get('schema_version')}; this Kiripix reads "
+                           f"{CLIPS_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} clips --force")
+    events = {str(c["name"]): c["events"] for c in built["clips"]}
     for name in (COLOR_ATLAS, NORMAL_ATLAS):
         run.check_cancel()
         shutil.copyfile(folder / name, run.output_dir / name)
@@ -80,7 +91,7 @@ def run_character_export(run: StageRun) -> None:
         "pivot": sheet["pivot"],
         "atlas": sheet["atlas"],
         "directions": sheet["directions"],
-        "clips": sheet["clips"],
+        "clips": [{**c, "events": events.get(str(c["name"]), {"foot": []})} for c in sheet["clips"]],
         "parts": [{"name": p["name"], "materials": p["materials"], "row": p["row"], "shared": p["shared"],
                    "indexes": p["indexes"], "rgb": p["rgb"]} for p in sorted(palette["parts"], key=lambda p: int(p["row"]))],
         "rows": _rows(palette),

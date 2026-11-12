@@ -31,10 +31,22 @@ unchanged, so they must stop assuming that the frame list comes from a Stage nam
 
 - [ ] Every existing character test and golden passes unchanged, and `character.mc02`'s Stages stay `done` after the change
       (no input hash changed): checked with `kiripix status` on a copy of the art Project.
-- [ ] CLI seam on the fake renderer: `finish normals=flat` and `normals=height` write a normal frame of the colour frame's size;
+- [x] CLI seam on the fake renderer: `finish normals=flat` and `normals=height` write a normal frame of the colour frame's size;
       `flat` is (128, 128, 255) on every opaque pixel.
-- [ ] A test frame list with `feet` makes `sheet.pivot_drift` report the frame whose feet moved, and not one whose pivot alone
+- [x] A test frame list with `feet` makes `sheet.pivot_drift` report the frame whose feet moved, and not one whose pivot alone
       differs.
-- [ ] `uv run lint-imports` and `uv run mypy` pass.
+- [x] `uv run lint-imports` and `uv run mypy` pass.
 
 Budget: 80–120k tokens.
+
+## Notes (2026-11-12)
+
+- The factories are `palette_stage(frames)`, `finish_stage(frames)` and `sheet_stage(frames)`, each returning `(run, check)`; the
+  character's `run_character_*` and `check_character_*` are `...("render")` / `("finish")`, so `character.py` is unchanged.
+  `normals_params(default)` gives the `normals` and `relief` ParamSpecs for a Recipe that declares them; the character does not
+  (a declared default is hashed), and its `finish` reads `pass` when the parameter isn't declared. `flat` is written as the
+  encoded value on the final colour frame's opaque pixels, not quantised again (8 levels would turn (128, 128, 255) into a tilt).
+  `sheet` takes the expected frame counts from the frame list when the Recipe has no `clips` Stage.
+- First box not ticked: the character's Stage specs (inputs, params, Checks) are identical before and after, so no input hash
+  can change, and the existing tests and goldens pass. But on a copy of the art Project `render` is already `stale` without this
+  change (another change in the tree), so `palette` to `export` can't show `done` there.

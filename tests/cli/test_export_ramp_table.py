@@ -66,7 +66,7 @@ def test_character_json_carries_each_parts_row_and_shared_in_row_order(project: 
 
     character = built(folders[TWIN])
 
-    assert character["schema_version"] == 3
+    assert character["schema_version"] == 4
     assert [(p["name"], p["row"], p["shared"], p["materials"]) for p in character["parts"]] == [
         ("skin", 0, True, ["jacket"]), ("top", 2, False, ["face"])]
     assert character["rows"] == [{"name": "skin", "length": 3}, {"name": "hair", "length": 2}, {"name": "top", "length": 2}]

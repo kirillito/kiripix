@@ -40,7 +40,7 @@ from kiripix.ops import (
     remove_orphans,
     remove_orphans_by_part,
 )
-from kiripix.recipes.base import StageFailure, StageRun
+from kiripix.recipes.base import CheckFunction, StageFailure, StageFunction, StageRun
 from kiripix.recipes.common import BAYER, palette_rgb, read_rgba, write_rgba
 
 # 2: `parts` (each part's name, materials, indexes and RGB, dark to light); empty with no `parts`
@@ -51,12 +51,12 @@ RENDER_FILE = "render.json"
 PALETTE_FILE = "palette.json"
 
 
-def _render(run: StageRun) -> dict[str, Any]:
-    path = run.upstream["render"] / RENDER_FILE
+def _render(run: StageRun, frames: str) -> dict[str, Any]:
+    path = run.upstream[frames] / RENDER_FILE
     try:
         document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        raise StageFailure("render has no render.json; run it again") from None
+        raise StageFailure(f"{frames} has no render.json; run it again") from None
     return document
 
 
@@ -196,9 +196,9 @@ def _reserved(table: list[dict[str, Any]]) -> np.ndarray:
     return np.array(colours, dtype=np.uint8).reshape(-1, 3)
 
 
-def run_character_palette(run: StageRun) -> None:
-    render = run.upstream["render"]
-    document = _render(run)
+def _run_palette(run: StageRun, source: str) -> None:
+    render = run.upstream[source]
+    document = _render(run, source)
     files = _colour_files(document)
     palette = palette_rgb(run)
     count = int(run.params["colors"])
@@ -223,8 +223,8 @@ def run_character_palette(run: StageRun) -> None:
             try:
                 labels.append(read_labels(render / label_files[number]))
             except OSError:
-                raise StageFailure(f"render has no material pass for {name}; run it again", code="palette.part_unknown",
-                                   fix=f"kiripix run {run.asset_id} render --force") from None
+                raise StageFailure(f"{source} has no material pass for {name}; run it again", code="palette.part_unknown",
+                                   fix=f"kiripix run {run.asset_id} {source} --force") from None
     run.check_cancel()
     try:
         if specs:
@@ -283,7 +283,7 @@ def run_character_palette(run: StageRun) -> None:
                    indent=2) + "\n", encoding="utf-8")
 
 
-def check_character_palette(run: StageRun) -> list[Finding]:
+def _check_palette(run: StageRun, source: str) -> list[Finding]:
     """`palette.off_palette` on every colour frame, against the character's own colours (the fixed subset and every ramp), and
     `palette.ramp_shared` when a ramp's colour is in two ramps or in a pixel of another part, the colours the Project's ramp
     table reserves for parts the character lacks included; a finding names the frame."""
@@ -325,7 +325,7 @@ def check_character_palette(run: StageRun) -> list[Finding]:
         if not ramps:
             continue
         try:
-            label = read_labels(run.upstream["render"] / label_files[number])
+            label = read_labels(run.upstream[source] / label_files[number])
         except OSError:
             continue  # `render` has nothing to compare with: its own Stage says so
         if label.shape != image.shape[:2]:
@@ -339,3 +339,12 @@ def check_character_palette(run: StageRun) -> list[Finding]:
                                       y=found.position.y if found.position else None)
             findings.append(found)
     return findings
+
+
+def palette_stage(frames: str = "render") -> tuple[StageFunction, CheckFunction]:
+    """The Stage's `run` and `check` for a Recipe whose frame list (`render.json`) and colour and material frames are in the
+    Stage named `frames`: the character's `render`, a sprite's `fit` (ticket 0176). The Stage must list it upstream."""
+    return (lambda run: _run_palette(run, frames)), (lambda run: _check_palette(run, frames))
+
+
+run_character_palette, check_character_palette = palette_stage("render")

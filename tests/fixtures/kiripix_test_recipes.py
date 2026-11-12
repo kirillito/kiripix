@@ -231,6 +231,66 @@ register_kind(
 )
 
 
+# The test Kind `framed` (ticket 0176): the character's `palette`, `finish` and `sheet` on a frame list from a Stage named `fit`,
+# as the sprite Recipe uses them, with no `clips` Stage. `fit` writes one stationary clip `idle`, direction `s`, three frames of
+# 12 x 12 with an opaque 8 x 8 square, a fixed pivot (6, 10) and a normal pass of (200, 128, 200). src/frames.json says
+# {"feet": {"idle/s/2": [x, y]}, "pivots": {"idle/s/2": [x, y]}} to move the feet or the pivot of a frame (the others have feet
+# (6, 9), only when "feet" is there at all).
+
+
+def _fit_frames(run: StageRun) -> None:
+    from PIL import Image
+
+    said = json.loads(run.files["src/frames.json"].read_text(encoding="utf-8"))
+    frames = []
+    for index in range(3):
+        key = f"idle/s/{index:03d}"
+        colour = np.zeros((12, 12, 4), dtype=np.uint8)
+        colour[1:9, 2:10] = (40 + 60 * index, 120, 200 - 40 * index, 255)
+        normal = np.zeros_like(colour)
+        normal[1:9, 2:10] = (200, 128, 200, 255)
+        files = {"color": f"color/idle/s/{index:03d}.png"}
+        for name, image in (("color", colour), ("normal", normal)):
+            target = run.output_dir / name / "idle" / "s" / f"{index:03d}.png"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(image, "RGBA").save(target)
+        files["normal"] = f"normal/idle/s/{index:03d}.png"
+        entry: dict[str, Any] = {"index": index, "pivot": said.get("pivots", {}).get(f"idle/s/{index}", [6.0, 10.0]),
+                                 "files": files}
+        if "feet" in said:
+            entry["feet"] = said["feet"].get(f"idle/s/{index}", [6.0, 9.0])
+        frames.append(entry)
+    document = {"schema_version": 1, "frame": {"width": 12, "height": 12}, "pivot": [6.0, 10.0], "directions": ["s"], "bands": 3,
+                "materials": [], "clips": [{"name": "idle", "fps": 12, "loop": True, "stationary": True,
+                                            "directions": {"s": frames}}]}
+    (run.output_dir / "render.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def _framed_stages() -> tuple[StageSpec, ...]:
+    from kiripix.recipes.character import CHARACTER
+    from kiripix.recipes.character_finish import finish_stage, normals_params
+    from kiripix.recipes.character_palette import palette_stage
+    from kiripix.recipes.character_sheet import sheet_stage
+    from dataclasses import replace
+
+    stages = {s.name: s for s in CHARACTER.stages}
+    palette_run, palette_check = palette_stage("fit")
+    finish_run, finish_check = finish_stage("fit")
+    sheet_run, sheet_check = sheet_stage("finish")
+    return chain(
+        StageSpec(name="fit", description="Write a frame list.", inputs=StageInputs(files=["src/frames.json"]), run=_fit_frames),
+        replace(stages["palette"], inputs=StageInputs(upstream=["fit"], settings=["palette", "character.ramps"]),
+                run=palette_run, check=palette_check),
+        replace(stages["finish"], inputs=StageInputs(upstream=["palette", "fit"], settings=["palette"]),
+                params=stages["finish"].params + normals_params(), run=finish_run, check=finish_check),
+        replace(stages["sheet"], inputs=StageInputs(upstream=["finish"]), run=sheet_run, check=sheet_check),
+    )
+
+
+register_kind(KindSpec(name="framed", description="A test Kind: the character's frame Stages on a frame list from `fit`.",
+                       stages=_framed_stages()))
+
+
 def _sheeted(run: StageRun) -> None:
     (run.output_dir / "out.txt").write_text(",".join(sorted(run.files)), encoding="utf-8")
 

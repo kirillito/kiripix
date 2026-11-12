@@ -5,8 +5,10 @@ travels in each, for the `clips` Stage.
 
 args:   {"input": <a .glb, .fbx or .blend>, "root": [<bone names to try as the root, in order>],
          "travel": <false to skip the sampling of the root's travel: default true>,
-         "optional": <true to answer a file with no armature instead of failing: default false>}
-result: {"armature", "bones": [<bone names>], "fps", "height", "root", "actions": [{"name", "start", "end", "travel"}]}
+         "optional": <true to answer a file with no armature instead of failing: default false>,
+         "feet": {<"left" | "right">: <bone name>, ...} (default none)}
+result: {"armature", "bones": [<bone names>], "fps", "height", "root",
+         "actions": [{"name", "start", "end", "travel", "feet"?}]}
 
 The `inspect` Probe (ticket 0123) calls it with `travel` false and `optional` true: it lists a file's bones and actions and
 needs neither the root nor the travel. A file with no armature then answers `armature` null and no bones or actions.
@@ -15,6 +17,10 @@ needs neither the root nor the travel. A file with no armature then answers `arm
 the root bone's head gets from where it is at the action's first frame, on the ground plane (x and y), both in the file's own
 units; the Stage uses their ratio, so a rigged file that isn't normalised to Kiripix's height needs no conversion. The root is
 the first of `root` that is a bone of the rig (names compare without a `mixamorig:` prefix, in lower case).
+
+With `feet`, every action also has `feet` (ticket 0172): {"frames": [<sampled frames>], "left": {"z": [...], "speed": [...]},
+"right": ...}, a foot bone's head at each sampled frame: its height `z` and its horizontal `speed` in the world, per second, in
+the file's units. A foot whose bone the rig lacks is left out. The `clips` Stage finds the plants from it.
 """
 
 import json
@@ -66,12 +72,31 @@ def rest_height(armature) -> float:
     return (max(zs) - min(zs)) if zs else 0.0
 
 
+def foot_bones(armature, wanted: dict) -> dict:
+    bones = {plain(b.name): b.name for b in armature.data.bones}
+    return {side: bones[plain(name)] for side, name in wanted.items() if plain(name) in bones}
+
+
 def assign(armature, action) -> None:
     armature.animation_data_create()
     armature.animation_data.action = action
     slots = list(getattr(action, "slots", []))
     if slots and getattr(armature.animation_data, "action_slot", None) is None:
         armature.animation_data.action_slot = slots[0]  # Blender 5: an action's channels sit in a slot
+
+
+def foot_samples(frames: list, heads: dict, fps: float) -> dict:
+    """Each foot's height and horizontal speed (units a second) at the sampled frames; the first sample has the second's speed."""
+    result: dict = {"frames": frames}
+    for side, points in heads.items():
+        speed = [0.0]
+        for index in range(1, len(points)):
+            gap = max(1, frames[index] - frames[index - 1])
+            speed.append(math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y) / gap * fps)
+        if len(speed) > 1:
+            speed[0] = speed[1]
+        result[side] = {"z": [p.z for p in points], "speed": speed}
+    return result
 
 
 def read(args: dict) -> dict:
@@ -88,6 +113,7 @@ def read(args: dict) -> dict:
     armature = armatures[0]
     sample = bool(args.get("travel", True))
     root = find_root(armature, list(args.get("root", [])))
+    feet = foot_bones(armature, dict(args.get("feet") or {}))
     height = rest_height(armature)
     actions = []
     total = len(bpy.data.actions)
@@ -101,6 +127,8 @@ def read(args: dict) -> dict:
         step = max(1, math.ceil((end - start + 1) / MAX_SAMPLES))
         first = None
         travel = 0.0
+        sampled = []
+        heads: dict = {side: [] for side in feet}
         for frame in range(start, end + 1, step):
             scene.frame_set(frame)
             bpy.context.view_layer.update()
@@ -108,7 +136,13 @@ def read(args: dict) -> dict:
             flat = Vector((point.x, point.y))
             first = flat if first is None else first
             travel = max(travel, (flat - first).length)
-        actions.append({"name": action.name, "start": start, "end": end, "travel": travel})
+            sampled.append(frame)
+            for side, bone in feet.items():
+                heads[side].append(armature.matrix_world @ armature.pose.bones[bone].head)
+        found = {"name": action.name, "start": start, "end": end, "travel": travel}
+        if feet:
+            found["feet"] = foot_samples(sampled, heads, fps)
+        actions.append(found)
     if armature.animation_data is not None:
         armature.animation_data.action = None
     progress(2, 2, "done")

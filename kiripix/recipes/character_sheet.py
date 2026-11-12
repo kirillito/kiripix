@@ -43,7 +43,7 @@ from kiripix.checks import (
     check_pivot_drift,
 )
 from kiripix.ops import pack_atlas
-from kiripix.recipes.base import StageFailure, StageRun
+from kiripix.recipes.base import CheckFunction, StageFailure, StageFunction, StageRun
 from kiripix.recipes.character_palette import RENDER_FILE
 from kiripix.recipes.common import read_rgba, write_rgba
 
@@ -70,9 +70,9 @@ def _cell(document: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
     return (int(frame["width"]), int(frame["height"])), (_round(pivot[0]), _round(pivot[1]))
 
 
-def _frames(run: StageRun, document: dict[str, Any], *, normals: bool) -> tuple[list[SheetFrame], dict[tuple[str, str, int], str]]:
+def _frames(run: StageRun, source: str, document: dict[str, Any], *, normals: bool) -> tuple[list[SheetFrame], dict[tuple[str, str, int], str]]:
     """Every frame render.json lists whose colour file exists in `finish`, in clip, direction, frame order, with its file."""
-    finish = run.upstream["finish"]
+    finish = run.upstream[source]
     frames: list[SheetFrame] = []
     names: dict[tuple[str, str, int], str] = {}
     for entry in document["clips"]:
@@ -88,20 +88,22 @@ def _frames(run: StageRun, document: dict[str, Any], *, normals: bool) -> tuple[
                     try:
                         normal = read_rgba(finish / ("normal/" + name.partition("/")[2]))
                     except OSError:
-                        raise StageFailure(f"finish has no normal for {entry['name']}/{direction} frame {index}; run finish "
-                                           f"again", fix=f"kiripix run {run.asset_id} finish --force") from None
+                        raise StageFailure(f"{source} has no normal for {entry['name']}/{direction} frame {index}; run {source} "
+                                           f"again", fix=f"kiripix run {run.asset_id} {source} --force") from None
                 pivot = (_round(frame["pivot"][0]), _round(frame["pivot"][1]))
-                frames.append(SheetFrame(entry["name"], direction, index, read_rgba(path), pivot, normal))
+                feet = frame.get("feet")  # a sprite's measured feet; a character's render.json has none
+                frames.append(SheetFrame(entry["name"], direction, index, read_rgba(path), pivot, normal,
+                                         None if feet is None else (_round(feet[0]), _round(feet[1]))))
                 names[(entry["name"], direction, index)] = name
     return frames, names
 
 
-def run_character_sheet(run: StageRun) -> None:
-    document = _json(run.upstream["finish"] / RENDER_FILE, RENDER_FILE, "finish")
+def _run_sheet(run: StageRun, source: str) -> None:
+    document = _json(run.upstream[source] / RENDER_FILE, RENDER_FILE, source)
     cell, cell_pivot = _cell(document)
-    frames, _ = _frames(run, document, normals=True)
+    frames, _ = _frames(run, source, document, normals=True)
     if not frames:
-        raise StageFailure("finish has no frames to pack; run it again", fix=f"kiripix run {run.asset_id} finish --force")
+        raise StageFailure(f"{source} has no frames to pack; run it again", fix=f"kiripix run {run.asset_id} {source} --force")
     run.progress(0, 2, "packing the colour atlas")
     pivots = [f.pivot for f in frames]
     columns = max(1, math.ceil(math.sqrt(len(frames))))
@@ -143,22 +145,25 @@ def run_character_sheet(run: StageRun) -> None:
     (run.output_dir / SHEET_FILE).write_text(json.dumps(sheet, indent=1) + "\n", encoding="utf-8")
 
 
-def check_character_sheet(run: StageRun) -> list[Finding]:
+def _check_sheet(run: StageRun, source: str) -> list[Finding]:
     """`sheet.pivot_drift`, `sheet.frame_overflow`, `sheet.frame_count` and `sheet.empty_frame`, from `finish`'s frames."""
     try:
-        document = json.loads((run.upstream["finish"] / RENDER_FILE).read_text(encoding="utf-8"))
-        expected = {c["name"]: len(c["frames"])
-                    for c in json.loads((run.upstream["clips"] / "clips.json").read_text(encoding="utf-8"))["clips"]}
+        document = json.loads((run.upstream[source] / RENDER_FILE).read_text(encoding="utf-8"))
+        if "clips" in run.upstream:
+            expected = {c["name"]: len(c["frames"])
+                        for c in json.loads((run.upstream["clips"] / "clips.json").read_text(encoding="utf-8"))["clips"]}
+        else:  # a Recipe with no `clips` Stage (the sprite): the frame list is the count
+            expected = {c["name"]: len(next(iter(c["directions"].values()), [])) for c in document["clips"]}
         cell, cell_pivot = _cell(document)
     except (OSError, ValueError, KeyError):
         return []  # nothing built to check
     if not (run.output_dir / SHEET_FILE).is_file():
         return []
-    fix = f"kiripix run {run.asset_id} finish --force"
+    fix = f"kiripix run {run.asset_id} {source} --force"
     # The pivots and the cell come from `render`, which fixes a stationary clip's pivot (ticket 0154) and sizes the cell to
     # every pose (0155): rendering again is what changes them.
     rerender = f"kiripix run {run.asset_id} render --force"
-    frames, names = _frames(run, document, normals=False)
+    frames, names = _frames(run, source, document, normals=False)
     stationary = {str(c["name"]) for c in document["clips"] if c["stationary"]}
     findings = (check_pivot_drift(frames, stationary, rerender) + check_frame_overflow(frames, cell, rerender, cell_pivot)
                 + check_frame_count(frames, expected, fix, list(document["directions"])) + check_empty_frame(frames, fix))
@@ -170,3 +175,12 @@ def check_character_sheet(run: StageRun) -> list[Finding]:
         if len(parts) == 3 and (parts[0], parts[1], int(parts[2])) in names:
             finding.position.file = names[(parts[0], parts[1], int(parts[2]))]
     return findings
+
+
+def sheet_stage(frames: str = "finish") -> tuple[StageFunction, CheckFunction]:
+    """The Stage's `run` and `check` for a Recipe whose finished frames and frame list (`render.json`) are in the Stage named
+    `frames` (ticket 0176). The Stage must list it upstream; `clips`, when listed, gives the expected frame counts."""
+    return (lambda run: _run_sheet(run, frames)), (lambda run: _check_sheet(run, frames))
+
+
+run_character_sheet, check_character_sheet = sheet_stage("finish")
