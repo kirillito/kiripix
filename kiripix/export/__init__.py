@@ -123,7 +123,10 @@ def _character_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, 
 
 
 _FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget], tuple[dict[str, bytes], ExportedIds]]] = {
-    "room": _room_files, "prop": _prop_files, "character": _character_files}
+    "room": _room_files, "prop": _prop_files, "character": _character_files, "sprite": _character_files}  # a sprite is exported as a character, under sprite/
+
+
+_NOT_AVAILABLE = "a {} can't be exported yet; only rooms, props, characters and sprites can"
 
 
 def _hashes(files: dict[str, bytes]) -> dict[str, str]:
@@ -177,8 +180,7 @@ def _conflict(res: str, current: str | None, wanted: str, manifest: Manifest | N
 def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget, options: ExportOptions) -> _Plan:
     """What exporting the Asset would do, or the refusal why not. Writes nothing."""
     if asset.kind not in _FILES_BY_KIND:
-        raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms, props and characters can",
-                   fix="kiripix describe project")
+        raise fail("export.not_available", _NOT_AVAILABLE.format(asset.kind), fix="kiripix describe project")
     frozen = frozen_findings(project, asset, cache)
     if frozen:
         raise KiripixError(frozen, ExitCode.CHECK_FAILED)
@@ -296,8 +298,7 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
     after the exports are written. Returns the results and the findings of the call."""
     for asset in assets or []:
         if asset.kind not in _FILES_BY_KIND:
-            raise fail("export.not_available", f"a {asset.kind} can't be exported yet; only rooms, props and characters can",
-                       fix="kiripix describe project")
+            raise fail("export.not_available", _NOT_AVAILABLE.format(asset.kind), fix="kiripix describe project")
     target = resolve_target(project)
     prunes = plan_prune(project, target, None, options.force) if prune else []
     every, broken = list_assets(project)

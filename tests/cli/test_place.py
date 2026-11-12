@@ -134,7 +134,8 @@ def test_each_marker_type_keeps_its_own_fields_in_the_markers_file(project: Kiri
         {"id": "exit.east", "type": "exit", "x": 40, "y": 16, "target_room": "room.street", "target_exit": "exit.west"},
         {"id": "crate", "type": "interactable", "x": 30, "y": 20},
         {"id": "lamp", "type": "light", "x": 30, "y": 8, "colour": "#FFCC88", "radius": 24, "energy": 1.5},
-        {"id": "steam", "type": "emitter", "x": 32, "y": 8, "name": "steam_vent"},
+        {"id": "steam", "type": "emitter", "x": 32, "y": 8, "name": "steam_vent", "shape": None,
+         "direction": None, "colours": None},
         {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "layer": "rail", "x2": 40, "y2": 20},
     ]
 

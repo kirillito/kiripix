@@ -12,7 +12,8 @@ if TYPE_CHECKING:
     import numpy as np
 else:
     np = lazy_module("numpy")
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from kiripix.checks import Finding
 
@@ -68,6 +69,8 @@ class DecisionSpec(BaseModel):
     description: str
     entry_schema: dict[str, Any]
     on_image: bool = False
+    # What a JSON Schema can't say (one field against another): why this entry is refused, or None. Never described.
+    problem: SkipJsonSchema[Callable[[dict[str, Any]], str | None] | None] = Field(default=None, exclude=True)
 
 
 class CheckSpec(BaseModel):

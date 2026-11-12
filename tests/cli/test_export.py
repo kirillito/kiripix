@@ -89,7 +89,7 @@ def test_the_stage_builds_engine_free_outputs_in_out(project: Kiripix) -> None:
 
     assert stage_status(project, ROOM)["export"] == "done"
     room = json.loads((folder / "out" / "export" / "room.json").read_text("utf-8"))
-    assert room["schema_version"] == 2 and room["size"] == [48, 32] and room["layers"] == []
+    assert room["schema_version"] == 4 and room["size"] == [48, 32] and room["layers"] == []
     assert [marker["id"] for marker in room["markers"]] == ["spawn.main"]
     # The left wall, flooded into `solid` from the 48 x 32 Plate: 16 columns, all one rectangle.
     assert room["collision"]["solid"] == [[[0, 0], [16, 0], [16, 32], [0, 32]]]

@@ -84,6 +84,7 @@ export interface ShowData {
   picked: string | null;
   clip_sources: FileEntry[]; // a character's animation files, by file stem
   rigged: FileEntry | null; // a character's rigged file
+  sheets?: (FileEntry & { png_count: number | null })[]; // a sprite's imported sheets, named by hash
   stages: StageDetail[];
 }
 

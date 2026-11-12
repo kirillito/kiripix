@@ -725,6 +725,35 @@ kbd {
   image-rendering: pixelated;
 }
 
+.frame-box[data-pickable="true"] {
+  cursor: crosshair;
+}
+
+.pivot-mark.pivot-cross {
+  border-color: transparent;
+}
+
+.pivot-cross::before,
+.pivot-cross::after {
+  background: #ff3366;
+  content: "";
+  position: absolute;
+}
+
+.pivot-cross::before {
+  height: 1px;
+  left: -10px;
+  right: -10px;
+  top: 50%;
+}
+
+.pivot-cross::after {
+  bottom: -10px;
+  left: 50%;
+  top: -10px;
+  width: 1px;
+}
+
 .pivot-mark {
   border: 1px solid #ff3366;
   box-sizing: border-box;

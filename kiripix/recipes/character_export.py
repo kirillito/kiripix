@@ -72,14 +72,16 @@ def run_character_export(run: StageRun) -> None:
     if palette.get("schema_version") != PALETTE_SCHEMA_VERSION:
         raise StageFailure(f"{PALETTE_FILE} has schema_version {palette.get('schema_version')}; this Kiripix reads "
                            f"{PALETTE_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} palette --force")
-    try:
-        built: dict[str, Any] = json.loads((run.upstream["clips"] / "clips.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise StageFailure("clips has no clips.json; run it again", fix=f"kiripix run {run.asset_id} clips --force") from None
-    if built.get("schema_version") != CLIPS_SCHEMA_VERSION:
-        raise StageFailure(f"clips.json has schema_version {built.get('schema_version')}; this Kiripix reads "
-                           f"{CLIPS_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} clips --force")
-    events = {str(c["name"]): c["events"] for c in built["clips"]}
+    events: dict[str, Any] = {}
+    if "clips" in run.upstream:  # a sprite has no `clips` Stage, and no foot events
+        try:
+            built: dict[str, Any] = json.loads((run.upstream["clips"] / "clips.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise StageFailure("clips has no clips.json; run it again", fix=f"kiripix run {run.asset_id} clips --force") from None
+        if built.get("schema_version") != CLIPS_SCHEMA_VERSION:
+            raise StageFailure(f"clips.json has schema_version {built.get('schema_version')}; this Kiripix reads "
+                               f"{CLIPS_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} clips --force")
+        events = {str(c["name"]): c["events"] for c in built["clips"]}
     for name in (COLOR_ATLAS, NORMAL_ATLAS):
         run.check_cancel()
         shutil.copyfile(folder / name, run.output_dir / name)

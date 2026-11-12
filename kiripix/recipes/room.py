@@ -58,6 +58,7 @@ from kiripix.ops import (
     reachable,
     simplify,
     snap_cell,
+    srgb_to_oklab,
     split_painted,
     walkable,
     walkable_islands,
@@ -68,6 +69,7 @@ from kiripix.recipes.common import (
     box_of,
     box_params,
     padded_click,
+    palette_rgb,
     whole_tiles,
     box_problem,
     check_fit,
@@ -506,24 +508,110 @@ _MARKER_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "radius": {"type": "number", "exclusiveMinimum": 0},
         "energy": {"type": "number", "minimum": 0},
     },
-    "emitter": {"name": {"type": "string", "minLength": 1}},
+    # An emitter (ticket 0185): the game fills it with its own particles. `shape`, `direction` and `colours` are optional.
+    "emitter": {
+        "name": {"type": "string", "minLength": 1},
+        "shape": {"oneOf": [
+            {"type": "object", "properties": {"type": {"const": "point"}}, "required": ["type"],
+             "additionalProperties": False},
+            {"type": "object",
+             "properties": {"type": {"enum": ["line", "box"]}, "x2": {"type": "integer", "minimum": 0},
+                            "y2": {"type": "integer", "minimum": 0}},
+             "required": ["type", "x2", "y2"], "additionalProperties": False},
+            {"type": "object",
+             "properties": {"type": {"const": "polygon"},
+                            "points": {"type": "array", "minItems": 3,
+                                       "items": {"type": "array", "minItems": 2, "maxItems": 2,
+                                                 "items": {"type": "integer", "minimum": 0}}}},
+             "required": ["type", "points"], "additionalProperties": False},
+        ]},
+        "direction": {"type": "object",
+                      "properties": {"x": {"type": "integer", "minimum": 0}, "y": {"type": "integer", "minimum": 0}},
+                      "required": ["x", "y"], "additionalProperties": False},
+        "colours": {"type": "array", "minItems": 1, "maxItems": 16,
+                    "items": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}},
+    },
     "ysort": {
         "layer": {"type": "string", "pattern": LAYER_ID},
         "x2": {"type": "integer", "minimum": 0},
         "y2": {"type": "integer", "minimum": 0},
     },
+    # A box on the room (ticket 0137): (x, y) to (x2, y2), corners inclusive; `cell` and `walkable` are optional.
+    "area": {
+        "x2": {"type": "integer", "minimum": 0},
+        "y2": {"type": "integer", "minimum": 0},
+        "cell": {"type": "integer", "minimum": 1},
+        "walkable": {"type": "boolean"},
+    },
 }
+_OPTIONAL_FIELDS = {"area": ("cell", "walkable"), "emitter": ("shape", "direction", "colours")}  # the rest of a type's own fields are required
 _ON_WALKABLE = ("exit", "spawn")
+
+
+def _shape_problem(name: str, x: int, y: int, shape: dict[str, Any]) -> str | None:
+    """What is wrong with an emitter's `shape` drawn from (x, y), or None. Used by the Decision and by the Check."""
+    kind = shape.get("type")
+    if kind == "polygon":
+        points = shape.get("points") or []
+        return None if len(points) >= 3 else (f"the polygon of the emitter '{name}' has {len(points)} points; it needs "
+                                              "at least three")
+    if kind not in ("line", "box"):
+        return None
+    x2, y2 = int(shape["x2"]), int(shape["y2"])
+    if kind == "line" and (x2, y2) == (x, y):
+        return f"the line of the emitter '{name}' has no length: its end (x2 {x2}, y2 {y2}) is its start (x {x}, y {y})"
+    if kind == "box" and x2 < x:
+        return f"the box of the emitter '{name}' has its corner (x2 {x2}) left of its corner (x {x}); give (x, y) as " \
+               "the top-left corner and (x2, y2) as the bottom-right"
+    if kind == "box" and y2 < y:
+        return f"the box of the emitter '{name}' has its corner (y2 {y2}) above its corner (y {y}); give (x, y) as " \
+               "the top-left corner and (x2, y2) as the bottom-right"
+    return None
+
+
+def _marker_problem(data: dict[str, Any]) -> str | None:
+    """What the schema can't say: an area's corners are top-left then bottom-right, and an emitter's shape has a size."""
+    if data.get("type") == "emitter" and data.get("shape") is not None:
+        return _shape_problem(str(data["id"]), int(data["x"]), int(data["y"]), data["shape"])
+    if data.get("type") != "area":
+        return None
+    x, y, x2, y2 = int(data["x"]), int(data["y"]), int(data["x2"]), int(data["y2"])
+    if x2 < x:
+        return f"the area '{data['id']}' has its corner (x2 {x2}) left of its corner (x {x}); give (x, y) as the " \
+               "top-left corner and (x2, y2) as the bottom-right"
+    if y2 < y:
+        return f"the area '{data['id']}' has its corner (y2 {y2}) above its corner (y {y}); give (x, y) as the " \
+               "top-left corner and (x2, y2) as the bottom-right"
+    return None
 
 
 def _marker_decision() -> DecisionSpec:
     point = {"type": "integer", "minimum": 0}
     fields = {name: schema for own in _MARKER_FIELDS.values() for name, schema in own.items()}
+    owners: dict[str, list[str]] = {}
+    for marker_type, own in _MARKER_FIELDS.items():
+        for name in own:
+            owners.setdefault(name, []).append(marker_type)
     return DecisionSpec(
         name="marker",
         description="Place a Marker at a target pixel. A Marker with the same ID and type moves it. An Exit also takes "
                     "target_room and target_exit; a light colour, radius and energy; an emitter name; and a y-sort "
-                    "line runs from (x, y) to (x2, y2) and sorts the Layer it names (a sloped line sorts at its mean y).",
+                    "line runs from (x, y) to (x2, y2) and sorts the Layer it names (a sloped line sorts at its mean y). "
+                    "An `area` is a box from (x, y), its top-left, to (x2, y2), its bottom-right, corners included; a "
+                    "room holds any number, each with its own ID, and Kiripix reads nothing into an ID's prefix (the "
+                    "game does). With `cell` (px) its edges snap outward to multiples of `cell` from the room's "
+                    "top-left, and `place` reports cells the Masks half-block (`area.ambiguous_cells`). Set "
+                    "`walkable` true on an area that is for standing in, such as a battle area: `place` then checks "
+                    "that it holds walkable ground (`area.no_walkable`) and `reach` that the Body can get there "
+                    "(`area.not_reached`). Left out, `walkable` is false, and an area over a wall, a fence or an "
+                    "Exit's trigger box has no finding. An `emitter` may also have a `shape` (the area the game "
+                    "fills with particles, in target px: {\"type\": \"point\"} by default, a line or a box from "
+                    "(x, y) to (x2, y2), or a polygon of at least three `points`), a `direction` (a second point: the "
+                    "arrow from the emitter to it is where the particles go, and its length is how far) and `colours` "
+                    "(at most 16 hex colours, each on the Project palette). The `colours` are what the game draws: "
+                    "opaque, exactly these. Choose them from the room around the emitter, so the particles belong to "
+                    "the painting. The game's particle kind, count and seed stay in its data; Kiripix gives an emitter "
+                    "no meaning.",
         entry_schema={
             "type": "object",
             "properties": {
@@ -536,14 +624,24 @@ def _marker_decision() -> DecisionSpec:
             "required": ["id", "type", "x", "y"],
             "additionalProperties": False,
             "allOf": [
-                {
-                    "if": {"properties": {"type": {"const": marker_type}}, "required": ["type"]},
-                    "then": {"required": list(own)},
-                    "else": {"properties": {name: False for name in own}},
-                }
-                for marker_type, own in _MARKER_FIELDS.items() if own
+                *[
+                    {
+                        "if": {"properties": {"type": {"const": marker_type}}, "required": ["type"]},
+                        "then": {"required": [n for n in own if n not in _OPTIONAL_FIELDS.get(marker_type, ())]},
+                    }
+                    for marker_type, own in _MARKER_FIELDS.items() if own
+                ],
+                # a field of a type is refused on every other type (`x2` and `y2` belong to two)
+                *[
+                    {
+                        "if": {"properties": {"type": {"enum": types}}, "required": ["type"]},
+                        "else": {"properties": {name: False}},
+                    }
+                    for name, types in owners.items()
+                ],
             ],
         },
+        problem=_marker_problem,
     )
 
 
@@ -554,11 +652,27 @@ def _no_walking(run: StageRun) -> np.ndarray:
     return solid | _read_mask(pit) if pit.is_file() else solid
 
 
+def _snapped(data: dict[str, Any]) -> dict[str, Any]:
+    """An area with a `cell` has its box widened outward to whole cells from the room's top-left corner; `walkable` is
+    written out whatever the Decision left to its default, so a reader needs no default."""
+    if data["type"] == "emitter":  # the optional fields are written out, `null` when unset, so a reader needs no default
+        return {**data, "shape": data.get("shape"), "direction": data.get("direction"), "colours": data.get("colours")}
+    if data["type"] != "area":
+        return data
+    area = {**data, "walkable": bool(data.get("walkable", False))}
+    cell = area.get("cell")
+    if cell is not None:
+        cell = int(cell)
+        area["x"], area["y"] = int(area["x"]) // cell * cell, int(area["y"]) // cell * cell
+        area["x2"], area["y2"] = (int(area["x2"]) // cell + 1) * cell - 1, (int(area["y2"]) // cell + 1) * cell - 1
+    return area
+
+
 def _current_markers(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
     markers: dict[tuple[str, str], dict[str, Any]] = {}
     for decision in decisions:
         if decision.name == "marker":
-            markers[str(decision.data["id"]), str(decision.data["type"])] = decision.data  # a move keeps its first place
+            markers[str(decision.data["id"]), str(decision.data["type"])] = _snapped(decision.data)  # a move keeps its first place
     return list(markers.values())
 
 
@@ -758,7 +872,164 @@ def _check_place(run: StageRun) -> list[Finding]:
                                      "ID, or edit the solid Mask under it.",
                     )
                 )
+    findings += _check_emitters(run, [m for m in markers if m["type"] == "emitter"])
+    return findings + _check_areas(run, [m for m in markers if m["type"] == "area"])
+
+
+def _emitter_points(emitter: dict[str, Any]) -> list[tuple[int, int]]:
+    """Every pixel an emitter's drawing reaches: its own, the shape's corners or points, and the direction's end. An
+    emitter with neither a shape nor a direction is the game's to place, so it reaches none."""
+    shape, direction = emitter.get("shape"), emitter.get("direction")
+    if shape is None and direction is None:
+        return []
+    points = [(int(emitter["x"]), int(emitter["y"]))]
+    if shape is not None and shape["type"] in ("line", "box"):
+        points.append((int(shape["x2"]), int(shape["y2"])))
+    if shape is not None and shape["type"] == "polygon":
+        points += [(int(x), int(y)) for x, y in shape["points"]]
+    if direction is not None:
+        points.append((int(direction["x"]), int(direction["y"])))
+    return points
+
+
+def _hex(rgb: Any) -> str:
+    return "#{:02X}{:02X}{:02X}".format(*(int(v) for v in rgb))
+
+
+def _nearest_colour(palette: np.ndarray, colour: str) -> str:
+    """The palette colour nearest `colour` in OKLab."""
+    rgb = np.array([int(colour[i:i + 2], 16) for i in (1, 3, 5)], dtype=np.uint8)
+    distance = ((srgb_to_oklab(palette) - srgb_to_oklab(rgb)) ** 2).sum(axis=1)
+    return _hex(palette[int(np.argmin(distance))])
+
+
+def _check_emitters(run: StageRun, emitters: list[dict[str, Any]]) -> list[Finding]:
+    if not emitters:
+        return []
+    asset = run.asset_id
+    size = _room_size(run)
+    palette = palette_rgb(run) if any(e.get("colours") for e in emitters) else None
+    findings = []
+    for emitter in emitters:
+        name = str(emitter["id"])
+        x, y = int(emitter["x"]), int(emitter["y"])
+        at = Position(asset=asset, stage="place", x=x, y=y)
+        shape = emitter.get("shape")
+        problem = None if shape is None else _shape_problem(name, x, y, shape)
+        if problem is not None:
+            findings.append(Finding(
+                code="place.emitter_shape_invalid",
+                message=problem,
+                position=at,
+                owner_action=f"Draw {name} again with a shape that has a size: a marker Decision of the same ID "
+                             "(a polygon needs at least three points, a line two different ends).",
+            ))
+        if size is not None and any(px >= size[0] or py >= size[1] for px, py in _emitter_points(emitter)):
+            findings.append(Finding(
+                code="place.emitter_outside_room",
+                severity="warning",
+                message=f"the emitter '{name}' (its shape or its direction's end) leaves the {size[0]}x{size[1]} room",
+                position=at,
+                owner_action=f"Draw {name} again inside the room: a marker Decision of the same ID with every point "
+                             f"within (0, 0) to ({size[0] - 1}, {size[1] - 1}), or leave it if the particles may "
+                             "leave the room.",
+            ))
+        if palette is not None and emitter.get("colours"):
+            on = {_hex(rgb) for rgb in palette}
+            colours = [str(c) for c in emitter["colours"]]
+            off = [c for c in colours if c.upper() not in on]
+            if off:
+                data = {k: v for k, v in emitter.items() if v is not None}
+                data["colours"] = [_nearest_colour(palette, c) if c in off else c for c in colours]
+                decision = json.dumps({"decision": "marker", "data": data})
+                findings.append(Finding(
+                    code="place.emitter_colour_off_palette",
+                    message=f"the emitter '{name}' has {len(off)} colour(s) not on the palette: {', '.join(off)}",
+                    position=at,
+                    fix=f"kiripix decide {asset} place --decision '{decision}'",
+                ))
     return findings
+
+
+# An area's cell is ambiguous when the Masks cover a share of it between these (both included).
+AMBIGUOUS_FROM = 0.25
+AMBIGUOUS_TO = 0.75
+_LISTED_CELLS = 8
+
+
+def _room_size(run: StageRun) -> tuple[int, int] | None:
+    """The room's width and height, from any painted Mask (all are the Plate's size)."""
+    for path in sorted(run.upstream[MASKS_STAGE].glob("*.png")):
+        with Image.open(path) as image:
+            return image.width, image.height
+    return None
+
+
+def _box_of_area(area: dict[str, Any]) -> tuple[int, int, int, int]:
+    return int(area["x"]), int(area["y"]), int(area["x2"]), int(area["y2"])
+
+
+def _check_areas(run: StageRun, areas: list[dict[str, Any]]) -> list[Finding]:
+    if not areas:
+        return []
+    asset = run.asset_id
+    size = _room_size(run)
+    path = run.output_dir / "walkable.png"
+    ground = _read_mask(path) if path.is_file() else None
+    blocked = _no_walking(run) if (run.upstream[MASKS_STAGE] / "solid.png").is_file() else None
+    findings = []
+    for area in areas:
+        x0, y0, x1, y1 = _box_of_area(area)
+        name, cell = str(area["id"]), area.get("cell")
+        at = Position(asset=asset, stage="place", x=x0, y=y0, width=x1 - x0 + 1, height=y1 - y0 + 1)
+        snapped = f" (snapped to its cell of {cell} px)" if cell is not None else ""
+        if size is not None and (x1 >= size[0] or y1 >= size[1]):
+            findings.append(Finding(
+                code="area.outside_room",
+                message=f"the area '{name}' from ({x0}, {y0}) to ({x1}, {y1}){snapped} leaves the {size[0]}x{size[1]} room",
+                position=at,
+                owner_action=f"Place {name} again inside the room: a marker Decision of the same ID with its corners "
+                             f"within (0, 0) to ({size[0] - 1}, {size[1] - 1}).",
+            ))
+        if area.get("walkable") and ground is not None and not ground[y0:y1 + 1, x0:x1 + 1].any():
+            findings.append(Finding(
+                code="area.no_walkable",
+                message=f"the area '{name}' from ({x0}, {y0}) to ({x1}, {y1}) is marked walkable but holds no walkable "
+                        "pixel: the Body's footprint fits nowhere in it",
+                position=at,
+                owner_action=f"Either move {name} onto walkable ground with a marker Decision of the same ID, or leave "
+                             "out `walkable` (place it again with walkable false) if the area isn't for standing in.",
+            ))
+        if cell is not None and blocked is not None:
+            ambiguous = _ambiguous_cells(blocked, (x0, y0, x1, y1), int(cell))
+            if ambiguous:
+                listed = ", ".join(f"({x}, {y})" for x, y in ambiguous[:_LISTED_CELLS])
+                more = f" and {len(ambiguous) - _LISTED_CELLS} more" if len(ambiguous) > _LISTED_CELLS else ""
+                findings.append(Finding(
+                    code="area.ambiguous_cells",
+                    severity="info",
+                    message=f"{len(ambiguous)} cells of the area '{name}' are between a quarter and three quarters "
+                            f"covered by solid or pit, with their top-left pixels at {listed}{more}",
+                    position=at,
+                    owner_action="Make the Mask decide those cells: paint them fully solid or pit, or fully open "
+                                 f"(kiripix decide {asset} {MASKS_STAGE} --help). Kiripix doesn't choose which cells "
+                                 "are open; the game does.",
+                ))
+    return findings
+
+
+def _ambiguous_cells(blocked: np.ndarray, box: tuple[int, int, int, int], cell: int) -> list[tuple[int, int]]:
+    """The top-left pixel of each cell of `box` (whole cells, clipped to the room) that `blocked` covers by a share of
+    AMBIGUOUS_FROM to AMBIGUOUS_TO."""
+    x0, y0, x1, y1 = box
+    height, width = blocked.shape
+    found = []
+    for y in range(y0, min(y1 + 1, height), cell):
+        for x in range(x0, min(x1 + 1, width), cell):
+            share = float(blocked[y:y + cell, x:x + cell].mean())
+            if AMBIGUOUS_FROM <= share <= AMBIGUOUS_TO:
+                found.append((x, y))
+    return found
 
 
 # reach: the Body's flood over walkable from each Spawn and Exit (top view; the side view's platforms are not planned yet).
@@ -850,7 +1121,16 @@ def _reach(run: StageRun) -> None:
     if not path.is_file():
         raise StageFailure(f"reach floods over walkable, and the {run.asset_params['view']} view doesn't derive it; "
                            "add walkable = { derived = true } under [masks] in kiripix.toml")
-    reached, report = _reach_report(run, _flood_targets(run.upstream["place"]), _read_mask(path))
+    ground = _read_mask(path)
+    reached, report = _reach_report(run, _flood_targets(run.upstream["place"]), ground)
+    markers, _ = _read_markers(run.upstream["place"], run.asset_id)
+    report["areas"] = []
+    for area in (m for m in markers if m["type"] == "area" and m.get("walkable")):
+        x0, y0, x1, y1 = _box_of_area(area)
+        inside = ground[y0:y1 + 1, x0:x1 + 1]
+        if inside.any():  # an area with no walkable pixel is `place`'s finding (`area.no_walkable`), not this one's
+            report["areas"].append({"id": area["id"], "x": x0, "y": y0, "width": x1 - x0 + 1, "height": y1 - y0 + 1,
+                                    "reached": bool((inside & reached[y0:y1 + 1, x0:x1 + 1]).any())})
     _write_mask(run.output_dir / "reachable.png", reached)
     (run.output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
@@ -903,6 +1183,21 @@ def _check_reach(run: StageRun) -> list[Finding]:
                              "ground solid or leave it.",
             )
         )
+    for area in report.get("areas", []):
+        if area["reached"]:
+            continue
+        x, y = int(area["x"]), int(area["y"])
+        findings.append(
+            Finding(
+                code="area.not_reached",
+                severity="warning",
+                message=f"no walkable part of the area '{area['id']}' can be reached from any Spawn or Exit",
+                position=Position(asset=asset, stage="reach", x=x, y=y, width=int(area["width"]),
+                                  height=int(area["height"])),
+                owner_action=f"If the Body should get there, open a way in the solid Mask: {erase}. If the area isn't "
+                             f"for standing in, place {area['id']} again with walkable false.",
+            )
+        )
     for gap in report["gaps"]:
         fits = "the Body fits" if gap["width"] >= gap["needed"] else "the Body doesn't fit"
         findings.append(
@@ -920,7 +1215,9 @@ def _check_reach(run: StageRun) -> list[Finding]:
 # export: what the game gets, with nothing of Godot in it: the mapped Plate, and `room.json` with the collision shapes, the
 # navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
 
-ROOM_SCHEMA_VERSION = 2  # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
+ROOM_SCHEMA_VERSION = 4  # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
+#                          3: `area` Markers, with `walkable` and a snapped box (ticket 0137)
+#                          4: an emitter's `shape`, `direction` and `colours`, `null` when unset (ticket 0185)
 _COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -1158,9 +1455,10 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="place",
-            description="Places Markers: Exits, Spawns, lights, emitters and y-sort lines, one for each foreground Layer "
-                        "unless it is always above.",
-            inputs=StageInputs(upstream=["palette", "layers", MASKS_STAGE], settings=["body", "masks", "project.tile"]),
+            description="Places Markers: Exits, Spawns, lights, emitters, areas (boxes) and y-sort lines, one for each "
+                        "foreground Layer unless it is always above.",
+            inputs=StageInputs(upstream=["palette", "layers", MASKS_STAGE],
+                               settings=["body", "masks", "project.tile", "palette"]),
             decisions=(_marker_decision(), _above_decision()),
             checks=(
                 CheckSpec(code="marker.duplicate_id", description="Marker IDs are unique."),
@@ -1171,6 +1469,16 @@ ROOM = KindSpec(
                 CheckSpec(code="ysort.sloped", description="A y-sort line's ends are within half a tile in y (warning)."),
                 CheckSpec(code="ysort.extra_line", description="A Layer has one y-sort line; a later one sorts nothing "
                                                                "(warning)."),
+                CheckSpec(code="place.emitter_colour_off_palette", description="An emitter's colours are on the "
+                                                                              "palette."),
+                CheckSpec(code="place.emitter_outside_room", description="An emitter's shape and direction lie within "
+                                                                         "the room (warning)."),
+                CheckSpec(code="place.emitter_shape_invalid", description="An emitter's shape has a size: a polygon "
+                                                                          "three points, a line a length."),
+                CheckSpec(code="area.outside_room", description="Every area lies within the room."),
+                CheckSpec(code="area.no_walkable", description="An area marked walkable holds a walkable pixel."),
+                CheckSpec(code="area.ambiguous_cells", description="No cell of an area with a `cell` is half covered by "
+                                                                   "solid or pit (info)."),
             ),
             owner_input="Places Markers.",
             available_from="M1",
@@ -1188,6 +1496,8 @@ ROOM = KindSpec(
             checks=(
                 CheckSpec(code="reach.unreachable_marker", description="Every Spawn and Exit is reachable."),
                 CheckSpec(code="reach.unreachable_island", description="All walkable ground is reachable (warning)."),
+                CheckSpec(code="area.not_reached", description="A walkable area has walkable ground the Body can reach "
+                                                               "(warning)."),
                 CheckSpec(code="reach.narrow_gap", description="The narrowest gaps in solid (info)."),
             ),
             available_from="M1",

@@ -163,9 +163,13 @@ def _check_sheet(run: StageRun, source: str) -> list[Finding]:
     # The pivots and the cell come from `render`, which fixes a stationary clip's pivot (ticket 0154) and sizes the cell to
     # every pose (0155): rendering again is what changes them.
     rerender = f"kiripix run {run.asset_id} render --force"
+    drift = rerender
+    if document.get("kind") == "sprite":  # no `render`: `fit` places the frames, and align_feet is what quiets a hop
+        rerender = f"kiripix run {run.asset_id} fit --force"
+        drift = f"kiripix set {run.asset_id} fit align_feet=true"
     frames, names = _frames(run, source, document, normals=False)
     stationary = {str(c["name"]) for c in document["clips"] if c["stationary"]}
-    findings = (check_pivot_drift(frames, stationary, rerender) + check_frame_overflow(frames, cell, rerender, cell_pivot)
+    findings = (check_pivot_drift(frames, stationary, drift) + check_frame_overflow(frames, cell, rerender, cell_pivot)
                 + check_frame_count(frames, expected, fix, list(document["directions"])) + check_empty_frame(frames, fix))
     for finding in findings:
         if finding.position is None:

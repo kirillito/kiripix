@@ -20,8 +20,9 @@ from kiripix.export.manifest import ExportedIds, Manifest, read_manifest
 from kiripix.export.room import EXPORT_STAGE, ROOM_FILE, ROOM_SCHEMA_VERSION
 from kiripix.export.target import resolve_target
 from kiripix.recipes.clips import CLIP, DIRECTIONS
+from kiripix.recipes.sprite_frames import FRAMES_FILE
 
-EXPORTERS = frozenset({"room", "prop", "character"})  # the Kinds that have an exporter
+EXPORTERS = frozenset({"room", "prop", "character", "sprite"})  # the Kinds that have an exporter
 
 
 def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
@@ -49,7 +50,23 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
         # taken away fails before anything is run again
         clips = sorted(animation_name(str(d.data["name"]), direction)
                        for d in graph.replay("clips").current if d.name == CLIP.name for direction in DIRECTIONS)
+    if graph.asset.kind == "sprite":
+        clips = _sprite_animations(graph, clips)
     return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips)
+
+
+def _sprite_animations(graph: AssetGraph, unchanged: list[str]) -> list[str]:
+    """A sprite's animation names, from the clips `frames` last cut (its clips come from the sheets, not from Decisions, so
+    a clip taken away is seen once `frames` has run again). With `frames` not built, they are taken as unchanged."""
+    spec = graph.spec("frames")
+    if graph.built_hash(spec) is None:
+        return unchanged
+    try:
+        document = json.loads((graph.output_dir(spec) / FRAMES_FILE).read_text(encoding="utf-8"))
+        return sorted(animation_name(str(clip["name"]), direction) for clip in document["clips"]
+                      for direction in clip["directions"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return unchanged
 
 
 def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Finding]:

@@ -198,6 +198,16 @@ def _entry_findings(spec: StageSpec, asset: Asset, document: DecisionDocument) -
                 fix=f"kiripix describe {asset.kind}",
             )
         )
+    why = declared.problem(document.data) if not findings and declared.problem is not None else None
+    if why is not None:
+        findings.append(
+            Finding(
+                code="decision.invalid",
+                message=f"{document.decision}: {why}",
+                position=Position(asset=asset.id, stage=spec.name, field=document.decision),
+                fix=f"kiripix describe {asset.kind}",
+            )
+        )
     return findings
 
 

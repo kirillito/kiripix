@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -38,10 +38,32 @@ Doesn't depend on the trial (0184).
 
 ## Acceptance criteria
 
-- [ ] CLI seam on a test room: an emitter of each shape type, a direction, colours; each finding above; a moved emitter and
+- [x] CLI seam on a test room: an emitter of each shape type, a direction, colours; each finding above; a moved emitter and
       `undo`.
-- [ ] CLI seam: a room with an emitter and no new fields builds the same `place` output as before, apart from the `null`s
+- [x] CLI seam: a room with an emitter and no new fields builds the same `place` output as before, apart from the `null`s
       and `schema_version`.
-- [ ] `describe` shows the schema; the contract sample passes.
+- [x] `describe` shows the schema; the contract sample passes.
 
 Budget: 120–200k tokens.
+
+## Notes
+
+2026-11-12:
+
+- Decided: `markers.json` and `room.json` write `shape`, `direction` and `colours` on every emitter, `null` when unset (as an
+  area's `walkable` is always written). `room.json` is schema 4 (an old one is refused); `markers.json` stays at 1. This
+  changed `tests/cli/test_place.py`'s expected emitter and the `schema_version` pins in `test_export.py` and
+  `test_export_layers.py`.
+- Decided: `place` now lists the `palette` setting among its inputs (the colour Check reads it), so a palette change makes
+  `place` stale.
+- Decided: a `shape` of type `point` is kept as written; unset is `null`, and the game reads both as a point. The Decision
+  refuses a polygon of fewer than three points, a line whose end is its start, a box with `x2 < x` or `y2 < y`, an empty
+  `colours` list and more than 16 colours. `place.emitter_shape_invalid` runs the same rule on the built file.
+- Decided: `place.emitter_outside_room` looks at the Marker's own point, the shape's corners or points and the direction's end,
+  but only for an emitter with a shape or a direction, so an old emitter gets no new warning.
+- Decided: the colour `fix` is a `decide` command that sets the same Marker with each off-palette colour replaced by its
+  nearest palette colour (OKLab); colours compare case-insensitively.
+- Open: a `direction` equal to the emitter's own point (zero length) is accepted. Say if it should be refused.
+- Open: `kiripix/export` still reads `room.json` by `ROOM_SCHEMA_VERSION` imported from `recipes`, so it follows the bump with no
+  edit here; 0186 exports the new fields.
+- Tests: `tests/cli/test_emitter.py`.

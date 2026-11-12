@@ -40,10 +40,30 @@ only to an area that asks for them (`walkable`, below; decided by the Owner, 202
 
 ## Acceptance criteria
 
-- [ ] CLI seam on a test room: each finding above, an area moved by a second Decision, and `undo`.
-- [ ] CLI seam: an area wholly on `solid` without `walkable` (an `escape.*` area over a fence) has no finding; with
+- [x] CLI seam on a test room: each finding above, an area moved by a second Decision, and `undo`.
+- [x] CLI seam: an area wholly on `solid` without `walkable` (an `escape.*` area over a fence) has no finding; with
       `walkable = true` it has `area.no_walkable`. Two areas with different prefixes and a one-cell-wide area are both accepted.
 - [ ] The ID is frozen once exported, as other Marker IDs are (checked once [0138](0138-m4-export-area.md) exports it).
-- [ ] `describe room --stage place` shows the schema, and its contract sample passes.
+- [x] `describe room --stage place` shows the schema, and its contract sample passes.
 
 Budget: 200–300k tokens.
+
+## Notes
+
+2026-11-12:
+
+- Open: the third box (ID frozen once exported) waits for 0138. The freeze code reads every Marker the Stage's Decisions
+  place (`StageSpec.markers`), but the Exporter keeps only the types in `EXPORTED_MARKER_TYPES`, so an area's ID isn't frozen
+  until 0138 adds `area` there. `status` stays `todo` for that reason.
+- Decided: `DecisionSpec` got an optional `problem` hook (excluded from `describe`) for a rule a JSON Schema can't state. The
+  `marker` Decision uses it for `x2 < x` / `y2 < y`; core's `decide` reports it as `decision.invalid` naming the corners.
+- Decided: `markers.json` and `room.json` hold the snapped box (what the game gets), with `walkable` always written. The
+  Decision keeps what was asked. `room.json` is schema 3 (an old one is refused); `markers.json` stays at 1, since a Stage
+  rebuilds it from the Decisions and old files hold no area.
+- Decided: a cell is ambiguous at a `solid` or `pit` share of 0.25 to 0.75, both included. A snapped box that leaves the room
+  (for example a cell of 32 on a room 368 px high) is `area.outside_room`, and its message says it was snapped.
+- `area.not_reached` counts ground reached from any Spawn or Exit (not only the main group), and an area with no walkable
+  pixel is left to `area.no_walkable`, so one area never gets both. The Probe `reach` doesn't report areas.
+- The `marker` schema's "a field belongs to these types" rule is now per field, because `x2` and `y2` belong to `ysort` and
+  `area`; `cell` and `walkable` are optional on an area.
+- Tests: `tests/cli/test_area.py`; `schema_version` 3 in `test_export.py` and `test_export_layers.py`.

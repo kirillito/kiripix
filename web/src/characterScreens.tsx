@@ -14,7 +14,7 @@ export const CHARACTER_SCREENS = [MODEL_STAGE, RIG_STAGE, CLIPS_STAGE];
 export const BONE_DECISION = "bone";
 export const CLIP_DECISION = "clip";
 
-export type ImportRole = "variant" | "clip-source" | "rigged";
+export type ImportRole = "variant" | "clip-source" | "rigged" | "sheet";
 export const MODEL_FILES = ".glb,.fbx,.blend";
 
 interface ModelDocument {
@@ -167,18 +167,18 @@ function ReadingNote(props: { reads: ReturnType<typeof useFileReads> }) {
   return null;
 }
 
-function readableSize(bytes: number): string {
+export function readableSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function basename(path: string): string {
+export function basename(path: string): string {
   return path.split("/").at(-1) ?? path;
 }
 
 // A drop target that is also a button: dropped or chosen files go to `onFiles`.
-function FileDrop(props: { testid: string; accept: string; multiple?: boolean; onFiles: (files: File[]) => void; children: ReactNode }) {
+export function FileDrop(props: { testid: string; accept: string; multiple?: boolean; onFiles: (files: File[]) => void; children: ReactNode }) {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   function drop(event: DragEvent) {

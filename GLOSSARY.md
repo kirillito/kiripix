@@ -13,7 +13,7 @@ One thing in the game, with a Kind and a stable ID, such as `room.queen_west_all
 _Avoid_: item, resource
 
 **Kind**:
-An Asset's type, which fixes its Recipe: room, prop, character.
+An Asset's type, which fixes its Recipe: room, prop, character, sprite.
 _Avoid_: type, category
 
 **Recipe**:
@@ -153,6 +153,12 @@ A part of a Room that plays by itself, over and over, cut to a region: a colour 
 through a list) or frames. Its first frame is the room's own pixels, and its timing is in whole game ticks. A character
 clip's `loop` flag (whether a clip repeats) is not a Loop.
 _Avoid_: animation, ambient, effect, look (a Look is shown by game state; a Loop always plays)
+
+## Sprites
+
+**Sprite**:
+An Asset of Kind sprite: an actor built from imported 2D frames, exported as a character is.
+_Avoid_: sprite for one frame (say frame), or for Godot's `Sprite2D`
 
 ## Verification and output
 

@@ -34,6 +34,7 @@ import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
 import { LAYERS_DECISION, LAYERS_STAGE, LayersPanel } from "./layerScreen";
 import { layerIdOf } from "./sortView";
 import { CHARACTER_KIND, CHARACTER_SCREENS, CharacterScreen, type ImportRole } from "./characterScreens";
+import { SPRITE_FRAMES_STAGE, SPRITE_KIND, SpriteFramesScreen } from "./spriteScreens";
 import { FRAME_STAGES, FrameScreen, frameOf, type FrameFocus } from "./frameScreen";
 import { WorkStrip, type Working } from "./workStrip";
 
@@ -212,7 +213,10 @@ export function App() {
   const isReach = current === REACH_STAGE && show?.kind === "room";
   const isCharacterScreen =
     show?.kind === CHARACTER_KIND && current !== null && CHARACTER_SCREENS.includes(current) && description !== undefined;
-  const isFrames = show?.kind === CHARACTER_KIND && current !== null && FRAME_STAGES.includes(current) && description !== undefined;
+  const hasFrames = show?.kind === CHARACTER_KIND || show?.kind === SPRITE_KIND;
+  const isFrames = hasFrames && current !== null && FRAME_STAGES.includes(current) && description !== undefined;
+  const isSpriteFrames = show?.kind === SPRITE_KIND && current === SPRITE_FRAMES_STAGE && description !== undefined;
+  const isPivot = show?.kind === SPRITE_KIND && current === "fit";
   const isFootprint = description?.decisions.some((decision) => decision.name === FOOTPRINT_DECISION) ?? false;
 
   // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
@@ -324,6 +328,18 @@ export function App() {
     },
     [asset, current, isLayers, perform, rebuilt],
   );
+  // A click on `fit` is one `pivot` Decision; `fit` is then run again at once so the frame shows it (no Runner is called), as a
+  // Mask edit does (ADR 0006). With no Direction the Decision is every Direction's.
+  const decidePivot = useCallback(
+    (x: number, y: number, direction: string, all: boolean) => {
+      const decision = JSON.stringify({ decision: "pivot", data: all ? { x, y } : { x, y, direction } });
+      void perform(
+        async () => rebuilt(await call("decide", { asset, stage: current, decision }), false, true),
+        all ? "Setting the pivot of every Direction" : `Setting the pivot of ${direction}`,
+      );
+    },
+    [asset, current, perform, rebuilt],
+  );
   const importMask = useCallback(
     (file: File) => void perform(async () => rebuilt(await callWithFile("mask-import", { asset }, "png", file)), "Importing a Mask image"),
     [asset, perform, rebuilt],
@@ -359,12 +375,12 @@ export function App() {
             // Runner call still missing waits for the Owner). Every step on `layers` does it, because which Decision a
             // queued step undoes is only known once the steps before it have landed.
             const result = await call(command, { asset, stage: current });
-            return rebuilt(result, false, isLayers);
+            return rebuilt(result, false, isLayers || isPivot);
           },
           command === "undo" ? "Undoing" : "Redoing",
         );
     },
-    [asset, busy, current, isLayers, perform, rebuilt],
+    [asset, busy, current, isLayers, isPivot, perform, rebuilt],
   );
 
   // The job exists once it reaches the front of the queue, and only then can it be cancelled.
@@ -445,7 +461,7 @@ export function App() {
     // The canvas focuses one pixel: a box (an open edge) is focused at its middle.
     if (x != null && y != null) jumpTo.current = { x: x + Math.floor((width ?? 1) / 2), y: y + Math.floor((height ?? 1) / 2) };
     const layer = finding.code === "layer.no_ysort" ? layerIdOf(finding.position?.file ?? "") : undefined;
-    const framed = show?.kind === CHARACTER_KIND ? frameOf(finding) : null;
+    const framed = hasFrames ? frameOf(finding) : null;
     if (framed) setFocusFrame((before) => ({ ...framed, count: (before?.count ?? 0) + 1 }));
     if (layer) setFocusLayer((before) => ({ layer, count: (before?.count ?? 0) + 1 }));
     if (where && where !== current) setStage(where);
@@ -543,6 +559,17 @@ export function App() {
             onImport={(files, role) => void importFiles(files, role)}
             decide={decideCharacter}
           />
+        ) : isSpriteFrames && detail && description ? (
+          <SpriteFramesScreen
+            key={`${asset}/${current}`}
+            show={show}
+            detail={detail}
+            description={description}
+            refreshes={data.refreshes}
+            disabled={busy}
+            onImport={(files, role) => void importFiles(files, role)}
+            decide={decideCharacter}
+          />
         ) : isFrames && detail ? (
           <FrameScreen
             key={`${asset}/${current}`}
@@ -552,6 +579,7 @@ export function App() {
             refreshes={data.refreshes}
             imageVersion={imageVersion}
             focus={focusFrame}
+            pivotTool={isPivot ? { disabled: busy, decide: decidePivot } : undefined}
           />
         ) : isSource ? (
           <VariantGrid show={show} onPick={pick} onImport={(files) => void importFiles(files)} />
@@ -659,7 +687,7 @@ export function App() {
                 />
               ))}
             </fieldset>
-            {!isSource && !isCharacterScreen && !isFrames && image && (
+            {!isSource && !isCharacterScreen && !isSpriteFrames && !isFrames && image && (
               <label className="toggle">
                 <input
                   type="checkbox"

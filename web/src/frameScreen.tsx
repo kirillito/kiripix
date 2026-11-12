@@ -10,7 +10,8 @@ import { fileUrl, type Finding, type ShowData, type StageDetail } from "./api";
 import { isTyping } from "./pixelCanvas";
 import { outputOf, useDocument } from "./characterScreens";
 
-export const FRAME_STAGES = ["render", "palette", "finish", "sheet"];
+// A character's picture Stages, and a sprite's (`fit` is the one that makes the frames, as `render` does for a character).
+export const FRAME_STAGES = ["fit", "render", "palette", "finish", "sheet"];
 const ZOOMS = [1, 2, 3, 4, 6, 8];
 const COMPASS = [
   ["nw", "n", "ne"],
@@ -201,6 +202,8 @@ function FrameCanvas(props: {
   get: (url: string) => HTMLImageElement | undefined;
   testid?: string;
   pivot?: [number, number] | null;
+  cross?: boolean;
+  onPick?: (x: number, y: number, event: MouseEvent) => void;
 }) {
   const { width, height, zoom, layers, get } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -219,7 +222,19 @@ function FrameCanvas(props: {
     context.globalAlpha = 1;
   });
   return (
-    <span className="frame-box" style={{ width: width * zoom, height: height * zoom }}>
+    <span
+      className="frame-box"
+      data-pickable={props.onPick ? "true" : undefined}
+      style={{ width: width * zoom, height: height * zoom }}
+      onClick={
+        props.onPick
+          ? (event) => {
+              const box = event.currentTarget.getBoundingClientRect();
+              props.onPick?.(Math.floor((event.clientX - box.left) / zoom), Math.floor((event.clientY - box.top) / zoom), event.nativeEvent);
+            }
+          : undefined
+      }
+    >
       <canvas
         ref={canvas}
         data-testid={props.testid}
@@ -230,7 +245,7 @@ function FrameCanvas(props: {
       />
       {props.pivot && (
         <i
-          className="pivot-mark"
+          className={props.cross ? "pivot-mark pivot-cross" : "pivot-mark"}
           data-testid={props.testid ? `${props.testid}-pivot` : undefined}
           style={{ left: Math.floor(props.pivot[0]) * zoom, top: Math.floor(props.pivot[1]) * zoom, width: zoom, height: zoom }}
         />
@@ -260,11 +275,14 @@ export function FrameScreen(props: {
   refreshes: number;
   imageVersion: number;
   focus: FrameFocus | null;
+  // On a sprite's `fit`: a click sets the pivot (one `pivot` Decision). `all` is set with Shift: every Direction, not this one.
+  pivotTool?: { disabled: boolean; decide: (x: number, y: number, direction: string, all: boolean) => void };
 }) {
   const { stage, show, detail, refreshes, imageVersion } = props;
   const sheet = stage === "sheet";
   const path = outputOf(detail, sheet ? "sheet.json" : "render.json");
   const document = useDocument<RenderDocument | SheetDocument>(path, refreshes);
+  const fitRecord = useDocument<{ pivots: Record<string, [number, number]> }>(props.pivotTool ? outputOf(detail, "fit.json") : null, refreshes);
   // The palette Stage makes colour frames only: its normals are the render Stage's.
   const renderDetail = show.stages.find((entry) => entry.stage === "render");
   const renderPath = stage === "palette" ? outputOf(renderDetail, "render.json") : null;
@@ -458,6 +476,22 @@ export function FrameScreen(props: {
             get={get}
             testid="frame-canvas"
             pivot={view.pivot ? current.pivot : null}
+            cross={!!props.pivotTool}
+            onPick={
+              props.pivotTool && fitRecord && direction && fitRecord.pivots[direction] && !props.pivotTool.disabled
+                ? (x, y, event) => {
+                    // The Decision is in the pivot's own pixels (the fitted frame's, from its top left): the cell moves them by
+                    // the cell's pivot less the direction's.
+                    const own = fitRecord.pivots[direction];
+                    props.pivotTool?.decide(
+                      Math.max(0, x - current.pivot[0] + own[0]),
+                      Math.max(0, y - current.pivot[1] + own[1]),
+                      direction,
+                      event.shiftKey,
+                    );
+                  }
+                : undefined
+            }
           />
         ) : (
           <p className="hint" data-testid="frame-missing">
@@ -497,6 +531,11 @@ export function FrameScreen(props: {
           />
           Normal map <kbd>N</kbd>
         </label>
+        {props.pivotTool && (
+          <span className="hint" data-testid="pivot-hint">
+            Click sets the pivot for {direction}; Shift-click sets it for every Direction. Ctrl+Z undoes it.
+          </span>
+        )}
         <label className="toggle">
           <input type="checkbox" data-testid="pivot-view" checked={view.pivot} onChange={(event) => change({ pivot: event.target.checked })} />
           Pivot

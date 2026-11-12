@@ -47,7 +47,7 @@ def test_room_json_lists_each_layer_with_its_file_and_sort_position(project: Kir
 
     room = room_json(folder)
 
-    assert room["schema_version"] == 2
+    assert room["schema_version"] == 4
     assert room["layers"] == [{"id": "lamp", "file": "layer.lamp.png", "above": False, "y": 20},
                               {"id": "crate", "file": "layer.crate.png", "above": True, "y": None}]
     out = folder / "out" / "export"

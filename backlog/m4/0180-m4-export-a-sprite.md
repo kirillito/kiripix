@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: godot-export
 type: ticket
@@ -24,11 +24,25 @@ characters, so a sprite's Godot files are the character's, made by the same func
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a sprite's export writes `color.png`, `normal.png`, `texture.tres`, `frames.tres` and `<name>.tscn` into a
+- [x] CLI seam: a sprite's export writes `color.png`, `normal.png`, `texture.tres`, `frames.tres` and `<name>.tscn` into a
       temporary Godot folder; the `.tres` and `.tscn` text equals what the character functions write for the same
       `character.json`.
-- [ ] A 4-direction sprite's `frames.tres` holds exactly 4 animations per clip; removing a clip after export is refused as a
+- [x] A 4-direction sprite's `frames.tres` holds exactly 4 animations per clip; removing a clip after export is refused as a
       frozen ID, as for a character.
-- [ ] Contract samples unchanged, or updated where `export`'s message changed.
+- [x] Contract samples unchanged, or updated where `export`'s message changed.
 
 Budget: 60–100k tokens.
+
+## Notes (2026-11-12)
+
+- Built: `sprite` in `_FILES_BY_KIND` (the same `_character_files`; the folder is `<root>/<kind>/<name>`, so `sprite/npc/`) and in
+  `EXPORTERS`; one `_NOT_AVAILABLE` message ("only rooms, props, characters and sprites can") for both refusal sites. The Manifest
+  schema is unchanged. Spec §9's table has the Sprite row.
+- **Frozen sprite IDs are read from `frames.json`**, since a sprite's clips come from its sheets (a ZIP's folders), not from
+  `clip` Decisions. So a clip taken away is refused once `frames` has run again; before that the freeze sees the old clips, and
+  `export` stops with `export.not_ready` (the Stage is stale) with nothing written. A character's freeze fires at the Decision.
+  Reading the ZIPs without running `frames` would duplicate the naming rule (and 0175 may still change it); left for the Owner.
+- Tests: `tests/cli/test_export_sprite.py`. The "text equals what the character functions write" criterion is met by construction
+  (one function, `_character_files`) and checked at the seam by the same assertions as a character's export (names, offsets, texture
+  paths, 4 animations per clip, byte-identical re-export), not by importing internals. `test_sprite.py` asserted no refusal, so it
+  needed no change. Contract samples unchanged. Opening the scene in a real Godot is not repeated for a sprite (same writers).
