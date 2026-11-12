@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -34,7 +34,7 @@ The clip's name is its frozen ID once exported ([0113](../m3/0113-m3-character-e
 
 ## Acceptance criteria
 
-- [ ] CLI seam: deciding `idle` again with a shorter range changes `clips.json`'s idle to the new frames, keeps walk and attack
+- [x] CLI seam: deciding `idle` again with a shorter range changes `clips.json`'s idle to the new frames, keeps walk and attack
       as they were, and `render` renders only idle.
-- [ ] `undo` of that Decision restores the old range.
-- [ ] After an export, changing idle's range and exporting again succeeds with the same `idle_<dir>` IDs and fewer frames.
+- [x] `undo` of that Decision restores the old range.
+- [x] After an export, changing idle's range and exporting again succeeds with the same `idle_<dir>` IDs and fewer frames.

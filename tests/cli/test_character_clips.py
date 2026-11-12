@@ -142,17 +142,19 @@ def test_an_end_past_the_action_gives_clips_range(project: Kiripix) -> None:
     assert project.json("run", HERO, "clips", expect=1)["findings"][0]["code"] == "clips.range"
 
 
-def test_a_duplicate_name_gives_clips_duplicate_name(project: Kiripix) -> None:
-    rigged_hero(project)
+def test_a_clip_named_twice_is_one_clip_the_latest(project: Kiripix) -> None:
+    """Ticket 0156: `clips.duplicate_name` is gone, because a repeated name replaces the clip instead of failing."""
+    folder = rigged_hero(project)
     clip(project, IDLE)
+    clip(project, WALK)
     clip(project, {**WALK, "name": "idle"})
 
-    [finding] = project.json("run", HERO, "clips", expect=1)["findings"]
+    project.json("run", HERO, "clips")
 
-    assert finding["code"] == "clips.duplicate_name" and "idle" in finding["message"]
-    assert finding["fix"] == "kiripix undo character.hero clips"
+    assert [(c["name"], c["source"]) for c in clips_json(folder)["clips"]] == [("idle", "walk"), ("walk", "walk")]
     project.json("undo", HERO, "clips")
-    assert project.json("run", HERO, "clips")["data"]["results"][-1]["outcome"] == "done"
+    project.json("run", HERO, "clips")
+    assert [(c["name"], c["source"]) for c in clips_json(folder)["clips"]] == [("idle", "idle"), ("walk", "walk")]
 
 
 @pytest.mark.parametrize("name", ["Walk", "walk-fast", "walk_sw", "idle_s", "attack_ne", "", "a b"])
@@ -220,9 +222,10 @@ def test_describe_shows_the_final_schema(project: Kiripix) -> None:
     properties = decision["entry_schema"]["properties"]
     assert set(properties) == {"name", "source", "start", "end", "fps", "loop", "stationary"}
     assert properties["stationary"]["default"] is False
+    assert "again under a name" in decision["description"]
     assert decision["entry_schema"]["required"] == ["name", "source", "start", "end", "fps", "loop"]
     assert [c["code"] for c in stage["checks"]] == [
-        "clips.source_missing", "clips.range", "clips.duplicate_name", "clips.bad_name", "clips.root_motion"]
+        "clips.source_missing", "clips.range", "clips.bad_name", "clips.root_motion"]
 
 
 # the real Blender

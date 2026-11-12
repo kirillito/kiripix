@@ -50,16 +50,16 @@ def test_the_stage_declares_the_room_parameters_and_colors(project: Kiripix) -> 
     [stage] = kind["stages"]
 
     by_name = {p["name"]: p for p in stage["params"]}
-    assert set(by_name) == {"colors", "dither", "strength", "orphan_size"}
+    assert set(by_name) == {"colors", "parts", "dither", "strength", "orphan_size"}
     assert by_name["colors"]["default"] == 16 and by_name["colors"]["minimum"] == 1
-    assert [c["code"] for c in stage["checks"]] == ["palette.off_palette"]
+    assert [c["code"] for c in stage["checks"]] == ["palette.off_palette", "palette.ramp_shared"]
 
 
 def test_run_maps_every_frame_to_one_subset_of_the_palette(project: Kiripix) -> None:
     folder = built(project, "colors=3")
 
     document = palette_json(folder)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2 and document["parts"] == []
     colours = document["colors"]
     palette = project_palette(project)
     assert len(colours) == 3 and [c["index"] for c in colours] == sorted(c["index"] for c in colours)

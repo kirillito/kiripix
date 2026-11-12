@@ -12,12 +12,13 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from kiripix.checks import Position
-from kiripix.core import atomic, editing, journal
+from kiripix.core import atomic, editing, journal, sheets
 from kiripix.core.assets import Asset
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.images import read_as_png
+from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
 from kiripix.recipes.base import PICK, StageSpec
 
@@ -26,6 +27,11 @@ MODEL_SUFFIXES = (".glb", ".fbx", ".blend")
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 _IMAGE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")
 CHARACTER = "character"
+
+
+def takes_sheets(asset: Asset) -> bool:
+    """A sprite Asset (a Kind that declares it) takes sheets, not Variants."""
+    return get_kind(asset.kind).takes_sheets
 
 
 def takes_models(asset: Asset) -> bool:
@@ -137,6 +143,19 @@ def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path,
     the Kind that takes it."""
     data = _read_for_import(file, shown)
     position = Position(asset=asset.id, file=shown)
+    if takes_sheets(asset):
+        if role in ("clip-source", "rigged"):
+            raise fail("import.role_needs_character", f"--role {role} is for a character; {asset.id} is a {asset.kind}",
+                       fix=f"kiripix import {asset.id} {shown} --role sheet", position=position)
+        if role != "sheet":
+            raise fail("import.sprite_takes_sheets", f"{asset.id} is a {asset.kind}, which takes sheets, not Variants",
+                       fix=f"kiripix import {asset.id} {shown} --role sheet", position=position)
+        suffix = sheets.check(data, shown, position)
+        return _store(asset.dir / "src" / sheets.SHEETS_DIR, hash_bytes(data)[:VARIANT_NAME_LENGTH], suffix, data)
+    if role == "sheet":
+        raise fail("import.role_needs_sprite", f"--role sheet is for a sprite; {asset.id} is a {asset.kind}",
+                   owner_action="Import a sheet into a sprite Asset, or make one with kiripix new sprite <name>.",
+                   position=position)
     if not takes_models(asset):
         if role != "variant":
             raise fail("import.role_needs_character", f"--role {role} is for a character; {asset.id} is a {asset.kind}",

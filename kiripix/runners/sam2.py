@@ -27,8 +27,8 @@ from kiripix.runners import ort
 from kiripix.runners.base import CheckCancel, Device, EmbeddingRunner, RunnerError, WeightFile
 
 _SIZE = 1024
-_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+_MEAN = (0.485, 0.456, 0.406)  # arrays are built where used: numpy loads late
+_STD = (0.229, 0.224, 0.225)
 _FILES = "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/" \
          "a7df49d8de14b9d2e4504d1687b0d568f905fd8d/onnx/"
 _ENCODER = "vision_encoder.onnx"
@@ -84,7 +84,7 @@ class Sam2(EmbeddingRunner):
         if self._embedded is not None and self._embedded[0] == key:
             return self._embedded[1]
         squared = Image.fromarray(image[..., :3], "RGB").resize((_SIZE, _SIZE), Image.Resampling.BILINEAR)
-        pixels = (np.asarray(squared, dtype=np.float32) / 255 - _MEAN) / _STD
+        pixels = (np.asarray(squared, dtype=np.float32) / 255 - np.array(_MEAN, dtype=np.float32)) / np.array(_STD, dtype=np.float32)
         outputs = ort.run(self._encoder, {"pixel_values": pixels.transpose(2, 0, 1)[None]}, check_cancel, "SAM 2")
         names = [output.name for output in self._encoder.get_outputs()]
         embeddings = dict(zip(names, outputs))

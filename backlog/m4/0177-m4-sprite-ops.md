@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -31,10 +31,10 @@ In `kiripix/ops/`, exported from `kiripix/ops/__init__.py`:
 
 ## Acceptance criteria
 
-- [ ] Golden tests: a 3 × 4 sheet sliced; a sheet of the wrong size refused; the feet of a standing figure, of a figure with
+- [x] Golden tests: a 3 × 4 sheet sliced; a sheet of the wrong size refused; the feet of a standing figure, of a figure with
       one leg forward, and of an empty frame; the height and the normals of a disc and of a 52 px test silhouette.
-- [ ] On the test silhouette, `normals_from_height` matches the game's `tools/normal_map.py` within 1 per channel (the tool is
+- [x] On the test silhouette, `normals_from_height` matches the game's `tools/normal_map.py` within 1 per channel (the tool is
       copied into the test as the reference, not imported).
-- [ ] Existing goldens are unchanged; `uv run lint-imports` passes.
+- [x] Existing goldens are unchanged; `uv run lint-imports` passes.
 
 Budget: 120–200k tokens.

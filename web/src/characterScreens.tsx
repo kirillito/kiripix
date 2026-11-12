@@ -22,6 +22,7 @@ interface ModelDocument {
   bounds: { min: number[]; max: number[] };
   armature: string | null;
   bones: string[];
+  fps?: number; // the file's frame rate; absent in a model.json built before it was recorded
   actions: { name: string; start: number; end: number }[];
 }
 
@@ -449,6 +450,23 @@ interface ClipData {
   stationary?: boolean;
 }
 
+// How many frames a clip's range gives at its frame rate: `sample_frames` in kiripix/recipes/clips.py, which a render samples. A
+// looping clip ends before `end` (its first pose again); one that doesn't loop ends on it. Python's `round` takes a half to the
+// even number, which `Math.round` doesn't, so it's written out.
+function roundHalfEven(value: number): number {
+  const floor = Math.floor(value);
+  const diff = value - floor;
+  if (diff < 0.5) return floor;
+  if (diff > 0.5) return floor + 1;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+
+export function sampleCount(start: number, end: number, sourceFps: number, fps: number, loop: boolean): number {
+  const step = sourceFps / fps;
+  const span = end - start;
+  return loop ? Math.max(1, roundHalfEven(span / step)) : Math.floor(span / step + 1e-9) + 1;
+}
+
 function ClipsScreen(props: {
   show: ShowData;
   detail: StageDetail;
@@ -504,9 +522,17 @@ function ClipsScreen(props: {
     known.push({ value: action.name, label: `rigged file, ${action.short} (${action.start}–${action.end})`, start: action.start, end: action.end, fps: riggedRead?.fps ?? null });
   }
   for (const action of actions) {
-    known.push({ value: action.name, label: `the Model, ${action.name} (${action.start}–${action.end})`, start: action.start, end: action.end, fps: null });
+    known.push({ value: action.name, label: `the Model, ${action.name} (${action.start}–${action.end})`, start: action.start, end: action.end, fps: model?.fps ?? null });
   }
-  const clips = detail.decisions.filter((decision) => decision.name === CLIP_DECISION).map((decision) => decision.data as unknown as ClipData);
+  // One clip per name: a `clip` Decision under a name an earlier one has replaces it, keeping the earlier one's place (0156).
+  const latest = new Map<string, ClipData>();
+  for (const decision of detail.decisions) {
+    if (decision.name === CLIP_DECISION) {
+      const data = decision.data as unknown as ClipData;
+      latest.set(data.name, data);
+    }
+  }
+  const clips = [...latest.values()];
   const pattern = description.decisions.find((entry) => entry.name === CLIP_DECISION)?.entry_schema?.properties?.name?.pattern;
   const namePattern = pattern ? new RegExp(pattern) : null;
 
@@ -517,17 +543,36 @@ function ClipsScreen(props: {
   const [fps, setFps] = useState("12");
   const [loop, setLoop] = useState(true);
   const [stationary, setStationary] = useState(false);
-  const [sourceFps, setSourceFps] = useState<number | null>(null); // the source file's, shown as a hint: the clip's is the game's
+  const [editing, setEditing] = useState<string | null>(null); // the name of the clip the form changes, or null when it adds
+  const [chosenFps, setChosenFps] = useState<number | null>(null);
+  const sourceFps = known.find((entry) => entry.value === source.trim())?.fps ?? chosenFps; // the source file's: the clip's is the game's
 
   function chooseSource(value: string) {
     setSource(value);
     const chosen = known.find((entry) => entry.value === value);
-    setSourceFps(chosen?.fps ?? null);
+    setChosenFps(chosen?.fps ?? null);
     const action = known.find((entry) => entry.value === value && entry.start !== null);
     if (action && action.start !== null && action.end !== null) {
       setStart(String(action.start));
       setEnd(String(action.end));
     }
+  }
+
+  function edit(clip: ClipData) {
+    setEditing(clip.name);
+    setName(clip.name);
+    setSource(clip.source);
+    setChosenFps(null);
+    setStart(String(clip.start));
+    setEnd(String(clip.end));
+    setFps(String(clip.fps));
+    setLoop(clip.loop);
+    setStationary(clip.stationary ?? false);
+  }
+
+  function stopEditing() {
+    setEditing(null);
+    setName("");
   }
 
   const whole = (text: string) => /^\d+$/.test(text.trim());
@@ -559,6 +604,7 @@ function ClipsScreen(props: {
               <th>Loop</th>
               <th>Stationary</th>
               <th>Frames</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -575,6 +621,11 @@ function ClipsScreen(props: {
                   <td>{clip.loop ? "loop" : "once"}</td>
                   <td>{clip.stationary ? "yes" : "no"}</td>
                   <td>{made ? `${made.frames.length}${made.root_motion ? " (root moves)" : ""}` : ""}</td>
+                  <td>
+                    <button data-testid={`clip-edit-${clip.name}`} disabled={props.disabled} onClick={() => edit(clip)}>
+                      Edit
+                    </button>
+                  </td>
                 </tr>
               );
             })}
@@ -584,10 +635,10 @@ function ClipsScreen(props: {
 
       <ReadingNote reads={reads} />
       <fieldset disabled={props.disabled} className="clip-form">
-        <h2>Add a clip</h2>
+        <h2>{editing ? `Change the clip ${editing}` : "Add a clip"}</h2>
         <div className="param">
           <label htmlFor="clip-name">Name</label>
-          <input id="clip-name" data-testid="clip-name" value={name} onChange={(event) => setName(event.target.value)} />
+          <input id="clip-name" data-testid="clip-name" value={name} readOnly={editing !== null} onChange={(event) => setName(event.target.value)} />
         </div>
         <div className="param">
           <label htmlFor="clip-source">Source</label>
@@ -631,6 +682,11 @@ function ClipsScreen(props: {
           <input type="checkbox" data-testid="clip-stationary" checked={stationary} onChange={(event) => setStationary(event.target.checked)} />
           Stationary (the feet must not move)
         </label>
+        {sourceFps !== null && whole(start) && whole(end) && whole(fps) && Number(fps) >= 1 && Number(start) <= Number(end) ? (
+          <p className="hint" data-testid="clip-frame-count">
+            {sampleCount(Number(start), Number(end), sourceFps, Number(fps), loop)} frames
+          </p>
+        ) : null}
         {problem && name && <p className="hint" data-testid="clip-problem">{problem}</p>}
         <button
           data-testid="clip-add"
@@ -639,13 +695,18 @@ function ClipsScreen(props: {
             props.decide(
               CLIP_DECISION,
               { name, source: source.trim(), start: Number(start), end: Number(end), fps: Number(fps), loop, stationary },
-              `Adding the clip ${name}`,
+              editing ? `Changing the clip ${name}` : `Adding the clip ${name}`,
             );
-            setName("");
+            stopEditing();
           }}
         >
-          Add clip
+          {editing ? "Change clip" : "Add clip"}
         </button>
+        {editing && (
+          <button data-testid="clip-cancel" onClick={stopEditing}>
+            Cancel
+          </button>
+        )}
       </fieldset>
 
       <h2>Animation files</h2>

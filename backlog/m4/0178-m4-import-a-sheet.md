@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -30,9 +30,9 @@ smaller.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a PNG and a ZIP import; the same file twice is one sheet; each refusal above (a `../` entry, an absolute path, a
+- [x] CLI seam: a PNG and a ZIP import; the same file twice is one sheet; each refusal above (a `../` entry, an absolute path, a
       JPEG renamed `.png`, too many entries) leaves `src/` untouched, with exit code 1 and the finding's code.
-- [ ] `--role sheet` on a room or a character is refused with `import.role_needs_sprite`.
-- [ ] Contract samples for the changed `import` and `show`.
+- [x] `--role sheet` on a room or a character is refused with `import.role_needs_sprite`.
+- [x] Contract samples for the changed `import` and `show`.
 
 Budget: 100–150k tokens.

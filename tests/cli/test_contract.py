@@ -1,6 +1,7 @@
 """The JSON contract, for every Command in the registry: `--help`, one JSON object, and output that validates against
 `schema`. A new Command without a sample here fails `test_every_command_has_a_sample`."""
 
+import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -57,6 +58,14 @@ def _character_files(project: Kiripix) -> None:
     project.json("import", "character.hero", "rigged.fbx", "--role", "rigged")
 
 
+def _clips_to_copy(project: Kiripix) -> None:
+    """character.hero with a clip, and character.twin without."""
+    _character_files(project)
+    project.json("new", "character", "twin")
+    project.json("decide", "character.hero", "clips", "--decision", json.dumps({"decision": "clip", "data": {
+        "name": "wave", "source": "rigged", "start": 0, "end": 10, "fps": 10, "loop": False}}))
+
+
 def _game_repo(project: Kiripix) -> None:
     """A Godot project that is a git repository, as the target."""
     if shutil.which("git") is None:
@@ -82,6 +91,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "override": lambda p: (sketched(p), ["override", "sketch.a", "draw", "fix.png"])[1],
     "accept": lambda p: (in_review(p), ["accept", "sketch.a", "draw"])[1],
     "import": lambda p: (_character_files(p), ["import", "character.hero", "rigged.fbx", "--role", "clip-source"])[1],
+    "clips copy": lambda p: (_clips_to_copy(p), ["clips", "copy", "character.twin", "--from", "character.hero"])[1],
     "mask-import": lambda p: (_room_image(p), ["mask-import", "room.alley", "in.png"])[1],
     "plate-import": lambda p: (_room_image(p), ["plate-import", "room.alley", "in.png"])[1],
     "pick": lambda p: (_imported(p), ["pick", "room.alley", _imported(p)])[1],
@@ -139,6 +149,19 @@ def test_json_output_validates_against_the_schema(project: Kiripix, schemas: dic
 def test_input_schema_lists_the_options(schemas: dict[str, dict[str, object]], name: str) -> None:
     schema = schemas[name]["input"]
     assert isinstance(schema, dict) and schema["type"] == "object"
+
+
+def test_import_and_show_of_a_sprite_sheet_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The sheet shapes of `import` and `show` (the samples above are for a character)."""
+    project.json("new", "sheeted", "npc")
+    Image.new("RGBA", (4, 4), (255, 0, 77, 255)).save(project.cwd / "walk.png")
+
+    imported = project.json("import", "sheeted.npc", "walk.png", "--role", "sheet")
+    shown = project.json("show", "sheeted.npc")
+
+    jsonschema.validate(imported, schemas["import"]["output"])
+    jsonschema.validate(shown, schemas["show"]["output"])
+    assert imported["data"]["sheet"] and shown["data"]["sheets"][0]["name"] == imported["data"]["sheet"]
 
 
 def test_an_error_result_validates_too(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:

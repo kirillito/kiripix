@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import sources
+from kiripix.core import sheets, sources
 from kiripix.core.assets import is_asset_id, load_asset
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
@@ -29,26 +29,32 @@ def _asset_lock(arguments: _AssetInput) -> str | None:
 
 class ImportInput(_AssetInput):
     file: Path = Field(description="A room's or Prop's PNG or JPEG (a JPEG is stored as a PNG); a character's .glb, "
-                                   ".fbx or .blend.")
-    role: Literal["variant", "clip-source", "rigged"] = Field(
-        "variant", description="What the file is. variant: a Source to pick. clip-source: an animation file (a Mixamo "
-                               ".fbx) that a `clip` Decision's `source` names by its file stem. rigged: the rigged "
-                               "file that comes back from Mixamo. The last two are for a character.")
+                                   ".fbx or .blend; a sprite's PNG or ZIP of PNGs.")
+    role: Literal["variant", "clip-source", "rigged", "sheet"] | None = Field(
+        None, description="What the file is. variant: a Source to pick (the default, except for a sprite). "
+                          "clip-source: an animation file (a Mixamo .fbx) that a `clip` Decision's `source` names by "
+                          "its file stem. rigged: the rigged file that comes back from Mixamo. The last two are for a "
+                          "character. sheet: a sprite's PNG sheet or ZIP of PNGs, stored whole in src/sheets/ (the "
+                          "default for a sprite; a ZIP with an unsafe or non-PNG entry is refused whole).")
 
 
 class ImportData(BaseModel):
     asset: str
     role: str
     variant: str | None = Field(description="With role variant: the Variant's name.")
+    sheet: str | None = Field(description="With role sheet: the sheet's name, the start of its hash.")
     clip_source: str | None = Field(description="With role clip-source: its name, the file stem.")
     rigged: str | None = Field(description="With role rigged: the rigged file's name.")
     file: str
     created: bool
     variants: list[str]
     clip_sources: list[str]
+    sheets: list[str]
 
     def text(self) -> str:
         added = "added" if self.created else "already had"
+        if self.role == "sheet":
+            return f"{self.asset}: {added} the sheet {self.sheet} ({self.file})"
         if self.role == "variant":
             return (f"{self.asset}: {added} the Variant {self.variant} ({self.file}); pick it with "
                     f"kiripix pick {self.asset} {self.variant}")
@@ -58,8 +64,9 @@ class ImportData(BaseModel):
 
 @command(
     "import",
-    summary="Add a file made elsewhere to an Asset: an image as a Variant (a PNG, named by its hash), or for a "
-            "character a Model, an animation file or the rigged file (--role).",
+    summary="Add a file made elsewhere to an Asset: an image as a Variant (a PNG, named by its hash), for a "
+            "character a Model, an animation file or the rigged file, or for a sprite a PNG sheet or a ZIP of PNGs "
+            "(--role).",
     input=ImportInput,
     output=ImportData,
     kind="writing",
@@ -71,14 +78,17 @@ class ImportData(BaseModel):
 def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
-    name, path, created = sources.import_file(asset, context.cwd / arguments.file, str(arguments.file), arguments.role)
+    role = arguments.role or ("sheet" if sources.takes_sheets(asset) else "variant")
+    name, path, created = sources.import_file(asset, context.cwd / arguments.file, str(arguments.file), role)
     return Outcome(ImportData(
-        asset=asset.id, role=arguments.role,
-        variant=name if arguments.role == "variant" else None,
-        clip_source=name if arguments.role == "clip-source" else None,
-        rigged=name if arguments.role == "rigged" else None,
+        asset=asset.id, role=role,
+        variant=name if role == "variant" else None,
+        sheet=name if role == "sheet" else None,
+        clip_source=name if role == "clip-source" else None,
+        rigged=name if role == "rigged" else None,
         file=project.relative(path), created=created,
-        variants=list(sources.variants(asset)), clip_sources=list(sources.clip_sources(asset))))
+        variants=list(sources.variants(asset)), clip_sources=list(sources.clip_sources(asset)),
+        sheets=list(sheets.sheets(asset))))
 
 
 # pick

@@ -116,6 +116,10 @@ test("two clips are recorded and one is undone", async ({ page, segmentingStudio
   // The Model's own actions fill the range.
   await page.getByTestId("clip-source").fill("walk");
   await expect(page.getByTestId("clip-end")).toHaveValue("30");
+  // ...and model.json's frame rate gives the frame count before a run (the fake's Model plays at 30).
+  await expect(page.getByTestId("clip-source-fps")).toContainText("30");
+  await page.getByTestId("clip-fps").fill("10");
+  await expect(page.getByTestId("clip-frame-count")).toHaveText("10 frames");
   await addClip(page, "walk", "walk", "10");
   await expect(page.getByTestId("clip-row-walk")).toContainText("0–30");
   await page.getByTestId("clip-stationary").check();
@@ -196,7 +200,59 @@ test("a rigged file's action is offered as a clip source", async ({ page, segmen
   await expect(page.getByTestId("clip-end")).toHaveValue("20");
 });
 
-test("a clip name that ends in a direction is stopped, an animation file is dropped, and an agent's clip shows", async ({
+test("a decided clip is edited under its name, and the form's frame count is the one clips.json gets", async ({ page, segmentingStudio: studio }) => {
+  rigged(studio);
+  // One animation at 24 frames a second, so a clip at 6 a second takes every 4th frame: idle's 250 frames make 62.5 steps,
+  // which `clips` rounds to the even 62 (Python's round), and walk's 10 make 2.5, which is 2.
+  const actions = [{ name: "Armature|mix", start: 0, end: 251, travel: 0 }];
+  studio.kiripix("import", HERO, studio.write("mix.fbx", Buffer.from(JSON.stringify({ actions, fps: 24 }))), "--role", "clip-source");
+  const clip = (name: string, start: number, end: number, loop: boolean) =>
+    studio.kiripix("decide", HERO, "clips", "--decision", JSON.stringify({ decision: "clip", data: { name, source: "mix", start, end, fps: 6, loop } }));
+  clip("idle", 1, 251, true);
+  clip("walk", 0, 10, true);
+  clip("attack", 0, 12, false);
+  await open(page, studio, "clips");
+
+  const count = page.getByTestId("clip-frame-count");
+  await page.getByTestId("clip-edit-idle").click();
+  await expect(page.getByTestId("clip-name")).toHaveValue("idle");
+  await expect(page.getByTestId("clip-name")).toHaveAttribute("readonly", "");
+  await expect(page.getByTestId("clip-end")).toHaveValue("251");
+  await expect(count).toHaveText("62 frames");
+  await expect(page.getByTestId("clip-add")).toHaveText("Change clip");
+
+  // Cancel puts the form back to adding.
+  await page.getByTestId("clip-cancel").click();
+  await expect(page.getByTestId("clip-add")).toHaveText("Add clip");
+  await expect(page.getByTestId("clip-name")).toHaveValue("");
+  await expect(page.getByTestId("clip-cancel")).toHaveCount(0);
+
+  await page.getByTestId("clip-edit-idle").click();
+  await page.getByTestId("clip-end").fill("101");
+  await expect(count).toHaveText("25 frames");
+  await page.getByTestId("clip-add").click();
+  await expect(page.getByTestId("clip-row-idle")).toContainText("1–101");
+  await expect(page.getByTestId("clip-row-idle")).toHaveCount(1); // the earlier Decision is replaced, not listed again
+  await expect(page.getByTestId("clip-row-walk")).toContainText("0–10");
+  await expect(page.getByTestId("clip-row-attack")).toContainText("0–12");
+  await expect(page.getByTestId("clip-add")).toHaveText("Add clip");
+  expect(decisions(studio, "clips").map((data) => data.name)).toEqual(["idle", "walk", "attack", "idle"]);
+
+  await page.getByTestId("run").click();
+  await expect(stage(page, "clips")).toHaveAttribute("data-status", "done");
+  const built = await page.getByTestId("clips-table").locator("tbody tr").evaluateAll((rows) =>
+    rows.map((row) => [row.children[0].textContent, row.children[6].textContent]),
+  );
+  expect(built).toEqual([["idle", "25"], ["walk", "2"], ["attack", "4"]]);
+
+  // The form's count for each is what the run made.
+  for (const [name, frames] of [["walk", "2"], ["attack", "4"]]) {
+    await page.getByTestId(`clip-edit-${name}`).click();
+    await expect(count).toHaveText(`${frames} frames`);
+  }
+});
+
+test("a clip name that ends in a direction is stopped,an animation file is dropped, and an agent's clip shows", async ({
   page,
   segmentingStudio: studio,
 }) => {

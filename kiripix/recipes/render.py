@@ -30,6 +30,10 @@ The Model's standing height (its z extent, seen from the camera) is `height` px:
 Toon shading (ticket 0105): the colour pass is the Model's colour lit by one key light fixed in camera space (the preset's
 `light_angle` and `light_tilt`), cut into `bands` steps and darkened by `shadow`. It is done in the script on the normal, not with
 a Blender shader, because Shader to RGB is EEVEE-only and render uses Cycles so that `--cpu` works. The other passes don't change.
+
+Material pass (ticket 0148): `material/<clip>/<dir>/<NNN>.png` holds each pixel's material, numbered from 1 by name, 0 for the
+background. `render.json` lists them (`materials`: `[{"index", "name"}]`) and records the toon `bands` beside `toon`, so
+`palette` can size a part's ramp. More than 255 materials fail the Stage.
 """
 
 import hashlib
@@ -43,12 +47,15 @@ from kiripix.recipes.base import StageFailure, StageRun, computed_setting
 from kiripix.recipes.blender_launcher import launch
 from kiripix.recipes.clips import DIRECTIONS
 
-RENDER_SCHEMA_VERSION = 2  # 2: each clip carries its measured `bounds` (0155), a stationary clip one pivot (0154)
+# 2: each clip carries its measured `bounds` (0155), a stationary clip one pivot (0154)
+# 3: a material pass, `materials` and `bands` (0148)
+RENDER_SCHEMA_VERSION = 3
 # A Stage input (ADR 0010), as the Blender version is: a render in an older format is stale, so `render` and every Stage
 # after it are built again. Read at call time, so that a test can change the version.
 FORMAT_SETTING = "render.format"
 computed_setting(FORMAT_SETTING, lambda: RENDER_SCHEMA_VERSION)
-PASSES = ("color", "normal", "depth", "mask")
+PASSES = ("color", "normal", "depth", "mask", "material")
+MAX_MATERIALS = 255  # an 8 bit pass: 0 is the background
 EIGHT = DIRECTIONS
 FOUR = ("s", "w", "n", "e")
 # Degrees the Model turns about its up axis (counter-clockwise from above), for the direction it then faces on screen. The
@@ -164,6 +171,25 @@ def _previous_bounds(run: StageRun) -> dict[str, tuple[str, list[float]]]:
         return {}
 
 
+def _materials(run: StageRun, result: dict[str, Any], previous: Path | None) -> list[dict[str, Any]]:
+    """The Model's materials by index, from this run's Blender, or from the previous output when every clip was kept."""
+    if "materials" in result:
+        found = [{"index": int(m["index"]), "name": str(m["name"])} for m in result["materials"]]
+    else:
+        found = []
+        if previous is not None:
+            try:
+                found = [{"index": int(m["index"]), "name": str(m["name"])} for m in _json(previous / "render.json")["materials"]]
+            except (OSError, ValueError, KeyError, TypeError):
+                found = []
+    if len(found) > MAX_MATERIALS:
+        raise StageFailure(
+            f"the Model has {len(found)} materials; the material pass holds at most {MAX_MATERIALS}",
+            code="render.too_many_materials",
+            owner_action=f"Join materials in the Model until it has {MAX_MATERIALS} or fewer, then run render again.")
+    return found
+
+
 def _copy_clip(run: StageRun, previous: Path, name: str) -> None:
     for kind in PASSES:
         shutil.copytree(previous / kind / name, run.output_dir / kind / name)
@@ -253,6 +279,7 @@ def run_render(run: StageRun) -> None:
     else:
         result = {"depth_range": next(iter(kept.values()), {"depth_range": [0.0, 1.0]})["depth_range"], "frames": {}}
         run.progress(0, 1, f"reused {reused} clip and direction pairs")
+    materials = _materials(run, result, previous if kept else None)
     for name in kept:
         assert previous is not None
         _copy_clip(run, previous, name)
@@ -292,6 +319,8 @@ def run_render(run: StageRun) -> None:
         "pivot": pivot,
         "px_per_unit": args["px_per_unit"],
         "toon": args["toon"],
+        "bands": args["toon"]["bands"],
+        "materials": materials,
         "depth_range": result["depth_range"],
         "passes": list(PASSES),
         "directions": list(names),

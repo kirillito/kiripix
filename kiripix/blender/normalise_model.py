@@ -6,7 +6,8 @@ args:   {"input": <file>, "output": <model.blend to write>, "height": <the Model
          "upload": <optional: an .fbx to write for Mixamo's auto-rigger when the Model has no armature>,
          "facing": <optional: the way the Model faces in the file, "-y" (default), "+y", "-x" or "+x">,
          "still": <optional: a .png to write, a 256 px preview of the normalised Model from direction `s`>}
-result: {"still": <true when the still was written>, "height", "up", "facing", "bounds": {"min", "max"}, "vertices", "armature", "bones", "actions": [{"name", "start", "end"}],
+result: {"still": <true when the still was written>, "height", "up", "facing", "bounds": {"min", "max"}, "vertices", "armature", "bones", "fps": <the file's frame rate, which the actions' frames count in>,
+         "actions": [{"name", "start", "end"}],
          "upload": <true when the upload file was written>,
          "ignored": [{"name", "vertices"}: a mesh deleted from the Model, because it isn't skinned to the armature]}
 
@@ -264,6 +265,8 @@ def normalise(args: dict) -> dict:
     armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
     bones = [bone.name for armature in armatures for bone in armature.data.bones]
     actions = [{"name": a.name, "start": int(a.frame_range[0]), "end": int(a.frame_range[1])} for a in bpy.data.actions]
+    scene = bpy.context.scene
+    fps = scene.render.fps / (scene.render.fps_base or 1.0)  # as read_actions.py reads it from the saved model.blend
 
     vertices = distinct_points(low, high)
 
@@ -288,6 +291,7 @@ def normalise(args: dict) -> dict:
         "still": still,
         "armature": armatures[0].name if armatures else None,
         "bones": bones,
+        "fps": fps,
         "actions": actions,
         "ignored": ignored,
     }

@@ -14,7 +14,14 @@ from kiripix.ops.colour import (
     quantize,
     srgb_to_oklab,
 )
-from kiripix.ops.character import encode_normals, palette_subset, quantise_normals
+from kiripix.ops.character import (
+    encode_normals,
+    palette_subset,
+    part_ramps,
+    quantise_normals,
+    quantize_by_part,
+    remove_orphans_by_part,
+)
 from kiripix.ops.chroma import chroma_key, key_fringe
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
 from kiripix.ops.compose import overlay
@@ -51,6 +58,7 @@ from kiripix.ops.palette import (
     suggest_palette,
 )
 from kiripix.ops.sheet import Rect, default_cell_pivot, pack_atlas
+from kiripix.ops.sprite import feet_point, height_from_alpha, normals_from_height, slice_grid
 from kiripix.ops.reach import Gap, Island, narrowest_gaps, reachable, walkable, walkable_islands
 from kiripix.ops.resample import (
     Grid,
@@ -98,12 +106,14 @@ __all__ = [
     "format_gpl",
     "grow_where_partial",
     "has_partial_alpha",
+    "height_from_alpha",
     "key_fringe",
     "mask_from_difference",
     "mask_runs",
     "mask_to_source",
     "mask_to_target",
     "nearest_index",
+    "normals_from_height",
     "outline_mask",
     "overlay",
     "paint_outline",
@@ -112,10 +122,14 @@ __all__ = [
     "SIDES",
     "open_edges",
     "paint_stroke",
+    "feet_point",
     "fill_polygon",
     "parse_gpl",
     "parse_hex",
     "palette_subset",
+    "part_ramps",
+    "quantize_by_part",
+    "remove_orphans_by_part",
     "partial_cells",
     "point_to_target",
     "mapping_error",
@@ -127,6 +141,7 @@ __all__ = [
     "remove_small_pieces",
     "sample_nearest",
     "simplify",
+    "slice_grid",
     "snap_cell",
     "split_painted",
     "srgb_to_oklab",

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -43,10 +43,10 @@ Characters made from a **base** (0165, M5) fix all of it, but they need cross-As
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake: copying from a character with three clips and one clip-source file gives the second the same
+- [x] CLI seam, on the fake: copying from a character with three clips and one clip-source file gives the second the same
       `clips.json` (bar `source_hash` paths), and `undo` three times removes them.
-- [ ] An existing clip is skipped with a warning; with `--replace` it takes the other's range.
-- [ ] Copying from a room fails with a finding naming the Kind.
+- [x] An existing clip is skipped with a warning; with `--replace` it takes the other's range.
+- [x] Copying from a room fails with a finding naming the Kind.
 
 Budget: 100–180k tokens.
 

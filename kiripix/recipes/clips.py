@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,8 @@ CLIP = DecisionSpec(
                 "never ending in a direction suffix (_s, _sw, _w, _nw, _n, _ne, _e, _se). `source` is a clip-source file's "
                 "stem or an action of the rigged Model; `start` and `end` are frames of that action; `fps` is the "
                 "clip's frame rate in the game; `stationary` (default false) marks a clip whose feet must not move, which "
-                "the sheet's pivot-drift Check then holds it to.",
+                "the sheet's pivot-drift Check then holds it to. Deciding a clip again under a name it already has "
+                "changes that clip, keeping its name and so its IDs in the game; `undo` brings the old frames back.",
     entry_schema={
         "type": "object",
         "properties": {
@@ -55,8 +57,20 @@ CLIP = DecisionSpec(
 _NAME = re.compile(NAME_PATTERN)
 
 
+def latest_clips(decisions: Iterable[CurrentDecision]) -> list[CurrentDecision]:
+    """The clips, one Decision per name: a `clip` Decision under a name an earlier one has replaces it (ticket 0156), so
+    the latest wins and the clip keeps the earlier one's place. The earlier one stays current in the journal, which is
+    why `undo` of the new one brings it back."""
+    latest: dict[str, CurrentDecision] = {}
+    for decision in decisions:
+        if decision.name == CLIP.name:
+            latest[str(decision.data["name"])] = decision  # a dict keeps the first insertion's place
+    return list(latest.values())
+
+
 def clip_decisions(run: StageRun) -> list[CurrentDecision]:
-    return [d for d in run.decisions if d.name == CLIP.name]
+    """The clips of a run. Every reader of the clips in a Stage goes through here."""
+    return latest_clips(run.decisions)
 
 
 def clips_needs_input(run: StageRun) -> NeedsInput | None:
@@ -143,21 +157,13 @@ def _action(found: dict[str, Any], wanted: str | None, stem: str) -> tuple[dict[
 
 def run_clips(run: StageRun) -> None:
     decisions = clip_decisions(run)
-    names: dict[str, int] = {}
-    for decision in decisions:
-        name = str(decision.data["name"])
-        names[name] = names.get(name, 0) + 1
+    names = [str(d.data["name"]) for d in decisions]
     bad = sorted(n for n in names if not _NAME.match(n))
     if bad:
         raise StageFailure(
             f"clip names must be lower-case snake_case and not end in a direction suffix: {', '.join(bad)}",
             code="clips.bad_name",
             fix=f"kiripix undo {run.asset_id} clips")  # then decide the clip again with a valid name
-    repeated = sorted(n for n, count in names.items() if count > 1)
-    if repeated:
-        raise StageFailure(f"a clip name is used twice in the character: {', '.join(repeated)}",
-                           code="clips.duplicate_name",
-                           fix=f"kiripix undo {run.asset_id} clips")  # the latest Decision is the repeat
 
     rig_file, rig = _rig(run)
     root = ["root", str(rig["mapping"].get("hips", "hips"))]

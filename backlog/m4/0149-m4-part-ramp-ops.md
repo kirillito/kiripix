@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -35,8 +35,8 @@ In `kiripix/checks/`:
 
 ## Acceptance criteria
 
-- [ ] Golden tests: two parts of near-identical colour get disjoint ramps; a part with a texture gets `steps` colours; an orphan
+- [x] Golden tests: two parts of near-identical colour get disjoint ramps; a part with a texture gets `steps` colours; an orphan
       pixel on a part boundary takes its own part's colour; a 1 px island of a material of its own (an eye) is kept, and a 1 px
       shading speck inside a material is cleaned.
-- [ ] `palette_subset` and the room `palette` goldens are unchanged.
-- [ ] `uv run lint-imports` passes.
+- [x] `palette_subset` and the room `palette` goldens are unchanged.
+- [x] `uv run lint-imports` passes.

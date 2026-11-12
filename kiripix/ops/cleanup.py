@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, deque
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from kiripix.ops.lazy import lazy_module
 if TYPE_CHECKING:
@@ -15,7 +15,10 @@ if TYPE_CHECKING:
 else:
     npt = lazy_module("numpy.typing")
 
-U8 = npt.NDArray[np.uint8]
+if TYPE_CHECKING:
+    U8 = npt.NDArray[np.uint8]
+else:
+    U8 = Any  # array types are for the type checker; numpy loads late
 
 
 def remove_orphans(rgba: U8, orphan_size: int) -> U8:

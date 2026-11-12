@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: ui-engineer
 type: ticket
@@ -22,6 +22,13 @@ Spec §11 (the UI) and §6.3 (clips). The UI half of [0156](0156-m4-edit-a-clip.
 
 ## Acceptance criteria
 
-- [ ] Playwright, on the fake renderer: edit idle's end, change it, and the table shows the new range; walk and attack are
+- [x] Playwright, on the fake renderer: edit idle's end, change it, and the table shows the new range; walk and attack are
       unchanged.
-- [ ] The form's frame count matches `clips.json`'s frame count for that clip after the run.
+- [x] The form's frame count matches `clips.json`'s frame count for that clip after the run.
+
+## Done
+
+The frame count needs the source's frame rate. A clip-source file's and the rigged file's came from the `inspect` Probe, but a
+clip from the Model's own actions had none. Fixed 2026-11-12: `normalise_model.py` returns the file's `fps` (read as
+`read_actions.py` reads it), `model.json` carries it as an additive key (`schema_version` stays 2), and the clips screen counts
+the Model's own actions' frames from it. A `model.json` built before has no `fps` and shows no count until `model` runs again.

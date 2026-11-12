@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -36,6 +36,6 @@ loose (the pivot within 2 px). Mixamo's `.fbx` files have no such object, so mc0
 
 ## Acceptance criteria
 
-- [ ] Marked `blender` test: the `rigged.glb` fixture renders at the target height (within 1 px) and with its feet on the pivot
+- [x] Marked `blender` test: the `rigged.glb` fixture renders at the target height (within 1 px) and with its feet on the pivot
       row.
-- [ ] The `.fbx` fixtures render byte for byte as before.
+- [x] The `.fbx` fixtures render byte for byte as before.

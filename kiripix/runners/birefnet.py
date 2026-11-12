@@ -25,8 +25,8 @@ from kiripix.runners import ort
 from kiripix.runners.base import CheckCancel, Device, Runner, RunnerError, WeightFile
 
 _SIZE = 1024
-_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+_MEAN = (0.485, 0.456, 0.406)  # arrays are built where used: numpy loads late
+_STD = (0.229, 0.224, 0.225)
 _MODEL = "model.onnx"
 # onnx-community/BiRefNet-ONNX, the fp32 export of ZhengPeng7/BiRefNet, pinned at one commit.
 _URL = "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/534d3c82d3bb8b2f0867db6dfbc3a525b8e42f67/onnx/model.onnx"
@@ -61,7 +61,7 @@ class BiRefNet(Runner):
         size = (max(1, round(width * scale)), max(1, round(height * scale)))
         colour = Image.fromarray(image[..., :3], "RGB")
         squared = colour.resize((_SIZE, _SIZE), Image.Resampling.BILINEAR)
-        pixels = (np.asarray(squared, dtype=np.float32) / 255 - _MEAN) / _STD
+        pixels = (np.asarray(squared, dtype=np.float32) / 255 - np.array(_MEAN, dtype=np.float32)) / np.array(_STD, dtype=np.float32)
         feeds = {self._session.get_inputs()[0].name: pixels.transpose(2, 0, 1)[None]}
         [logits, *_] = ort.run(self._session, feeds, check_cancel, "BiRefNet")
         matte = 1 / (1 + np.exp(-np.asarray(logits, dtype=np.float32).reshape(logits.shape[-2:])))

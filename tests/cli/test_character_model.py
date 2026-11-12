@@ -191,6 +191,7 @@ def test_each_fixture_normalises_to_the_same_height_and_up_axis(project: Kiripix
     if file.startswith("rigged"):
         assert "root" in document["bones"] and "mixamorig:Hips" in document["bones"]
         assert len(document["actions"]) >= 2 and document["armature"]
+        assert document["fps"] > 0  # the rate the actions' frames count in, which the clips screen counts frames by
     else:
         assert document["bones"] == [] and document["armature"] is None
 

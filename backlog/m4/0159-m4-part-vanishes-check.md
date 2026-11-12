@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -28,6 +28,7 @@ problem visible, so the Owner knows which parts and frames to fix without lookin
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake: a material missing from 2 of 10 frames in one direction gives one `sheet.part_vanishes` naming
+- [x] CLI seam, on the fake: a material missing from 2 of 10 frames in one direction gives one `sheet.part_vanishes` naming
       those frames; a material missing from every frame of a direction gives none.
-- [ ] mc02: the finding lists the frames where the eyes go missing, and none after the Owner's bigger eyes.
+- mc02: the finding lists the frames where the eyes go missing, and none after the Owner's bigger eyes. Moved to
+  [0197](0197-m4-mc02-bigger-eyes.md) (2026-11-12): it needs the art Project and the re-modelled Model.

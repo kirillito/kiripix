@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -24,7 +24,8 @@ Spec §6.3 (render). Part of [0147](0147-m4-character-palette-ramps.md).
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake Blender: `render.json` carries `materials` and `bands`, and a `material/` frame per colour frame.
-- [ ] Marked `blender` test: on the fixture (two materials, `skin` and `cloth`), every opaque pixel's material index is one of
+- [x] CLI seam, on the fake Blender: `render.json` carries `materials` and `bands`, and a `material/` frame per colour frame.
+- [x] Marked `blender` test: on the fixture (two materials, `skin` and `cloth`), every opaque pixel's material index is one of
       the two and every transparent pixel's is 0; the colour pass is byte-equal to before.
-- [ ] mc02 renders with its 9 materials listed.
+- [x] mc02 renders with its 9 materials listed (checked by running the script on mc02's rigged file into a scratch folder, not
+      through the Stage: the art Project was left alone). Order: backpack, boots, eyes, hair, hood, jacket, jeans, skin, straps.

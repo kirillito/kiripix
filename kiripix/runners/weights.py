@@ -9,8 +9,6 @@ import json
 import os
 import shutil
 import tempfile
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from kiripix.runners.base import CheckCancel, Runner, RunnerError
@@ -30,6 +28,9 @@ def missing_weights(directory: Path, runner: Runner) -> list[str]:
 
 
 def _download(url: str, target: Path, expected: str, check_cancel: CheckCancel) -> None:
+    import urllib.error  # loaded here: urllib.request pulls in ssl, which `kiripix --help` doesn't need
+    import urllib.request
+
     fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
     temporary = Path(name)
     digest = hashlib.sha256()

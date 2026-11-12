@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from conftest import Kiripix, stage_status
 from PIL import Image
-from test_character_clips import HIT, IDLE, WALK, add_source, blender_script, clip, real_hero, rigged_hero
+from test_character_clips import HIT, IDLE, WALK, add_source, blender_script, clip, clips_json, real_hero, rigged_hero
 from test_character_model import FIXTURES, HERO, calls, set_blender
 from test_locks import wait_for
 from test_serve import Server, server  # noqa: F401 - the `server` fixture
@@ -55,7 +55,7 @@ def test_run_writes_every_clip_direction_and_frame_and_render_json(project: Kiri
 
     assert [(r["stage"], r["outcome"]) for r in result["data"]["results"]] == [("render", "done")]
     document = render_json(folder)
-    assert document["schema_version"] == 2 and document["camera"] == "top34_8" and document["height"] == 52
+    assert document["schema_version"] == 3 and document["camera"] == "top34_8" and document["height"] == 52
     assert document["frame"] == {"width": 78, "height": 78} and document["directions"] == DIRECTIONS
     assert document["pivot"] == [39.0, 72.0] and document["depth_range"] == [8.0, 12.0]
     assert [c["name"] for c in document["clips"]] == ["hit", "idle"]
@@ -64,7 +64,7 @@ def test_run_writes_every_clip_direction_and_frame_and_render_json(project: Kiri
     assert list(hit["directions"]) == DIRECTIONS and len(hit["directions"]["sw"]) == 4
     frame = hit["directions"]["sw"][2]
     assert frame["index"] == 2 and frame["source_frame"] == 4 and frame["pivot"] == [39.0, 72.0]
-    assert frame["files"] == {p: f"{p}/hit/sw/002.png" for p in ("color", "normal", "depth", "mask")}
+    assert frame["files"] == {p: f"{p}/hit/sw/002.png" for p in ("color", "normal", "depth", "mask", "material")}
     assert len(document["clips"][1]["directions"]["s"]) == 10
     total = 0
     for entry in document["clips"]:
@@ -74,11 +74,63 @@ def test_run_writes_every_clip_direction_and_frame_and_render_json(project: Kiri
                     path = folder / "work" / "render" / name
                     assert Image.open(path).size == (78, 78)
                     total += 1
-    assert total == 8 * 14 * 4
+    assert total == 8 * 14 * 5
     [call] = render_calls(project)
     assert call["args"]["device"] == "gpu" and call["args"]["elevation"] == 30
     assert [d["yaw"] for d in call["args"]["directions"]] == [0, -45, -90, -135, 180, 135, 90, 45]
     assert project.json("next", HERO)["data"]["stage"] == "palette"
+
+
+def test_render_json_lists_the_materials_by_index_and_the_bands_and_writes_a_material_frame_per_colour_frame(
+        project: Kiripix) -> None:
+    folder = ready(project)
+
+    project.json("run", HERO, "render")
+
+    document = render_json(folder)
+    assert document["materials"] == [{"index": 1, "name": "cloth"}, {"index": 2, "name": "skin"}]
+    assert document["bands"] == 3 and document["toon"]["bands"] == 3
+    assert document["passes"] == ["color", "normal", "depth", "mask", "material"]
+    root = folder / "work" / "render"
+    assert len(list((root / "material").rglob("*.png"))) == len(list((root / "color").rglob("*.png"))) == 8 * 14
+    frame = np.array(Image.open(root / "material" / "hit" / "sw" / "002.png"))
+    assert frame.ndim == 2 and set(np.unique(frame)) <= {0, 1, 2}
+
+
+def test_the_materials_come_from_blender_and_the_bands_from_the_parameter(project: Kiripix) -> None:
+    folder = ready(project)
+    (project.cwd / "blender-materials").write_text(json.dumps(["boots", "hair", "skin"]), encoding="utf-8")
+    project.json("set", HERO, "render", "bands=4")
+
+    project.json("run", HERO, "render")
+
+    document = render_json(folder)
+    assert [m["name"] for m in document["materials"]] == ["boots", "hair", "skin"]
+    assert [m["index"] for m in document["materials"]] == [1, 2, 3] and document["bands"] == 4
+
+
+def test_a_rebuild_that_keeps_every_clip_keeps_the_materials(project: Kiripix) -> None:
+    folder = ready(project)
+    project.json("run", HERO, "render")
+    before = render_json(folder)["materials"]
+
+    project.json("run", HERO, "render", "--force")
+    project.json("run", HERO, "clips")  # nothing changed: no Blender at all
+    add_walk_and_run(project)
+    project.json("run", HERO, "render")
+
+    assert rendered(project) == ["walk"] and render_json(folder)["materials"] == before
+
+
+def test_more_than_255_materials_fail_the_stage_with_a_finding(project: Kiripix) -> None:
+    folder = ready(project)
+    (project.cwd / "blender-materials").write_text(json.dumps([f"m{i:03d}" for i in range(256)]), encoding="utf-8")
+
+    result = project.json("run", HERO, "render", expect=3)  # only the owner can join materials in the Model
+
+    assert result["findings"][0]["code"] == "render.too_many_materials"
+    assert "256" in result["findings"][0]["message"]
+    assert not (folder / "work" / "render" / "material").exists()
 
 
 def test_cpu_renders_without_the_gpu(project: Kiripix) -> None:
@@ -242,6 +294,42 @@ def test_a_new_clip_makes_render_stale_and_is_rendered(project: Kiripix) -> None
 
     assert [c["name"] for c in render_json(folder)["clips"]] == ["hit", "idle", "walk"]
     assert [c["name"] for c in render_calls(project)[-1]["args"]["clips"]] == ["walk"]  # ticket 0119: the others are kept
+
+
+# ticket 0156: deciding a clip again under its name changes it
+
+
+SHORT_IDLE = {**IDLE, "end": 12}
+
+
+def test_deciding_a_clip_again_changes_its_frames_keeps_the_others_and_renders_only_it(project: Kiripix) -> None:
+    folder = ready(project, WALK, IDLE, HIT)
+    project.json("run", HERO, "render")
+    before = {c["name"]: c for c in clips_json(folder)["clips"]}
+
+    clip(project, SHORT_IDLE)
+    project.json("run", HERO, "clips")
+    project.json("run", HERO, "render")
+
+    after = {c["name"]: c for c in clips_json(folder)["clips"]}
+    assert list(after) == ["hit", "idle", "walk"]  # one idle, in its place
+    assert (after["idle"]["end"], len(after["idle"]["frames"])) == (12, 5) and len(before["idle"]["frames"]) == 10
+    assert after["walk"] == before["walk"] and after["hit"] == before["hit"]
+    assert rendered(project) == ["idle"]
+    assert len(render_json(folder)["clips"][1]["directions"]["s"]) == 5
+
+
+def test_undoing_the_changed_clip_brings_the_old_range_back(project: Kiripix) -> None:
+    folder = ready(project, WALK, IDLE)
+    clip(project, SHORT_IDLE)
+    project.json("run", HERO, "clips")
+    assert {c["name"]: c["end"] for c in clips_json(folder)["clips"]} == {"idle": 12, "walk": 30}
+
+    project.json("undo", HERO, "clips")
+    project.json("run", HERO, "clips")
+
+    assert {c["name"]: c["end"] for c in clips_json(folder)["clips"]} == {"idle": 24, "walk": 30}
+    assert len(clips_json(folder)["clips"][0]["frames"]) == 10
 
 
 def test_a_clip_source_file_and_root_motion_reach_blender(project: Kiripix) -> None:
@@ -598,11 +686,34 @@ def test_the_walk_fixture_renders_8_directions_at_the_target_size(project: Kirip
     # the feet touch the ground at the pivot: the lowest opaque row is within a pixel or two of it
     mask = np.array(Image.open(folder / "work" / "render" / by_name["idle"]["directions"]["s"][0]["files"]["mask"]))
     assert abs(np.nonzero(mask.any(axis=1))[0].max() + 1 - document["pivot"][1]) <= 2
-    # and the character stands at the target height (ticket 0162): a wrong scale, such as one that counts a mesh that
-    # doesn't render, fails here
-    rows = np.nonzero(mask.any(axis=1))[0]
-    assert abs((rows.max() + 1 - rows.min()) - 26) <= 1
-    assert rows.max() + 1 == round(document["pivot"][1])
+
+
+@pytest.mark.blender
+def test_the_material_pass_numbers_the_fixtures_materials_and_leaves_the_background_0(project: Kiripix) -> None:
+    folder = real_hero(project, "rigged.glb")
+    clip(project, {"name": "idle", "source": "idle", "start": 1, "end": 3, "fps": 2, "loop": True, "stationary": True},
+         test_recipes=False)
+    project.json("run", HERO, "clips", test_recipes=False, timeout=900)
+    project.json("set", HERO, "render", "height=26", test_recipes=False)
+
+    result = project.json("run", HERO, "render", "--cpu", test_recipes=False, timeout=1800)
+
+    assert result["findings"] == []
+    document = render_json(folder)
+    by_name = {m["name"]: m["index"] for m in document["materials"]}
+    assert {"skin", "cloth"} <= set(by_name) and sorted(by_name, key=by_name.get) == sorted(by_name)
+    assert sorted(by_name.values()) == list(range(1, len(by_name) + 1)) and document["bands"] == 3
+    root = folder / "work" / "render"
+    seen: set[int] = set()
+    for frames in document["clips"][0]["directions"].values():
+        for item in frames:
+            material = Image.open(root / item["files"]["material"])
+            assert material.mode == "L"
+            indexes = np.array(material)
+            mask = np.array(Image.open(root / item["files"]["mask"])) == 255
+            assert set(np.unique(indexes[mask])) <= set(by_name.values()) and not indexes[~mask].any()
+            seen |= set(np.unique(indexes[mask]).tolist())
+    assert {by_name["skin"], by_name["cloth"]} <= seen
 
 
 @pytest.mark.blender
@@ -640,7 +751,8 @@ def test_a_clip_source_file_poses_the_rig_as_its_own_action_does(project: Kiripi
 
 
 @pytest.mark.blender
-def test_a_rigged_file_from_the_round_trip_is_normalised_and_rendered(project: Kiripix) -> None:
+@pytest.mark.parametrize("file", ["rigged.fbx", "rigged.glb"])
+def test_a_rigged_file_from_the_round_trip_is_normalised_and_rendered(project: Kiripix, file: str) -> None:
     folder = project.cwd / "assets" / "character" / "hero"
     project.json("new", "character", "hero", test_recipes=False)
     set_blender(project, os.environ["KIRIPIX_BLENDER"])
@@ -648,8 +760,8 @@ def test_a_rigged_file_from_the_round_trip_is_normalised_and_rendered(project: K
     variant = project.json("import", HERO, "plain.fbx", test_recipes=False)["data"]["variant"]
     project.json("pick", HERO, variant, test_recipes=False)
     project.json("run", HERO, "model", test_recipes=False, timeout=900)
-    (project.cwd / "back.fbx").write_bytes((FIXTURES / "rigged.fbx").read_bytes())
-    project.json("import", HERO, "back.fbx", "--role", "rigged", test_recipes=False)
+    (project.cwd / f"back{Path(file).suffix}").write_bytes((FIXTURES / file).read_bytes())
+    project.json("import", HERO, f"back{Path(file).suffix}", "--role", "rigged", test_recipes=False)
     project.json("run", HERO, "rig", test_recipes=False, timeout=900)
     assert json.loads((folder / "work" / "rig" / "rig.json").read_text("utf-8"))["source"] == "rigged"
     clip(project, {"name": "idle", "source": "idle", "start": 1, "end": 1, "fps": 6, "loop": False, "stationary": True},
@@ -661,7 +773,11 @@ def test_a_rigged_file_from_the_round_trip_is_normalised_and_rendered(project: K
 
     mask = np.array(Image.open(folder / "work" / "render" / "mask" / "idle" / "s" / "000.png"))
     rows = np.nonzero(mask.any(axis=1))[0]
-    assert 24 <= rows.max() - rows.min() + 1 <= 32  # about 26 px tall (a foot toward the camera adds a few): the target height
+    # 26 px tall, and the foot toward the camera adds 3 px at the fixture's elevation: 29 (a rigged .glb has an `Icosphere`
+    # in an excluded collection that must not count, or the body is 15 % too small: 0162), with the feet on the pivot row
+    assert abs((rows.max() + 1 - rows.min()) - 29) <= 1
+    document = json.loads((folder / "work" / "render" / "render.json").read_text("utf-8"))
+    assert abs(rows.max() + 1 - document["pivot"][1]) <= 2  # the toe toward the camera reaches a little below the pivot
 
 
 @pytest.mark.blender

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from kiripix.ops.lazy import lazy_module
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 else:
     np = lazy_module("numpy")
 
-from kiripix.checks import Finding, Position, check_conformance
+from kiripix.checks import Finding, PartCounts, Position, check_conformance, check_part_vanishes
 from kiripix.checks.sheet import SheetFrame, check_normal_size
 from kiripix.ops import Placement, add_outline, conformance, encode_normals, quantise_normals
 from kiripix.recipes.base import StageFailure, StageRun
@@ -63,7 +64,32 @@ def _outline_colour(run: StageRun, palette: np.ndarray) -> tuple[int, tuple[int,
                            code="finish.outline_colour_unknown",
                            fix=f"kiripix set {run.asset_id} finish outline_colour=0")
     r, g, b = (int(v) for v in palette[index])
+    _refuse_a_ramp_colour(run, palette, index, (r, g, b))
     return index, (r, g, b)
+
+
+def _refuse_a_ramp_colour(run: StageRun, palette: np.ndarray, index: int, rgb: tuple[int, int, int]) -> None:
+    """An outline in a part's ramp would be recoloured with the part by the game's swap: `finish.outline_in_ramp`, with the first
+    palette colour that no ramp and no fixed colour of the character has as the fix (ticket 0150)."""
+    try:
+        document = json.loads((run.upstream["palette"] / "palette.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    parts = document.get("parts", [])
+    owner = next((p["name"] for p in parts if list(rgb) in p["rgb"]), None)
+    if owner is None:
+        return
+    used = {tuple(rgb_) for p in parts for rgb_ in p["rgb"]} | {tuple(c["rgb"]) for c in document.get("colors", [])}
+    free = next((i for i, colour in enumerate(palette) if tuple(int(v) for v in colour) not in used), None)
+    if free is None:
+        raise StageFailure(f"the outline colour {index} is in the ramp of part {owner!r}, and the character's ramps and colours "
+                           f"use the whole palette, so no colour is free for the outline",
+                           code="finish.outline_in_ramp",
+                           owner_action="Give the character fewer colours or a shorter ramp (palette colors, parts), or add a "
+                                        "colour to the Project palette for the outline.")
+    raise StageFailure(f"the outline colour {index} is in the ramp of part {owner!r}, so swapping that part would recolour the "
+                       f"outline; palette colour {free} is free", code="finish.outline_in_ramp",
+                       fix=f"kiripix set {run.asset_id} finish outline_colour={free}")
 
 
 def _normal_frame(normal: np.ndarray, colour: np.ndarray, levels: int) -> np.ndarray:
@@ -108,6 +134,43 @@ def run_character_finish(run: StageRun) -> None:
     (run.output_dir / FINISH_FILE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
 
 
+def _read_labels(path: Path) -> np.ndarray:
+    """A material frame: mode L, each pixel's material index."""
+    from PIL import Image
+
+    with Image.open(path) as image:
+        return np.asarray(image.convert("L"), dtype=np.uint8).copy()
+
+
+def _vanishing_parts(run: StageRun, document: dict[str, Any], frames: list[SheetFrame]) -> list[Finding]:
+    """`sheet.part_vanishes` (ticket 0159): each material's pixels per finished frame, counted where the final colour frame is
+    opaque, from the material pass `render` wrote. Nothing when the pass isn't there to read."""
+    names = {int(m["index"]): str(m["name"]) for m in document.get("materials", [])}
+    render = run.upstream.get("render")
+    if not names or render is None:
+        return []
+    watch = [w.strip() for w in str(run.params.get("watch_parts", "")).split(",") if w.strip()]
+    by_name = {(f.clip, f.direction, f.index): f for f in frames}
+    counted: list[PartCounts] = []
+    for entry in document["clips"]:
+        for direction, listed in entry["directions"].items():
+            for frame in listed:
+                found = by_name.get((entry["name"], direction, int(frame["index"])))
+                path = render / str(frame["files"].get("material", ""))
+                if found is None or not path.is_file():
+                    continue
+                labels = _read_labels(path)
+                if labels.shape != found.image.shape[:2]:
+                    continue
+                inside = labels[found.image[..., 3] > 0]
+                counted.append(PartCounts(entry["name"], direction, int(frame["index"]),
+                                          {name: int((inside == index).sum()) for index, name in sorted(names.items())}))
+    findings = check_part_vanishes(counted, watch, int(run.params.get("part_min_pixels", 1)))
+    for finding in findings:
+        finding.position = Position(asset=run.asset_id, stage="finish", field=finding.position.field if finding.position else None)
+    return findings
+
+
 def check_character_finish(run: StageRun) -> list[Finding]:
     """`normal.size_mismatch` on every frame, and `palette.off_palette` on the colour frames against the Project palette."""
     out = run.output_dir
@@ -130,6 +193,7 @@ def check_character_finish(run: StageRun) -> list[Finding]:
         frames.append(SheetFrame(clip, direction, index, colour, (0, 0), read_rgba(normal_path)))
         findings += check_conformance(conformance(colour, palette), name, fix=fix)
     findings += check_normal_size(frames, fix)
+    findings += _vanishing_parts(run, document, frames)
     for finding in findings:
         if finding.position is None:
             finding.position = Position()

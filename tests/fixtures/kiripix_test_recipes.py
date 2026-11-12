@@ -231,6 +231,23 @@ register_kind(
 )
 
 
+def _sheeted(run: StageRun) -> None:
+    (run.output_dir / "out.txt").write_text(",".join(sorted(run.files)), encoding="utf-8")
+
+
+register_kind(
+    KindSpec(
+        name="sheeted",
+        description="A test Kind that takes sheets, as the sprite Kind does.",
+        takes_sheets=True,
+        stages=chain(
+            StageSpec(name="frames", description="List the sheets.", inputs=StageInputs(files=["src/sheets/*"]),
+                      run=_sheeted),
+        ),
+    )
+)
+
+
 # The fake Runners. Everything a test watches is in the folder the Command runs in:
 # - runner-calls.jsonl: one line per call, with the device and the parameters;
 # - runner-fails: while it exists, a call fails;
@@ -554,6 +571,9 @@ if Path("inpainter-b").exists():
 # is in the folder the Command runs in:
 # - blender-calls.jsonl: one line per call, with the script, its args and the `[character] blender` setting;
 # - blender-fails: while it exists, a call fails with the file's text;
+# - blender-materials: JSON list of the Model's material names, for a render's material pass (default skin, cloth);
+# - blender-material-split: while it exists, the material pass is 1 on the left half of a frame and 2 on the right (else all 1);
+# - blender-material-frames: JSON {"clip/dir/index" | "clip/dir" | "*": [material indexes]}, what each frame's material pass holds;
 # - hold-blender: while it exists, a call marks `blender-holding` and waits in chunks, checking the cancel token.
 # It writes what each script would write, with fixed contents, so a test sees a Stage's own work apart from Blender's.
 
@@ -599,6 +619,7 @@ class FakeBlender:
             "still": bool(args.get("still")),
             "armature": "Armature" if rigged else None,
             "bones": FAKE_BONES if rigged else [],
+            "fps": 30,  # as _read_actions says of model.blend
             "actions": [{"name": "idle", "start": 0, "end": 24}, {"name": "walk", "start": 0, "end": 30}] if rigged else [],
             # a file that names an `Icosphere` has a stray mesh that isn't skinned (tests/fixtures/characters/rigged_stray.glb)
             "ignored": [{"name": "Icosphere", "vertices": 12}] if rigged and b"Icosphere" in Path(args["input"]).read_bytes()
@@ -638,6 +659,19 @@ class FakeBlender:
         return [0.0, 0.0]
 
     @staticmethod
+    def _material_bands(clip: str, direction: str, index: int) -> list[int]:
+        """The material indexes a frame's material pass holds, in vertical bands: [1] unless `blender-material-frames` (JSON
+        {<key>: [indexes]}) has the key `clip/direction/index`, else `clip/direction`, else `*`."""
+        path = Path("blender-material-frames")
+        if not path.exists():
+            return [1]
+        chosen = json.loads(path.read_text("utf-8"))
+        for key in (f"{clip}/{direction}/{index}", f"{clip}/{direction}", "*"):
+            if key in chosen:
+                return [int(v) for v in chosen[key]]
+        return [1]
+
+    @staticmethod
     def _render_frames(args: dict[str, Any]) -> dict[str, Any]:
         """Every frame the real script would write, as flat PNGs of the right size, with the pivot where the root is."""
         from PIL import Image
@@ -652,19 +686,28 @@ class FakeBlender:
                 frames[clip["name"]][direction["name"]] = []
                 for index in range(len(clip["frames"])):
                     for name, mode, colour in (("color", "RGBA", (200, 100, 50, 255)), ("normal", "RGBA", (128, 128, 255, 255)),
-                                               ("depth", "L", 90), ("mask", "L", 255)):
+                                               ("depth", "L", 90), ("mask", "L", 255),
+                                               ("material", "L", 1)):
                         path = Path(args["output"]) / name / clip["name"] / direction["name"] / f"{index:03d}.png"
                         path.parent.mkdir(parents=True, exist_ok=True)
                         image = Image.new(mode, (width, height), colour)
+                        if name == "material":
+                            bands = FakeBlender._material_bands(clip["name"], direction["name"], index)
+                            for band, value in enumerate(bands):  # one vertical band per material present (ticket 0159)
+                                image.paste(value, (band * width // len(bands), 0, (band + 1) * width // len(bands), height))
                         if name == "color":  # two colours that differ by frame, so a palette has something to choose
                             tint = (index * 13 + len(direction["name"]) * 29) % 90
                             image.paste((200 - tint, 100 + tint, 50 + tint, 255), (width // 2, 0, width, height))
+                        if name == "material" and Path("blender-material-split").exists():  # the right half is the 2nd material
+                            image.paste(2, (width // 2, 0, width, height))
                         image.save(path)
                     under = FakeBlender._sway(clip, index)
                     frames[clip["name"]][direction["name"]].append(
                         {"pivot": [args["pivot"][0] + under[0], args["pivot"][1] + under[1]]})
         device = "cpu" if Path("blender-no-gpu").exists() else args["device"]  # as Blender falls back with no GPU
-        return {"device": device, "depth_range": [8.0, 12.0], "frames": frames}
+        names = json.loads(Path("blender-materials").read_text("utf-8")) if Path("blender-materials").exists() else ["skin", "cloth"]
+        materials = [{"index": i, "name": n} for i, n in enumerate(sorted(names), start=1)]  # by name, from 1 (ticket 0148)
+        return {"device": device, "depth_range": [8.0, 12.0], "materials": materials, "frames": frames}
 
     @staticmethod
     def _read_actions(path: Path) -> dict[str, Any]:

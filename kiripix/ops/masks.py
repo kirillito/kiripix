@@ -10,7 +10,7 @@ from collections import deque
 from collections.abc import Sequence
 from fractions import Fraction
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from kiripix.ops.lazy import lazy_module
 if TYPE_CHECKING:
     import numpy as np
@@ -23,7 +23,10 @@ else:
 
 from kiripix.ops.colour import U8, has_partial_alpha, nearest_index, srgb_to_oklab
 
-BoolMask = npt.NDArray[np.bool_]
+if TYPE_CHECKING:
+    BoolMask = npt.NDArray[np.bool_]
+else:
+    BoolMask = Any  # the array types are for the type checker; numpy loads late
 RGB = tuple[int, int, int]
 
 

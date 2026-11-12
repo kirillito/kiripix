@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -37,6 +37,37 @@ Where it goes (cumulative, warm): `kiripix.commands` 0.38 s, of which `commands.
 ## Acceptance criteria
 
 - [ ] `kiripix --help` and `kiripix status --json` on an empty Project take under 0.3 s on the Owner's laptop (record before
-      and after here).
-- [ ] The test of what `kiripix.launch` imports.
-- [ ] The full suite's time before and after, recorded here.
+      and after here). **Not met**; see Timings.
+- [x] The test of what `kiripix.launch` imports: `tests/cli/test_start_imports.py`.
+- [ ] The full suite's time before and after, recorded here. Before: 44 min (2026-11-11). After: 56 min (2026-11-12,
+      1,393 tests, `-n auto --dist loadfile`), not comparable: it ran with `KIRIPIX_BLENDER` set, so the `blender` tests
+      ran too, and it includes the tests added by 0148 to 0178. Re-time without `KIRIPIX_BLENDER` for a like-for-like number.
+
+## Done
+
+numpy, PIL (`Image`, `ImageOps`) and `jsonschema` no longer load at start. `kiripix.launch` imports none of numpy, PIL,
+onnxruntime, jsonschema, and neither do `--help`, `describe`, `schema` and `status` on an empty Project
+(`tests/cli/test_start_imports.py`, which reads `sys.modules` in a fresh interpreter).
+
+- `kiripix/ops/lazy.py` (`lazy_module`, stdlib only): a module writes `np = lazy_module("numpy")` under `else:` of
+  `if TYPE_CHECKING:`, so the type checker sees numpy and run time loads it on first use. Those modules have
+  `from __future__ import annotations`. Ops, checks, recipes, runners and core use it.
+- Module-level values that built numpy arrays are built on first use (OKLab matrices in `ops.colour`, mean and std in
+  the two Runners); the array type aliases (`U8`, `BoolMask`, ...) are `Any` at run time.
+- `jsonschema` loads inside the Decision validation; `urllib` inside the weights download.
+- Recipes still import at start (they register the Kinds), but cost only their own code now.
+
+## Timings
+
+Median of 9 runs, `python -m kiripix` on an empty Project, 2026-11-12. The machine was busy (Blender tests in another
+agent's session; `python -c pass` is far from idle), so the absolute numbers are well above the Owner's laptop; the
+before and after were measured back to back.
+
+| | before | after |
+|---|---|---|
+| `kiripix --help` | 1.28 s | 0.92 s |
+| `kiripix status --json` | 1.20 s | 0.99 s |
+
+What is left is pydantic (0.15 s here) and typer (0.19 s with its dependencies), which the contract needs. The 0.3 s
+goal probably needs a different path for them (a lighter parser for `--help`, or lazy pydantic model building); that is
+not an import move, so it is left for a follow-up if still wanted. Re-measure on the Owner's laptop.

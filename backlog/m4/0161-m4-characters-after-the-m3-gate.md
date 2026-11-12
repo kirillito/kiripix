@@ -28,7 +28,7 @@ adjust:
 |---|---|---|
 | 1 | [0156](0156-m4-edit-a-clip.md) (the Decision), then [0157](0157-m4-ui-edit-a-clip.md) (the clips screen) | work |
 | 2 | [0158](0158-m4-transition-clips-trial.md) | trial: the Owner picks how transitions are made |
-| 3 | [0159](0159-m4-part-vanishes-check.md) | work, after 0148. The Owner's own fix is bigger eyes in the Model |
+| 3 | [0159](0159-m4-part-vanishes-check.md) | work, after 0148. The Owner's own fix is bigger eyes in the Model, checked in [0197](0197-m4-mc02-bigger-eyes.md) |
 | 4 | [0160](0160-m4-flatter-character-look-trial.md) | trial, after 0148 (and better after 0150): the Owner picks the options to build |
 | - | [0162](0162-m4-render-measures-meshes-that-dont-render.md) | a bug found while closing M3 |
 

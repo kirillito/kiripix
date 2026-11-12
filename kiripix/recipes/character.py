@@ -29,7 +29,7 @@ from kiripix.recipes.clips import CLIP, check_clips, clips_needs_input, run_clip
 from kiripix.recipes.rig import BONE, UPLOAD, rig_needs_input, run_rig
 
 MODEL_HEIGHT = 2.0  # the normalised Model's height in Blender units: `render` frames it, so this is only a known size
-MODEL_SCHEMA_VERSION = 2  # 2: `vertices` and `upload` (read by the `rig` Stage); `facing` and `ignored` are additive keys
+MODEL_SCHEMA_VERSION = 2  # 2: `vertices` and `upload` (read by the `rig` Stage); `facing`, `ignored` and `fps` are additive keys
 STILL = "still.png"  # a 256 px preview of the Model (facing applied) for the UI; nothing below `model` reads it
 FACINGS = ["-y", "+y", "-x", "+x"]  # the way the Model faces in the file; `model` turns it to face -Y, toward the camera
 
@@ -138,7 +138,6 @@ CHARACTER = KindSpec(
             checks=(
                 CheckSpec(code="clips.source_missing", description="Each clip's source is an action or a clip-source file."),
                 CheckSpec(code="clips.range", description="Each clip's frames are inside its action's."),
-                CheckSpec(code="clips.duplicate_name", description="A clip name is used once in the character."),
                 CheckSpec(code="clips.bad_name", description="A clip name is lower-case snake_case with no direction suffix."),
                 CheckSpec(code="clips.root_motion", description="No clip moves its root (a warning: the render keeps the feet "
                                                                 "at the pivot)."),
@@ -201,13 +200,28 @@ CHARACTER = KindSpec(
                 ParamSpec(
                     name="colors",
                     type="int",
-                    description="How many Project palette colours the character uses, across all its frames.",
+                    description="How many Project palette colours the character uses, across all its frames. With `parts`, "
+                                "this counts only the materials in no part.",
                     default=16,
                     minimum=1,
                 ),
+                ParamSpec(
+                    name="parts",
+                    type="str",
+                    description="The swappable parts, comma-separated, each one of render's materials or several joined by "
+                                "`+`, each with a ramp of palette colours of its own, dark to light, that no other part, "
+                                "fixed colour or outline uses; `name:n` sets a part's ramp length (render's `bands` when "
+                                "unset). For example skin,hair,jacket+hood,jeans,boots or skin:4,hair. Empty: one palette "
+                                "for all.",
+                    default="",
+                ),
                 *PALETTE_PARAMS,
             ),
-            checks=(CheckSpec(code="palette.off_palette", description="Every pixel is a palette colour."),),
+            checks=(
+                CheckSpec(code="palette.off_palette", description="Every pixel is a palette colour."),
+                CheckSpec(code="palette.ramp_shared", description="No colour is in two parts' ramps, and no pixel of one "
+                                                                  "part is in another part's ramp."),
+            ),
             run=run_character_palette,
             check=check_character_palette,
             available_from="M3",
@@ -225,10 +239,16 @@ CHARACTER = KindSpec(
                                       "(none where it touches the frame's edge); edge: it is the silhouette's edge pixels."),
                 ParamSpec(name="normal_levels", type="int", minimum=1, maximum=256, default=8,
                           description="The normal pass keeps this many values per axis."),
+                ParamSpec(name="watch_parts", type="str", default="",
+                          description="sheet.part_vanishes watches these materials, comma-separated by name; all when empty."),
+                ParamSpec(name="part_min_pixels", type="int", minimum=1, default=1,
+                          description="A material with fewer pixels than this in a frame counts as missing from it."),
             ),
             checks=(
                 CheckSpec(code="normal.size_mismatch", description="Normal map size equals the colour frame's."),
                 CheckSpec(code="palette.off_palette", description="Every colour pixel, outline included, is a Project palette colour."),
+                CheckSpec(code="sheet.part_vanishes", description="A material seen in most frames of a clip and direction "
+                                                                  "isn't missing from some (a warning)."),
             ),
             run=run_character_finish,
             check=check_character_finish,

@@ -11,7 +11,8 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "pivot": [<x>, <y>] in px, where the ground point under the root lands, "device": "cpu" | "gpu",
          "toon": {"bands": 2 to 4, "shadow": 0 to 1, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
                   toward the camera>}}, "output": <folder to write the frames into>}
-result: {"device": <what rendered>, "depth_range": [<near>, <far>], "frames": {<clip>: {<direction>: [{"pivot": [x, y]}]}}}
+result: {"device": <what rendered>, "depth_range": [<near>, <far>], "materials": [{"index": <from 1>, "name"}],
+         "frames": {<clip>: {<direction>: [{"pivot": [x, y]}]}}}
 
 With `"measure": true` in args nothing is rendered or written (ticket 0155): the result is where each frame lands, for sizing
 the cell, `{"frames": {<clip>: {<direction>: [{"bounds": [left, top, right, bottom], "under": [x, y]}]}}}` in px from the
@@ -20,10 +21,11 @@ point the camera orbits (`measure_poses`).
 Files, per clip, direction and frame (index from 0, three digits): `color/<clip>/<dir>/<index>.png` (RGBA, 8 bit),
 `normal/...` (RGBA: the camera-space normal as (v + 1) / 2 * 255, X right, Y up, Z toward the camera),
 `depth/...` (gray, 16 bit: 0 at `depth_range[0]`, 65535 at `[1]` and in the background; distance along the view axis,
-in Blender units) and `mask/...` (gray, 8 bit, 0 or 255). Colour and normal carry the mask as their alpha, so it is 0 or 255.
+in Blender units) and `mask/...` (gray, 8 bit, 0 or 255) and `material/...` (gray, 8 bit: the pixel's material, numbered from 1 in the order of
+`materials`, the names of the materials the rendered meshes use sorted, 0 for the background; ticket 0148). Colour and normal carry the mask as their alpha, so it is 0 or 255.
 
 Cycles renders it at one sample with a box filter 0.01 wide and no denoising, so every pixel is its centre's value and there
-is no anti-aliasing. Every pass is a primary-ray value (Diffuse Color, Normal, Depth, Object Index), so the passes don't
+is no anti-aliasing. Every pass is a primary-ray value (Diffuse Color, Normal, Depth, Object Index, Material Index), so the passes don't
 depend on the device and don't have noise. The colour pass is the Diffuse Color toon-shaded by `shade` (ticket 0105): a light
 fixed in camera space, stepped in `bands` levels in numpy, which works in Cycles on CPU and GPU alike.
 
@@ -202,14 +204,20 @@ def restore(kept) -> None:
     bpy.context.view_layer.update()
 
 
+def rendered_meshes() -> list:
+    """The mesh objects that render: not hidden from renders, and in a collection that renders (`rendered_collections`).
+    Measuring and rendering count the same ones (ticket 0162)."""
+    shown = rendered_collections()
+    return [o for o in bpy.data.objects
+            if o.type == "MESH" and not o.hide_render and any(c in shown for c in o.users_collection)]
+
+
 def measure() -> tuple[Vector, Vector]:
-    """The world-space corners of every mesh in the rest pose (as `normalise_model.py` measures)."""
+    """The world-space corners of every mesh that renders, in the rest pose (as `normalise_model.py` measures)."""
     kept = at_rest()
     graph = bpy.context.evaluated_depsgraph_get()
     low, high = Vector((1e18,) * 3), Vector((-1e18,) * 3)
-    for obj in bpy.data.objects:
-        if obj.type != "MESH":
-            continue
+    for obj in rendered_meshes():
         evaluated = obj.evaluated_get(graph)
         for corner in evaluated.bound_box:
             world = evaluated.matrix_world @ Vector(corner)
@@ -290,6 +298,21 @@ def action_for(clip: dict):
     return action
 
 
+MAX_MATERIALS = 255  # an 8 bit pass, 0 being the background
+
+
+def number_materials() -> list:
+    """The materials of the meshes that render, numbered from 1 by name (Material Index, a primary-ray value), as
+    [{"index", "name"}]. A mesh with no material slot is index 0, as the background is."""
+    used = {slot.material for obj in rendered_meshes() for slot in obj.material_slots if slot.material is not None}
+    ordered = sorted(used, key=lambda m: m.name)
+    if len(ordered) > MAX_MATERIALS:
+        raise ValueError(f"the Model has {len(ordered)} materials; the material pass holds at most {MAX_MATERIALS}")
+    for index, material in enumerate(ordered, start=1):
+        material.pass_index = index
+    return [{"index": index, "name": material.name} for index, material in enumerate(ordered, start=1)]
+
+
 def set_up_scene(args: dict, armature, root_bone: str) -> dict:
     scene = bpy.context.scene
     width, height = args["frame"]
@@ -315,6 +338,7 @@ def set_up_scene(args: dict, armature, root_bone: str) -> dict:
     layer.use_pass_z = True
     layer.use_pass_normal = True
     layer.use_pass_object_index = True
+    layer.use_pass_material_index = True
     layer.use_pass_diffuse_color = True
 
     for obj in bpy.data.objects:
@@ -326,6 +350,7 @@ def set_up_scene(args: dict, armature, root_bone: str) -> dict:
                 if node.type == "TEX_IMAGE":
                     node.interpolation = "Closest"  # no texture filtering
 
+    materials = number_materials()
     bpy.context.view_layer.update()
     low, high = measure()
     head = armature.matrix_world @ armature.data.bones[root_bone].head_local  # the rest pose's root
@@ -358,7 +383,7 @@ def set_up_scene(args: dict, armature, root_bone: str) -> dict:
     landed = world_to_camera_view(scene, camera, ground)
     if abs(landed.x * width - float(args["pivot"][0])) > 0.01 or abs((1.0 - landed.y) * height - float(args["pivot"][1])) > 0.01:
         raise ValueError("the pivot did not land where it was asked to")
-    return {"ground": ground, "turntable": turntable, "camera": camera, "radius": radius}
+    return {"ground": ground, "turntable": turntable, "camera": camera, "radius": radius, "materials": materials}
 
 
 def choose_device(want: str) -> str:
@@ -438,6 +463,8 @@ def write_frame(output: Path, clip: str, direction: str, index: int, exr: Path, 
     png(output / "normal" / clip / direction / name, normal, "rgba")
     png(output / "depth" / clip / direction / name, np.floor(scaled * 65535.0 + 0.5), "l16")
     png(output / "mask" / clip / direction / name, alpha, "l8")
+    numbered = np.rint(channel(channels, "Material Index.X", "IndexMA.X")).astype(np.int64)
+    png(output / "material" / clip / direction / name, np.where(mask, np.clip(numbered, 0, 255), 0), "l8")
 
 
 def pose(armature, frame) -> None:
@@ -479,11 +506,8 @@ def rendered_collections() -> set:
 def posed_points() -> np.ndarray:
     """Every vertex of every mesh that renders, in the current pose, in world space: an (n, 3) array."""
     graph = bpy.context.evaluated_depsgraph_get()
-    shown = rendered_collections()
     found = []
-    for obj in bpy.data.objects:
-        if obj.type != "MESH" or obj.hide_render or not any(c in shown for c in obj.users_collection):
-            continue
+    for obj in rendered_meshes():
         evaluated = obj.evaluated_get(graph)
         mesh = evaluated.to_mesh()
         try:
@@ -579,7 +603,8 @@ def render(args: dict) -> dict:
                 done += 1
     shutil.rmtree(scratch, ignore_errors=True)
     progress(total, total, "done")
-    return {"device": device, "depth_range": [round(depth_range[0], 4), round(depth_range[1], 4)], "frames": pivots}
+    return {"device": device, "depth_range": [round(depth_range[0], 4), round(depth_range[1], 4)],
+            "materials": setup["materials"], "frames": pivots}
 
 
 def main() -> None:

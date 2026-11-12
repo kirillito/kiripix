@@ -7,7 +7,8 @@ last-bit difference between platforms' maths libraries can't flip a choice, and 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from functools import cache
+from typing import TYPE_CHECKING, Any, Literal
 
 from kiripix.ops.lazy import lazy_module
 if TYPE_CHECKING:
@@ -19,43 +20,46 @@ if TYPE_CHECKING:
 else:
     npt = lazy_module("numpy.typing")
 
-U8 = npt.NDArray[np.uint8]
-F64 = npt.NDArray[np.float64]
+if TYPE_CHECKING:
+    U8 = npt.NDArray[np.uint8]
+else:
+    U8 = Any  # the array types are for the type checker; numpy loads late
+if TYPE_CHECKING:
+    F64 = npt.NDArray[np.float64]
+else:
+    F64 = Any  # the array types are for the type checker; numpy loads late
 
 BayerSize = Literal[0, 2, 4, 8]
 
 _DISTANCE_DECIMALS = 12
 _CHUNK = 1 << 16
 
-_M1 = np.array(
-    [
-        [0.4122214708, 0.5363325363, 0.0514459929],
-        [0.2119034982, 0.6806995451, 0.1073969566],
-        [0.0883024619, 0.2817188376, 0.6299787005],
-    ]
+_M1_ROWS = (
+    (0.4122214708, 0.5363325363, 0.0514459929),
+    (0.2119034982, 0.6806995451, 0.1073969566),
+    (0.0883024619, 0.2817188376, 0.6299787005),
 )
-_M2 = np.array(
-    [
-        [0.2104542553, 0.7936177850, -0.0040720468],
-        [1.9779984951, -2.4285922050, 0.4505937099],
-        [0.0259040371, 0.7827717662, -0.8086757660],
-    ]
+_M2_ROWS = (
+    (0.2104542553, 0.7936177850, -0.0040720468),
+    (1.9779984951, -2.4285922050, 0.4505937099),
+    (0.0259040371, 0.7827717662, -0.8086757660),
 )
 
 
-def _srgb_to_linear_table() -> F64:
+@cache
+def _oklab_matrices() -> tuple[F64, F64, F64]:
+    """The sRGB-to-linear table and the two OKLab matrices, built on first use so numpy loads late."""
     c = np.arange(256, dtype=np.float64) / 255.0
-    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
-
-
-_LINEAR = _srgb_to_linear_table()
+    linear = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    return linear, np.array(_M1_ROWS), np.array(_M2_ROWS)
 
 
 def srgb_to_oklab(rgb: U8) -> F64:
     """Convert (..., 3) uint8 sRGB to (..., 3) float64 OKLab (L, a, b)."""
-    linear = _LINEAR[rgb]
-    lms = np.cbrt(linear @ _M1.T)
-    result: F64 = lms @ _M2.T
+    table, m1, m2 = _oklab_matrices()
+    linear = table[rgb]
+    lms = np.cbrt(linear @ m1.T)
+    result: F64 = lms @ m2.T
     return result
 
 

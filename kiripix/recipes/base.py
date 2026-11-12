@@ -303,6 +303,7 @@ class KindSpec:
     description: str
     stages: tuple[StageSpec, ...]
     params: tuple[ParamSpec, ...] = ()
+    takes_sheets: bool = False  # imports 2D frame sheets (`import --role sheet`, `src/sheets/`) instead of Variants
 
     def stage(self, name: str) -> StageSpec | None:
         return next((s for s in self.stages if s.name == name), None)

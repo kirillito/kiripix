@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from conftest import Kiripix
-from test_character_clips import WALK, clip
+from test_character_clips import IDLE, WALK, clip
 from test_character_finish import finished
 from test_character_model import HERO
 from test_export import GENERATED, godot_project, node, set_target
@@ -125,6 +125,20 @@ def test_a_clip_taken_away_is_refused_and_a_clip_added_is_fine(project: Kiripix)
     assert data["counter"] == 2
     assert len(manifest(project)["ids"]["clips"]) == 24
     assert {f"walk_{d}" for d in DIRECTIONS} <= set(manifest(project)["ids"]["clips"])
+
+
+def test_a_clip_changed_after_an_export_keeps_its_ids_and_exports_fewer_frames(project: Kiripix) -> None:
+    exportable_character(project)  # hit (4 frames) and idle (10)
+    project.json("export", HERO)
+    ids = manifest(project)["ids"]["clips"]
+
+    clip(project, {**IDLE, "end": 12})  # 5 frames
+    project.json("run", HERO)
+    data = project.json("export", HERO)["data"]
+
+    assert data["counter"] == 2
+    assert manifest(project)["ids"]["clips"] == ids
+    assert (project.cwd / FRAMES).read_text("utf-8").count("[sub_resource") == 8 * 9
 
 
 def test_editing_the_scene_refuses_and_force_backs_it_up(project: Kiripix) -> None:

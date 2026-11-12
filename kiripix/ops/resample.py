@@ -28,8 +28,14 @@ else:
 
 from kiripix.ops.colour import U8, srgb_to_oklab
 
-BoolMask = npt.NDArray[np.bool_]
-IntArray = npt.NDArray[np.int64]
+if TYPE_CHECKING:
+    BoolMask = npt.NDArray[np.bool_]
+else:
+    BoolMask = Any  # the array types are for the type checker; numpy loads late
+if TYPE_CHECKING:
+    IntArray = npt.NDArray[np.int64]
+else:
+    IntArray = Any  # the array types are for the type checker; numpy loads late
 
 OPAQUE_FROM = 128  # an alpha at or above this counts as opaque when alpha is binarised
 

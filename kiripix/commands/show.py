@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.decisions import DecisionOut, current_decisions
 from kiripix.commands.registry import CliMeta, command
-from kiripix.core import sources
+from kiripix.core import sheets, sources
 from kiripix.core.assets import Asset, load_asset
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
@@ -29,6 +29,10 @@ class VariantOut(BaseModel):
     imported_as: str | None = Field(
         description="The file name it was imported with, or null if it was imported before Kiripix recorded names.")
     size: int = Field(description="The stored file's size in bytes.")
+
+
+class SheetOut(VariantOut):
+    png_count: int | None = Field(description="A ZIP sheet's PNG count; null for a PNG sheet.")
 
 
 class StageDetail(BaseModel):
@@ -61,6 +65,7 @@ class ShowData(BaseModel):
     picked: str | None
     clip_sources: list[VariantOut] = Field(description="A character's animation files, named by file stem.")
     rigged: VariantOut | None = Field(description="A character's rigged file.")
+    sheets: list[SheetOut] = Field(description="A sprite's imported sheets (PNGs and ZIPs), named by hash.")
     stages: list[StageDetail]
     export_command: str | None = Field(
         None, description="While every Stage is done and the game doesn't have what is built: the Command that exports it.")
@@ -70,6 +75,8 @@ class ShowData(BaseModel):
         lines += [f"  variant {v.name}{' (picked)' if v.name == self.picked else ''}" for v in self.variants]
         lines += [f"  clip source {c.name}" for c in self.clip_sources]
         lines += [f"  rigged {self.rigged.file}"] if self.rigged is not None else []
+        lines += [f"  sheet {s.name} ({s.imported_as or s.file}, {s.size} bytes"
+                  + (f", {s.png_count} PNGs" if s.png_count is not None else "") + ")" for s in self.sheets]
         for stage in self.stages:
             params = ", ".join(f"{k}={v}" for k, v in stage.params.items())
             lines.append(f"  {stage.stage:<10} {stage.status}" + (f"  {params}" if params else ""))
@@ -136,6 +143,8 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
                       for name, path in sources.clip_sources(asset).items()],
         rigged=_variant(project, asset, names, rigged_path.stem, rigged_path)
         if (rigged_path := sources.rigged(asset)) is not None else None,
+        sheets=[SheetOut(**_variant(project, asset, names, name, path).model_dump(), png_count=sheets.png_count(path))
+                for name, path in sheets.sheets(asset).items()],
         stages=stages,
         export_command=export_command(project, asset, cache, states),
     )
