@@ -174,6 +174,77 @@ def part_ramps(
     return ramps
 
 
+_LIGHTNESS_DECIMALS = 3  # lightness is compared in steps of 0.001 OKLab L, so a break is a value the pixels really have
+
+
+def _lightness(rgb: U8) -> F64:
+    """OKLab L of each (…, 3) colour, rounded to `_LIGHTNESS_DECIMALS`."""
+    shape = rgb.shape[:-1]
+    lightness: F64 = np.round(srgb_to_oklab(rgb.reshape(-1, 3))[:, 0], _LIGHTNESS_DECIMALS).reshape(shape)
+    return lightness
+
+
+def lightness_breaks(
+    frames: Sequence[U8],
+    labels: Sequence[npt.NDArray[np.integer[Any]]],
+    materials: Collection[int],
+    steps: int,
+) -> list[float]:
+    """Where a part's lightness classes start: `steps - 1` ascending OKLab L values, for mapping the part onto a ramp it didn't
+    choose (a ramp the Project's table gives) by lightness order, dark to dark.
+
+    The part is the opaque pixels of `materials` in all the frames together. Their lightness (OKLab L, rounded to 0.001) is
+    split into `steps` classes of neighbouring values by optimal 1-D clustering (the smallest total squared distance to each
+    class's weighted mean, so a toon render's shade bands stay whole; a tie goes to the earlier split). Class k starts at
+    breaks[k - 1]: a pixel of lightness L is in class `searchsorted(breaks, L, "right")`. So a darker or a lighter texture
+    than the one the ramp came from still uses every step, as long as it has that many shades. With fewer shades than
+    steps, they are spread evenly over the steps, the darkest on the first and the lightest on the last; one shade alone
+    takes the middle step. A break that no shade reaches is infinity. No pixel at all gives all breaks infinite.
+    """
+    if steps < 1:
+        raise ValueError("a ramp needs at least 1 step")
+    if len(frames) != len(labels):
+        raise ValueError("every frame needs a label image")
+    pixels = [f[..., :3][_part_mask(f, lab, materials)] for f, lab in zip(frames, labels, strict=True)]
+    opaque = np.concatenate(pixels) if pixels else np.zeros((0, 3), dtype=np.uint8)
+    if steps == 1:
+        return []
+    if len(opaque) == 0:
+        return [float("inf")] * (steps - 1)
+    colours, counts = np.unique(opaque, axis=0, return_counts=True)
+    values, inverse = np.unique(_lightness(colours), return_inverse=True)
+    weight = np.bincount(inverse.ravel(), weights=counts.astype(np.float64), minlength=len(values))
+    n = len(values)
+    if n <= steps:
+        level = [0 if n == 1 else round(i * (steps - 1) / (n - 1)) for i in range(n)]
+        if n == 1:
+            level = [(steps - 1) // 2]
+        return [next((float(values[i]) for i in range(n) if level[i] >= k), float("inf")) for k in range(1, steps)]
+    # cost[i, j]: the weighted squared distance of values i..j-1 (as one class) to their weighted mean, from prefix sums
+    w = np.concatenate([[0.0], np.cumsum(weight)])
+    wx = np.concatenate([[0.0], np.cumsum(weight * values)])
+    wxx = np.concatenate([[0.0], np.cumsum(weight * values * values)])
+    starts, ends = np.arange(n + 1)[:, None], np.arange(n + 1)[None, :]
+    span_w = w[ends] - w[starts]
+    span_wx = wx[ends] - wx[starts]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cost = (wxx[ends] - wxx[starts]) - np.where(span_w > 0, span_wx * span_wx / span_w, 0.0)
+    cost = np.where(ends > starts, np.round(np.maximum(cost, 0.0), 12), np.inf)
+    best = cost[0].copy()  # best[j]: values 0..j-1 in one class
+    choice: list[F64] = []
+    for _ in range(1, steps):
+        totals = best[:, None] + cost  # [i, j]: values 0..i-1 in the classes so far, i..j-1 in a new one
+        split = totals.argmin(axis=0)  # the first, smallest i on a tie
+        choice.append(split)
+        best = np.round(totals[split, np.arange(n + 1)], 12)
+    starts_of: list[int] = []
+    end = n
+    for split in reversed(choice):
+        end = int(split[end])
+        starts_of.append(end)
+    return [float(values[i]) for i in reversed(starts_of)]
+
+
 def quantize_by_part(
     frame: U8,
     labels: npt.NDArray[np.integer[Any]],
@@ -182,6 +253,7 @@ def quantize_by_part(
     fixed: U8,
     dither: BayerSize = 0,
     strength: float = 1.0,
+    breaks: Mapping[str, Sequence[float]] | None = None,
 ) -> U8:
     """Map each opaque pixel onto its own part's ramp, or onto `fixed` when its material is in no part.
 
@@ -189,6 +261,10 @@ def quantize_by_part(
     (`dither` 2, 4 or 8) offsets lightness by `strength` times the spread of that ramp alone, with the Bayer cell
     taken from the pixel's position in the frame, so a dithered pixel never leaves its ramp. Alpha as in `quantize`:
     0 stays (0, 0, 0, 0), anything but 0 and 255 is refused.
+
+    A part in `breaks` is mapped by lightness order instead: a pixel of OKLab L (rounded to 0.001) takes the ramp step
+    `searchsorted(breaks[part], L, "right")`, with the breaks `lightness_breaks` worked out for the part over all the
+    character's frames. Such a part isn't dithered: its steps are classes of the part's own shades, not distances.
     """
     if labels.shape != frame.shape[:2]:
         raise ValueError("the label image and the frame differ in size")
@@ -201,9 +277,20 @@ def quantize_by_part(
     opaque = frame[..., 3] == 255
     in_part = np.zeros(opaque.shape, dtype=bool)
     groups: list[tuple[npt.NDArray[np.bool_], U8]] = []
+    by_lightness = breaks or {}
     for name, materials in parts.items():
         mask = _part_mask(frame, labels, materials)
         in_part |= mask
+        if name in by_lightness:
+            ramp = np.asarray(ramps[name], dtype=np.uint8).reshape(-1, 3)
+            if len(by_lightness[name]) != len(ramp) - 1:
+                raise ValueError(f"part {name!r} has {len(ramp)} steps and {len(by_lightness[name])} breaks")
+            if mask.any():
+                step = np.searchsorted(np.asarray(by_lightness[name], dtype=np.float64), _lightness(frame[..., :3][mask]),
+                                       side="right")
+                out[mask, :3] = ramp[step]
+                out[mask, 3] = 255
+            continue
         groups.append((mask, ramps[name]))
     groups.append((opaque & ~in_part, fixed))
     for mask, colours in groups:

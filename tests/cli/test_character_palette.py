@@ -59,7 +59,7 @@ def test_run_maps_every_frame_to_one_subset_of_the_palette(project: Kiripix) -> 
     folder = built(project, "colors=3")
 
     document = palette_json(folder)
-    assert document["schema_version"] == 2 and document["parts"] == []
+    assert document["schema_version"] == 3 and document["parts"] == []
     colours = document["colors"]
     palette = project_palette(project)
     assert len(colours) == 3 and [c["index"] for c in colours] == sorted(c["index"] for c in colours)

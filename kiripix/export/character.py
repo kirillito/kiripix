@@ -16,20 +16,23 @@ RAMPS_FILE = "ramps.png"
 
 
 def ramp_rows(character: dict[str, Any]) -> list[str]:
-    """The part names in `ramps.png`'s row order, which `metadata/kiripix_parts` lists. For now `character.json`'s order (dark
-    to light is within a ramp, not between them); rows are written from these names, never by position (ticket 0169)."""
-    return [str(part["name"]) for part in character.get("parts", [])]
+    """The part names in `ramps.png`'s row order, which `metadata/kiripix_parts` lists: `character.json`'s `rows`, the Project
+    ramp table's parts in its order, so the same list on every character (ticket 0169); with no table, the character's own
+    parts. Rows are written from these names, never by position."""
+    return [str(row["name"]) for row in character.get("rows", [])]
 
 
 def ramps_png(character: dict[str, Any], rows: list[str]) -> bytes:
-    """`ramps.png`: one row per name in `rows`, one pixel per ramp step, dark to light, the row padded to the longest ramp with
-    transparent pixels. A name the character has no part for is a fully transparent row."""
+    """`ramps.png`: one row per name in `rows`, one pixel per ramp step, dark to light, the row padded with transparent pixels
+    to the longest ramp of the character's parts and of `character.json`'s `rows` (the table's lengths). A name the character
+    has no part for is a fully transparent row."""
     from io import BytesIO
 
     from PIL import Image
 
     ramps = {str(part["name"]): part["rgb"] for part in character.get("parts", [])}
-    width = max([len(ramps.get(name, [])) for name in rows] + [1])
+    lengths = {str(row["name"]): int(row["length"]) for row in character.get("rows", [])}
+    width = max([len(ramps.get(name, [])) for name in rows] + [lengths.get(name, 0) for name in rows] + [1])
     pixels = bytearray(len(rows) * width * 4)
     for row, name in enumerate(rows):
         for step, (red, green, blue) in enumerate(ramps.get(name, [])):

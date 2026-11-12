@@ -148,13 +148,16 @@ def test_ramps_add_writes_the_table_from_palette_json_and_a_repeat_writes_nothin
 
 def test_a_part_already_in_the_table_is_refused_when_its_length_or_colours_differ(project: Kiripix) -> None:
     hero(project)
-    project.json("ramps-add", HERO, "--parts", "skin", owner=True)
     path = project.cwd / "kiripix.toml"
+    before = path.read_text(encoding="utf-8")
+    project.json("ramps-add", HERO, "--parts", "skin", owner=True)
     text = path.read_text(encoding="utf-8")
 
     with_colours = project.json("ramps-add", HERO, "--parts", "skin", "--colours", owner=True, expect=1)
     assert codes(with_colours) == ["ramps.part_differs"] and "rgb" in with_colours["findings"][0]["message"]
+    path.write_text(before, encoding="utf-8")  # with the table, a length of the hero's own is refused (ticket 0168)
     build(project, HERO, "skin:4")
+    path.write_text(text, encoding="utf-8")
     longer = project.json("ramps-add", HERO, "--parts", "skin", owner=True, expect=1)
 
     assert codes(longer) == ["ramps.part_differs"]
@@ -180,8 +183,8 @@ def test_two_characters_that_disagree_on_a_part_raise_palette_parts_differ(proje
 
 def test_a_different_length_is_named(project: Kiripix) -> None:
     hero(project)
+    twin(project, "cloth,skin:4")  # built before the table: with it, a length of the twin's own is refused (ticket 0168)
     project.json("ramps-add", HERO, "--parts", "cloth,skin", owner=True)
-    twin(project, "cloth,skin:4")
 
     result = project.json("check", "--all", expect=2)
 

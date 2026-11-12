@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -30,12 +30,26 @@ Spec §6.3 (palette). Part of [0166](0166-m4-ramps-match-across-characters.md).
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake: two characters with materials named differently, mapped to the same table parts, get the same rows
+- [x] CLI seam, on the fake: two characters with materials named differently, mapped to the same table parts, get the same rows
       and lengths in `palette.json`, and the same colours for a part with `rgb`.
-- [ ] Changing the table makes both characters' `palette` stale and neither's `render`.
-- [ ] `palette.part_not_in_table` is raised with an `owner_action`; `palette.ramp_shared` still holds, now across the reserved
+- [x] Changing the table makes both characters' `palette` stale and neither's `render`.
+- [x] `palette.part_not_in_table` is raised with an `owner_action`; `palette.ramp_shared` still holds, now across the reserved
       colours too.
-- [ ] A golden test: a part with a lighter and a darker texture both use every step of a 3-colour given ramp.
-- [ ] On mc02 with a table filled from mc02 itself: the 52 px frames are byte-equal to 0150's (same ramps, same order).
+- [x] A golden test: a part with a lighter and a darker texture both use every step of a 3-colour given ramp.
+- [x] On mc02 with a table filled from mc02 itself: the 52 px frames are byte-equal to 0150's (same ramps, same order).
+
+Done 2026-11-12. Tests: `tests/cli/test_palette_table.py`; the Op `lightness_breaks` (and `quantize_by_part`'s `breaks`) in
+`tests/golden/test_part_ramps.py` (`lightness_lighter.png`, `lightness_darker.png`).
+
+- `palette.json` (schema 3) also carries `table`, the ramp table the Stage read, so `finish` and the Check know the colours of
+  parts the character lacks, and 0169's export knows every row.
+- The lightness classes are an optimal 1-D clustering of the part's OKLab L over all frames (toon shade bands stay whole); a
+  part with `rgb` isn't dithered.
+- `parts` accepts `name=materials` with an empty table too.
+- Adding `character.ramps` to `palette`'s inputs changes its input hash, so every built character's `palette` is stale once
+  after this change (not `render`).
+- mc02, in a scratch copy of 0150's build (the art Project untouched): with no table, with a table filled from mc02 without
+  colours, and with skin and hair given mc02's colours, all 1096 frames are byte-equal to 0150's, as are the fixed colours and
+  every ramp. (`jacket+hood` is renamed `top=jacket+hood`, since a table name is snake_case.)
 
 Budget: 150–250k tokens.

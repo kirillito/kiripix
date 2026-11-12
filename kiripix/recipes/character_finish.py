@@ -76,6 +76,9 @@ def _refuse_a_ramp_colour(run: StageRun, palette: np.ndarray, index: int, rgb: t
     except (OSError, ValueError):
         return
     parts = document.get("parts", [])
+    if parts:  # the Project's ramp table reserves its colours for every character with a part of it (ticket 0168)
+        parts = parts + [r for r in document.get("table", []) if r.get("rgb") is not None
+                         and all(p["name"] != r["name"] for p in parts)]
     owner = next((p["name"] for p in parts if list(rgb) in p["rgb"]), None)
     if owner is None:
         return

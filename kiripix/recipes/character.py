@@ -195,7 +195,7 @@ CHARACTER = KindSpec(
         StageSpec(
             name="palette",
             description="One palette per character across all frames, and orphan cleanup.",
-            inputs=StageInputs(settings=["palette"]),
+            inputs=StageInputs(settings=["palette", "character.ramps"]),
             params=(
                 ParamSpec(
                     name="colors",
@@ -210,9 +210,11 @@ CHARACTER = KindSpec(
                     type="str",
                     description="The swappable parts, comma-separated, each one of render's materials or several joined by "
                                 "`+`, each with a ramp of palette colours of its own, dark to light, that no other part, "
-                                "fixed colour or outline uses; `name:n` sets a part's ramp length (render's `bands` when "
-                                "unset). For example skin,hair,jacket+hood,jeans,boots or skin:4,hair. Empty: one palette "
-                                "for all.",
+                                "fixed colour or outline uses; `name=materials` names a part apart from its materials; "
+                                "`name:n` sets a part's ramp length (render's `bands` when unset). For example "
+                                "skin,hair,jacket+hood,jeans,boots or skin:4,hair. With the Project's ramp table "
+                                "([[character.ramps]]) each part is a part of the table, which gives its length, its row and "
+                                "maybe its colours, such as skin,hair,top=jacket+hood. Empty: one palette for all.",
                     default="",
                 ),
                 *PALETTE_PARAMS,

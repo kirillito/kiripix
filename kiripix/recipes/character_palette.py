@@ -32,6 +32,7 @@ else:
 from kiripix.checks import Finding, Position, check_ramp_shared
 from kiripix.ops import (
     conformance,
+    lightness_breaks,
     palette_subset,
     part_ramps,
     quantize,
@@ -42,7 +43,10 @@ from kiripix.ops import (
 from kiripix.recipes.base import StageFailure, StageRun
 from kiripix.recipes.common import BAYER, palette_rgb, read_rgba, write_rgba
 
-PALETTE_SCHEMA_VERSION = 2  # 2: `parts` (each part's name, materials, indexes and RGB, dark to light); empty with no `parts`
+# 2: `parts` (each part's name, materials, indexes and RGB, dark to light); empty with no `parts`
+# 3: each part's `row` and `shared`, and `table`, the Project's ramp table the Stage read (ticket 0168)
+PALETTE_SCHEMA_VERSION = 3
+TABLE_SETTING = "character.ramps"
 RENDER_FILE = "render.json"
 PALETTE_FILE = "palette.json"
 
@@ -95,35 +99,53 @@ def _indexes(subset: np.ndarray, palette: np.ndarray, taken: list[int] | None = 
 
 @dataclass(frozen=True)
 class PartSpec:
-    """One swappable part as `parts` names it: its name (the key everywhere), its materials and its ramp length."""
+    """One swappable part as `parts` names it: its name (the key everywhere), its materials and its ramp length; with the
+    Project's ramp table, its `row` there and the table's colours (`rgb`, dark to light) when the table shares them."""
 
     name: str
     materials: list[str]
     steps: int
+    row: int | None = None
+    rgb: list[list[int]] | None = None
 
 
-def parse_parts(text: str, materials: list[str], bands: int, asset_id: str) -> list[PartSpec]:
-    """`skin,hair,jacket+hood,jeans:4` as parts. Each part is one material or several joined by `+`; `:n` sets its ramp length
-    (`bands` when unset). A part is named as written, without its length. StageFailure when a name is no material of the
-    render, a material is in two parts, a part is named twice, or a length isn't a whole number from 1."""
+def _table(run: StageRun) -> list[dict[str, Any]]:
+    """The Project's ramp table (`[[character.ramps]]`), each row {name, length, rgb}; empty when the Project has none."""
+    rows = run.settings.get(TABLE_SETTING) or []
+    return [dict(r) for r in rows]
+
+
+def parse_parts(text: str, materials: list[str], bands: int, asset_id: str,
+                table: list[dict[str, Any]] | None = None) -> list[PartSpec]:
+    """`skin,hair,top=jacket+hood,jeans:4` as parts. Each part is one material or several joined by `+`, named as written, or
+    `name=materials` to name it apart from its materials; `:n` sets its ramp length (`bands` when unset). With a non-empty
+    `table` (the Project's ramp table), every part's name must be a row of it, which gives its length and row, and `:n` is
+    refused. StageFailure when a material isn't render's, a material is in two parts, a part is named twice, a length isn't a
+    whole number from 1, or a part isn't in the table."""
     shown = ",".join(materials)
     fix = f"kiripix set {asset_id} palette parts={shown}"
+    rows = {str(r["name"]): (row, r) for row, r in enumerate(table or [])}
     parts: list[PartSpec] = []
     owner: dict[str, str] = {}
     for token in (t.strip() for t in text.split(",")):
         if not token:
             continue
-        name, colon, length = token.partition(":")
-        name = name.strip()
+        written, colon, length = token.partition(":")
+        name, equals, joined = (w.strip() for w in written.partition("="))
+        joined = joined if equals else name
         steps = bands
         if colon:
+            if rows:
+                raise StageFailure(f"part {name!r} sets its own ramp length ({token!r}); the Project's ramp table gives every "
+                                   f"part's length", code="palette.parts_invalid",
+                                   fix=f"kiripix set {asset_id} palette parts={text.replace(':' + length, '')}")
             if not length.strip().isdigit() or int(length) < 1:
                 raise StageFailure(f"the ramp length of part {name!r} is {length.strip()!r}, not a whole number from 1",
                                    code="palette.parts_invalid", fix=fix)
             steps = int(length)
-        names = [m.strip() for m in name.split("+")]
+        names = [m.strip() for m in joined.split("+")]
         unknown = [m for m in names if m not in materials]
-        if unknown or not all(names):
+        if unknown or not all(names) or not name:
             raise StageFailure(f"part {name!r} names {', '.join(repr(m) for m in unknown) or 'no material'}, which "
                                f"render's materials don't include; they are: {shown}", code="palette.part_unknown", fix=fix)
         if any(p.name == name for p in parts):
@@ -133,7 +155,20 @@ def parse_parts(text: str, materials: list[str], bands: int, asset_id: str) -> l
                 raise StageFailure(f"material {material!r} is in two parts, {owner[material]!r} and {name!r}",
                                    code="palette.parts_invalid", fix=fix)
             owner[material] = name
-        parts.append(PartSpec(name, names, steps))
+        row: int | None = None
+        rgb: list[list[int]] | None = None
+        if rows:
+            if name not in rows:
+                raise StageFailure(
+                    f"part {name!r} isn't in the Project's ramp table, whose parts are: {', '.join(rows)}",
+                    code="palette.part_not_in_table",
+                    owner_action=f"Add it to the table with `kiripix ramps-add <character> --parts {name}` from a character "
+                                 f"that has it, or as a [[character.ramps]] row in kiripix.toml; or map {asset_id}'s "
+                                 f"materials to a part of the table (parts=<part>={'+'.join(names)}).")
+            row, entry = rows[name]
+            steps = int(entry["length"])
+            rgb = [[int(c) for c in colour] for colour in entry["rgb"]] if entry.get("rgb") is not None else None
+        parts.append(PartSpec(name, names, steps, row, rgb))
     return parts
 
 
@@ -154,6 +189,13 @@ def _hex(rgb: np.ndarray) -> str:
     return "#%02x%02x%02x" % tuple(int(c) for c in rgb)
 
 
+def _reserved(table: list[dict[str, Any]]) -> np.ndarray:
+    """Every `rgb` colour of the table, as an (N, 3) array: no fixed colour, fitted part or outline of a character with a
+    table part may use one, even a colour of a part it lacks."""
+    colours = [colour for row in table if row.get("rgb") is not None for colour in row["rgb"]]
+    return np.array(colours, dtype=np.uint8).reshape(-1, 3)
+
+
 def run_character_palette(run: StageRun) -> None:
     render = run.upstream["render"]
     document = _render(run)
@@ -161,8 +203,14 @@ def run_character_palette(run: StageRun) -> None:
     palette = palette_rgb(run)
     count = int(run.params["colors"])
     materials = {str(m["name"]): int(m["index"]) for m in document.get("materials", [])}
-    specs = parse_parts(str(run.params.get("parts", "")), list(materials), int(document.get("bands", 3)), run.asset_id)
+    table = _table(run)
+    specs = parse_parts(str(run.params.get("parts", "")), list(materials), int(document.get("bands", 3)), run.asset_id, table)
     parts = {s.name: [materials[m] for m in s.materials] for s in specs}
+    fitted = [s for s in specs if s.rgb is None]
+    shared = [s for s in specs if s.rgb is not None]
+    reserved = _reserved(table) if specs else np.zeros((0, 3), dtype=np.uint8)
+    free = ~(palette[:, None, :] == reserved[None, :, :]).all(axis=2).any(axis=1) if len(reserved) else np.ones(len(palette),
+                                                                                                                bool)
     claimed = sorted(i for indexes in parts.values() for i in indexes)
     frames: list[np.ndarray] = []
     labels: list[np.ndarray] = []
@@ -183,33 +231,37 @@ def run_character_palette(run: StageRun) -> None:
             counted = [_fixed_only(f, lab, claimed) for f, lab in zip(frames, labels, strict=True)]
             has_fixed = any(bool((c[..., 3] == 255).any()) for c in counted)
             # `colors` is a ceiling: the ramps take their colours out of the same palette, so the fixed ones leave them room
-            room = len(palette) - sum(s.steps for s in specs)
+            available = palette[free]
+            room = len(available) - sum(s.steps for s in fitted)
             if has_fixed and room < 1:
                 raise StageFailure(f"the parts' ramps ask for {sum(s.steps for s in specs)} colours, and the palette has "
                                    f"{len(palette)}, so none is left for the materials in no part", code="palette.ramp_unavailable",
-                                   owner_action="Add colours to the Project palette, shorten the ramps (parts such as skin:2), "
-                                                "or name more materials as parts.")
-            subset = (palette_subset(counted, palette, min(count, room)) if has_fixed
+                                   owner_action="Add colours to the Project palette, shorten the ramps (parts such as skin:2, "
+                                                "or the lengths of the Project's ramp table), or name more materials as parts.")
+            subset = (palette_subset(counted, available, min(count, room)) if has_fixed
                       else np.zeros((0, 3), dtype=np.uint8))
         else:
             subset = palette_subset(frames, palette, count)
     except ValueError as error:
         raise StageFailure(f"can't choose the character's colours: {error}") from None
-    ramps: dict[str, np.ndarray] = {}
-    if specs:
+    ramps: dict[str, np.ndarray] = {s.name: np.array(s.rgb, dtype=np.uint8).reshape(-1, 3) for s in shared}
+    if fitted:
         try:
-            ramps = part_ramps(frames, labels, parts, palette, {s.name: s.steps for s in specs}, subset)
+            ramps.update(part_ramps(frames, labels, {s.name: parts[s.name] for s in fitted}, palette,
+                                    {s.name: s.steps for s in fitted}, np.concatenate([subset, reserved])))
         except ValueError as error:
             raise StageFailure(f"can't choose the part ramps: {error}; fewer fixed colours leave more for the ramps",
                                code="palette.ramp_unavailable",
                                fix=f"kiripix set {run.asset_id} palette colors={max(1, count - 1)}") from None
+    ramps = {s.name: ramps[s.name] for s in specs}  # in the order of `parts`
+    breaks = {s.name: lightness_breaks(frames, labels, parts[s.name], s.steps) for s in shared}
     dither, strength, orphans = BAYER[str(run.params["dither"])], float(run.params["strength"]), int(run.params["orphan_size"])
     for number, ((clip, direction, index, name), frame) in enumerate(zip(files, frames, strict=True)):
         run.check_cancel()
         run.progress(len(files) + number, len(files) * 2, f"mapping {clip}/{direction}/{index:03d}")
         try:
             if specs:
-                mapped = quantize_by_part(frame, labels[number], parts, ramps, subset, dither, strength)
+                mapped = quantize_by_part(frame, labels[number], parts, ramps, subset, dither, strength, breaks=breaks)
                 cleaned = remove_orphans_by_part(mapped, labels[number], parts, orphans)
             else:
                 cleaned = remove_orphans(quantize(frame, subset, dither, strength), orphans)
@@ -222,17 +274,19 @@ def run_character_palette(run: StageRun) -> None:
     taken: list[int] = []
     colours = [{"index": i, "rgb": [int(c) for c in rgb], "hex": _hex(rgb)}
                for i, rgb in zip(_indexes(subset, palette, taken), subset, strict=True)]
-    described = [{"name": s.name, "materials": s.materials, "indexes": _indexes(ramps[s.name], palette, taken),
+    described = [{"name": s.name, "materials": s.materials, "row": place if s.row is None else s.row,
+                  "shared": s.rgb is not None, "indexes": _indexes(ramps[s.name], palette, taken),
                   "rgb": [[int(c) for c in rgb] for rgb in ramps[s.name]], "hex": [_hex(rgb) for rgb in ramps[s.name]]}
-                 for s in specs]
+                 for place, s in enumerate(specs)]
     (run.output_dir / PALETTE_FILE).write_text(
-        json.dumps({"schema_version": PALETTE_SCHEMA_VERSION, "colors": colours, "parts": described}, indent=2) + "\n",
-        encoding="utf-8")
+        json.dumps({"schema_version": PALETTE_SCHEMA_VERSION, "colors": colours, "parts": described, "table": table},
+                   indent=2) + "\n", encoding="utf-8")
 
 
 def check_character_palette(run: StageRun) -> list[Finding]:
     """`palette.off_palette` on every colour frame, against the character's own colours (the fixed subset and every ramp), and
-    `palette.ramp_shared` when a ramp's colour is in two ramps or in a pixel of another part; a finding names the frame."""
+    `palette.ramp_shared` when a ramp's colour is in two ramps or in a pixel of another part, the colours the Project's ramp
+    table reserves for parts the character lacks included; a finding names the frame."""
     out = run.output_dir
     try:
         document = json.loads((out / PALETTE_FILE).read_text(encoding="utf-8"))
@@ -241,11 +295,14 @@ def check_character_palette(run: StageRun) -> list[Finding]:
         render = json.loads((out / RENDER_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError):
         return []  # nothing built to check
-    colours = [c["rgb"] for c in chosen] + [rgb for part in described for rgb in part["rgb"]]
+    colours = [c["rgb"] for c in chosen] + [rgb for part in described for rgb in part["rgb"]]  # what may be in a frame
     subset = np.array(colours, dtype=np.uint8).reshape(-1, 3)
     materials = {str(m["name"]): int(m["index"]) for m in render.get("materials", [])}
     parts = {p["name"]: [materials[m] for m in p["materials"] if m in materials] for p in described}
     ramps = {p["name"]: np.array(p["rgb"], dtype=np.uint8).reshape(-1, 3) for p in described}
+    if described:  # the table's colours of parts the character lacks are reserved all the same
+        ramps.update({str(r["name"]): np.array(r["rgb"], dtype=np.uint8).reshape(-1, 3) for r in document.get("table", [])
+                      if r.get("rgb") is not None and r["name"] not in ramps})
     label_files = _material_files(render)
     fix = f"kiripix run {run.asset_id} palette --force"
     findings = []

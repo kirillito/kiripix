@@ -56,7 +56,7 @@ def test_each_part_gets_a_ramp_of_its_own_and_no_colour_is_in_two(project: Kirip
     folder = built_parts(project, "cloth,skin")
 
     document = palette_json(folder)
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert [p["name"] for p in document["parts"]] == ["cloth", "skin"]
     palette = project_palette(project)
     seen: list[int] = []

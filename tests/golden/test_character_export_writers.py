@@ -81,3 +81,20 @@ def test_the_frozen_ids_are_each_clip_in_each_direction() -> None:
 
     assert ids.clips == ["attack_e", "attack_s", "idle_e", "idle_s"]
     assert ids.markers == ids.layers == ids.masks == []
+
+
+def test_the_ramps_image_is_padded_to_the_longest_row_of_the_table_even_one_the_character_lacks() -> None:
+    import io
+
+    from PIL import Image
+
+    from kiripix.export.character import ramp_rows, ramps_png
+
+    character = {"parts": [{"name": "skin", "rgb": [[1, 2, 3], [4, 5, 6]]}],
+                 "rows": [{"name": "skin", "length": 2}, {"name": "hair", "length": 4}]}
+    rows = ramp_rows(character)
+    image = Image.open(io.BytesIO(ramps_png(character, rows))).convert("RGBA")
+
+    assert rows == ["skin", "hair"] and image.size == (4, 2)
+    assert [list(image.getpixel((x, 0))) for x in range(4)] == [[1, 2, 3, 255], [4, 5, 6, 255], [0, 0, 0, 0], [0, 0, 0, 0]]
+    assert [list(image.getpixel((x, 1))) for x in range(4)] == [[0, 0, 0, 0]] * 4

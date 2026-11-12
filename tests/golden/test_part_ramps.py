@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 
 from kiripix.checks import check_ramp_shared
-from kiripix.ops import part_ramps, quantize_by_part, remove_orphans_by_part
+from kiripix.ops import lightness_breaks, part_ramps, quantize_by_part, remove_orphans_by_part
 
 EXPECTED = Path(__file__).parent / "expected"
 
@@ -182,3 +182,59 @@ def test_ramp_shared_is_silent_for_disjoint_ramps_and_flags_fixed_pixels() -> No
     assert [f.message.split(" at ")[0].split("a pixel of ")[-1] for f in findings] == ["fixed colours"]
     ok, ok_labels = build([[1, 2, 3]], {1: (28, 13, 8), 2: (120, 70, 45), 3: (235, 190, 160)})
     assert check_ramp_shared(ok, ok_labels, PARTS, ramps, "f.png", fix="x") == []
+
+
+# A part whose colours the Project's ramp table gives (ticket 0168): mapped by lightness order, not by nearest colour.
+GIVEN = np.array([[64, 32, 20], [120, 70, 45], [235, 190, 160]], dtype=np.uint8)  # dark to light
+
+
+def shaded(shades: list[tuple[int, int, int]]) -> tuple[np.ndarray, np.ndarray]:
+    """A 3-band toon-shaded skin (material 3, one band per shade, the lit band widest) beside a fixed jacket (material 5)."""
+    return build(
+        [[3, 3, 3, 3, 3, 3, 5], [3, 3, 3, 3, 3, 3, 5], [3, 3, 3, 3, 3, 3, 5], [3, 3, 3, 3, 3, 3, 5]],
+        {3: shades[0], 5: (90, 90, 110)},
+    )
+
+
+def bands(frame: np.ndarray, shades: list[tuple[int, int, int]]) -> np.ndarray:
+    """The skin painted in three vertical bands, dark on the left: 1, 2 and 3 columns wide."""
+    out = frame.copy()
+    for (x0, x1), shade in zip(((0, 1), (1, 3), (3, 6)), shades, strict=True):
+        out[:, x0:x1, :3] = shade
+    return out
+
+
+@pytest.mark.parametrize(("texture", "golden"), [
+    ([(150, 110, 90), (190, 150, 125), (250, 225, 205)], "lightness_lighter.png"),  # lighter than the given ramp's middle
+    ([(30, 15, 10), (55, 32, 22), (85, 52, 36)], "lightness_darker.png"),  # darker: nearest would put it all on the dark step
+])
+def test_a_lighter_and_a_darker_texture_both_use_every_step_of_a_given_ramp(
+        request: pytest.FixtureRequest, texture: list[tuple[int, int, int]], golden: str) -> None:
+    frame, labels = shaded(texture)
+    frame = bands(frame, texture)
+    parts = {"skin": [SKIN]}
+
+    breaks = lightness_breaks([frame], [labels], [SKIN], 3)
+    mapped = quantize_by_part(frame, labels, parts, {"skin": GIVEN}, PALETTE[[5]], breaks={"skin": breaks})
+
+    assert_golden(request, mapped, golden)
+    skin = mapped[labels == SKIN][:, :3]
+    assert {tuple(c) for c in skin.tolist()} == {tuple(c) for c in GIVEN.tolist()}
+    assert mapped[0, 0, :3].tolist() == GIVEN[0].tolist() and mapped[0, 5, :3].tolist() == GIVEN[2].tolist()  # dark to dark
+    assert {tuple(c) for c in mapped[labels == JACKET][:, :3].tolist()} == {(90, 90, 110)}
+
+
+def test_lightness_breaks_spread_fewer_shades_than_steps_over_the_ramp_and_count_every_frame() -> None:
+    frame, labels = shaded([(30, 15, 10)])
+    lit = frame.copy()
+    lit[..., :3] = np.where((labels == SKIN)[..., None], np.array([250, 225, 205], dtype=np.uint8), lit[..., :3])
+
+    breaks = lightness_breaks([frame, lit], [labels, labels], [SKIN], 3)
+
+    assert len(breaks) == 2
+    dark = quantize_by_part(frame, labels, {"skin": [SKIN]}, {"skin": GIVEN}, PALETTE[[5]], breaks={"skin": breaks})
+    light = quantize_by_part(lit, labels, {"skin": [SKIN]}, {"skin": GIVEN}, PALETTE[[5]], breaks={"skin": breaks})
+    assert {tuple(c) for c in dark[labels == SKIN][:, :3].tolist()} == {tuple(GIVEN[0].tolist())}
+    assert {tuple(c) for c in light[labels == SKIN][:, :3].tolist()} == {tuple(GIVEN[2].tolist())}
+    with pytest.raises(ValueError, match="at least 1"):
+        lightness_breaks([frame], [labels], [SKIN], 0)

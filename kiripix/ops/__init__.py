@@ -16,6 +16,7 @@ from kiripix.ops.colour import (
 )
 from kiripix.ops.character import (
     encode_normals,
+    lightness_breaks,
     palette_subset,
     part_ramps,
     quantise_normals,
@@ -127,6 +128,7 @@ __all__ = [
     "parse_gpl",
     "parse_hex",
     "palette_subset",
+    "lightness_breaks",
     "part_ramps",
     "quantize_by_part",
     "remove_orphans_by_part",
