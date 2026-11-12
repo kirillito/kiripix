@@ -26,6 +26,12 @@ def _proposal(project: Kiripix) -> None:
     shutil.copy(project.cwd / made, project.cwd / ".kiripix" / "palette-proposals" / "in-proposal.json")
 
 
+def _built_hero(project: Kiripix) -> None:
+    from test_ramp_table import hero  # imported here: test_ramp_table reaches test_serve, which imports SAMPLES
+
+    hero(project)
+
+
 def _decided(project: Kiripix) -> None:
     make_demo(project)
     project.json("decide", "demo.a", "choose", "--decision", MARK)
@@ -104,6 +110,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
     "op palette-suggest": lambda p: (_image(p), ["op", "palette-suggest", "in.png", "--add", "2", "--scale", "1"])[1],
     "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
+    "ramps-add": lambda p: (_built_hero(p), ["ramps-add", "character.hero", "--parts", "skin"])[1],
     "runners list": lambda p: ["runners", "list"],
     "runners pull": lambda p: ["runners", "pull", "sam2.1-small"],
     "runners rm": lambda p: ["runners", "rm", "sam2.1-small"],

@@ -9,11 +9,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from conftest import Kiripix
+from PIL import Image
 from test_character_clips import IDLE, WALK, clip
 from test_character_finish import finished
 from test_character_model import HERO
+from test_character_ramps import built_parts
 from test_export import GENERATED, godot_project, node, set_target
 from test_export import exportable_room as exported_room
 from test_export_prop import MANIFEST as PROP_MANIFEST
@@ -58,8 +61,8 @@ def test_the_stage_leaves_both_atlases_and_character_json_in_out_export(project:
     sheet = json.loads((folder / "work" / "sheet" / "sheet.json").read_text("utf-8"))
 
     assert sorted(p.name for p in out.iterdir() if p.name != ".stage.json") == ["character.json", "color.png", "normal.png"]
-    assert character == {"schema_version": 1, "asset": HERO, "files": {"color": "color.png", "normal": "normal.png"},
-                         **{key: sheet[key] for key in ("cell", "pivot", "atlas", "directions", "clips")}}
+    assert character == {"schema_version": 2, "asset": HERO, "files": {"color": "color.png", "normal": "normal.png"},
+                         **{key: sheet[key] for key in ("cell", "pivot", "atlas", "directions", "clips")}, "parts": []}
     for name in ("color.png", "normal.png"):
         assert (out / name).read_bytes() == (folder / "work" / "sheet" / name).read_bytes()
 
@@ -223,6 +226,201 @@ def test_a_version_1_manifest_is_read_and_rewritten_as_version_2(project: Kiripi
 
     record = manifest(project)
     assert record["schema_version"] == 2 and len(record["ids"]["clips"]) == 16 and record["counter"] == 1
+
+
+RAMPS = f"{FOLDER}/ramps.png"
+PARTS = "cloth,skin"
+
+
+def exportable_parts(project: Kiripix) -> Path:
+    """The same character with `parts` (cloth and skin, on the fake Blender's split material pass), built through `export`."""
+    folder = built_parts(project, PARTS)
+    finish_without_outline(project)
+    godot_project(project)
+    set_target(project)
+    project.json("run", HERO)
+    return folder
+
+
+def finish_without_outline(project: Kiripix) -> None:
+    """`finish` refuses an outline colour that is in a ramp (the swap would recolour it), so these draw none."""
+    project.json("set", HERO, "finish", "outline=false")
+    project.json("run", HERO, "finish")
+
+
+def palette_parts(folder: Path) -> list[dict[str, Any]]:
+    document = json.loads((folder / "work" / "palette" / "palette.json").read_text("utf-8"))
+    parts: list[dict[str, Any]] = document["parts"]
+    return parts
+
+
+def test_character_json_lists_each_part_dark_to_light_in_palettes_order(project: Kiripix) -> None:
+    folder = exportable_parts(project)
+
+    character = built(folder)
+
+    assert character["schema_version"] == 2
+    assert character["parts"] == [{key: part[key] for key in ("name", "materials", "indexes", "rgb")}
+                                  for part in palette_parts(folder)]
+    assert [p["name"] for p in character["parts"]] == ["cloth", "skin"]
+
+
+def test_ramps_png_has_one_row_per_part_with_the_ramps_exact_colours(project: Kiripix) -> None:
+    folder = exportable_parts(project)
+    parts = palette_parts(folder)
+
+    data = project.json("export", HERO)["data"]
+
+    assert sorted(data["written"]) == sorted(FILES + [f"{RES}/ramps.png"]) and data["counter"] == 1
+    image = np.array(Image.open(project.cwd / RAMPS).convert("RGBA"))
+    longest = max(len(p["rgb"]) for p in parts)
+    assert image.shape == (len(parts), longest, 4)
+    for row, part in enumerate(parts):
+        assert image[row, :len(part["rgb"])].tolist() == [[*rgb, 255] for rgb in part["rgb"]]
+        assert (image[row, len(part["rgb"]):] == 0).all()  # padded with transparent pixels
+    assert f"{RES}/ramps.png" in manifest(project)["files"]
+
+
+def test_ramps_png_is_padded_to_the_longest_ramp(project: Kiripix) -> None:
+    folder = built_parts(project, "cloth:2,skin:4")
+    finish_without_outline(project)
+    godot_project(project)
+    set_target(project)
+    project.json("run", HERO)
+
+    project.json("export", HERO)
+
+    image = np.array(Image.open(project.cwd / RAMPS).convert("RGBA"))
+    assert [len(p["rgb"]) for p in palette_parts(folder)] == [2, 4]
+    assert image.shape == (2, 4, 4) and (image[0, 2:] == 0).all() and (image[0, :2, 3] == 255).all()
+
+
+def test_the_scene_names_the_ramps_and_the_parts_in_row_order(project: Kiripix) -> None:
+    exportable_parts(project)
+    project.json("export", HERO)
+
+    root = node((project.cwd / SCENE).read_text("utf-8"), "hero")
+
+    assert f'metadata/kiripix_ramps = "{RES}/ramps.png"' in root
+    assert 'metadata/kiripix_parts = PackedStringArray("cloth", "skin")' in root
+
+
+def test_re_exporting_a_character_with_parts_writes_nothing_and_a_rebuild_is_byte_identical(project: Kiripix) -> None:
+    exportable_parts(project)
+    project.json("export", HERO)
+    before = {path: (project.cwd / path).read_bytes() for path in (SCENE, RAMPS, MANIFEST)}
+
+    project.json("run", HERO, "export", "--force")
+    data = project.json("export", HERO)["data"]
+
+    assert {path: (project.cwd / path).read_bytes() for path in before} == before
+    assert data["written"] == [] and data["counter"] == 1
+
+
+def test_a_character_without_parts_exports_no_ramps_and_names_none(project: Kiripix) -> None:
+    exportable_character(project)
+
+    project.json("export", HERO)
+
+    assert not (project.cwd / RAMPS).exists()
+    assert "kiripix_ramps" not in (project.cwd / SCENE).read_text("utf-8")
+    assert "ramps.png" not in " ".join(manifest(project)["files"])
+
+
+def test_an_edited_ramps_png_is_refused_like_any_owned_file(project: Kiripix) -> None:
+    exportable_parts(project)
+    project.json("export", HERO)
+    original = (project.cwd / RAMPS).read_bytes()
+    (project.cwd / RAMPS).write_bytes(original + GAMES)
+
+    result = project.json("export", HERO, expect=3)
+
+    [finding] = [f for f in result["findings"] if f["code"] == "export.file_changed"]
+    assert f"{RES}/ramps.png" in finding["message"]
+    assert project.json("export", HERO, "--force")["data"]["backed_up"] == [f"{RES}/ramps.png"]
+    assert (project.cwd / RAMPS).read_bytes() == original
+
+
+SWAP = """shader_type canvas_item;
+// A test of the game's swap: a pixel that is a step of ramps.png's row `row` takes the same step of `swapped`'s first row.
+uniform sampler2D ramps : filter_nearest;
+uniform sampler2D swapped : filter_nearest;
+uniform int row = 0;
+void fragment() {
+	vec4 c = texture(TEXTURE, UV);
+	int n = textureSize(ramps, 0).x;
+	for (int i = 0; i < n; i++) {
+		vec4 from = texelFetch(ramps, ivec2(i, row), 0);
+		if (from.a > 0.5 && distance(from.rgb, c.rgb) < 0.002) {
+			c = vec4(texelFetch(swapped, ivec2(i, 0), 0).rgb, c.a);
+			break;
+		}
+	}
+	COLOR = c;
+}
+"""
+
+SWAP_PROBE = """extends SceneTree
+
+func _init() -> void:
+	var hero: Node = load("res://kiripix/character/hero/hero.tscn").instantiate()
+	var ramps_image: Image = load(hero.get_meta("kiripix_ramps")).get_image()
+	var names: PackedStringArray = hero.get_meta("kiripix_parts")
+	var sprite: AnimatedSprite2D = hero.get_node("Sprite")
+	var atlas: AtlasTexture = sprite.sprite_frames.get_frame_texture(&"idle_s", 0)
+	var source: Image = atlas.atlas.diffuse_texture.get_image()
+	var region := Rect2i(atlas.region)
+	var rows := []
+	for r in range(names.size()):
+		var colours := []
+		for i in range(ramps_image.get_width()):
+			var c := ramps_image.get_pixel(i, r)
+			if c.a > 0.5:
+				colours.append(c)
+		rows.append(colours)
+	# the shader's rule for row `swap_row`: only a pixel on that row's steps changes; the rest of the frame stays
+	var swap_row: int = int(OS.get_environment("KIRIPIX_SWAP_ROW"))
+	var changed := {}
+	var kept := {}
+	for y in range(region.position.y, region.end.y):
+		for x in range(region.position.x, region.end.x):
+			var pixel := source.get_pixel(x, y)
+			if pixel.a < 0.5:
+				continue
+			var owner := "(fixed)"
+			for r in range(names.size()):
+				for c in rows[r]:
+					if pixel.is_equal_approx(c):
+						owner = names[r]
+			var found: Dictionary = changed if owner == names[swap_row] else kept
+			found[owner] = found.get(owner, 0) + 1
+	print("PROBE ", JSON.stringify({"parts": names, "changed": changed, "kept": kept}))
+	quit()
+"""
+
+
+@pytest.mark.godot
+def test_godot_swapping_one_row_of_ramps_png_changes_only_that_parts_pixels(project: Kiripix) -> None:
+    """Marked: real Godot 4.7 loads the scene and `ramps.png` headlessly. A canvas shader needs a window, so the script applies
+    the shader's rule (`swap.gdshader`, written to the game too, for the Owner's window) to the atlas itself."""
+    exportable_parts(project)
+    project.json("export", HERO)
+    game = project.cwd / "game"
+    (game / "swap.gdshader").write_text(SWAP, "utf-8")
+    (game / "probe.gd").write_text(SWAP_PROBE, "utf-8")
+    godot = os.environ["KIRIPIX_GODOT"]
+    subprocess.run([godot, "--headless", "--path", str(game), "--import", "--quit"], capture_output=True, timeout=300, check=False)
+
+    result = {}
+    for row in (0, 1):
+        done = subprocess.run([godot, "--headless", "--path", str(game), "-s", "res://probe.gd"], capture_output=True, text=True,
+                              encoding="utf-8", timeout=120, check=False, env={**os.environ, "KIRIPIX_SWAP_ROW": str(row)})
+        [line] = [line for line in done.stdout.splitlines() if line.startswith("PROBE ")]
+        result[row] = json.loads(line.removeprefix("PROBE "))
+
+    assert result[0]["parts"] == ["cloth", "skin"]
+    assert set(result[0]["changed"]) == {"cloth"} and set(result[1]["changed"]) == {"skin"}
+    assert set(result[0]["kept"]) <= {"skin", "(fixed)"} and set(result[1]["kept"]) <= {"cloth", "(fixed)"}
 
 
 PROBE = """extends SceneTree

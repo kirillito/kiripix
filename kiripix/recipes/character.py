@@ -271,7 +271,7 @@ CHARACTER = KindSpec(
         StageSpec(
             name="export",
             description="SpriteFrames, a CanvasTexture with the normal map, and an AnimatedSprite2D scene.",
-            inputs=StageInputs(upstream=["sheet"], settings=["export.godot"]),
+            inputs=StageInputs(upstream=["sheet", "palette"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),),
             output_root="out",
             available_from="M3",

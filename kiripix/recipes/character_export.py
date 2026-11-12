@@ -2,14 +2,16 @@
 `sheet`'s `sheet.json` and atlases only, and leaves in `out/export/`:
 
     color.png, normal.png   the two atlases, copied
-    character.json          {"schema_version": 1, "asset": "character.hero",
+    character.json          {"schema_version": 2, "asset": "character.hero",
                              "files": {"color": "color.png", "normal": "normal.png"},
                              "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # from the cell's top left
                              "atlas": {"width": 858, "height": 936},
                              "directions": ["s", "sw", ...],
                              "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
                                         "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78,
-                                                                                     "height": 78}}, ...]}}]}
+                                                                                     "height": 78}}, ...]}}],
+                             "parts": [{"name": "skin", "materials": ["skin"], "indexes": [12, 3, 9],
+                                        "rgb": [[r, g, b], ...]}]}   # each part's ramp, dark to light, from `palette`; [] without
 
 The animation `<clip>_<direction>` of the game is a clip's frames in one direction. The Exporter (`kiripix.export`) turns
 this into the engine's files.
@@ -21,9 +23,10 @@ from typing import Any
 
 from kiripix.checks import Finding, Position
 from kiripix.recipes.base import NeedsInput, StageFailure, StageRun
+from kiripix.recipes.character_palette import PALETTE_FILE, PALETTE_SCHEMA_VERSION
 from kiripix.recipes.character_sheet import COLOR_ATLAS, NORMAL_ATLAS, SHEET_FILE, SHEET_SCHEMA_VERSION
 
-CHARACTER_SCHEMA_VERSION = 1
+CHARACTER_SCHEMA_VERSION = 2  # 2: `parts`, each swappable part's ramp from `palette` (`[]` without parts)
 CHARACTER_FILE = "character.json"
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -43,6 +46,14 @@ def run_character_export(run: StageRun) -> None:
     if sheet.get("schema_version") != SHEET_SCHEMA_VERSION:
         raise StageFailure(f"{SHEET_FILE} has schema_version {sheet.get('schema_version')}; this Kiripix reads "
                            f"{SHEET_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} sheet --force")
+    try:
+        palette: dict[str, Any] = json.loads((run.upstream["palette"] / PALETTE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise StageFailure(f"palette has no {PALETTE_FILE}; run it again",
+                           fix=f"kiripix run {run.asset_id} palette --force") from None
+    if palette.get("schema_version") != PALETTE_SCHEMA_VERSION:
+        raise StageFailure(f"{PALETTE_FILE} has schema_version {palette.get('schema_version')}; this Kiripix reads "
+                           f"{PALETTE_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} palette --force")
     for name in (COLOR_ATLAS, NORMAL_ATLAS):
         run.check_cancel()
         shutil.copyfile(folder / name, run.output_dir / name)
@@ -55,6 +66,8 @@ def run_character_export(run: StageRun) -> None:
         "atlas": sheet["atlas"],
         "directions": sheet["directions"],
         "clips": sheet["clips"],
+        "parts": [{"name": p["name"], "materials": p["materials"], "indexes": p["indexes"], "rgb": p["rgb"]}
+                  for p in palette["parts"]],
     }
     (run.output_dir / CHARACTER_FILE).write_text(json.dumps(character, indent=2) + "\n", encoding="utf-8")
 

@@ -249,13 +249,19 @@ def character_frames(character: dict[str, Any], texture_path: str) -> str:
         header + "\n", texture, *atlases, _section("[resource]", "animations = [" + ", ".join(entries) + "]")])
 
 
-def character_scene(character: dict[str, Any], name: str, frames_path: str) -> str:
+def character_scene(character: dict[str, Any], name: str, frames_path: str, ramps_path: str | None = None,
+                    parts: list[str] | None = None) -> str:
     """The scene's text. The root sits at the character's feet, so the game y-sorts it by its position, and the
-    AnimatedSprite2D is drawn offset so that the pivot pixel of the cell is the root's own place."""
+    AnimatedSprite2D is drawn offset so that the pivot pixel of the cell is the root's own place. With `ramps_path` the root
+    names `ramps.png` in `metadata/kiripix_ramps` and the part names in row order in `metadata/kiripix_parts`; the scene
+    itself doesn't load it, since the game's shader does."""
     pivot = character["pivot"]
     first = character_animations(character)[0]
+    ramps = ([f"metadata/kiripix_ramps = {_text(ramps_path)}",
+              "metadata/kiripix_parts = PackedStringArray(" + ", ".join(_text(p) for p in parts or []) + ")"]
+             if ramps_path is not None else [])
     nodes = [
-        _node(name, "Node2D", None, f"metadata/kiripix_id = {_text(str(character['asset']))}"),
+        _node(name, "Node2D", None, f"metadata/kiripix_id = {_text(str(character['asset']))}", *ramps),
         _node(SPRITE, "AnimatedSprite2D", ".", 'sprite_frames = ExtResource("frames")',
               f'animation = &"{animation_name(first[0]["name"], first[1])}"', "centered = false",
               f"offset = Vector2({-pivot['x']}, {-pivot['y']})"),

@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 3
+PROJECT_TEMPLATE = """schema_version = 4
 
 [project]
 name = "{name}"
@@ -94,6 +94,12 @@ elevation = 30                 # degrees above the ground plane
 directions = 8
 light_angle = -45              # the toon key light: degrees round the view from the top, -45 = upper left
 light_tilt = 35                # and toward the camera
+
+# The ramp table: the same part names, ramp lengths and ramps.png rows on every character. Add rows with `kiripix ramps-add`.
+# [[character.ramps]]
+# name = "skin"                # a part name, lower-case snake_case
+# length = 3                   # steps, at least 2
+# rgb = [[171, 82, 54], [255, 163, 0], [255, 241, 232]]   # optional: shared colours, dark to light, of the Project palette
 
 [providers]
 default = "import"             # import | openai | gemini | pixellab | local-sd

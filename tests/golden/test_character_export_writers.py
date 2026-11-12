@@ -45,6 +45,29 @@ def test_the_scene(request: pytest.FixtureRequest) -> None:
     assert_golden(request, character_scene(character(), "hero", f"{BASE}/frames.tres"), "hero.tscn")
 
 
+def test_the_scene_with_ramps_names_them_and_the_parts_in_row_order(request: pytest.FixtureRequest) -> None:
+    text = character_scene(character(), "hero", f"{BASE}/frames.tres", f"{BASE}/ramps.png", ["skin", "hair"])
+    assert_golden(request, text, "hero_ramps.tscn")
+
+
+def test_the_ramps_image_pads_rows_and_leaves_a_part_the_character_lacks_transparent() -> None:
+    import io
+
+    from PIL import Image
+
+    from kiripix.export.character import ramps_png
+
+    parts = [{"name": "skin", "rgb": [[1, 2, 3], [4, 5, 6], [7, 8, 9]]}, {"name": "hair", "rgb": [[10, 11, 12]]}]
+    data = ramps_png({"parts": parts}, ["hair", "eyes", "skin"])
+    image = Image.open(io.BytesIO(data)).convert("RGBA")
+
+    assert image.size == (3, 3)
+    assert [list(image.getpixel((x, 0))) for x in range(3)] == [[10, 11, 12, 255], [0, 0, 0, 0], [0, 0, 0, 0]]
+    assert [list(image.getpixel((x, 1))) for x in range(3)] == [[0, 0, 0, 0]] * 3
+    assert [list(image.getpixel((x, 2))) for x in range(3)] == [[1, 2, 3, 255], [4, 5, 6, 255], [7, 8, 9, 255]]
+    assert ramps_png({"parts": parts}, ["hair", "eyes", "skin"]) == data
+
+
 def test_the_sprite_frames(request: pytest.FixtureRequest) -> None:
     assert_golden(request, character_frames(character(), f"{BASE}/texture.tres"), "frames.tres")
 

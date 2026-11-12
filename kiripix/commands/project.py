@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.checks import Finding, Position
 from kiripix.commands.contract import Context, ExitCode, Outcome
+from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow
 from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import cancel
 from kiripix.core.assets import create_asset, is_asset_id, list_assets, load_asset
@@ -123,9 +124,17 @@ class KindDescription(BaseModel):
 
 class DescribeData(BaseModel):
     kinds: list[KindDescription]
+    ramps: list[RampRow] | None = Field(
+        None, description="With `describe project`: the Project's ramp table, in row order (null for a Kind).")
+    ramps_example: str | None = Field(None, description="With `describe project`: how to fill the ramp table.")
 
     def text(self) -> str:
         lines = []
+        if self.ramps is not None:
+            lines.append(f"ramp table ({len(self.ramps)} rows; e.g. {self.ramps_example}):")
+            for row, ramp in enumerate(self.ramps):
+                colours = "shared colours" if ramp.rgb else "colours fitted per character"
+                lines.append(f"  row {row}: {ramp.name}, {ramp.length} steps, {colours}")
         for kind in self.kinds:
             lines.append(f"{kind.name}: {kind.description}")
             lines.append("  recipe: " + " -> ".join(kind.recipe))
@@ -183,6 +192,13 @@ def describe(arguments: DescribeInput, context: Context) -> Outcome[DescribeData
             raise fail("describe.stage_needs_kind", "--stage needs a Kind, not 'project'",
                        fix="kiripix describe project")
         kinds = [_describe(k, detail=False) for _, k in sorted(all_kinds().items())]
+        try:  # `describe project` also works outside a Project, with no table
+            ramps = find_project(context.cwd).settings.character.ramps
+        except KiripixError:
+            return Outcome(DescribeData(kinds=kinds, ramps_example=RAMPS_EXAMPLE))
+        table = [RampRow(name=r.name, length=r.length, rgb=[list(c) for c in r.rgb] if r.rgb is not None else None)
+                 for r in ramps]
+        return Outcome(DescribeData(kinds=kinds, ramps=table, ramps_example=RAMPS_EXAMPLE))
     else:
         kind = _describe(get_kind(arguments.target), detail=True)
         if arguments.stage is not None:

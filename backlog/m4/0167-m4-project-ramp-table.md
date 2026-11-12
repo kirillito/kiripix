@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket

@@ -24,7 +24,7 @@ from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
 from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, frozen_layer_findings, pairing_findings
-from kiripix.export.character import COLOR_FILE, NORMAL_FILE, read_character
+from kiripix.export.character import COLOR_FILE, NORMAL_FILE, RAMPS_FILE, ramp_rows, ramps_png, read_character
 from kiripix.export.godot import (
     character_frames, character_ids, character_scene, character_texture, prop_ids, prop_scene, room_ids, room_scene,
 )
@@ -108,13 +108,17 @@ def _character_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, 
     folder = f"{target.root}/{graph.kind.name}/{name}"
     colour, normal = f"{folder}/{COLOR_FILE}", f"{folder}/{NORMAL_FILE}"
     texture, frames = f"{folder}/texture.tres", f"{folder}/frames.tres"
+    rows = ramp_rows(character)
+    ramps = f"{folder}/{RAMPS_FILE}"
     files = {
-        f"{folder}/{name}.tscn": character_scene(character, name, frames).encode("utf-8"),
+        f"{folder}/{name}.tscn": character_scene(character, name, frames, ramps if rows else None, rows).encode("utf-8"),
         frames: character_frames(character, texture).encode("utf-8"),
         texture: character_texture(colour, normal).encode("utf-8"),
         colour: (built_dir(graph) / COLOR_FILE).read_bytes(),
         normal: (built_dir(graph) / NORMAL_FILE).read_bytes(),
     }
+    if rows:
+        files[ramps] = ramps_png(character, rows)
     return files, character_ids(character)
 
 
