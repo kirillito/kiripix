@@ -1,11 +1,17 @@
 """How a Kind and its Recipe are declared: Stages with inputs, parameters, Decisions, Checks and a run function."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 from pydantic import BaseModel, ConfigDict
 
 from kiripix.checks import Finding

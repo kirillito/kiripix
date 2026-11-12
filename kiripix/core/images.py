@@ -1,11 +1,25 @@
 """Reading and writing images and palette files: the I/O around the pure Ops."""
 
+from __future__ import annotations
+
 import io
 from pathlib import Path
 
-import numpy as np
-import numpy.typing as npt
-from PIL import Image, ImageOps, UnidentifiedImageError
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
+if TYPE_CHECKING:
+    from PIL import Image, ImageOps
+else:
+    Image = lazy_module("PIL.Image")
+    ImageOps = lazy_module("PIL.ImageOps")
 
 from kiripix.checks import Position, check_palette
 from kiripix.core import atomic
@@ -25,7 +39,7 @@ def load_rgba(path: Path | io.BytesIO, shown: str) -> U8:
             rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
     except FileNotFoundError:
         raise fail("image.not_found", f"no image at {shown}", owner_action=f"Check the path {shown}.") from None
-    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
+    except (Image.UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         raise fail(
             "image.unreadable",
             f"{shown} is not a readable image: {error}",
@@ -66,7 +80,7 @@ def read_as_png(path: Path, shown: str) -> tuple[bytes, U8]:
         with Image.open(io.BytesIO(data)) as image:
             upright = ImageOps.exif_transpose(image)
             rgba = np.asarray(upright.convert("RGBA"), dtype=np.uint8).copy()
-    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
+    except (Image.UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         raise fail("image.unreadable", f"{shown} is not a readable image: {error}",
                    owner_action=f"Save {shown} as a PNG.", position=Position(file=shown)) from None
     return png_bytes(rgba), rgba

@@ -6,9 +6,15 @@ in the style of `ops.mask_runs`: a hole is mostly a few solid blobs, so a 1000 p
 runs, a few KB of JSON, not a bitmap.
 """
 
-from typing import Any
+from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING, Any
+
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.ops import mask_runs
 

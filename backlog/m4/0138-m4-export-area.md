@@ -15,7 +15,9 @@ Spec §9 (Room).
 
 - An `Area2D` named from the Marker's ID, as other Marker nodes are, with a `CollisionShape2D` child and a `RectangleShape2D`
   the size of the box, placed at its centre. It has `monitoring = false`, `monitorable = false`, `collision_layer = 0` and
-  `collision_mask = 0`, so it never touches physics. Metadata: `kiripix_id`, `kiripix_type = "area"`, and `cell` when set.
+  `collision_mask = 0`, so it never touches physics. Metadata: `kiripix_id`, `kiripix_type = "area"`, `walkable`, and `cell` when set.
+- An area with no walkable pixel (an `escape.*` area over a fence, an Exit's trigger box) exports like any other; nothing in
+  the export depends on `walkable` but the metadata.
 - The Manifest lists the ID with the other Marker IDs, so the ID freeze covers it.
 - Spec §9's Room row.
 

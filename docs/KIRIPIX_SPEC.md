@@ -80,7 +80,7 @@ layers, and the layers get stacked back into a scene.
 | **Decision** | Recorded human input that a stage replays: a Pick, segmentation clicks, an Override, marker positions. |
 | **Override** | A recorded hand edit on a stage's image output, tied to the hash of the image it was painted on. |
 | **Layer** / **Plate** | A visible image plane of a room; the Plate is the room with its foreground objects removed. |
-| **Look** / **Condition** | Another appearance of part of a room (a door shut, a lamp unlit), painted as an edit of its Source; the opaque name of the game state that shows it. |
+| **Look** / **Condition** | Another appearance of part of a room (a door shut, a lamp unlit), painted as an edit of its Source; an optional label naming the game state that shows it, for people and other Exporters. |
 | **Mask** | A named binary gameplay region (`solid`, `oneway`, `ladder`). Derived masks (`walkable`, `foreground`) are computed, never painted. |
 | **Model** / **Runner** / **Provider** | A 3D model; a local ML model; an image or 3D-model generator. In names Kiripix controls (paths, fields, flags, code), `model` means only the 3D Model; a Runner's files are its **weights**. |
 | **Pinned output** | A committed Runner or Provider result, keyed on all of its inputs. |
@@ -248,9 +248,9 @@ A background scene with Layers, Masks, Markers and lights. A room is either `vie
 | **layers** | Builds the **Plate** and the foreground Layers. Paths: (a) the source was generated as a plate plus props, so the Layers come from their difference; (b) segment the foreground objects (SAM 2; a negative click takes the object under it away from that Layer, and so from the Plate's hole, at its place in the replay), then inpaint the Plate (LaMa locally, or an edit API for large areas); (c) side view: depth-assisted parallax split into N planes. On path (a) the owner names a Layer with one click in a region of the difference; unclicked regions stay in the Plate. One **grow** parameter widens both a Layer's alpha and its Plate hole, in target pixels, only where the Runner's alpha was partial: a target pixel whose Source cell is partly covered by the Runner's Mask or has alpha strictly between 0 and 255 (default 1 px, 0 allowed). With no Decisions the Stage is `done`, and the Plate is the fit image. | Clicks objects to lift out; trims a rim with a brush on the Layer's alpha | Plate + Layers recompose exactly to the fit image; no holes in the Plate |
 | **masks** | Paints the painted Masks (`solid` and `pit` for top view; `solid`, `oneway`, `ladder` for side view): click-to-segment (SAM 2: a positive click adds the object under it to the Mask, a negative click, a shift-click, takes that object away from the Mask at its place in the replay, whichever Decision put it there; each is one Runner call), flood by colour region within an OKLab tolerance of the clicked pixel, brush, polygon (`{mask, erase, points}`, at least three corners in target pixels; it closes itself, the outline pixels are included so a rectangle fills exactly its box, a self-crossing polygon follows the even-odd rule, points outside the Mask are clipped; not `on_image`, so a changed Plate leaves it as it is), a wall along the room's chosen edges, or import of a painted image; optional snap to an N px cell grid. The UI has no polygon tool yet (ticket 0080). | Clicks and brushes | Every Mask binary |
 | **palette** | Maps the whole composite once to the palette in OKLab (strict, or with optional ordered dithering) and removes orphan pixels. Each foreground Layer is that mapped image cut by its alpha; the Plate is the same image with only its inpainted areas mapped separately. | Tunes 2–3 sliders, with a before/after view | Every pixel on the palette; Plate + Layers still recompose exactly |
-| **looks** | The room's other Looks (see Looks, below). Each is an edit of the Source, picked as a Variant of that Look. It is resized to the Source, registered to it, fitted with the room's Grid transform, optionally regraded, mapped to the palette as `palette` maps the room, and cut to its region. The region's pixels over a foreground Layer become a piece at that Layer's depth. A Look may have its own `solid` Mask. With no Looks the Stage is `done`. M4. | Imports or generates an edit, names the Condition, draws the region; paints `solid` where the Look blocks | Every pixel on the palette; the edit registers to the Source; drift outside the region is reported; the region shows a change |
-| **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines, areas (a box, optionally snapped to a `cell` from the room's top-left corner; Kiripix gives an area no meaning, and the game decides what it's for, such as a battle area, M4). | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag; a sloped line sorts at its mean y, with a warning if its ends differ by more than half a tile; an area lies inside the room and holds walkable ground, and with a `cell`, the cells a Mask leaves between a quarter and three quarters blocked are listed (info) |
-| **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, Later). Warns when no walkable part of an area is reachable. Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
+| **looks** | The room's other Looks (see Looks, below). Each is an edit of the Source, picked as a Variant of that Look. It is resized to the Source, registered to it, fitted with the room's Grid transform, optionally regraded, mapped to the palette as `palette` maps the room, and cut to its region. The region's pixels over a foreground Layer become a piece at that Layer's depth. A Look may have its own `solid` Mask. With no Looks the Stage is `done`. M4. | Imports or generates an edit, names the Look, draws the region; paints `solid` where the Look blocks | Every pixel on the palette; the edit registers to the Source; drift outside the region is reported; the region shows a change |
+| **place** | Puts Markers on the room: Exits (with a target room and Exit ID), Spawns, interactables, lights (colour, radius, energy), particle emitters, y-sort lines, areas (a box, optionally snapped to a `cell` from the room's top-left corner, optionally `walkable`; any number, any Marker ID, one pixel or one cell wide at least; Kiripix gives an area no meaning, and the game decides what it's for, such as a battle area, an escape route over a fence or an Exit's trigger box, M4). | Places Markers | Unique IDs; Exits and Spawns on walkable ground; every foreground Layer has a y-sort line or an "always above" flag; a sloped line sorts at its mean y, with a warning if its ends differ by more than half a tile; an area lies inside the room, and a `walkable` one holds walkable ground; with a `cell`, the cells a Mask leaves between a quarter and three quarters blocked are listed (info) |
+| **reach** | Reachability: the body's footprint, flood-filled over walkable at sub-tile steps, from each Spawn and Exit to all the others (side view: over platforms, with jump settings, Later). Warns when no walkable part of a `walkable` area is reachable. Lists unreachable Markers, unreachable walkable islands and the narrowest gaps. | — | All Markers reachable |
 | **export** | Writes the Godot scene (see §9). | — | Export target set; Project checks (see below) |
 
 **palette reads `layers`, not `masks`**: its upstream is the Plate and the Layers, so a Mask edit never rebuilds the
@@ -271,18 +271,25 @@ may come later, not in the first milestones.)
 and `export --all` run it; exporting a single room only warns, so a room can be worked on before its neighbour
 exists.
 
+**An Exit's trigger box is an area.** An Exit is a point. When the game needs a rectangle the player walks into, the room
+gives it as an `area` Marker (for example `exit.back_door` and the area `exit.back_door.trigger`), and the game's own room data
+names that area on its Exit. Kiripix doesn't pair them and adds nothing to the Exit (decided by the Owner, 2026-11-12, for the
+game's exits ticket 0040), so the box is drawn on the room and moves with it, never typed into the game's data.
+
 **Walk test (UI):** the stand-in body walks the room with the arrow keys, on the real collision, at game resolution,
 with the foreground Layers drawn over it by their y-sort lines.
 
 #### Looks (ADR 0009, M4)
 
 A painted room is one baked picture, so a door that opens or a lamp that goes out has its other appearance painted too.
-That appearance is a **Look**. The game shows it while its **Condition** holds. The Condition is an opaque string to
-Kiripix (`door.cell_3:shut`, `circuit.hall:off`). A Look belongs to the room's Asset because it must share the room's
-Grid transform, palette mapping and Layers exactly.
+That appearance is a **Look**. The game finds it by its ID and decides when to show it. A Look may carry a **Condition**,
+an opaque string to Kiripix (`door.cell_3:shut`, `circuit.hall:off`): a label for people and for other Exporters, which the
+game never evaluates. Urban Mystery Club binds each Look by ID in its own room data, with its own condition JSON over its
+Facts, as it binds lights and interactables (decided by the Owner, 2026-11-12). A Look belongs to the room's Asset
+because it must share the room's Grid transform, palette mapping and Layers exactly.
 
 **Making one.**
-- A `look` Decision gives the Look an ID and a Condition.
+- A `look` Decision gives the Look an ID and, optionally, a Condition.
 - Its edit is added with `kiripix import <id> <png> --look <look>`. From M6, `gen <id> --look <look>` makes one with an
   edit prompt ("Edit this image. Keep everything exactly the same except: …"). An edit can also be painted by hand on a
   copy of the Source.
@@ -302,7 +309,7 @@ Grid transform, palette mapping and Layers exactly.
    so an actor still sorts right. The rest draws with the Plate.
 
 **Decisions,** in target pixels, each naming its Look:
-- `look` (ID, Condition) and `pick` (the edit);
+- `look` (ID, optional Condition) and `pick` (the edit);
 - region: `polygon` and `brush` as on `masks`, and `difference`: inside a box, the pixels where the mapped edit differs
   from the mapped room by more than a tolerance, with specks removed. A `difference` region picks out a lamp's glass
   without anyone drawing it, and it is on the image, so a new edit or a refit puts it in `needs-review`. A polygon or a
@@ -360,9 +367,9 @@ pixel size (52 px tall in the Toronto RPG), so the recipe has no `fit`.
 |---|---|---|
 | **model** | Imports `.glb`, `.fbx` or `.blend`; optional image-to-3D (a local Runner if one fits 8 GB, or a Provider). Normalises scale and the up axis. | Picks or imports |
 | **rig** | Validates a humanoid rig, or guides the Mixamo auto-rig round trip (the tool shows the steps and picks up the downloaded file). Rigify for non-humanoids. | Mixamo step, when used |
-| **clips** | Maps named clips (`idle`, `walk`, `run`, `attack`, `hit`, `ko`, `cast`…) to animation sources, with frame range, frame rate and loop flag. Clip IDs are snake_case verbs; a variant is named for what it is (`attack_kick`), not numbered. | Chooses clips |
+| **clips** | Maps named clips (`idle`, `walk`, `run`, `attack`, `hit`, `ko`, `cast`…) to animation sources, with frame range, frame rate and loop flag. Clip IDs are snake_case verbs; a variant is named for what it is (`attack_kick`), not numbered. Deciding a clip again under its name changes its range (M4). Records the frames where a foot plants, the same in every direction (M4, lower priority). A class's weapon in its battle clips: how it gets there is a trial (M4, [0170](../backlog/m4/0170-m4-weapon-in-a-battle-clip-trial.md)). | Chooses clips |
 | **render** | Blender headless. Orthographic camera from a preset: top-down 3/4 at 4 or 8 directions (all rendered, none mirrored, so an asymmetric character stays right), side view. Battle clips use the same camera as walking, because the game fights in the room. Directions are named `s sw w nw n ne e se` from the screen's view, `s` facing the camera. Rendered at the target pixel size, no anti-aliasing, toon shading, in one square cell per character, grown from 1.5 x its height until every pose of every clip fits with a pixel to spare for the outline, so no pose is cut. A stationary clip's pivot is the same pixel in every frame (the feet, not the swaying hips). Passes: colour, normal, depth and an object mask. Frames are subsampled to the clip's frame rate. Renders aren't pinned: they rebuild as deterministic work, with the Blender version and render settings among the Stage's inputs. | Tunes the camera preset once per project |
-| **palette** | One palette per character across all frames (a project-palette subset), orphan cleanup. | — |
+| **palette** | One palette per character across all frames (a project-palette subset), orphan cleanup. With `parts` (M4), each swappable part (one or more Blender materials) owns a ramp of palette colours that nothing else uses. The Project's ramp table (`[[character.ramps]]` in `kiripix.toml`) fixes each part's name, length and row for every character, and its colours where they're shared (skin, hair), so one swap means the same on every body. | — |
 | **finish** | Outline, drawn after mapping, in a palette colour: a 1 px silhouette from the object mask (§16, decision 3); outline consistency across frames. The normal pass is quantised to its own levels (not palette-mapped) and aligned to the colour frames. | — |
 | **sheet** | Packs frames into an atlas with a fixed pivot (the feet) per frame, plus frame metadata. | — |
 | **export** | Godot `SpriteFrames` `.tres`, plus a `CanvasTexture` with the normal map for 2D lights, plus a scene with `AnimatedSprite2D`. An animation is named `<clip>_<dir>`, such as `walk_sw`. | — |
@@ -448,9 +455,9 @@ Kiripix writes Godot 4 text resources (`.tscn`, `.tres`) and PNGs under `export.
 
 | Asset | Godot output |
 |---|---|
-| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `GPUParticles2D` stubs from emitter Markers; an `Area2D` per area Marker (M4), with a `RectangleShape2D` the size of its box, `monitoring` and `monitorable` off and collision layer 0, so it never touches physics, and metadata `kiripix_id`, `kiripix_type` and `cell`. **Masks and `room.json` (M4):** the `solid` and `pit` Masks go beside the scene as 1-bit PNGs (`masks/solid.png`, `masks/pit.png`, and each Look's own `solid`), with `room.json`; the scene's root names `room.json` in `metadata/kiripix_room`. The game builds cell data, such as a battle grid, from these exact pixels, not from the simplified collision polygons; Godot's default lossless import keeps them exact for `Texture2D.get_image()`. (`LightOccluder2D` has no source for its shape yet, so it isn't in M2.) `solid` is on collision layer 1 and `pit` is a `StaticBody2D` of its own on layer 2: the game's Body drops layer 2 from its mask while it dashes. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. **Looks** (M4): a `Sprite2D` per Look in a `Looks` node drawn with the Plate, at its region's box, `visible = false`, with metadata `kiripix_id` and `condition`; each piece over a foreground Layer is a `Sprite2D` child of that Layer's node, so it sorts with the Layer and draws over it, also hidden and with the same metadata; a Look's `solid` is a `StaticBody2D` on layer 1 whose `CollisionPolygon2D`s start `disabled = true`. The game shows a Look by showing every node whose `condition` holds and enabling its polygons. `room.json` carries the same data (`looks`: ID, Condition, file, box, pieces with their Layer, collision), so another Exporter reads it, not the scene. `room.json` is part of the game's contract from M4: each format change bumps its `schema_version`, and through M4 a change means a re-export, not a migration (the Owner has no production rooms). |
+| Room | A scene with these nodes: `Sprite2D` Plate; foreground `Sprite2D`s, y-sorted by their y-sort lines or above actors when flagged "always above"; `StaticBody2D` + `CollisionPolygon2D` from the `solid` Mask; `NavigationRegion2D` + `NavigationPolygon` from walkable ∩ reachable; `Marker2D` for Spawns and Exits (with metadata: IDs, targets); `PointLight2D` from light Markers; `GPUParticles2D` stubs from emitter Markers; an `Area2D` per area Marker (M4), with a `RectangleShape2D` the size of its box, `monitoring` and `monitorable` off and collision layer 0, so it never touches physics, and metadata `kiripix_id`, `kiripix_type`, `walkable` and `cell`. **Masks and `room.json` (M4):** the `solid` and `pit` Masks go beside the scene as 1-bit PNGs (`masks/solid.png`, `masks/pit.png`, and each Look's own `solid`), with `room.json`; the scene's root names `room.json` in `metadata/kiripix_room`. The game builds cell data, such as a battle grid, from these exact pixels, not from the simplified collision polygons; Godot's default lossless import keeps them exact for `Texture2D.get_image()`. (`LightOccluder2D` has no source for its shape yet, so it isn't in M2.) `solid` is on collision layer 1 and `pit` is a `StaticBody2D` of its own on layer 2: the game's Body drops layer 2 from its mask while it dashes. Side view: `oneway` → one-way collision; parallax planes → `Parallax2D`. **Looks** (M4): a `Sprite2D` per Look in a `Looks` node drawn with the Plate, at its region's box, `visible = false`, with metadata `kiripix_id` and, when the Look has one, `condition`; each piece over a foreground Layer is a `Sprite2D` child of that Layer's node, so it sorts with the Layer and draws over it, also hidden and with the same metadata; a Look's `solid` is a `StaticBody2D` on layer 1 whose `CollisionPolygon2D`s start `disabled = true`. The game shows a Look by showing every node whose `kiripix_id` is that Look's and enabling its polygons; when to do so is in the game's own room data, not in the Condition. `room.json` carries the same data (`looks`: ID, Condition or `null`, file, box, pieces with their Layer, collision), so another Exporter reads it, not the scene. `room.json` is part of the game's contract from M4: each format change bumps its `schema_version`, and through M4 a change means a re-export, not a migration (the Owner has no production rooms). |
 | Prop | A scene: a `Node2D` root at the origin (the y-sort point), a `Sprite2D` offset so the origin pixel is the root's own place, and a `StaticBody2D` footprint on collision layer 1, with a `CollisionPolygon2D` per convex piece of the polygon, relative to the origin. No body when the polygon is empty. The prop's `export` Stage leaves `sprite.png` and `prop.json` (`schema_version`, `asset`, `size`, `origin`, `collision`) in `out/export/`. The scene instances the sprite as `sprite.png` beside it. No prop ID is frozen, so the footprint can be emptied. |
-| Character | `texture.tres` (`CanvasTexture`: the colour atlas as diffuse, the normal atlas as its normal map), `frames.tres` (`SpriteFrames`: one animation `<clip>_<dir>` per clip and direction, such as `walk_sw`, each frame an `AtlasTexture` region of the `CanvasTexture`, at the clip's speed and loop flag), and a scene: a `Node2D` root at the feet with an `AnimatedSprite2D` child `Sprite`, `centered = false`, offset so the pivot pixel is the origin. Both atlases sit beside them. The character's `export` Stage leaves `color.png`, `normal.png` and `character.json` (`schema_version`, `asset`, `files`, `cell`, `pivot`, `atlas`, `directions`, `clips` with each direction's frames as `index` and `rect`, `fps`, `loop`, `stationary`) in `out/export/`. The frozen IDs are the animation names. |
+| Character | `texture.tres` (`CanvasTexture`: the colour atlas as diffuse, the normal atlas as its normal map), `frames.tres` (`SpriteFrames`: one animation `<clip>_<dir>` per clip and direction, such as `walk_sw`, each frame an `AtlasTexture` region of the `CanvasTexture`, at the clip's speed and loop flag), and a scene: a `Node2D` root at the feet with an `AnimatedSprite2D` child `Sprite`, `centered = false`, offset so the pivot pixel is the origin. Both atlases sit beside them. The character's `export` Stage leaves `color.png`, `normal.png` and `character.json` (`schema_version`, `asset`, `files`, `cell`, `pivot`, `atlas`, `directions`, `clips` with each direction's frames as `index` and `rect`, `fps`, `loop`, `stationary`) in `out/export/`. The frozen IDs are the animation names. **Part ramps (M4):** `character.json`'s `parts` (each part's name, materials, row, palette indexes and RGB, dark to light), and `ramps.png` beside the atlases, one row per part of the Project's ramp table in its order, padded to the longest ramp; a part the character lacks is a transparent row, so a row is the same part on every character. The scene's root names it in `metadata/kiripix_ramps`, with the part names in row order in `metadata/kiripix_parts`. **Events (M4, lower priority):** each clip's `events`, such as `foot`, the game frames where a foot plants. |
 
 The game instances these scenes and adds its own scripts in its own scenes, so nothing it writes is ever regenerated
 over (principle 10).
@@ -769,16 +776,44 @@ DEC-048): rooms grow past one screen in both directions, and a battle area in th
 - The `area` Marker and its `Area2D`; the Masks and `room.json` exported into the game (§9).
 - Room Looks (§6.1, ADR 0009): the `looks` Stage, edits by `import --look`, and their export to Godot. Trial
   [0128](../backlog/m4/0128-m4-room-look-edit-trial.md) comes first; the work is [0127](../backlog/m4/0127-m4-room-looks.md).
+  The game's M05 bins that a boss knocks over are Props the game moves, not a Look (the Owner, 2026-11-12; as the bench,
+  decision 8). So the game's first Look is its M09 (R6: the power comes back and the lights come on); Looks stay in M4 anyway.
 - An optional SAM 2 crop on a large room, chosen by the Owner or an agent, only if the trial (0134) shows clicks get worse.
 - First in M4: **palette ramps per part** for characters ([0147](../backlog/m4/0147-m4-character-palette-ramps.md); open
   decision 9, the game's DEC-053). A part is a Blender material; `render` writes a material pass, the character `palette`
   gives each swappable part its own ramp of palette colours that nothing else uses, and the export gives the game each
   part's ramp in `character.json` and as `ramps.png`.
+- **Characters after the M3 gate** ([0161](../backlog/m4/0161-m4-characters-after-the-m3-gate.md)): change a decided clip's
+  range, a Check for small parts that vanish from some frames, and trials of transitions between clips and of a flatter,
+  more 2D character look.
+- **A faster start** ([0163](../backlog/m4/0163-m4-start-faster.md)): every Command spends 0.65 s importing before it works.
+- **A `sprite` Kind** ([0174](../backlog/m4/0174-m4-sprite-kind.md); the game's DEC-012 and DEC-044, needed by its M04): an
+  actor from imported 2D frames (a PixelLab sheet or ZIP, or AI images), `frames → fit`, then the character's `palette`,
+  `finish`, `sheet` and `export`, so the game loads it as a character. A missing direction is a finding, never mirrored; the
+  pivot comes from the feet; normals from height or flat.
+- **Four bodies, one swap shader** (added 2026-11-12, for the game's M03: 2 genders x 2 outfits): ramps that match across
+  characters, from a Project ramp table ([0166](../backlog/m4/0166-m4-ramps-match-across-characters.md)), right after the
+  ramps per part; a trial of a class's weapon in its battle clips ([0170](../backlog/m4/0170-m4-weapon-in-a-battle-clip-trial.md));
+  a stop-gap that copies clip Decisions between characters until M5's bases
+  ([0171](../backlog/m4/0171-m4-copy-clips-from-a-character.md)); and, lower priority, foot contact frames
+  ([0172](../backlog/m4/0172-m4-foot-contact-frames.md)). The game's M03 waits on the clip edit (0156), the flatter-look trial
+  (0160) and the weapon trial, so they go before the rooms work.
+- **Rooms that move** ([0183](../backlog/m4/0183-m4-ambient-animation.md), added 2026-11-12 by the Owner): ambient animation
+  for painted rooms. A shape, a direction and opaque palette colours on emitter Markers, for the game's particles. **Loops**, a
+  `loops` Stage after `looks`: colour cycles baked into frames, and frame loops from whole-pixel Ops (`sway`, `shimmer`,
+  `scroll`), a hand-painted kit or image-model edits. Frame 0 is always the room, timing is in whole ticks, and the game plays the
+  frames from its frame counter. A trial in the game's kitchen comes first
+  ([0184](../backlog/m4/0184-m4-ambient-animation-trial.md)) and sets the defaults the child tickets (0185 to 0196) mark
+  "set by 0184". Animated separable objects are
+  `sprite` Assets, and a runtime shader on the Plate is out.
 
 **M5: character layers.** Added on 2026-11-11 for the game's customizable MC (its DEC-052, needed by its M10): hair styles
 and outfits rendered once each as layers over a body, with the body as a holdout, on the body's clips, camera, frames and
 pivots, so the cost adds per layer and no combination is rendered. A trial comes first
 ([0153](../backlog/m5/0153-m5-character-layer-trial.md)); the work is [0152](../backlog/m5/0152-m5-character-layers.md).
+The two bodies are base Models built by Claude in headless Blender
+([0164](../backlog/m5/0164-m5-claude-built-base-models-trial.md)), and a character made from a base shares its rig and clips,
+so it needs no Mixamo round trip of its own ([0165](../backlog/m5/0165-m5-characters-share-a-base.md)).
 
 **M6: generation and agents.** Moved from M4 on 2026-11-08, and from M5 on 2026-11-11.
 - Providers (one API provider plus PixelLab), prompt templates, the style bible, the cost ledger and budget.
@@ -790,7 +825,8 @@ pivots, so the cost adds per layer and no combination is rendered. A trial comes
 **Later:** side view (side-view Masks: one-way, ladder; the parallax split with depth; platform reachability; the lowest
 priority, moved here from M7 on 2026-11-11), tileset recipe (autotile rules; see below), portraits, VFX sheets, UI icons, a batch view for
 whole districts, normal maps for painted backgrounds, "promote to Prop" for a room's foreground Layer, renaming exported
-IDs with aliases. (Battle backgrounds were dropped on 2026-11-08: the game fights in the room, and its DEC-048 rejects
+IDs with aliases, custom named Masks (`cover`, `high`, `water`…) painted like `solid` and exported as images beside it, with
+no meaning in Kiripix (as areas have none), for terrain the game reads on its grid (filed when a room needs one). (Battle backgrounds were dropped on 2026-11-08: the game fights in the room, and its DEC-048 rejects
 separate battle maps.)
 
 **The tileset recipe, estimated on 2026-11-08, not planned.** The game compares painted rooms with a modular kit for its
@@ -866,16 +902,29 @@ answers that first, before the game's M09.
    station with the lamps off, Lost-and-Found's `relight`); whether a Look can take collision away (rubble cleared) or change
    walkable, navigation and `reach`; whether a Look has its own Markers, such as a light that goes off with an unlit Look; and
    whether a soft edge is allowed with binary alpha. Each waits for a room that needs it. (2026-11-08: a boss phase that moves a
-   bench doesn't need a Look to take collision away. The bench is a Prop, and the game moves it.)
+   bench doesn't need a Look to take collision away. The bench is a Prop, and the game moves it. 2026-11-12, decided by the
+   Owner: the same for the game's M05 bins that a boss knocks over. A toppled bin frees the cells it stood on, which is a Look
+   taking collision away, and bins are cover on single cells, which the game keeps on its grid; so they are Props the game
+   moves, and the laneway is painted without them.)
 
 9. **Character customization**, narrowed on 2026-11-11 (the game's DEC-013, DEC-027 and DEC-051 to DEC-054). The player
    picks gender, skin colour, hair, clothes and a class. Rendering every combination is out: a full body with about 15 clips is
    about 10 minutes of rendering (mc02: 70 ms a frame at 52 px, plus `palette` and `finish`). Decided:
    - **Colours by palette swap in the game,** with no extra render. Each swappable part (a Blender material, or several) owns a
      ramp of palette colours that no other part, fixed colour or the outline uses (M4,
-     [0147](../backlog/m4/0147-m4-character-palette-ramps.md)).
+     [0147](../backlog/m4/0147-m4-character-palette-ramps.md)). **Ramps match across characters** (2026-11-12): a Project
+     ramp table fixes each part's name, length and `ramps.png` row on every character, and optionally its colours, so one
+     shader and one appearance record serve every body ([0166](../backlog/m4/0166-m4-ramps-match-across-characters.md)).
+     Decided by the Owner the same day: a table, not a character reading another's ramps; skin and hair share their colours
+     on every character, and every other part, clothing included, shares only its name, length and row.
    - **Gender as whole bodies** (2). **A class changes only the battle clips** (3 sets per body, the weapon in the frames), not
-     the body, the exploration clips or the outfits; one character holds them all, by clip name.
+     the body, the exploration clips or the outfits; one character holds them all, by clip name. How the weapon gets into the
+     frames (a clip's attachment, a rigged file per class, or a layer) is a trial
+     ([0170](../backlog/m4/0170-m4-weapon-in-a-battle-clip-trial.md)).
+   - **Four character Assets at the game's M03** (2 bodies x 2 outfits) each decide their clips. Until characters share a base
+     (M5, [0165](../backlog/m5/0165-m5-characters-share-a-base.md)), `kiripix clips copy` copies clip Decisions between them
+     ([0171](../backlog/m4/0171-m4-copy-clips-from-a-character.md); chosen 2026-11-12), and each body's second outfit is
+     modelled on the first's rigged file, so it needs no Mixamo trip.
    - **Camera:** `top34_8` for every character; the game changed its own rule to match.
    - **Outfits are whole-body variants** until hair styles and outfits become **layers** (M5,
      [0152](../backlog/m5/0152-m5-character-layers.md)), rendered with the body as a holdout.
@@ -884,7 +933,16 @@ answers that first, before the game's M09.
 
 ## Changes since v0.4
 
+- M4, 2026-11-12: rooms that move (0183), decided by the Owner. Loops are a `loops` Stage of their own, not animated Looks.
+  A `pulse` may brighten a light source's own pixels, never the surfaces around it (the game's Option A). Particles draw opaque
+  palette colours. Cycles are baked into frames. `loop.flash` is an error. When a Look over a Loop shows, the game hides the
+  Loop by its ID. A Loop may name a light Marker to flicker in step. §6.1 and §9 get the details with 0189 and 0190.
+- M4 rooms, 2026-11-12, after the game's M04 and M05 plans: the walkable Checks apply only to an area marked `walkable`; an
+  Exit's trigger box is an area the game pairs by ID; a Look's Condition is an optional label, since the game binds Looks by
+  ID; the M05 bins are Props, not a Look, and Looks stay in M4; custom named Masks under Later. All decided by the Owner.
 - Open decision 9: character customization (2026-11-11), narrowed the same day. Palette ramps per part come first in M4.
+  On 2026-11-12, for the game's four M03 bodies: ramps that match across characters (a Project ramp table), a trial of a
+  class's weapon in its battle clips, `clips copy`, and foot contact frames in `character.json`.
 - A new M5, character layers (2026-11-11). Generation and agents move to M6; side view moves to Later, as the lowest priority.
 - M4 is re-cut as "rooms for grid battles" (2026-11-08, after the game's DEC-048). Generation and agents move to M5, side view
   to M6.

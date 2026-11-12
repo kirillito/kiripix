@@ -598,6 +598,11 @@ def test_the_walk_fixture_renders_8_directions_at_the_target_size(project: Kirip
     # the feet touch the ground at the pivot: the lowest opaque row is within a pixel or two of it
     mask = np.array(Image.open(folder / "work" / "render" / by_name["idle"]["directions"]["s"][0]["files"]["mask"]))
     assert abs(np.nonzero(mask.any(axis=1))[0].max() + 1 - document["pivot"][1]) <= 2
+    # and the character stands at the target height (ticket 0162): a wrong scale, such as one that counts a mesh that
+    # doesn't render, fails here
+    rows = np.nonzero(mask.any(axis=1))[0]
+    assert abs((rows.max() + 1 - rows.min()) - 26) <= 1
+    assert rows.max() + 1 == round(document["pivot"][1])
 
 
 @pytest.mark.blender

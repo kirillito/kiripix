@@ -122,7 +122,7 @@ A placed point, line or box on a Room with a stable ID: an Exit, a Spawn, a ligh
 
 **Area**:
 A Marker that is a box on a Room, optionally snapped to a cell grid. Kiripix gives it no meaning; the game decides what it
-is for, such as a battle area.
+is for, such as a battle area, an escape route or an Exit's trigger box.
 _Avoid_: region (that is a Look's), zone, battle area (in Kiripix's own code and messages)
 
 **Exit**:
@@ -140,13 +140,19 @@ The line on a foreground Layer that decides whether it is drawn over or under an
 
 **Look**:
 Another appearance of part of a Room, such as a door shut, a lamp unlit or a station unbuilt. It is painted as an edit
-of the room's Source, cut to a region, and shown by the game while its Condition holds.
+of the room's Source, cut to a region, and shown by the game, which finds it by its ID.
 _Avoid_: state (that is the game's, and Stage status is "status"), variant, overlay, patch
 
 **Condition**:
-The name of the game state that shows a Look, such as `circuit.hall:off`. Kiripix stores and exports it, and never
-interprets it.
+An optional label naming the game state that shows a Look, such as `circuit.hall:off`, for people and other Exporters.
+Kiripix stores and exports it, and never interprets it; the game binds a Look by its ID, not by its Condition.
 _Avoid_: when, flag, trigger
+
+**Loop**:
+A part of a Room that plays by itself, over and over, cut to a region: a colour cycle (chosen palette colours stepping
+through a list) or frames. Its first frame is the room's own pixels, and its timing is in whole game ticks. A character
+clip's `loop` flag (whether a clip repeats) is not a Loop.
+_Avoid_: animation, ambient, effect, look (a Look is shown by game state; a Loop always plays)
 
 ## Verification and output
 

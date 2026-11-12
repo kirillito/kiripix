@@ -4,9 +4,16 @@ Every Check takes the frames as `SheetFrame` values and the `fix` command to nam
 clip, direction and frame in `field` as `clip/direction/frame`, and the pivot or pixel in `x`, `y` where there is one.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
-import numpy as np
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks.finding import Finding, Position
 from kiripix.ops.sheet import default_cell_pivot

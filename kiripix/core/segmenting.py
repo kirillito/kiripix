@@ -2,10 +2,16 @@
 a flood would fill, with nothing recorded or pinned. `serve` keeps segment-preview's Runner warm (`kiripix.core.warm`);
 the CLI loads and unloads it like any other call. flood-preview needs no Runner."""
 
-from dataclasses import dataclass
-from typing import Any
+from __future__ import annotations
 
-import numpy as np
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks import Position
 from kiripix.core import cancel, warm

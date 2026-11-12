@@ -1,10 +1,20 @@
 """Palette files: GIMP `.gpl` (stored) and `.hex` (imported). Text in, data out; no I/O."""
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 
-import numpy as np
-import numpy.typing as npt
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 from kiripix.ops.colour import srgb_to_oklab
 

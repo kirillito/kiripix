@@ -16,11 +16,17 @@ Output in `work/finish/`, in `render`'s layout: `color/<clip>/<dir>/<NNN>.png` a
 frame, `render.json` (copied, so the frame list and pivots go on to `sheet`) and `finish.json` (what was drawn).
 """
 
+from __future__ import annotations
+
 import json
 import shutil
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks import Finding, Position, check_conformance
 from kiripix.checks.sheet import SheetFrame, check_normal_size

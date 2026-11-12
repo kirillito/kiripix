@@ -19,8 +19,10 @@ pipeline's most-used parts.
 
 ## Solution
 
-- A `looks` Stage after `palette`. Each Look has an ID, a Condition, a picked edit of the room's Source, a region and,
-  optionally, its own `solid` Mask.
+- A `looks` Stage after `palette`. Each Look has an ID, a picked edit of the room's Source, a region and, optionally, a
+  Condition and its own `solid` Mask. The game binds a Look by its ID in its own room data, with its own condition JSON over
+  its Facts, as it binds lights and interactables; the Condition is a label for people and other Exporters, which the game
+  never evaluates (decided by the Owner, 2026-11-12).
 - An edit is resized and registered to the Source, fitted with the room's Grid transform, mapped as the room is mapped,
   and cut to its region. Its pixels over a foreground Layer go to a piece at that Layer's depth.
 - Checks: on the palette, registered, drift outside the region reported, and the region shows a change.
@@ -38,7 +40,7 @@ pipeline's most-used parts.
 
 ## User Stories
 
-1. As the Owner, I want to import an edit of a room as a Look with a Condition, so that the game can show a shut door.
+1. As the Owner, I want to import an edit of a room as a Look with an ID, so that the game can show a shut door.
 2. As the Owner, I want an edit that came back at another size or slightly rescaled to line up anyway, or to be told it
    doesn't, so that the picture never jumps when the Look toggles.
 3. As the Owner, I want to see where the edit changed the room outside the region, so that the model's drift is never

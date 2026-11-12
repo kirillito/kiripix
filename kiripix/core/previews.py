@@ -3,11 +3,21 @@
 Written to `.kiripix/previews/`, a cache that deleting loses nothing from. Nothing here takes a lock or records anything.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-import numpy.typing as npt
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset

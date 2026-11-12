@@ -66,7 +66,7 @@ it returned 16 colours with the new `fit`, 18 with the old). Mean OKLab distance
 | +32 asked (16 found) | none | 0.0119 | 0.0100 | 0.0128 |
 | +32 asked (16 found) | bayer8 | 0.0144 | 0.0129 | 0.0154 |
 
-Images: [r02, x 150-330, y 60-200, 3x](0094-images/r02_x150-330_y60-200.png). Top row: Source (box mean), `fit` before the fix,
+Images (deleted 2026-11-12; in git before commit 0504348): r02, x 150-330, y 60-200, 3x. Top row: Source (box mean), `fit` before the fix,
 `fit` after. Bottom row: current palette with bayer8, grown palette with bayer8, grown palette with no dither.
 
 - **Two causes, as suspected.** The palette is the larger one (r02 0.0189 -> 0.0129 with the grown palette: the wall stays
@@ -99,7 +99,7 @@ middle colour), `test_quantize.py` (`dark_gradient.png`), `test_mapping_check.py
 
 ## Acceptance criteria
 
-- [x] The measurement table and images are recorded here, with the Owner's look at the grown palette's result (2026-11-07: "looks good", on [r02_final.png](0094-images/r02_final.png)).
+- [x] The measurement table and images are recorded here, with the Owner's look at the grown palette's result (2026-11-07: "looks good", on r02_final.png).
 - [x] A golden image of a smooth dark gradient maps without hard bands, with the palette the measurement picks.
 - [x] `fit` keeps the Source's thin dark lines continuous and its flat areas even, on golden images (`downscale_thin_line.png`,
       `downscale_soft_shade.png`). (Reworded: the dark lines were the Source's own, see the Owner's look.)
@@ -107,7 +107,7 @@ middle colour), `test_quantize.py` (`dark_gradient.png`), `test_mapping_check.py
 
 ## The Owner's look (2026-11-07)
 
-On [r02_x150-330_y60-200.png](0094-images/r02_x150-330_y60-200.png) (top: Source, old `fit`, new `fit`; bottom: current
+On r02_x150-330_y60-200.png (top: Source, old `fit`, new `fit`; bottom: current
 palette `bayer8`, grown palette `bayer8`, grown palette no dither): only the Source looks right. The other five are
 "extremely noisy and uneven". The old `fit` (top middle) is closest, but the locker door outlines have coloured pixels in
 them instead of the Source's continuous dark lines: "this gives a poor quality impression".
@@ -124,8 +124,8 @@ flat, even areas, as in the Source.
 Prototype script, not in the repo: `C:\Users\Kirill\AppData\Local\Temp\claude\e7ccd5c4395c2f79\ac3f705e-c588-4ca1-bd55-d61d051d0969\scratchpad\proto.py`.
 All three use 0081's one scale: r02's 1200 x 896 Source at 15/7 on both axes, the 5 spare rows cropped evenly.
 Images, each panel the r02 lockers (fit x 150-330, y 60-200) at 4x nearest neighbour, labelled:
-[the candidates](0094-images/r02_lockers_candidates.png) and
-[the same through `palette` with the grown palette (the 64 plus 19 suggested), no dither](0094-images/r02_lockers_candidates_palette.png).
+the candidates and
+the same through `palette` with the grown palette (the 64 plus 19 suggested), no dither.
 First panel is the Source scaled by nearest neighbour to the fit size, second the current fit.
 
 - **A, lines first.** Finds the Source's dark thin pixels (darker than their 9 x 9 neighbourhood by 0.045 in OKLab lightness),
@@ -155,7 +155,7 @@ axis where the line's run of cells is longer; at a crossing nothing is thinned. 
 horizontal 2 px line straddling cells stays one pixel wide and unbroken (`downscale_thin_line.png`), and a soft-shaded wall stays
 within the noise of the plain mean (`downscale_soft_shade.png`).
 
-Final comparison on r02, lockers at 4x nearest: [r02_final.png](0094-images/r02_final.png). Panels: the Source, the old fit,
+Final comparison on r02, lockers at 4x nearest: r02_final.png. Panels: the Source, the old fit,
 the new fit, the new fit through `palette` with the grown palette (the 64 plus 18 suggested), no dither. The floor's bands in the
 last panel are the palette without dither, which `bayer8` is there to hide.
 

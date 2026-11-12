@@ -8,11 +8,17 @@ and mask passes stay in `render`'s folder, untouched; `render.json` is copied he
 Output in `work/palette/`: `color/<clip>/<dir>/<NNN>.png` (as in `render`), `palette.json` and `render.json`.
 """
 
+from __future__ import annotations
+
 import json
 import shutil
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks import Finding, Position
 from kiripix.ops import conformance, palette_subset, quantize, remove_orphans

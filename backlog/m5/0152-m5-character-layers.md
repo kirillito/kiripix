@@ -42,8 +42,8 @@ Open, for the trial [0153](0153-m5-character-layer-trial.md) to settle before th
 
 | Wave | Tickets |
 |---|---|
-| 1 | [0153](0153-m5-character-layer-trial.md), the trial |
-| 2 | The work tickets the trial files |
+| 1 | [0153](0153-m5-character-layer-trial.md), the trial, and [0164](0164-m5-claude-built-base-models-trial.md), the two base Models (male and female) built by Claude in Blender |
+| 2 | The work tickets the trials file, and [0165](0165-m5-characters-share-a-base.md): characters made from a base share its rig and clips |
 
 Needs M4 done: the game's M04 and M05 need M4 first. The game needs layers by its M10.
 

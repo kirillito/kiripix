@@ -7,6 +7,8 @@ Everything a Runner does in this process, warm or not, goes one at a time: `one_
 unloads its own, which unloads the warm ones first because a server's Commands share the registered Runners.
 """
 
+from __future__ import annotations
+
 import threading
 import time
 from collections import OrderedDict
@@ -14,9 +16,13 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.core import cancel, locks
 from kiripix.runners import Device, EmbeddingRunner, Runner, pull, weights_dir

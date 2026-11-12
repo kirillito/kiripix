@@ -5,11 +5,18 @@ a positive signed area (it runs clockwise on screen, with the Mask on its right)
 works in whole numbers, so no test here can go wrong by rounding.
 """
 
+from __future__ import annotations
+
 import math
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
-import numpy as np
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.ops.masks import BoolMask
 

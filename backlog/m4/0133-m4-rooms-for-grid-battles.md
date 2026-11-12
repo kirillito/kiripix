@@ -29,11 +29,19 @@ to later milestones (M5 and M6; since 2026-11-11, generation is M6 and side view
   Kiripix writes the canvas for the next piece, and joins the piece the Owner made in the image model's own UI.
 - **An `area` Marker:** a box with a stable ID, optionally snapped to a cell, exported as an `Area2D`. Kiripix gives it no meaning.
   The game reads `battle.*` IDs as battle areas, and keeps its own rules (minimum size, connected cells, deployment) in its
-  content check. Deploy cells live in the game's encounter data, so no new point Marker is needed.
+  content check. Deploy cells live in the game's encounter data, so no new point Marker is needed. A room holds any number of
+  areas with any ID, one cell wide at least. Not every area is for standing in: the laneway's `escape.*` area over the fence,
+  an Exit's trigger box (spec §6.1) or a camera frame has no walkable pixel, so the walkable Checks apply only to an area
+  marked `walkable` ([0137](0137-m4-area-marker.md); decided by the Owner, 2026-11-12).
 - **The Masks reach the game as images,** with `room.json`, so the game builds cells from exact pixels.
 - **Room Looks without generation** ([0127](0127-m4-room-looks.md)): imported edits with their own `solid`, for boss phases
   (lights fail) and doors. A moving bench is a Prop that the game moves, not a Look (the Owner, 2026-11-08), so open decision 8
-  stays open.
+  stays open. The game binds each Look by its ID in its own room data, so a Look's Condition is an optional label
+  ([0131](0131-m4-looks-export.md)).
+- **The game's M05 bins, decided by the Owner on 2026-11-12:** the boss knocks the bins over mid-fight. The game's plan asks for
+  "a Look with its own `solid` (fallback: props)", but a toppled bin frees the cells it stood on, which is a Look taking
+  collision away (open decision 8), and bins are per-cell cover, which the game keeps on its grid anyway. So the same rule as
+  the bench: bins are Props (the prop recipe, M2) that the game places and moves, and the laneway is painted without them.
 - **SAM 2 on large rooms,** only if the trial shows clicks get worse.
 
 ## Order
@@ -47,6 +55,10 @@ to later milestones (M5 and M6; since 2026-11-11, generation is M6 and side view
 | 4 | Looks: [0128](0128-m4-room-look-edit-trial.md), [0129](0129-m4-look-variants.md), [0130](0130-m4-looks-stage.md), [0131](0131-m4-looks-export.md), [0132](0132-m4-ui-looks-screen.md) |
 | 5 | The SAM 2 crop, if 0134 shows clicks get worse on a large room; 0134 files that ticket |
 | 6 | [0141](0141-m4-agent-acceptance-test.md), then the gate [0142](0142-m4-gate.md) |
+
+**Looks stay in M4** (the Owner, 2026-11-12), though with the bins as Props no game milestone before its M09 (R6: the power
+comes back and the lights come on) uses a Look. So wave 4 doesn't block the game's M04 or M05, and may run after wave 5 if
+another wave needs the agents first.
 
 **Don't run these at the same time, because they edit the same files:**
 - 0137 and 0130 (`kiripix/recipes/room.py`).
@@ -64,6 +76,8 @@ to later milestones (M5 and M6; since 2026-11-11, generation is M6 and side view
 5. As an agent, I want the same through the CLI, so that I can prepare and join pieces for the Owner.
 6. As the Owner, I want a boss phase's changed look (lights out) as a Look with its own `solid`, so that the game switches it
    mid-fight.
+7. As the game, I want an area that isn't for standing in (an escape route over a fence, an Exit's trigger box) without a
+   walkable error, so that every rectangle the room's play needs is drawn on the room.
 
 ## Out of scope
 

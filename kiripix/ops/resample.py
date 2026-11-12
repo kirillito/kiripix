@@ -10,12 +10,21 @@ pixels are; an even-sized cell is sampled at the upper of its two middle pixels;
 offset among equally good ones, and the scale to the largest consistent one.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-import numpy.typing as npt
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 from kiripix.ops.colour import U8, srgb_to_oklab
 

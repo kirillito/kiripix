@@ -1,6 +1,13 @@
 """Chroma key (spec §6.2, §7): remove a flat background colour exactly. Pure numpy; deterministic."""
 
-import numpy as np
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.ops.colour import U8, srgb_to_oklab
 from kiripix.ops.resample import BoolMask

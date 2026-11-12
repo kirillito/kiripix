@@ -72,6 +72,9 @@ Then mc02: set `parts`, rebuild, export, and check in Godot that a test shader s
 
 ## Out of scope
 
+- The same parts, lengths, rows and (for skin and hair) colours on every character, which the game's four M03 bodies need: a
+  spec of its own after these tickets, [0166](0166-m4-ramps-match-across-characters.md). 0150 and 0151 should key everything by
+  part name, not position, so that 0166 only adds a Project order.
 - Per-part layer renders (hair styles and outfits as layers): M5, [0152](../m5/0152-m5-character-layers.md).
 - The game's swap shader and appearance data.
 - A palette screen showing the ramps in the UI. A follow-up, if the Owner wants it.

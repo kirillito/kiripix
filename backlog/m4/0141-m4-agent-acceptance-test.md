@@ -13,7 +13,7 @@ Spec §14 (the agent acceptance test). It's run at the gate, not in CI.
 
 ## What to change
 
-- The stand-in Owner's fixture adds an `area` Marker (`battle.test`, cell 32) to the room, so the agent has to place it from
+- The stand-in Owner's fixture adds an `area` Marker (`battle.test`, cell 32, `walkable = true`) to the room, so the agent has to place it from
   `describe`, `next` and `check` output alone, and clear `area.no_walkable` if the fixture puts it wrong first.
 - The room is two pieces joined with `extend`, from fixture pieces, before `import`.
 - The run checks that the export has the `Area2D`, `masks/solid.png` and `room.json`.

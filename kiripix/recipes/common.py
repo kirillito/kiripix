@@ -2,15 +2,24 @@
 records, the fit and palette Stages' work and their Checks. A Recipe passes in what differs, such as the image to map;
 which Stage is upstream stays with the Recipe."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import shutil
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from PIL import Image
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    from PIL import Image
+else:
+    Image = lazy_module("PIL.Image")
 
 from kiripix.checks import Finding, Position, check_conformance, check_mapping_error
 from kiripix.ops import (

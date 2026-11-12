@@ -1,9 +1,19 @@
 """The Layer Ops (spec §7): cutting an image into Layers and putting them back, on binary Masks."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 
-import numpy as np
-import numpy.typing as npt
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 from kiripix.ops.colour import U8, srgb_to_oklab
 from kiripix.ops.compose import overlay

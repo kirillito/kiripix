@@ -4,11 +4,20 @@ Pure numpy: arrays in, arrays out. Results are deterministic: squared distances 
 last-bit difference between platforms' maths libraries can't flip a choice, and ties go to the earlier palette colour.
 """
 
-from dataclasses import dataclass, field
-from typing import Literal
+from __future__ import annotations
 
-import numpy as np
-import numpy.typing as npt
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
+
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 U8 = npt.NDArray[np.uint8]
 F64 = npt.NDArray[np.float64]

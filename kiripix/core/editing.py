@@ -9,7 +9,6 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from kiripix.checks import Finding, Position
@@ -186,6 +185,8 @@ def _entry_findings(spec: StageSpec, asset: Asset, document: DecisionDocument) -
             )
         ]
     findings: list[Finding] = []
+    from jsonschema import Draft202012Validator  # loaded here: it costs 0.06 s at start
+
     for error in sorted(Draft202012Validator(declared.entry_schema).iter_errors(document.data),
                         key=lambda e: [str(p) for p in e.absolute_path]):
         where = ".".join(str(part) for part in error.absolute_path)

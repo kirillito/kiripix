@@ -24,6 +24,9 @@ Spec §6.3 (palette, finish). Part of [0147](0147-m4-character-palette-ramps.md)
 - In `finish`: an `outline_colour` that is in a part's ramp fails the Stage with `finish.outline_in_ramp`, naming the part and a
   free index as the fix.
 - `describe` shows `parts` with an example.
+- Keep part names the key everywhere (in `palette.json`, in the Ops' arguments), not a part's position:
+  [0166](0166-m4-ramps-match-across-characters.md) later fixes each part's length, row and colours across characters from a
+  Project table.
 
 ## Acceptance criteria
 

@@ -13,7 +13,7 @@ Spec §6.1 (the `looks` row and Looks); ADR 0009. After [0128](0128-m4-room-look
 
 ## What to build
 
-- **Decisions,** each naming its Look: `look` (ID, Condition); region `polygon`, `brush` and `difference` (box,
+- **Decisions,** each naming its Look: `look` (ID, and an optional Condition, a label the game doesn't evaluate); region `polygon`, `brush` and `difference` (box,
   tolerance, specks removed; on the image); `solid` by polygon or brush. The `masks` Stage's `snap_cell` applies to
   `solid`.
 - **The build,** per Look: resize to the Source, register (`register`), fit through the room's Grid transform, regrade

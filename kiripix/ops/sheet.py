@@ -1,8 +1,15 @@
 """The character sheet's Ops (spec §7, ticket 0108): pack a character's frames into one atlas."""
 
+from __future__ import annotations
+
 import math
 
-import numpy as np
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 Rect = tuple[int, int, int, int]  # x, y, width, height in the atlas
 

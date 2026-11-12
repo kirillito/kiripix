@@ -2,13 +2,22 @@
 
 Built to the footprint (tickets 0050, 0051); `export` leaves the engine-free files the Exporter reads (ticket 0052)."""
 
+from __future__ import annotations
+
 import json
 import re
 import shutil
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from PIL import Image
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    from PIL import Image
+else:
+    Image = lazy_module("PIL.Image")
 
 from kiripix.checks import Finding, Position, check_alpha, check_conformance, check_chroma_cutout
 from kiripix.ops import Outline, add_outline, chroma_key, collision_shapes, conformance

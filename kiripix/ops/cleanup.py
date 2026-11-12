@@ -1,10 +1,19 @@
 """Cleanup Ops (spec §7): orphan pixel removal. Pure numpy; deterministic."""
 
-from collections import Counter, deque
-from typing import Literal
+from __future__ import annotations
 
-import numpy as np
-import numpy.typing as npt
+from collections import Counter, deque
+from typing import TYPE_CHECKING, Literal
+
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 U8 = npt.NDArray[np.uint8]
 

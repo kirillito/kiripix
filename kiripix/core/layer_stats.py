@@ -2,10 +2,16 @@
 output as built (one awaiting review too) and the sorting Stage's current Decisions. Nothing is recorded, no status
 changes and no lock is taken. What is specific to a Recipe comes from the Stage's `LayerStatsHooks`."""
 
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
 
-import numpy as np
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks import Position
 from kiripix.core.assets import Asset

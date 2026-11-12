@@ -5,11 +5,17 @@ One that loads a Runner takes the GPU lock, as anything loading a Runner does.
 a cached embedding); in the CLI a Probe works too, only slower. A Probe is registered with `@probe(name)`.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome

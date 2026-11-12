@@ -7,9 +7,16 @@ mapped separately with the same parameters (the same Bayer phase), cleaned of or
 Layers recompose exactly to `palette.png`. With no Layers `plate.png` is a byte copy of `palette.png`.
 """
 
+from __future__ import annotations
+
 import shutil
 
-import numpy as np
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks import Finding, Position, check_conformance
 from kiripix.ops import conformance, cut_by_alpha, has_partial_alpha, recompose, remove_orphans

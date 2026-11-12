@@ -3,7 +3,7 @@ status: todo
 milestone: M4
 agent: character-pipeline
 type: ticket
-parent: 0097-m3-characters.md
+parent: 0161-m4-characters-after-the-m3-gate.md
 ---
 
 # M4: change a decided clip's frames, keeping its name

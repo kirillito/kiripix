@@ -1,9 +1,19 @@
 """Making an image easier to look at: a tint over each Mask. For previews, never for game art."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 
-import numpy as np
-import numpy.typing as npt
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 from kiripix.ops.colour import U8
 

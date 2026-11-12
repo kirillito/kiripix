@@ -1,9 +1,15 @@
 """`kiripix op`: Ops run directly on any image, outside Recipes."""
 
-from pathlib import Path
-from typing import Literal
+from __future__ import annotations
 
-import numpy as np
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.checks import check_alpha, check_conformance

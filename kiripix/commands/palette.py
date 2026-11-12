@@ -1,12 +1,18 @@
 """Growing the Project's palette from an image: `op palette-suggest` (an agent may run it, it only writes a proposal) and
 `palette-add` (owner-only, it appends the proposal's colours to the palette)."""
 
+from __future__ import annotations
+
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.checks import check_palette

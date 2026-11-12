@@ -3,7 +3,7 @@ status: todo
 milestone: M4
 agent: character-pipeline
 type: trial
-parent: 0097-m3-characters.md
+parent: 0161-m4-characters-after-the-m3-gate.md
 depends_on: [0148-m4-render-material-pass.md]
 ---
 

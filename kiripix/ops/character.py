@@ -5,10 +5,20 @@ module adds the one choice a character needs on top, which palette colours all i
 which is never palette-mapped.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 
-import numpy as np
-import numpy.typing as npt
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 from kiripix.ops.colour import srgb_to_oklab
 

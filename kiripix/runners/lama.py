@@ -7,12 +7,21 @@ taken from the result, so what is outside the hole is the input's, bit for bit. 
 Runner loads.
 """
 
+from __future__ import annotations
+
 import gc
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from PIL import Image
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    from PIL import Image
+else:
+    Image = lazy_module("PIL.Image")
 
 from kiripix.runners import ort
 from kiripix.runners.base import CheckCancel, Device, Runner, RunnerError, WeightFile

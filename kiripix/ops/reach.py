@@ -4,11 +4,18 @@ Pure: arrays in, arrays out. A spot (x, y) is where the footprint is centred. A 
 x - width // 2 up to x + (width - 1) // 2 and likewise in y, so with an even size the extra pixel is up and to the left.
 """
 
+from __future__ import annotations
+
 from collections import deque
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
-import numpy as np
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.ops.masks import BoolMask
 

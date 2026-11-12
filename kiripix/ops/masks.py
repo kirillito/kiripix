@@ -4,12 +4,22 @@ Pure: arrays in, arrays out. Every tie is broken explicitly: a flood takes 4-con
 points in order, and a colour that is equally near two defined colours goes to the first one given.
 """
 
+from __future__ import annotations
+
 from collections import deque
 from collections.abc import Sequence
 from fractions import Fraction
 
-import numpy as np
-import numpy.typing as npt
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    import numpy.typing as npt
+else:
+    npt = lazy_module("numpy.typing")
 
 from kiripix.ops.colour import U8, has_partial_alpha, nearest_index, srgb_to_oklab
 

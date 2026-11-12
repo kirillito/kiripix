@@ -5,12 +5,18 @@ Runner's ID with a hash of its weights. The device isn't part of it. The record 
 PNG is written last, so a result that exists is a whole one.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.core import atomic
 from kiripix.core.hashing import hash_json

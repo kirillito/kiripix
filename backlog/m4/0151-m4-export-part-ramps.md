@@ -18,7 +18,9 @@ Spec §9 (character export). Part of [0147](0147-m4-character-palette-ramps.md).
 - The Godot exporter writes `ramps.png` beside `color.png`: one row per part in that order, one pixel per ramp step, the row
   padded with transparent pixels to the longest ramp. The scene's root names it in `metadata/kiripix_ramps`, with the part names
   in row order in `metadata/kiripix_parts`. It is owned through the Manifest like the atlases.
-- Spec §9's Character row says what the game gets.
+- Spec §9's Character row already says what the game gets (written 2026-11-12, with 0166's Project order); check it matches.
+- The row order here is `palette`'s, for one character. [0169](0169-m4-export-ramps-in-project-order.md) later puts rows in the
+  Project ramp table's order, the same on every character, so write the rows from a list of part names, not by position.
 
 ## Acceptance criteria
 

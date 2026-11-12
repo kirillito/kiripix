@@ -124,7 +124,7 @@ Not decided here. A ticket that depends on one says so, and stops until it's ans
 | Q8 | **Answered 2026-11-08:** `height = 52` in `[character]` is the Project default, and a character's `height` parameter overrides it. | 0099 |
 | Q9 | **Answered 2026-11-08:** a `colors` parameter on the character's `palette` Stage, default 16; `palette_subset` picks the n best-fitting palette colours in OKLab across all frames. | 0107, 0110 |
 | Q10 | **Answered 2026-11-08:** the ground point under the root that Blender reports per frame, so no `feet_point` Op; the Check reads the pivots it's given. Stationary clips carry a `stationary` flag on the `clip` Decision (default false); only those are checked. | 0103, 0108, 0112 |
-| Q11 | Rigify for non-humanoids: in M3, or deferred until a non-humanoid character is needed? | 0102 |
+| Q11 | **Answered 2026-11-12: deferred to Later.** Rigify for non-humanoids is low priority; it waits until a non-humanoid character is needed. | 0102 |
 | Q12 | **Answered 2026-11-08:** one atlas per character, with one cell size for the whole character. | 0108, 0112 |
 
 ## Testing Decisions

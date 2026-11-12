@@ -1,6 +1,13 @@
 """The cutout Checks (spec §6.2, ticket 0050): did an exact chroma key take the background out?"""
 
-import numpy as np
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks.finding import Finding, Position
 from kiripix.ops import key_fringe

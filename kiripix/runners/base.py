@@ -6,14 +6,20 @@ fresh clone with no weights must still find its pinned results. In names Kiripix
 weights.
 """
 
+from __future__ import annotations
+
 import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 Device = Literal["auto", "cpu"]  # auto: the GPU if ONNX Runtime can use it, else the CPU
 CheckCancel = Callable[[], None]

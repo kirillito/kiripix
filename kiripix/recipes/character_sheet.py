@@ -21,11 +21,17 @@ The Checks read `finish`'s frames again (the atlas has cut off what overflows th
 about a frame has `position.field` = `clip/direction/index` and `position.file` = the frame's colour file in `finish`.
 """
 
+from __future__ import annotations
+
 import json
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.checks import (
     Finding,

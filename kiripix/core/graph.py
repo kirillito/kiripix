@@ -15,6 +15,8 @@ pinned result is needs-input, and `run --rerun` makes it. A pinned result no `ac
 needs-review. The pinned results of a Stage's current calls are part of its input hash.
 """
 
+from __future__ import annotations
+
 import json
 import shutil
 import time
@@ -24,9 +26,13 @@ from contextlib import ExitStack
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ContextManager, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ContextManager, Literal, TypeVar
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position

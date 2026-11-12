@@ -19,6 +19,12 @@ each animation, import the rigged file and every clip source, and decide every c
 16 minutes of the journal. NPCs and enemies built on the same body (with another head, hair or outfit, and the same skeleton)
 repeat all of it.
 
+M4's stop-gap (chosen by the Owner on 2026-11-12) [0171](../m4/0171-m4-copy-clips-from-a-character.md) (`kiripix clips copy`) already copies
+clip Decisions between characters, with no link. A base replaces it: decide whether `clips copy` stays.
+
+The same cross-Asset inputs could later let a character take its ramps from another (`ramps_from`), which M4 avoided with a
+Project ramp table ([0166](../m4/0166-m4-ramps-match-across-characters.md)).
+
 ## What to build
 
 Settle the details after [0164](0164-m5-claude-built-base-models-trial.md) and [0153](0153-m5-character-layer-trial.md); the

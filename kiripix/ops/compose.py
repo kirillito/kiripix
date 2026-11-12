@@ -1,6 +1,13 @@
 """Putting one image on top of another, pixel-exactly."""
 
-import numpy as np
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.ops.colour import U8
 

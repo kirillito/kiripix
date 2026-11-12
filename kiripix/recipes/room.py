@@ -1,13 +1,22 @@
 """The room Recipe (spec §6.1): brief, source, fit, layers, masks, palette, place, reach, export."""
 
+from __future__ import annotations
+
 import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from PIL import Image
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    from PIL import Image
+else:
+    Image = lazy_module("PIL.Image")
 
 from kiripix.checks import Finding, Position
 from kiripix.recipes.base import (

@@ -1,13 +1,19 @@
 """What the ONNX Runners share: choosing the providers, and one inference that a cancel can stop. ONNX Runtime is imported
 only when a Runner loads or runs, so nothing else pays for it."""
 
+from __future__ import annotations
+
 import contextlib
 import io
 import threading
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
 
 from kiripix.runners.base import CheckCancel, Device, RunnerError
 

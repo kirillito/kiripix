@@ -21,14 +21,23 @@ Layer pixels are the fit image cut by alpha, the hole equals the union of the al
 fit image, so Plate and Layers recompose exactly (ADR 0004). With no Decisions the Plate is a byte copy of the fit image.
 """
 
+from __future__ import annotations
+
 import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from PIL import Image
+from kiripix.ops.lazy import lazy_module
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = lazy_module("numpy")
+if TYPE_CHECKING:
+    from PIL import Image
+else:
+    Image = lazy_module("PIL.Image")
 
 import kiripix.runners as runners
 from kiripix.checks import Finding, Position
