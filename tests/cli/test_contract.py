@@ -19,6 +19,16 @@ def _image(project: Kiripix) -> None:
     Image.new("RGBA", (4, 4), (255, 0, 77, 255)).save(project.cwd / "in.png")  # "red" in the default palette
 
 
+def _join_images(project: Kiripix) -> None:
+    """A base and a piece that continues it east: two 200 px crops of one blocky random scene, 100 px apart."""
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    scene = np.kron(rng.integers(0, 256, (20, 75, 3), dtype=np.uint8), np.ones((4, 4, 1), dtype=np.uint8))
+    for name, crop in (("base.png", scene[:, :200]), ("piece.png", scene[:, 100:])):
+        Image.fromarray(crop, "RGB").save(project.cwd / name)
+
+
 def _proposal(project: Kiripix) -> None:
     """A palette proposal for a colour the default palette lacks, copied to a path the sample can name."""
     Image.new("RGBA", (4, 4), (10, 200, 210, 255)).save(project.cwd / "in.png")
@@ -109,6 +119,9 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
     "op palette-suggest": lambda p: (_image(p), ["op", "palette-suggest", "in.png", "--add", "2", "--scale", "1"])[1],
+    "op register-piece": lambda p: (_join_images(p), ["op", "register-piece", "base.png", "piece.png", "--overlap", "east:100", "--output", "reg.png"])[1],
+    "op match-tone": lambda p: (_join_images(p), ["op", "match-tone", "base.png", "piece.png", "toned.png", "--overlap", "east:100"])[1],
+    "op seam-join": lambda p: (_join_images(p), ["op", "seam-join", "base.png", "piece.png", "joined.png", "--overlap", "east:100"])[1],
     "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
     "ramps-add": lambda p: (_built_hero(p), ["ramps-add", "character.hero", "--parts", "skin"])[1],
     "runners list": lambda p: ["runners", "list"],

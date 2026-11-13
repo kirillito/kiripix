@@ -29,6 +29,7 @@ import {
 } from "./components";
 import { isTyping, type PixelCanvas } from "./pixelCanvas";
 import { MASKS_STAGE, MasksPanel } from "./maskScreen";
+import { ambiguousCells } from "./markerTool";
 import { ABOVE_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
 import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
 import { LAYERS_DECISION, LAYERS_STAGE, LayersPanel } from "./layerScreen";
@@ -460,6 +461,8 @@ export function App() {
     const { stage: where, x, y, width, height } = finding.position ?? {};
     // The canvas focuses one pixel: a box (an open edge) is focused at its middle.
     if (x != null && y != null) jumpTo.current = { x: x + Math.floor((width ?? 1) / 2), y: y + Math.floor((height ?? 1) / 2) };
+    const cell = ambiguousCells(finding)?.cells[0]; // the first ambiguous cell, rather than the middle of its area
+    if (cell) jumpTo.current = cell;
     const layer = finding.code === "layer.no_ysort" ? layerIdOf(finding.position?.file ?? "") : undefined;
     const framed = hasFrames ? frameOf(finding) : null;
     if (framed) setFocusFrame((before) => ({ ...framed, count: (before?.count ?? 0) + 1 }));
@@ -623,6 +626,7 @@ export function App() {
                 status={data.status}
                 imageVersion={imageVersion}
                 focusLayer={focusLayer}
+                findings={data.checks}
                 decide={decideMarker}
                 decideAbove={decideAbove}
                 disabled={busy}

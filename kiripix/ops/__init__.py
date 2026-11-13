@@ -27,6 +27,17 @@ from kiripix.ops.chroma import chroma_key, key_fringe
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
 from kiripix.ops.compose import overlay
 from kiripix.ops.geometry import NavigationPolygon, Outline, collision_shapes, contours, navigation_polygon, simplify
+from kiripix.ops.join import (
+    JOIN_SIDES,
+    GainRange,
+    Overlap,
+    Registration,
+    Seam,
+    match_tone,
+    register_piece,
+    resample_piece,
+    seam_join,
+)
 from kiripix.ops.layers import (
     connected_regions,
     cut_by_alpha,
@@ -77,17 +88,22 @@ from kiripix.ops.resample import (
 __all__ = [
     "BayerSize",
     "ConformanceReport",
+    "GainRange",
     "Gap",
     "Grid",
     "Island",
+    "JOIN_SIDES",
     "NavigationPolygon",
     "Outline",
+    "Overlap",
     "Palette",
     "PaletteEntry",
     "PaletteSuggestion",
     "PaletteSyntaxError",
     "Placement",
     "Rect",
+    "Registration",
+    "Seam",
     "add_outline",
     "alpha_by_vote",
     "bayer_matrix",
@@ -111,6 +127,10 @@ __all__ = [
     "key_fringe",
     "mask_from_difference",
     "mask_runs",
+    "match_tone",
+    "register_piece",
+    "resample_piece",
+    "seam_join",
     "mask_to_source",
     "mask_to_target",
     "nearest_index",

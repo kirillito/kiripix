@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -43,7 +43,7 @@ only to an area that asks for them (`walkable`, below; decided by the Owner, 202
 - [x] CLI seam on a test room: each finding above, an area moved by a second Decision, and `undo`.
 - [x] CLI seam: an area wholly on `solid` without `walkable` (an `escape.*` area over a fence) has no finding; with
       `walkable = true` it has `area.no_walkable`. Two areas with different prefixes and a one-cell-wide area are both accepted.
-- [ ] The ID is frozen once exported, as other Marker IDs are (checked once [0138](0138-m4-export-area.md) exports it).
+- [x] The ID is frozen once exported, as other Marker IDs are (checked once [0138](0138-m4-export-area.md) exports it).
 - [x] `describe room --stage place` shows the schema, and its contract sample passes.
 
 Budget: 200–300k tokens.
@@ -67,3 +67,8 @@ Budget: 200–300k tokens.
 - The `marker` schema's "a field belongs to these types" rule is now per field, because `x2` and `y2` belong to `ysort` and
   `area`; `cell` and `walkable` are optional on an area.
 - Tests: `tests/cli/test_area.py`; `schema_version` 3 in `test_export.py` and `test_export_layers.py`.
+- Confirmed by the Owner (2026-11-12): the ambiguous share 0.25 to 0.75 includes both ends, and a snapped box that leaves
+  the room is the error `area.outside_room`, not clipped.
+
+- 2026-11-12, after 0138: `area` is in the exported types, and `tests/cli/test_export_area.py` checks that renaming an exported area is
+  refused with `export.id_frozen`. The third box is ticked and `status` is `done`.

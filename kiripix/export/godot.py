@@ -20,9 +20,10 @@ ABOVE_Z = 100  # above any z_index an actor is likely to have; Godot draws a hig
 # both layers when it walks, and drops the pit's from its collision mask while it dashes. `solid` always stops it.
 COLLISION_LAYERS = {"solid": 1, "pit": 2}
 _MARKER_PARENT = {"spawn": "Markers", "exit": "Markers", "interactable": "Markers", "light": "Lights",
-                  "emitter": "Emitters"}
+                  "emitter": "Emitters", "area": "Markers"}
 _MARKER_NODE = {"spawn": "Marker2D", "exit": "Marker2D", "interactable": "Marker2D", "light": "PointLight2D",
-                "emitter": "GPUParticles2D"}
+                "emitter": "GPUParticles2D", "area": "Area2D"}
+AREA_SHAPE = "Shape"  # an area's CollisionShape2D: its place is stable, because the game finds it by its path
 
 
 EXPORTED_MARKER_TYPES = frozenset(_MARKER_NODE)
@@ -82,6 +83,31 @@ def _light_resources(index: int, marker: dict[str, Any]) -> list[str]:
     ]
 
 
+def _area_size(marker: dict[str, Any]) -> tuple[int, int]:
+    """An area's box in pixels: its corners are inclusive."""
+    return int(marker["x2"]) - int(marker["x"]) + 1, int(marker["y2"]) - int(marker["y"]) + 1
+
+
+def _area_shape_id(marker: dict[str, Any]) -> str:
+    return f"area_{_node_name(str(marker['id']))}"
+
+
+def _area_nodes(marker: dict[str, Any], parent: str) -> list[str]:
+    """An `Area2D` at the centre of its box, with a `CollisionShape2D` of the box's size. It never touches physics: it
+    monitors nothing, can't be monitored and sits on no collision layer. `walkable` and `cell` are only metadata."""
+    width, height = _area_size(marker)
+    name = _node_name(str(marker["id"]))
+    centre = (int(marker["x"]) + width / 2, int(marker["y"]) + height / 2)
+    properties = [f"position = Vector2({_number(centre[0])}, {_number(centre[1])})", "collision_layer = 0",
+                  "collision_mask = 0", "monitoring = false", "monitorable = false",
+                  f"metadata/kiripix_id = {_text(str(marker['id']))}", "metadata/kiripix_type = \"area\"",
+                  f"metadata/walkable = {'true' if marker.get('walkable') else 'false'}"]
+    if marker.get("cell") is not None:
+        properties.append(f"metadata/cell = {int(marker['cell'])}")
+    return [_node(name, "Area2D", parent, *properties),
+            _node(AREA_SHAPE, "CollisionShape2D", f"{parent}/{name}", f'shape = SubResource("{_area_shape_id(marker)}")')]
+
+
 def _marker_properties(marker: dict[str, Any], light: int | None) -> list[str]:
     properties = [f"position = Vector2({marker['x']}, {marker['y']})"]
     if light is not None:
@@ -135,6 +161,9 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str) -> str:
     lights = [marker for marker in markers if marker["type"] == "light"]
     navigation = room["navigation"]
     resources = [resource for index, marker in enumerate(lights) for resource in _light_resources(index, marker)]
+    resources += [_section(f'[sub_resource type="RectangleShape2D" id="{_area_shape_id(marker)}"]',
+                           "size = Vector2({}, {})".format(*_area_size(marker)))
+                  for marker in markers if marker["type"] == "area"]
     resources.append(_section(
         '[sub_resource type="NavigationPolygon" id="navigation"]',
         f"vertices = {_vectors(navigation['vertices'])}",
@@ -156,7 +185,9 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str) -> str:
     for parent in ("Markers", "Lights", "Emitters"):
         nodes.append(_node(parent, "Node2D", "."))
         for marker in markers:
-            if _MARKER_PARENT[marker["type"]] == parent:
+            if _MARKER_PARENT[marker["type"]] == parent and marker["type"] == "area":
+                nodes += _area_nodes(marker, parent)
+            elif _MARKER_PARENT[marker["type"]] == parent:
                 light = lights.index(marker) if marker["type"] == "light" else None
                 nodes.append(_node(_node_name(str(marker["id"])), _MARKER_NODE[marker["type"]], parent,
                                    *_marker_properties(marker, light)))

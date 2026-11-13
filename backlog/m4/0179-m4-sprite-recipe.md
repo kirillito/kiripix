@@ -101,3 +101,5 @@ Budget: 250–400k tokens.
 - Left for later: a `clip` Decision for a name no frames have is ignored silently; a Decision's `pivot` is not `on_image` (the UI
   ticket [0181](0181-m4-ui-sprite-screens.md) may want it); `grid` detection of a frame with no colour changes reads as scale 1
   and may be named by `fit.grid_differs`.
+- Confirmed by the Owner (2026-11-12): `directions` defaults to `4`; `frames.unknown_direction` stays a warning; the `pivot`
+  Decision isn't `on_image` for now (0181 may add it); a `clip` Decision for a name with no frames stays silent.

@@ -2,6 +2,7 @@
 
 from kiripix.checks.cutout import check_chroma_cutout
 from kiripix.checks.finding import Finding, Position, Severity
+from kiripix.checks.join import check_join_gain, check_join_residual, check_seam_difference
 from kiripix.checks.palette import check_alpha, check_conformance, check_mapping_error, check_palette
 
 from kiripix.checks.parts import PartCounts, check_part_vanishes
@@ -16,6 +17,6 @@ from kiripix.checks.sheet import (
 )
 
 __all__ = ["Finding", "Position", "Severity", "SheetFrame", "check_alpha", "check_chroma_cutout", "check_conformance",
-           "check_empty_frame", "check_frame_count", "check_frame_overflow", "check_mapping_error",
+           "check_empty_frame", "check_frame_count", "check_frame_overflow", "check_join_gain", "check_join_residual", "check_seam_difference", "check_mapping_error",
            "check_normal_size", "check_palette", "check_part_vanishes", "check_pivot_drift", "check_ramp_shared",
            "PartCounts"]

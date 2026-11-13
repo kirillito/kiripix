@@ -1,13 +1,13 @@
 // The room's hand-written screens (spec §11): place, with its Marker form, and reach, with the walk test.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { call, fileUrl, type ShowData, type SortPosition, type StageDetail, type StatusData } from "./api";
-import { isDrawnFromTwoPoints, MarkerTool, type Marker } from "./markerTool";
+import { call, fileUrl, type Finding, type ShowData, type SortPosition, type StageDetail, type StatusData } from "./api";
+import { ambiguousCells, isDrawnFromTwoPoints, MarkerTool, type Marker } from "./markerTool";
 import type { CanvasPixel, PixelCanvas } from "./pixelCanvas";
 import { LayerHighlight, layerFiles, loadImage } from "./sortView";
 import { loadMask, WalkTest, type SortedLayers } from "./walkTest";
 
-const TYPES = ["spawn", "exit", "interactable", "light", "emitter", "ysort"] as const;
+const TYPES = ["spawn", "exit", "interactable", "light", "emitter", "ysort", "area"] as const;
 const LABELS: Record<string, string> = {
   spawn: "Spawns",
   exit: "Exits",
@@ -15,6 +15,7 @@ const LABELS: Record<string, string> = {
   light: "Lights",
   emitter: "Emitters",
   ysort: "Y-sort lines",
+  area: "Areas",
 };
 
 export const PLACE_DECISION = "marker";
@@ -29,9 +30,25 @@ interface Fields {
   radius: number;
   energy: number;
   name: string;
+  cell: string; // px, blank for none
+  walkable: boolean;
 }
 
-const DEFAULTS: Fields = { target_room: "", target_exit: "", colour: "#ffffff", radius: 32, energy: 1, name: "emitter" };
+const DEFAULTS: Fields = {
+  target_room: "",
+  target_exit: "",
+  colour: "#ffffff",
+  radius: 32,
+  energy: 1,
+  name: "emitter",
+  cell: "",
+  walkable: false,
+};
+
+function cellSize(text: string): number | null {
+  const cell = Number(text);
+  return text.trim() !== "" && Number.isInteger(cell) && cell > 0 ? cell : null;
+}
 
 function sortText(entry: SortPosition | undefined): string {
   if (!entry) return "no y-sort line yet";
@@ -56,6 +73,10 @@ function ownFields(type: string, fields: Fields, layer: string): Record<string, 
   if (type === "exit") return { target_room: fields.target_room, target_exit: fields.target_exit };
   if (type === "light") return { colour: fields.colour, radius: fields.radius, energy: fields.energy };
   if (type === "emitter") return { name: fields.name };
+  if (type === "area") {
+    const cell = cellSize(fields.cell);
+    return { ...(cell ? { cell } : {}), walkable: fields.walkable };
+  }
   return {};
 }
 
@@ -66,11 +87,12 @@ export function PlacePanel(props: {
   status: StatusData | null;
   imageVersion: number;
   focusLayer: { layer: string; count: number } | null;
+  findings: Finding[];
   decide: (marker: Record<string, unknown>) => void;
   decideAbove: (layer: string, above: boolean) => void;
   disabled: boolean;
 }) {
-  const { canvas, show, detail, status, imageVersion, focusLayer, decide, decideAbove, disabled } = props;
+  const { canvas, show, detail, status, imageVersion, focusLayer, findings, decide, decideAbove, disabled } = props;
   const markers = markersOf(detail);
   const [type, setType] = useState<string>(TYPES[0]);
   const [typedId, setTypedId] = useState<string | null>(null);
@@ -94,7 +116,12 @@ export function PlacePanel(props: {
     setSelectedId(marker.id);
     setType(marker.type);
     setTypedId(marker.id);
-    setFields((before) => ({ ...before, ...(marker as unknown as Partial<Fields>) }));
+    setFields((before) => ({
+      ...before,
+      ...(marker as unknown as Partial<Fields>),
+      cell: typeof marker.cell === "number" ? String(marker.cell) : "",
+      walkable: marker.walkable === true,
+    }));
     if (typeof marker.layer === "string") setChosenLayer(marker.layer);
   }
 
@@ -115,6 +142,23 @@ export function PlacePanel(props: {
       place(start: CanvasPixel, end: CanvasPixel) {
         const { type: chosen, id: name, fields: own, layer: sorted, decide: record } = form.current;
         const line = isDrawnFromTwoPoints(chosen);
+        if (chosen === "area") {
+          // A bare click draws nothing, unless a cell makes it one cell.
+          const cell = cellSize(own.cell);
+          if (!cell && start.x === end.x && start.y === end.y) return;
+          record({
+            id: name,
+            type: chosen,
+            x: Math.min(start.x, end.x),
+            y: Math.min(start.y, end.y),
+            x2: Math.max(start.x, end.x),
+            y2: Math.max(start.y, end.y),
+            ...ownFields(chosen, own, sorted),
+          });
+          setTypedId(null);
+          setSelectedId(null);
+          return;
+        }
         if ((line && start.x === end.x && start.y === end.y)) return;
         if (chosen === "ysort" && !sorted) return; // a line sorts a Layer, and the room has none yet
         record({
@@ -160,11 +204,30 @@ export function PlacePanel(props: {
   }, [canvas, shownFile, layer, imageVersion]);
 
   // Every refresh brings a new `detail`, so a drag that was refused goes back to where the Marker is.
+  const drawnCell = type === "area" ? cellSize(fields.cell) : null;
+  const ambiguous = findings.flatMap((finding) => ambiguousCells(finding) ?? []);
+  const ambiguousKey = JSON.stringify(ambiguous);
   useEffect(() => {
     tool.current?.setMarkers(markersOf(detail));
     tool.current?.setSelected(selectedId);
+    tool.current?.setDrawing(type, drawnCell);
+    tool.current?.setAmbiguous(JSON.parse(ambiguousKey) as typeof ambiguous);
     canvas.current?.redraw();
-  }, [canvas, detail, selectedId]);
+  }, [canvas, detail, selectedId, type, drawnCell, ambiguousKey]);
+
+  // The letter A picks the area tool (spec §11: letters switch tools).
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName))) return;
+      if (event.key.toLowerCase() !== "a" || event.ctrlKey || event.metaKey || event.altKey) return;
+      setType("area");
+      setTypedId(null);
+      setSelectedId(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const targetRoom = fields.target_room;
   useEffect(() => {
@@ -320,6 +383,31 @@ export function PlacePanel(props: {
           />
         </div>
       )}
+      {type === "area" && (
+        <>
+          <div className="param">
+            <label htmlFor="marker-cell">Cell (px)</label>
+            <input
+              id="marker-cell"
+              data-testid="marker-cell"
+              type="number"
+              min={1}
+              placeholder="none"
+              value={fields.cell}
+              onChange={(event) => update({ cell: event.target.value })}
+            />
+          </div>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              data-testid="marker-walkable"
+              checked={fields.walkable}
+              onChange={(event) => update({ walkable: event.target.checked })}
+            />
+            walkable (the area is for standing in)
+          </label>
+        </>
+      )}
       <p className="hint">
         {isDrawnFromTwoPoints(type) ? "Drag on the canvas to draw it." : "Click the canvas to place it."} Drag a Marker to
         move it.
@@ -354,7 +442,8 @@ export function PlacePanel(props: {
                 data-testid={`marker-${marker.id}`}
                 onClick={() => choose(marker)}
               >
-                {marker.id} ({marker.x}, {marker.y}){typeof marker.layer === "string" ? ` for ${marker.layer}` : ""}
+                {marker.id} ({marker.x}, {marker.y}
+                {marker.x2 !== undefined && marker.type === "area" ? ` to ${marker.x2}, ${marker.y2}` : ""}){typeof marker.layer === "string" ? ` for ${marker.layer}` : ""}
   </button>
             ))}
         </section>
