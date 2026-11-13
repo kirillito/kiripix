@@ -8,6 +8,11 @@ Two things, both after `palette`:
   Prop's outline matches; where the character touches the frame's edge the line has nowhere to go) or `edge` (the line is the
   silhouette's own edge pixels). `render`'s cell leaves the character at least `ceil(0.1 * height)` px under its feet and more
   elsewhere, so `outside` has room.
+- the eyes (ticket 0203), with `eyes=stamp` or `pupils`, before the outline: the pixels of the eye materials that `render`
+  followed (its `eyes` parameter) are filled with the skin round them, and each eye is painted as a small fixed pattern from
+  where the posed Model puts it (`plan_eyes`): chosen once for a clip and a direction, on whole pixels, moving only when the
+  head has. A frame in its clip's `blink` list gets closed eyes, one in `wink_left` or `wink_right` that eye closed. The colours are Project palette colours (`eye_colour`,
+  `eye_white`). The normal pass is not changed.
 - the normal pass, from `render`: quantised to `normal_levels` values per axis, encoded for Godot, and cut by the final colour
   frame's alpha, so an outline pixel gets a normal that faces the camera and the two images line up pixel for pixel. It is
   never palette-mapped.
@@ -32,12 +37,17 @@ else:
 from kiripix.checks import Finding, PartCounts, Position, check_conformance, check_part_vanishes
 from kiripix.checks.sheet import SheetFrame, check_normal_size
 from kiripix.ops import (
+    EyeAnchor,
+    EyeStamp,
     Placement,
     add_outline,
     conformance,
     encode_normals,
+    fill_from_neighbours,
     height_from_alpha,
     normals_from_height,
+    paint_eyes,
+    plan_eyes,
     quantise_normals,
 )
 from kiripix.recipes.base import CheckFunction, ParamSpec, StageFailure, StageFunction, StageRun
@@ -156,17 +166,117 @@ def _normal_frame(normal: np.ndarray, colour: np.ndarray, levels: int) -> np.nda
     return out
 
 
+# An eye counts as seen in a frame unless the pixel at its centre is nearer the camera than the eye is by more than this
+# share of the character's height: an arm in front of the face, or the head itself in front of its far eye. The brow, the
+# nose and a fringe are nearer by less, and hiding the eye for them would bring back the flicker the stamp is there to end.
+SEEN_MARGIN = 0.067
+
+
+def _eyes_mode(run: StageRun) -> str:
+    return str(run.params.get("eyes", "render"))
+
+
+def _palette_colour(run: StageRun, palette: np.ndarray, name: str, index: int) -> tuple[int, tuple[int, int, int]]:
+    if not 0 <= index < len(palette):
+        raise StageFailure(f"the {name} {index} is not in the palette, which has {len(palette)} colours (indexes 0 to "
+                           f"{len(palette) - 1}); kiripix set {run.asset_id} finish {name}=-1",
+                           code="finish.eye_colour_unknown", fix=f"kiripix set {run.asset_id} finish {name}=-1")
+    r, g, b = (int(v) for v in palette[index])
+    return index, (r, g, b)
+
+
+class _Eyes:
+    """What `eyes=stamp` needs for a run: the eye materials' indexes in the material pass, the colours, and each frame's
+    patterns, planned per clip and direction."""
+
+    def __init__(self, run: StageRun, source: str, document: dict[str, Any], palette: np.ndarray) -> None:
+        self.run, self.source = run, source
+        names = [str(n) for n in document.get("eyes", [])]
+        self.labels = [int(m["index"]) for m in document.get("materials", []) if str(m["name"]) in names]
+        if not self.labels or source not in run.upstream:
+            raise StageFailure(
+                "finish can't stamp the eyes: render didn't follow them. Name the Model's eye materials in render's eyes "
+                f"parameter (kiripix set {run.asset_id} render eyes=<materials>), or leave the eyes as rendered",
+                code="finish.eyes_not_followed", fix=f"kiripix set {run.asset_id} finish eyes=render")
+        self.whites = _eyes_mode(run) == "stamp"
+        near, far = (float(v) for v in document["depth_range"])
+        margin = SEEN_MARGIN * float(document["height"]) / float(document["px_per_unit"])
+        self.stamps: dict[tuple[str, str, int], list[EyeStamp | None]] = {}
+        self.closed: dict[tuple[str, int], set[int]] = {}  # (clip, frame) -> the eyes closed in it, as `render` orders them
+        seen_colours: dict[tuple[int, int, int], int] = {}
+        for entry in document["clips"]:
+            for key, which in (("blink", (0, 1)), ("wink_right", (0,)), ("wink_left", (1,))):  # the right eye is first
+                for index in entry.get(key, []):
+                    self.closed.setdefault((str(entry["name"]), int(index)), set()).update(which)
+            for direction, listed in entry["directions"].items():
+                run.check_cancel()
+                anchors: list[list[EyeAnchor]] = []
+                for frame in listed:
+                    labels = _read_labels(run.upstream[source] / str(frame["files"]["material"]))
+                    eye = np.isin(labels, self.labels)
+                    if eye.any():
+                        mapped = read_rgba(run.upstream["palette"] / str(frame["files"]["color"]))
+                        colours, counts = np.unique(mapped[eye & (mapped[..., 3] > 0)][:, :3], axis=0, return_counts=True)
+                        for rgb, count in zip(colours, counts, strict=True):
+                            found_rgb = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                            seen_colours[found_rgb] = seen_colours.get(found_rgb, 0) + int(count)
+                    depth = near + _read_depth(run.upstream[source] / str(frame["files"]["depth"])) / 65535.0 * (far - near)
+                    anchors.append([self._anchor(found, depth, margin) for found in frame.get("eyes", [])])
+                for frame, stamps in zip(listed, plan_eyes(anchors, self.whites), strict=True):
+                    self.stamps[(str(entry["name"]), direction, int(frame["index"]))] = stamps
+        wanted = int(run.params.get("eye_colour", -1))
+        if wanted >= 0:
+            self.pupil = _palette_colour(run, palette, "eye_colour", wanted)
+        else:
+            lightness = _lightness(palette[None, :, :])[0]
+            common = max(seen_colours, key=lambda c: (seen_colours[c], c)) if seen_colours else None
+            index = next((i for i, c in enumerate(palette) if common == tuple(int(v) for v in c)), int(np.argmin(lightness)))
+            self.pupil = _palette_colour(run, palette, "eye_colour", index)
+        white = int(run.params.get("eye_white", -1))
+        if white < 0:
+            white = int(np.argmax(_lightness(palette[None, :, :])[0]))
+        self.white = _palette_colour(run, palette, "eye_white", white)
+
+    @staticmethod
+    def _anchor(found: dict[str, Any], depth: np.ndarray, margin: float) -> EyeAnchor:
+        x, y = float(found["x"]), float(found["y"])
+        column, row = int(np.floor(x)), int(np.floor(y))
+        inside = 0 <= row < depth.shape[0] and 0 <= column < depth.shape[1]
+        seen = inside and float(depth[row, column]) >= float(found["depth"]) - margin
+        normal = found["normal"]
+        return EyeAnchor(x, y, float(found["width"]), float(found["height"]), float(normal[0]), float(normal[2]), seen)
+
+    def paint(self, colour: np.ndarray, clip: str, direction: str, index: int, material: str) -> np.ndarray:
+        eye = np.isin(_read_labels(self.run.upstream[self.source] / material), self.labels)
+        filled = fill_from_neighbours(colour, eye) if eye.shape == colour.shape[:2] else colour
+        return cast("np.ndarray", paint_eyes(filled, self.stamps.get((clip, direction, index), []), self.pupil[1],
+                                             self.white[1] if self.whites else None, self.closed.get((clip, index), set())))
+
+    def drawn(self) -> dict[str, Any]:
+        return {"mode": _eyes_mode(self.run), "pupil": {"colour": self.pupil[0], "rgb": list(self.pupil[1])},
+                "white": {"colour": self.white[0], "rgb": list(self.white[1])} if self.whites else None}
+
+
+def _materials_by_frame(document: dict[str, Any]) -> dict[tuple[str, str, int], str]:
+    return {(str(e["name"]), d, int(f["index"])): str(f["files"].get("material", ""))
+            for e in document["clips"] for d, listed in e["directions"].items() for f in listed}
+
+
 def _run_finish(run: StageRun, source: str) -> None:
     document = _document(run)
     mode, relief = _normals_mode(run), float(run.params.get("relief", 0.0))
     palette = palette_rgb(run)
     outline = _outline_colour(run, palette)
     levels, placement = int(run.params["normal_levels"]), str(run.params["placement"])
+    eyes = _Eyes(run, source, document, palette) if _eyes_mode(run) != "render" else None
+    materials = _materials_by_frame(document) if eyes is not None else {}
     files = _colour_files(document)
     for number, (clip, direction, index, name) in enumerate(files):
         run.check_cancel()
         run.progress(number, len(files), f"finishing {clip}/{direction}/{index:03d}")
         colour = read_rgba(run.upstream["palette"] / name)
+        if eyes is not None:
+            colour = eyes.paint(colour, clip, direction, index, materials[(clip, direction, index)])
         mapped = colour
         if outline is not None:
             colour = add_outline(colour, outline[1], cast(Placement, placement))
@@ -190,7 +300,8 @@ def _run_finish(run: StageRun, source: str) -> None:
     shutil.copyfile(run.upstream["palette"] / RENDER_FILE, run.output_dir / RENDER_FILE)
     drawn = {"schema_version": FINISH_SCHEMA_VERSION, "normal_levels": levels,
              **({} if mode == "pass" else {"normals": mode}),
-             "outline": None if outline is None else {"colour": outline[0], "rgb": list(outline[1]), "placement": placement}}
+             "outline": None if outline is None else {"colour": outline[0], "rgb": list(outline[1]), "placement": placement},
+             **({} if eyes is None else {"eyes": eyes.drawn()})}
     (run.output_dir / FINISH_FILE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
 
 
@@ -202,6 +313,14 @@ def _read_labels(path: Path) -> np.ndarray:
         return np.asarray(image.convert("L"), dtype=np.uint8).copy()
 
 
+def _read_depth(path: Path) -> np.ndarray:
+    """A depth frame: 16 bit gray, as `render` wrote it."""
+    from PIL import Image
+
+    with Image.open(path) as image:
+        return np.asarray(image, dtype=np.float64).copy()
+
+
 def _vanishing_parts(run: StageRun, source: str, document: dict[str, Any], frames: list[SheetFrame]) -> list[Finding]:
     """`sheet.part_vanishes` (ticket 0159): each material's pixels per finished frame, counted where the final colour frame is
     opaque, from the material pass `render` wrote. Nothing when the pass isn't there to read."""
@@ -209,6 +328,8 @@ def _vanishing_parts(run: StageRun, source: str, document: dict[str, Any], frame
     render = run.upstream.get(source)
     if not names or render is None:
         return []
+    if _eyes_mode(run) != "render":  # the stamped eyes are not the render's: its eye materials have nothing to vanish from
+        names = {index: name for index, name in names.items() if name not in document.get("eyes", [])}
     watch = [w.strip() for w in str(run.params.get("watch_parts", "")).split(",") if w.strip()]
     by_name = {(f.clip, f.direction, f.index): f for f in frames}
     counted: list[PartCounts] = []

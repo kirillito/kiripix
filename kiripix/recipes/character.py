@@ -185,6 +185,14 @@ CHARACTER = KindSpec(
                     minimum=0,
                     maximum=1,
                 ),
+                ParamSpec(
+                    name="eyes",
+                    type="str",
+                    description="The Model's eye materials, comma-separated, such as eyes or eyes,iris,eyewhite: render then "
+                                "also records where each eye is in every frame, for finish to stamp the eyes (eyes=stamp). "
+                                "Empty: the eyes are not followed.",
+                    default="",
+                ),
             ),
             gpu=True,
             run=run_render,
@@ -245,6 +253,16 @@ CHARACTER = KindSpec(
                           description="sheet.part_vanishes watches these materials, comma-separated by name; all when empty."),
                 ParamSpec(name="part_min_pixels", type="int", minimum=1, default=1,
                           description="A material with fewer pixels than this in a frame counts as missing from it."),
+                ParamSpec(name="eyes", type="choice", choices=["render", "stamp", "pupils"], default="render",
+                          description="render: the eyes are the render's pixels. stamp: they are painted over with a small "
+                                      "fixed pattern, a pupil and a white, that sits on whole pixels and moves only when "
+                                      "the head does (render's `eyes` parameter must name the eye materials); a clip's "
+                                      "`blink` frames get closed eyes. pupils: the same without the whites."),
+                ParamSpec(name="eye_colour", type="int", minimum=-1, default=-1,
+                          description="The pupil's colour: an index into the Project palette; -1: the colour most of the "
+                                      "rendered eyes' pixels have."),
+                ParamSpec(name="eye_white", type="int", minimum=-1, default=-1,
+                          description="The white's colour: an index into the Project palette; -1: its lightest colour."),
             ),
             checks=(
                 CheckSpec(code="normal.size_mismatch", description="Normal map size equals the colour frame's."),

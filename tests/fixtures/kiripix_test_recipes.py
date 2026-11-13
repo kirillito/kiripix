@@ -733,12 +733,16 @@ class FakeBlender:
 
     @staticmethod
     def _render_frames(args: dict[str, Any]) -> dict[str, Any]:
-        """Every frame the real script would write, as flat PNGs of the right size, with the pivot where the root is."""
+        """Every frame the real script would write, as flat PNGs of the right size, with the pivot where the root is. With
+        `eyes` naming one of the materials (ticket 0203), each frame has two eyes, 3.3 px apart round the pivot's column and
+        40.4 px above it, facing the camera, or away from it in the direction `n`."""
         from PIL import Image
 
         if args.get("measure"):
             return FakeBlender._measure(args)
         width, height = args["frame"]
+        names = json.loads(Path("blender-materials").read_text("utf-8")) if Path("blender-materials").exists() else ["skin", "cloth"]
+        followed = bool(set(args.get("eyes") or []) & set(names))
         frames: dict[str, Any] = {}
         for clip in args["clips"]:
             frames[clip["name"]] = {}
@@ -762,10 +766,13 @@ class FakeBlender:
                             image.paste(2, (width // 2, 0, width, height))
                         image.save(path)
                     under = FakeBlender._sway(clip, index)
-                    frames[clip["name"]][direction["name"]].append(
-                        {"pivot": [args["pivot"][0] + under[0], args["pivot"][1] + under[1]]})
+                    placed: dict[str, Any] = {"pivot": [args["pivot"][0] + under[0], args["pivot"][1] + under[1]]}
+                    if followed:
+                        facing = -1.0 if direction["name"] == "n" else 1.0
+                        placed["eyes"] = [{"x": placed["pivot"][0] + dx, "y": placed["pivot"][1] - 40.4, "width": 2.2,
+                                           "height": 2.0, "depth": 8.0, "normal": [0.0, 0.0, facing]} for dx in (-1.5, 1.8)]
+                    frames[clip["name"]][direction["name"]].append(placed)
         device = "cpu" if Path("blender-no-gpu").exists() else args["device"]  # as Blender falls back with no GPU
-        names = json.loads(Path("blender-materials").read_text("utf-8")) if Path("blender-materials").exists() else ["skin", "cloth"]
         materials = [{"index": i, "name": n} for i, n in enumerate(sorted(names), start=1)]  # by name, from 1 (ticket 0148)
         return {"device": device, "depth_range": [8.0, 12.0], "materials": materials, "frames": frames}
 

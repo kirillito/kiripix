@@ -39,7 +39,9 @@ def test_the_stage_declares_its_parameters_and_checks(project: Kiripix) -> None:
     [stage] = kind["stages"]
 
     by_name = {p["name"]: p for p in stage["params"]}
-    assert set(by_name) == {"outline", "outline_colour", "placement", "normal_levels", "watch_parts", "part_min_pixels"}
+    assert set(by_name) == {"outline", "outline_colour", "placement", "normal_levels", "watch_parts", "part_min_pixels",
+                            "eyes", "eye_colour", "eye_white"}
+    assert by_name["eyes"]["default"] == "render"
     assert by_name["outline"]["default"] is True and by_name["placement"]["default"] == "outside"
     assert [c["code"] for c in stage["checks"]] == ["normal.size_mismatch", "palette.off_palette", "sheet.part_vanishes"]
 

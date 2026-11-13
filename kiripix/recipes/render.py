@@ -34,6 +34,12 @@ a Blender shader, because Shader to RGB is EEVEE-only and render uses Cycles so 
 Material pass (ticket 0148): `material/<clip>/<dir>/<NNN>.png` holds each pixel's material, numbered from 1 by name, 0 for the
 background. `render.json` lists them (`materials`: `[{"index", "name"}]`) and records the toon `bands` beside `toon`, so
 `palette` can size a part's ramp. More than 255 materials fail the Stage.
+
+Eyes (ticket 0203): with the `eyes` parameter, the names of the Model's eye materials, Blender also reports where each eye is
+in every frame, from the posed mesh and not from the pixels: `render.json` then has `eyes` (the names) and each frame an
+`eyes` list (`x`, `y`, `width`, `height` in px, `depth` as the depth pass counts it, and the camera-space `normal`), for
+`finish` to stamp the eyes from. A clip's
+`blink`, `wink_left` and `wink_right` frames are copied to its entry. None of these keys is written when it isn't set.
 """
 
 import hashlib
@@ -45,7 +51,7 @@ from typing import Any
 
 from kiripix.recipes.base import StageFailure, StageRun, computed_setting
 from kiripix.recipes.blender_launcher import launch
-from kiripix.recipes.clips import DIRECTIONS
+from kiripix.recipes.clips import DIRECTIONS, EYELIDS
 
 # 2: each clip carries its measured `bounds` (0155), a stationary clip one pivot (0154)
 # 3: a material pass, `materials` and `bands` (0148)
@@ -232,6 +238,9 @@ def run_render(run: StageRun) -> None:
         "device": "cpu" if run.cpu else "gpu",
         "output": str(run.output_dir),
     }
+    eyes = [name.strip() for name in str(run.params.get("eyes", "")).split(",") if name.strip()]
+    if eyes:
+        args["eyes"] = eyes
     posing: dict[str, Any] = {name: args[name] for name in ("root", "model_height", "elevation", "px_per_unit")}
     posing.update(directions=list(names), rig=_stamp_hash(run.upstream["rig"]), model=_stamp_hash(run.upstream["model"]),
                   blender=str(run.settings.get("blender.version", "")), script=_script_hash(), schema=RENDER_SCHEMA_VERSION)
@@ -251,6 +260,8 @@ def run_render(run: StageRun) -> None:
     args.update(frame=[side, side], pivot=pivot)
     shared: dict[str, Any] = {name: args[name] for name in ("frame", "pivot", "toon")}
     shared.update(posing)
+    if eyes:
+        shared["eyes"] = eyes
 
     def key(clip: dict[str, Any], device: str) -> str:
         return hashlib.sha256(json.dumps({"clip": clip, **shared, "device": device}, sort_keys=True)
@@ -304,12 +315,18 @@ def run_render(run: StageRun) -> None:
                 missing = [f for f in files.values() if not (run.output_dir / f).is_file()]
                 if missing:
                     raise StageFailure(f"Blender finished without writing {missing[0]}")
+                if eyes and not found.get("eyes"):
+                    raise StageFailure(
+                        f"the Model has no material named {' or '.join(eyes)} (it has "
+                        f"{', '.join(m['name'] for m in materials) or 'none'}), so its eyes can't be followed",
+                        code="render.eyes_unknown", fix=f"kiripix set {run.asset_id} render eyes=")
                 frames.append({"index": index, "source_frame": clip["frames"][index], "files": files,
-                               "pivot": list(pivot) if clip["stationary"] else found["pivot"]})
+                               "pivot": list(pivot) if clip["stationary"] else found["pivot"],
+                               **({"eyes": found["eyes"]} if eyes else {})})
             directions[direction] = frames
         entries.append({"name": clip["name"], "key": keys[clip["name"]], "fps": clip["fps"], "loop": clip["loop"],
                         "stationary": clip["stationary"], "root_motion": clip["root_motion"], "directions": directions,
-                        **measures})
+                        **{key: clip[key] for key in EYELIDS if clip.get(key)}, **measures})
     document = {
         "schema_version": RENDER_SCHEMA_VERSION,
         "camera": camera_name,
@@ -321,6 +338,7 @@ def run_render(run: StageRun) -> None:
         "toon": args["toon"],
         "bands": args["toon"]["bands"],
         "materials": materials,
+        **({"eyes": eyes} if eyes else {}),
         "depth_range": result["depth_range"],
         "passes": list(PASSES),
         "directions": list(names),

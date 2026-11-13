@@ -28,6 +28,7 @@ CLIPS_SCHEMA_VERSION = 2
 PLANT_HEIGHT = 0.03  # a foot within this fraction of the rig's height of the clip's lowest foot point is on the ground
 PLANT_SPEED = 0.25  # with root motion, a planted foot moves less than this many rig heights a second
 CLIP_SOURCES = "src/clips/"
+EYELIDS = ("blink", "wink_left", "wink_right")  # a clip's frames with closed eyes: both, the Model's left, its right
 ROOT_MOTION_RATIO = 0.1  # the root travels more than this fraction of the rig's height: root motion
 HASH_LENGTH = 16  # hex digits of the SHA-256, as a Variant's name
 
@@ -41,8 +42,13 @@ CLIP = DecisionSpec(
                 "never ending in a direction suffix (_s, _sw, _w, _nw, _n, _ne, _e, _se). `source` is a clip-source file's "
                 "stem or an action of the rigged Model; `start` and `end` are frames of that action; `fps` is the "
                 "clip's frame rate in the game; `stationary` (default false) marks a clip whose feet must not move, which "
-                "the sheet's pivot-drift Check then holds it to. Deciding a clip again under a name it already has "
-                "changes that clip, keeping its name and so its IDs in the game; `undo` brings the old frames back.",
+                "the sheet's pivot-drift Check then holds it to. `speed` (default 1) plays the action that many times "
+                "faster, so the clip has fewer frames at the same `fps`. `still` makes the clip the one pose at `start`, "
+                "held for that many frames (`end` is not read): a standing idle. `blink` lists the clip's frames, from 0, "
+                "that `finish` draws with the eyes closed when it stamps them; `wink_left` and `wink_right` list the "
+                "frames with only the Model's left or right eye closed. Deciding a clip again under a name it "
+                "already has changes that clip, keeping its name and so its IDs in the game; `undo` brings the old frames "
+                "back.",
     entry_schema={
         "type": "object",
         "properties": {
@@ -53,6 +59,11 @@ CLIP = DecisionSpec(
             "fps": {"type": "integer", "minimum": 1},
             "loop": {"type": "boolean"},
             "stationary": {"type": "boolean", "default": False},
+            "speed": {"type": "number", "exclusiveMinimum": 0, "default": 1},
+            "still": {"type": "integer", "minimum": 1},
+            "blink": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": True},
+            "wink_left": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": True},
+            "wink_right": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": True},
         },
         "required": ["name", "source", "start", "end", "fps", "loop"],
         "additionalProperties": False,
@@ -113,10 +124,11 @@ def _hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:HASH_LENGTH]
 
 
-def sample_frames(start: int, end: int, source_fps: float, fps: int, loop: bool) -> list[float | int]:
-    """The frames of the action a render samples, `fps` a second. A looping clip ends before `end`, which is its first
-    pose again; a clip that doesn't loop ends on it. A frame that isn't a whole number is a sub-frame between two keys."""
-    step = source_fps / fps
+def sample_frames(start: int, end: int, source_fps: float, fps: int, loop: bool, speed: float = 1.0) -> list[float | int]:
+    """The frames of the action a render samples, `fps` a second, the action playing `speed` times as fast. A looping clip
+    ends before `end`, which is its first pose again; a clip that doesn't loop ends on it. A frame that isn't a whole number
+    is a sub-frame between two keys."""
+    step = source_fps * speed / fps
     span = end - start
     count = max(1, round(span / step)) if loop else math.floor(span / step + 1e-9) + 1
     frames: list[float | int] = []
@@ -226,6 +238,7 @@ def run_clips(run: StageRun) -> None:
     cache: dict[Path, dict[str, Any]] = {}
     missing: list[str] = []
     out_of_range: list[str] = []
+    bad_blinks: list[str] = []
     clips: list[dict[str, Any]] = []
     for index, decision in enumerate(sorted(decisions, key=lambda d: str(d.data["name"]))):
         run.progress(index, len(decisions), f"reading {decision.data['name']}")
@@ -250,7 +263,19 @@ def run_clips(run: StageRun) -> None:
             continue
         travel = float(action["travel"]) / float(found["height"]) if found["height"] else 0.0
         looping, in_place = bool(data["loop"]), travel <= ROOT_MOTION_RATIO
-        frames = sample_frames(start, end, float(found["fps"]), int(data["fps"]), looping)
+        speed, still = float(data.get("speed", 1)), data.get("still")
+        if still is not None:
+            frames: list[float | int] = [start] * int(still)
+        else:
+            frames = sample_frames(start, end, float(found["fps"]), int(data["fps"]), looping, speed)
+        eyelids = {key: sorted(int(b) for b in data.get(key, [])) for key in EYELIDS}
+        late = [f"{key} names {listed[-1]}" for key, listed in eyelids.items() if listed and listed[-1] >= len(frames)]
+        if late:
+            bad_blinks.append(f"{name}: it has {len(frames)} frames (0 to {len(frames) - 1}) and {' and '.join(late)}")
+            continue
+        # a key only when it is set, so a clip decided without them is the entry it always was (and `render` keeps its frames)
+        extras: dict[str, Any] = {**({"speed": speed} if speed != 1 else {}), **({"still": int(still)} if still is not None else {}),
+                                  **{key: listed for key, listed in eyelids.items() if listed}}
         clips.append({
             "name": name,
             "source": source,
@@ -265,8 +290,9 @@ def run_clips(run: StageRun) -> None:
             "root_travel": round(travel, 4),
             "root_motion": travel > ROOT_MOTION_RATIO,
             "frames": frames,
-            "events": {"foot": find_plants(action.get("feet") or {}, float(found["height"]), start, end, frames, looping,
-                                           not in_place)},
+            "events": {"foot": [] if still is not None else
+                       find_plants(action.get("feet") or {}, float(found["height"]), start, end, frames, looping, not in_place)},
+            **extras,
         })
     if missing:
         raise StageFailure("a clip's source can't be found: " + "; ".join(missing), code="clips.source_missing",
@@ -275,6 +301,9 @@ def run_clips(run: StageRun) -> None:
                                         "Model as the clip's source.")
     if out_of_range:
         raise StageFailure("a clip's frames are outside its action: " + "; ".join(out_of_range), code="clips.range",
+                           fix=f"kiripix undo {run.asset_id} clips")
+    if bad_blinks:
+        raise StageFailure("a clip's blink or wink is not one of its frames: " + "; ".join(bad_blinks), code="clips.blink_range",
                            fix=f"kiripix undo {run.asset_id} clips")
     document = {"schema_version": CLIPS_SCHEMA_VERSION, "clips": clips}
     (run.output_dir / "clips.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")

@@ -37,8 +37,8 @@ def test_an_area_is_an_area2d_with_a_shape_the_size_of_its_box_and_no_physics(pr
     assert 'metadata/kiripix_id = "battle.yard"' in yard and 'metadata/kiripix_type = "area"' in yard
     assert "metadata/walkable = true" in yard and "metadata/cell = 8" in yard
     shape = node(text, "Shape", "Markers/battle-yard")
-    assert 'type="CollisionShape2D"' in shape and 'shape = SubResource("area_battle-yard")' in shape
-    assert '[sub_resource type="RectangleShape2D" id="area_battle-yard"]\nsize = Vector2(16, 16)\n' in text
+    assert 'type="CollisionShape2D"' in shape and 'shape = SubResource("area_battle_yard")' in shape
+    assert '[sub_resource type="RectangleShape2D" id="area_battle_yard"]\nsize = Vector2(16, 16)\n' in text
 
 
 def test_an_area_with_no_walkable_pixel_and_no_cell_exports_like_any_other(project: Kiripix) -> None:
@@ -87,6 +87,21 @@ def test_a_new_area_is_a_new_id_and_is_allowed(project: Kiripix) -> None:
     assert "size = Vector2(1, 15)" in scene(project)
 
 
+def test_two_area_ids_that_meet_once_their_dots_are_underscores_get_distinct_shapes(project: Kiripix) -> None:
+    """Godot allows only letters, digits and `_` in a resource ID, so `.` becomes `_`; `a_b.c` and `a.b_c` would meet."""
+    exported_areas(project)
+
+    area(project, "a_b.c", (30, 6, 31, 7))
+    area(project, "a.b_c", (34, 6, 35, 7))
+    project.json("run", ROOM)
+    project.json("export", ROOM)
+    text = scene(project)
+
+    assert '[node name="Shape" type="CollisionShape2D" parent="Markers/a-b_c"]\nshape = SubResource("area_a_b_c")\n' in text
+    assert '[node name="Shape" type="CollisionShape2D" parent="Markers/a_b-c"]\nshape = SubResource("area_a_b_c_2")\n' in text
+    assert text.count('[sub_resource type="RectangleShape2D" id="area_a_b_c"]') == 1
+
+
 PROBE = """extends SceneTree
 
 func _init() -> void:
@@ -99,6 +114,7 @@ func _init() -> void:
 			found.append([node.get_meta("kiripix_id"), node.get_meta("walkable"), node.position.x, node.position.y,
 				rect.size.x, rect.size.y, node.monitoring, node.monitorable, node.collision_layer, node.collision_mask])
 	print("PROBE ", JSON.stringify(found))
+	room.free()
 	quit()
 """
 

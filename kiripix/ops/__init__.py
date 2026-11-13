@@ -26,6 +26,7 @@ from kiripix.ops.character import (
 from kiripix.ops.chroma import chroma_key, key_fringe
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
 from kiripix.ops.compose import overlay
+from kiripix.ops.eyes import EyeAnchor, EyeStamp, fill_from_neighbours, paint_eyes, plan_eyes
 from kiripix.ops.geometry import NavigationPolygon, Outline, collision_shapes, contours, navigation_polygon, simplify
 from kiripix.ops.join import (
     JOIN_SIDES,
@@ -118,7 +119,10 @@ __all__ = [
     "detect_grid",
     "downscale",
     "enclosed_holes",
+    "EyeAnchor",
+    "EyeStamp",
     "encode_normals",
+    "fill_from_neighbours",
     "flood_region",
     "format_gpl",
     "grow_where_partial",
@@ -137,7 +141,9 @@ __all__ = [
     "normals_from_height",
     "outline_mask",
     "overlay",
+    "paint_eyes",
     "paint_outline",
+    "plan_eyes",
     "narrowest_gaps",
     "navigation_polygon",
     "SIDES",

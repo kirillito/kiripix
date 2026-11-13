@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: godot-export
 type: ticket
@@ -24,7 +24,7 @@ Spec §9 (Room).
 ## Acceptance criteria
 
 - [x] CLI seam: the scene has the node, its shape and metadata. Renaming the ID after an export is refused.
-- [ ] A `godot` test loads the scene in a headless Godot 4.7 with no warnings, and reads the area's rectangle back.
+- [x] A `godot` test loads the scene in a headless Godot 4.7 with no warnings, and reads the area's rectangle back.
 
 Budget: 80–150k tokens.
 
@@ -37,11 +37,19 @@ Budget: 80–150k tokens.
 - Decided: the position is the box's centre, `x + width / 2`, on the `Area2D`, and the shape child has none. Corners are inclusive,
   so the size is `x2 - x + 1` by `y2 - y + 1`; an odd side puts the centre on a half pixel (`2.5`). The box is the one in
   `room.json`, already snapped to its `cell`.
-- Decided: the `RectangleShape2D`'s resource ID is `area_<node name>`, from the ID, not an index, so adding an area doesn't
-  renumber the others' resources in the game's diffs.
+- Decided: the `RectangleShape2D`'s resource ID is `area_<ID>` with `.` as `_` (`area_battle_yard`), from the ID, not an index,
+  so adding an area doesn't renumber the others' resources in the game's diffs. (Changed 2026-11-13, see below.)
 - Decided: `walkable` is always written as metadata (`true` or `false`); `cell` only when set. Nothing else depends on `walkable`.
 - The ID freeze needed only `area` in `EXPORTED_MARKER_TYPES` (it is derived from the node tables in `kiripix/export/godot.py`).
 - Tests: `tests/cli/test_export_area.py` (scene text, a re-export writing nothing, rename refused with `export.id_frozen`, a new
   area allowed). The `godot` test is written but skipped here: no Godot 4.7 on this machine (`KIRIPIX_GODOT` unset, none on PATH),
   so it hasn't been run. Run it once where Godot is installed.
 
+2026-11-13:
+
+- Ran the `godot` test against Godot 4.7.2 (`KIRIPIX_GODOT` set to the console build). It passes. Two things were fixed on the way:
+  - **Export bug:** the shape's resource ID was `area_<node name>` (`area_battle-yard`), and Godot refuses a `-` in it ("The scene
+    unique ID must contain only letters, numbers, and underscores"). It is now `area_` plus the ID with `.` as `_`. Two IDs that
+    meet that way (`a_b.c`, `a.b_c`) take `_2`, `_3` in the order of their IDs. Test: `test_two_area_ids_that_meet_...`.
+  - **Probe:** it now frees the room before `quit()`, or Godot reports the leaked physics and navigation RIDs as errors.
+- The test is slow on this machine (about 2 minutes, mostly Godot's first `--import`).

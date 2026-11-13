@@ -220,7 +220,8 @@ def test_describe_shows_the_final_schema(project: Kiripix) -> None:
 
     [decision] = stage["decisions"]
     properties = decision["entry_schema"]["properties"]
-    assert set(properties) == {"name", "source", "start", "end", "fps", "loop", "stationary"}
+    assert set(properties) == {"name", "source", "start", "end", "fps", "loop", "stationary", "speed", "still", "blink",
+                               "wink_left", "wink_right"}
     assert properties["stationary"]["default"] is False
     assert "again under a name" in decision["description"]
     assert decision["entry_schema"]["required"] == ["name", "source", "start", "end", "fps", "loop"]

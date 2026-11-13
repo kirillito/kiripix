@@ -147,7 +147,7 @@ def test_the_stage_takes_the_gpu_lock(project: Kiripix) -> None:
     [stage] = kind["stages"]
 
     assert stage["gpu"] is True
-    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow"}
+    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow", "eyes"}
     by_name = {p["name"]: p for p in stage["params"]}
     assert (by_name["bands"]["minimum"], by_name["bands"]["maximum"], by_name["bands"]["default"]) == (2, 4, 3)
 

@@ -10,9 +10,16 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "elevation": <degrees the camera looks down>, "frame": [<width>, <height>] in px, "px_per_unit": <px per Blender unit>,
          "pivot": [<x>, <y>] in px, where the ground point under the root lands, "device": "cpu" | "gpu",
          "toon": {"bands": 2 to 4, "shadow": 0 to 1, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
-                  toward the camera>}}, "output": <folder to write the frames into>}
+                  toward the camera>}}, "eyes": [<names of the materials that are the eyes; optional>],
+         "output": <folder to write the frames into>}
 result: {"device": <what rendered>, "depth_range": [<near>, <far>], "materials": [{"index": <from 1>, "name"}],
          "frames": {<clip>: {<direction>: [{"pivot": [x, y]}]}}}
+
+With `eyes`, each frame also has `"eyes"`: one entry per eye, the Model's right one first (ticket 0203), from the posed mesh and
+not from the pixels: `{"x", "y"}`, the eye's centre in px (x right, y down), `"width"` and `"height"`, its extent on screen in
+px, `"depth"`, its centre's distance along the view axis in Blender units (as the depth pass counts it), and `"normal"`, its
+mean normal in camera space (X right, Y up, Z toward the camera). An eye is the faces of those materials on one side of the
+Model's middle in the rest pose.
 
 With `"measure": true` in args nothing is rendered or written (ticket 0155): the result is where each frame lands, for sizing
 the cell, `{"frames": {<clip>: {<direction>: [{"bounds": [left, top, right, bottom], "under": [x, y]}]}}}` in px from the
@@ -522,6 +529,73 @@ def posed_points() -> np.ndarray:
     return np.concatenate(found)
 
 
+def eye_groups(names: list, ground: Vector) -> list:
+    """The eyes: per side of the Model's middle (x below the ground point's first), the vertices of the faces whose material
+    is one of `names`, as [(object, vertex indexes)]. A side with no such face has no entry. Read in the rest shape, which a
+    mesh's own data is."""
+    sides: list = [[], []]
+    for obj in rendered_meshes():
+        slots = {i for i, slot in enumerate(obj.material_slots) if slot.material is not None and slot.material.name in names}
+        if not slots:
+            continue
+        found: list = [set(), set()]
+        for polygon in obj.data.polygons:
+            if polygon.material_index in slots:
+                centre = obj.matrix_world @ polygon.center
+                found[0 if centre.x < ground.x else 1].update(polygon.vertices)
+        for side in (0, 1):
+            if found[side]:
+                sides[side].append((obj, np.array(sorted(found[side]), dtype=np.int64)))
+    return [side for side in sides if side]
+
+
+def posed_eyes(groups: list) -> list:
+    """Each eye in the current pose, in world space: (its vertices (n, 3), its mean unit normal)."""
+    graph = bpy.context.evaluated_depsgraph_get()
+    eyes = []
+    for group in groups:
+        points, normals = [], []
+        for obj, indexes in group:
+            evaluated = obj.evaluated_get(graph)
+            mesh = evaluated.to_mesh()
+            try:
+                if len(mesh.vertices) != len(obj.data.vertices):
+                    raise ValueError(f"{obj.name} has a modifier that changes its vertices, so its eyes can't be followed")
+                co = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+                mesh.vertices.foreach_get("co", co)
+                normal = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+                mesh.vertex_normals.foreach_get("vector", normal)
+            finally:
+                evaluated.to_mesh_clear()
+            matrix = np.array(evaluated.matrix_world, dtype=np.float64)
+            points.append(co.reshape(-1, 3).astype(np.float64)[indexes] @ matrix[:3, :3].T + matrix[:3, 3])
+            normals.append(normal.reshape(-1, 3).astype(np.float64)[indexes] @ np.linalg.inv(matrix[:3, :3]))
+        mean = np.concatenate(normals).mean(axis=0)
+        length = float(np.linalg.norm(mean))
+        eyes.append((np.concatenate(points), mean / length if length > 1e-9 else np.array([0.0, 0.0, 0.0])))
+    return eyes
+
+
+def seen_eyes(eyes: list, camera, args: dict) -> list:
+    """Where each posed eye lands in the frame: its centre and extent in px, its depth, and its normal in camera space."""
+    scene = bpy.context.scene
+    width, height = args["frame"]
+    scale = float(args["px_per_unit"])
+    axes = np.array(camera.matrix_world.to_3x3(), dtype=np.float64)
+    eye_point = np.array(camera.matrix_world.translation, dtype=np.float64)
+    found = []
+    for points, normal in eyes:
+        middle = points.mean(axis=0)
+        centre = world_to_camera_view(scene, camera, Vector(middle))
+        across, up = points @ axes[:, 0] * scale, points @ axes[:, 1] * scale
+        found.append({"x": round(centre.x * width, 3), "y": round((1.0 - centre.y) * height, 3),
+                      "width": round(float(across.max() - across.min()), 3),
+                      "height": round(float(up.max() - up.min()), 3),
+                      "depth": round(float((eye_point - middle) @ axes[:, 2]), 4),
+                      "normal": [round(float(normal @ axes[:, i]), 4) for i in range(3)]})
+    return found
+
+
 def measure_poses(args: dict) -> dict:
     """Where every frame of every clip lands on screen, without rendering (ticket 0155), so that `render` can size one cell
     that holds every pose. Per clip, direction and frame: `bounds`, the mesh's extent [left, top, right, bottom] in px from
@@ -582,11 +656,13 @@ def render(args: dict) -> dict:
     total = sum(len(c["frames"]) for c in args["clips"]) * len(directions)
     done = 0
     pivots: dict = {}
+    groups = eye_groups(list(args.get("eyes") or []), ground)
     for clip in args["clips"]:
         assign(armature, action_for(clip))
         pivots[clip["name"]] = {d["name"]: [] for d in directions}
         for index, frame in enumerate(clip["frames"]):
             pose(armature, frame)
+            eyes = posed_eyes(groups)
             head = armature.matrix_world @ armature.pose.bones[root_bone].head
             under = Vector((head.x, head.y, 0.0))
             follow = clip.get("root_motion", False)
@@ -596,8 +672,10 @@ def render(args: dict) -> dict:
                 turntable.rotation_euler.z = -math.radians(float(direction["yaw"]))
                 bpy.context.view_layer.update()
                 seen = world_to_camera_view(scene, camera, under)
-                pivots[clip["name"]][direction["name"]].append(
-                    {"pivot": [round(seen.x * args["frame"][0], 3), round((1.0 - seen.y) * args["frame"][1], 3)]})
+                placed = {"pivot": [round(seen.x * args["frame"][0], 3), round((1.0 - seen.y) * args["frame"][1], 3)]}
+                if groups:
+                    placed["eyes"] = seen_eyes(eyes, camera, args)
+                pivots[clip["name"]][direction["name"]].append(placed)
                 bpy.ops.render.render(write_still=True)
                 write_frame(output, clip["name"], direction["name"], index, exr, camera, depth_range, args["toon"])
                 done += 1

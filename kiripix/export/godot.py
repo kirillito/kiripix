@@ -88,11 +88,22 @@ def _area_size(marker: dict[str, Any]) -> tuple[int, int]:
     return int(marker["x2"]) - int(marker["x"]) + 1, int(marker["y2"]) - int(marker["y"]) + 1
 
 
-def _area_shape_id(marker: dict[str, Any]) -> str:
-    return f"area_{_node_name(str(marker['id']))}"
+def _area_shape_ids(markers: list[dict[str, Any]]) -> dict[str, str]:
+    """Each area's RectangleShape2D resource ID, from its ID rather than an index, so adding an area doesn't renumber the
+    others. Godot allows only letters, digits and `_` in it, so `.` becomes `_`; two IDs that then meet (`a_b.c`, `a.b_c`)
+    take `_2`, `_3` in the order of their IDs, so the suffix doesn't move."""
+    ids: dict[str, str] = {}
+    for marker_id in sorted(str(marker["id"]) for marker in markers if marker["type"] == "area"):
+        base = "area_" + marker_id.replace(".", "_")
+        ident, count = base, 1
+        while ident in ids.values():
+            count += 1
+            ident = f"{base}_{count}"
+        ids[marker_id] = ident
+    return ids
 
 
-def _area_nodes(marker: dict[str, Any], parent: str) -> list[str]:
+def _area_nodes(marker: dict[str, Any], parent: str, shape_id: str) -> list[str]:
     """An `Area2D` at the centre of its box, with a `CollisionShape2D` of the box's size. It never touches physics: it
     monitors nothing, can't be monitored and sits on no collision layer. `walkable` and `cell` are only metadata."""
     width, height = _area_size(marker)
@@ -105,7 +116,7 @@ def _area_nodes(marker: dict[str, Any], parent: str) -> list[str]:
     if marker.get("cell") is not None:
         properties.append(f"metadata/cell = {int(marker['cell'])}")
     return [_node(name, "Area2D", parent, *properties),
-            _node(AREA_SHAPE, "CollisionShape2D", f"{parent}/{name}", f'shape = SubResource("{_area_shape_id(marker)}")')]
+            _node(AREA_SHAPE, "CollisionShape2D", f"{parent}/{name}", f'shape = SubResource("{shape_id}")')]
 
 
 def _marker_properties(marker: dict[str, Any], light: int | None) -> list[str]:
@@ -161,7 +172,8 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str) -> str:
     lights = [marker for marker in markers if marker["type"] == "light"]
     navigation = room["navigation"]
     resources = [resource for index, marker in enumerate(lights) for resource in _light_resources(index, marker)]
-    resources += [_section(f'[sub_resource type="RectangleShape2D" id="{_area_shape_id(marker)}"]',
+    shape_ids = _area_shape_ids(markers)
+    resources += [_section(f'[sub_resource type="RectangleShape2D" id="{shape_ids[str(marker['id'])]}"]',
                            "size = Vector2({}, {})".format(*_area_size(marker)))
                   for marker in markers if marker["type"] == "area"]
     resources.append(_section(
@@ -186,7 +198,7 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str) -> str:
         nodes.append(_node(parent, "Node2D", "."))
         for marker in markers:
             if _MARKER_PARENT[marker["type"]] == parent and marker["type"] == "area":
-                nodes += _area_nodes(marker, parent)
+                nodes += _area_nodes(marker, parent, shape_ids[str(marker['id'])])
             elif _MARKER_PARENT[marker["type"]] == parent:
                 light = lights.index(marker) if marker["type"] == "light" else None
                 nodes.append(_node(_node_name(str(marker["id"])), _MARKER_NODE[marker["type"]], parent,
