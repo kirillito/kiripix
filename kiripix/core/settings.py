@@ -85,6 +85,18 @@ class ExportSection(_Strict):
     godot: GodotExport = GodotExport()
 
 
+class ExtendSection(_Strict):
+    """`[extend]`: the canvas, in px, that `kiripix extend <id> canvas` writes for the image model (ticket 0136)."""
+
+    canvas: tuple[int, int] = Field((1376, 768), description="Width and height of the canvas for the next piece.")
+
+    @model_validator(mode="after")
+    def _positive(self) -> Self:
+        if min(self.canvas) < 16:
+            raise ValueError("canvas must be at least 16 x 16 px")
+        return self
+
+
 class Providers(_Strict):
     default: str = "import"
     budget_usd_month: float = Field(20, ge=0)
@@ -151,20 +163,21 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 4
+PROJECT_SCHEMA_VERSION = 5
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[4] = 4
+    schema_version: Literal[5] = 5
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
     export: ExportSection = ExportSection()
     providers: Providers = Providers()
     character: CharacterSettings = Field(default_factory=CharacterSettings)
+    extend: ExtendSection = Field(default_factory=ExtendSection)
 
 
 class AssetSettings(_Strict):
@@ -202,8 +215,14 @@ def _add_ramp_table(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "character": character, "schema_version": 4}
 
 
+def _add_extend_section(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 4 had no `[extend]`; version 5 adds it (ticket 0136), its canvas defaulting to 1376 x 768."""
+    return {**document, "schema_version": 5}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
-    0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table}
+    0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
+    4: _add_extend_section}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 

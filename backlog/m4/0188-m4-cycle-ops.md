@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -38,11 +38,23 @@ Part of [0183](0183-m4-ambient-animation.md), route (b). Spec §7 (Ops). Pure fu
 
 ## Acceptance criteria
 
-- [ ] Golden tests: `cycle_rotate` and `cycle_pulse` frames on a small fixture (a "neon tube" and a "puddle"), compared
+- [x] Golden tests: `cycle_rotate` and `cycle_pulse` frames on a small fixture (a "neon tube" and a "puddle"), compared
       pixel-exactly; every output pixel is a palette colour; frame 0 equals the input.
-- [ ] Unit checks: `flicker_sequence` is identical across two runs and sums to `length_ticks`; `flash_count` trips on a
+- [x] Unit checks: `flicker_sequence` is identical across two runs and sums to `length_ticks`; `flash_count` trips on a
       fixture flashing 5 times a second over a quarter of the screen and not on 2 a second; `seam_ratio` is 1.0 on a
       `pingpong` sequence of smooth frames.
-- [ ] `lint-imports` passes (`ops` imports nothing else from Kiripix).
+- [x] `lint-imports` passes (`ops` imports nothing else from Kiripix).
 
 Budget: 120–200k tokens.
+
+## Result (2026-11-13)
+
+`kiripix/ops/cycle.py`, exported from `kiripix.ops`; tests in `tests/golden/test_cycle_ops.py`, goldens
+`cycle_neon_rotate.png` and `cycle_puddle_pulse.png`. Trial 0184 hadn't run: every default is a placeholder with a
+`# set by 0184` comment (pulse depth 2 and steps 4, flicker 6 / 0.6 / 600, even ticks 8, ramp hue gap 40 degrees, grey
+chroma 0.03, WCAG thresholds). Added beyond the ticket: `cycle_seam_ratio(colours, pingpong)` for the cycle case of the
+seam measure. Frame ids in `flicker_sequence` and `even_sequence` are given as a list of ints.
+
+## Closing notes (2026-11-13)
+
+- The Owner approved the golden images (`cycle_neon_rotate`, `cycle_puddle_pulse`) on 2026-11-13.

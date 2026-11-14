@@ -89,7 +89,7 @@ def test_the_stage_builds_engine_free_outputs_in_out(project: Kiripix) -> None:
 
     assert stage_status(project, ROOM)["export"] == "done"
     room = json.loads((folder / "out" / "export" / "room.json").read_text("utf-8"))
-    assert room["schema_version"] == 4 and room["size"] == [48, 32] and room["layers"] == []
+    assert room["schema_version"] == 8 and room["size"] == [48, 32] and room["layers"] == []
     assert [marker["id"] for marker in room["markers"]] == ["spawn.main"]
     # The left wall, flooded into `solid` from the 48 x 32 Plate: 16 columns, all one rectangle.
     assert room["collision"]["solid"] == [[[0, 0], [16, 0], [16, 32], [0, 32]]]
@@ -118,7 +118,8 @@ def test_exporting_a_reached_room_writes_the_scene_the_png_and_the_manifest(proj
     data = project.json("export", ROOM)["data"]
 
     assert data["asset"] == ROOM and data["counter"] == 1 and data["unchanged"] == []
-    assert sorted(data["written"]) == ["res://kiripix/room/alley/alley.tscn", "res://kiripix/room/alley/plate.png"]
+    assert sorted(data["written"]) == [f"res://kiripix/room/alley/{name}" for name in (
+        "alley.tscn", "masks/pit.png", "masks/solid.png", "plate.png", "room.json")]
     assert data["manifest"] == "res://kiripix/manifest/room.alley.json"
     text = scene(project)
     assert text.startswith(GENERATED + "\n[gd_scene ")
@@ -146,7 +147,8 @@ def test_the_manifest_records_the_ids_the_files_and_their_hashes(project: Kiripi
     assert record["asset"] == ROOM and record["exported"] is True and record["counter"] == 1
     assert record["ids"] == {"markers": ["spawn.main"], "layers": ["plate"], "masks": ["pit", "solid"],
                            "clips": []}
-    assert sorted(record["files"]) == ["res://kiripix/room/alley/alley.tscn", "res://kiripix/room/alley/plate.png"]
+    assert sorted(record["files"]) == [f"res://kiripix/room/alley/{name}" for name in (
+        "alley.tscn", "masks/pit.png", "masks/solid.png", "plate.png", "room.json")]
     assert all(re.fullmatch("[0-9a-f]{64}", value) for value in record["files"].values())
 
 
@@ -240,7 +242,7 @@ def test_re_exporting_an_unchanged_room_writes_nothing_and_leaves_the_counter(pr
 
     data = project.json("export", ROOM)["data"]
 
-    assert data["written"] == [] and data["counter"] == 1 and len(data["unchanged"]) == 2
+    assert data["written"] == [] and data["counter"] == 1 and len(data["unchanged"]) == 5
     assert times(project) == before
 
 
@@ -252,7 +254,8 @@ def test_a_changed_room_overwrites_its_own_files_and_raises_the_counter(project:
     project.json("run", ROOM)
     data = project.json("export", ROOM)["data"]
 
-    assert data["written"] == ["res://kiripix/room/alley/alley.tscn"] and data["counter"] == 2
+    assert sorted(data["written"]) == ["res://kiripix/room/alley/alley.tscn", "res://kiripix/room/alley/room.json"]
+    assert data["counter"] == 2
     assert "position = Vector2(31, 16)" in scene(project)
     assert manifest(project)["counter"] == 2
 
@@ -283,7 +286,7 @@ def test_an_unlisted_file_is_refused_even_with_the_very_bytes_export_would_write
 
     result = project.json("export", ROOM, expect=3)
 
-    assert len(findings(result, "export.file_unmanaged")) == 2 and not (project.cwd / MANIFEST).exists()
+    assert len(findings(result, "export.file_unmanaged")) == 5 and not (project.cwd / MANIFEST).exists()
 
 
 def test_an_export_stopped_while_writing_its_files_can_be_run_again(project: Kiripix) -> None:
@@ -300,7 +303,8 @@ def test_an_export_stopped_while_writing_its_files_can_be_run_again(project: Kir
 
     data = project.json("export", ROOM)["data"]
 
-    assert data["written"] == [res] and "position = Vector2(31, 16)" in scene(project)
+    assert sorted(data["written"]) == [res, res.replace("alley.tscn", "room.json")]
+    assert "position = Vector2(31, 16)" in scene(project)
     assert "replacing" not in manifest(project) and manifest(project)["counter"] == 3
 
 

@@ -1,4 +1,4 @@
-"""The room Recipe (spec §6.1): brief, source, fit, layers, masks, palette, place, reach, export."""
+"""The room Recipe (spec §6.1): brief, source, fit, layers, masks, palette, looks, loops, place, reach, export."""
 
 from __future__ import annotations
 
@@ -96,6 +96,28 @@ from kiripix.recipes.layers import (
     runner_calls as layers_runner_calls,
 )
 from kiripix.recipes.layers import LAYER_ID, LAYERS_FILE, layer_file, read_layer_files, read_layers, read_removed
+from kiripix.recipes.kit_record import KIT_GLOB, KIT_REVIEW_REASON, kits_moved
+from kiripix.recipes.looks import (
+    CHECKS as LOOK_CHECKS,
+    DECISIONS as LOOK_DECISIONS,
+    LOOKS_DIR,
+    PARAMS as LOOK_PARAMS,
+    LOOKS_STAGE,
+    check_looks,
+    looks_needs_input,
+    read_looks,
+    run_looks,
+)
+from kiripix.recipes.loops import (
+    CHECKS as LOOP_CHECKS,
+    DECISIONS as LOOP_DECISIONS,
+    LOOPS_STAGE,
+    STAGE_TEXT as LOOP_TEXT,
+    check_loops,
+    loops_needs_input,
+    read_loops,
+    run_loops,
+)
 from kiripix.recipes.room_palette import (
     after_overrides as palette_after_overrides,
     check_room_palette,
@@ -1039,13 +1061,20 @@ SIDE_VIEW_REACH = ("the {view} view's reachability is over platforms, which is n
                    "(side view is under \"Later\" in the spec's milestones)")
 
 
+def _with_areas(markers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What `reach` floods from (Exits and Spawns), then the walkable areas it reports on; none without a flood."""
+    flood = [marker for marker in markers if marker["type"] in _ON_WALKABLE]
+    areas = [marker for marker in markers if marker["type"] == "area" and marker.get("walkable")]
+    return flood + areas if flood else []
+
+
 def _flood_targets(place_dir: Path) -> list[dict[str, Any]]:
     markers: list[dict[str, Any]] = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))["markers"]
-    return [marker for marker in markers if marker["type"] in _ON_WALKABLE]
+    return _with_areas(markers)
 
 
 def _flood_targets_of(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
-    return [marker for marker in _current_markers(decisions) if marker["type"] in _ON_WALKABLE]
+    return _with_areas(_current_markers(decisions))
 
 
 def _reach_needs_input(run: StageRun) -> NeedsInput | None:
@@ -1090,7 +1119,10 @@ def _main_group(targets: list[dict[str, Any]], regions: list[np.ndarray]) -> set
 
 def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
     """The Reachable Mask and the report, over `ground` (walkable) from `targets`, the Masks being `run.upstream`'s. The
-    `reach` Stage writes both; the `reach` Probe answers with the report."""
+    `reach` Stage writes both; the `reach` Probe answers with the report. The walkable areas among `targets` are
+    reported on, not flooded from."""
+    areas = [marker for marker in targets if marker["type"] == "area"]
+    targets = [marker for marker in targets if marker["type"] != "area"]
     width, height = run.settings["body"]["size"]
     footprint = (int(width), int(height))
     step, dash = int(run.params["step"]), int(run.settings["body"]["dash"])
@@ -1112,7 +1144,14 @@ def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarr
         "main": [targets[index]["id"] for index in sorted(main)],
         "islands": [vars(island) for island in walkable_islands(ground, reached)],
         "gaps": [vars(gap) for gap in narrowest_gaps(_no_walking(run), footprint)],
+        "areas": [],
     }
+    for area in areas:
+        x0, y0, x1, y1 = _box_of_area(area)
+        inside = ground[y0:y1 + 1, x0:x1 + 1]
+        if inside.any():  # an area with no walkable pixel is `place`'s finding (`area.no_walkable`), not this one's
+            report["areas"].append({"id": area["id"], "x": x0, "y": y0, "width": x1 - x0 + 1, "height": y1 - y0 + 1,
+                                    "reached": bool((inside & reached[y0:y1 + 1, x0:x1 + 1]).any())})
     return reached, report
 
 
@@ -1123,14 +1162,6 @@ def _reach(run: StageRun) -> None:
                            "add walkable = { derived = true } under [masks] in kiripix.toml")
     ground = _read_mask(path)
     reached, report = _reach_report(run, _flood_targets(run.upstream["place"]), ground)
-    markers, _ = _read_markers(run.upstream["place"], run.asset_id)
-    report["areas"] = []
-    for area in (m for m in markers if m["type"] == "area" and m.get("walkable")):
-        x0, y0, x1, y1 = _box_of_area(area)
-        inside = ground[y0:y1 + 1, x0:x1 + 1]
-        if inside.any():  # an area with no walkable pixel is `place`'s finding (`area.no_walkable`), not this one's
-            report["areas"].append({"id": area["id"], "x": x0, "y": y0, "width": x1 - x0 + 1, "height": y1 - y0 + 1,
-                                    "reached": bool((inside & reached[y0:y1 + 1, x0:x1 + 1]).any())})
     _write_mask(run.output_dir / "reachable.png", reached)
     (run.output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
@@ -1212,12 +1243,18 @@ def _check_reach(run: StageRun) -> list[Finding]:
     return findings
 
 
-# export: what the game gets, with nothing of Godot in it: the mapped Plate, and `room.json` with the collision shapes, the
+# export: what the game gets, with nothing of Godot in it: the mapped Plate, the collision Masks and `room.json` with the collision shapes, the
 # navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
 
-ROOM_SCHEMA_VERSION = 4  # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
+ROOM_SCHEMA_VERSION = 8  # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
 #                          3: `area` Markers, with `walkable` and a snapped box (ticket 0137)
 #                          4: an emitter's `shape`, `direction` and `colours`, `null` when unset (ticket 0185)
+#                          5: `masks`, the collision Masks' PNG files, by name (ticket 0140)
+#                          6: `looks`, each Look's pieces, box and own `solid` (ticket 0131)
+#                          7: `loops`, each Loop's strips, frame layout and sequence (ticket 0190)
+#                          8: a Loop's `source` and `moves_layer` (ticket 0195)
+STRIP_LIMIT = 4096  # px: a Loop's strip wraps into rows at this width, and none may be taller (a texture's safe size)
+MASKS_DIR = "masks"  # in `out/export/`, and beside the scene in the game: the game builds its grid from `masks/solid.png`
 _COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -1226,6 +1263,105 @@ def _export_needs_input(run: StageRun) -> NeedsInput | None:
     if run.settings["export.godot"].get("project"):
         return None
     return NeedsInput("no Godot project to export into", owner_action=_NO_TARGET)
+
+
+LOOKS_DIR_OUT = "looks"  # in `out/export/`, and beside the scene in the game: each Look's pieces, `looks/<look>/<piece>.png`
+
+
+def _export_looks(run: StageRun, mask_files: dict[str, str], tolerance: float) -> list[dict[str, Any]]:
+    """The Looks as `room.json` lists them: their pieces copied to `looks/`, their `solid` Masks to `masks/<look>.solid.png`
+    (and named in `mask_files`), and their shapes simplified as the room's are. Ordered by ID."""
+    built = sorted(read_looks(run.upstream[LOOKS_STAGE], run.asset_id), key=lambda look: str(look["id"]))
+    listed: list[dict[str, Any]] = []
+    for look in built:
+        run.check_cancel()
+        name = str(look["id"])
+
+        def copy(file: str) -> str:
+            target = f"{LOOKS_DIR_OUT}/{file}"
+            (run.output_dir / target).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(run.upstream[LOOKS_STAGE] / file, run.output_dir / target)
+            return target
+
+        record: dict[str, Any] = {
+            "id": name, "condition": look["condition"], "file": copy(str(look["plate"])) if look["plate"] else None,
+            "box": look["box"], "pieces": [{"layer": piece["id"], "file": copy(str(piece["file"]))}
+                                            for piece in look["layers"]],
+            "solid": None, "collision": {},
+        }
+        if look["solid"]:
+            source = run.upstream[LOOKS_STAGE] / str(look["solid"])
+            (run.output_dir / MASKS_DIR).mkdir(exist_ok=True)
+            shutil.copyfile(source, run.output_dir / MASKS_DIR / f"{name}.solid.png")
+            record["solid"] = mask_files[f"{name}.solid"] = f"{MASKS_DIR}/{name}.solid.png"
+            record["collision"] = {"solid": collision_shapes(simplify(contours(_read_mask(source)), tolerance))}
+        listed.append(record)
+    return listed
+
+
+LOOPS_DIR_OUT = "loops"  # in `out/export/`, and beside the scene in the game: each Loop's strips, `loops/<loop>/<piece>.png`
+
+
+def _loop_source(loop: dict[str, Any]) -> str:
+    """Where a Loop's frames come from: `cycle` (a colour cycle), `op` (an Op on the room's pixels) or `kit` (frames the
+    Owner imported). `edit` (frames drawn in the editor) is held until trial 0184."""
+    return "cycle" if loop["form"] == "cycle" else str(loop.get("source") or "op")
+
+
+def _takes_layer(run: StageRun, loop: dict[str, Any]) -> bool:
+    """A frame Loop on a Layer whose strip covers every opaque pixel of the Layer: the Layer's own Sprite2D can show the
+    strip instead of its texture, so the Layer and its motion can't come apart. A strip cut to a part of the Layer can't:
+    the rest of the Layer would be lost, and the strip stays a child of the Layer's node."""
+    if loop["form"] != "frames" or loop["layer"] == "plate" or loop["box"] is None or not loop["layers"]:
+        return False
+    with Image.open(run.upstream["palette"] / layer_file(str(loop["layer"]))) as image:
+        alpha = np.asarray(image.convert("RGBA"))[..., 3] > 0
+    if not alpha.any():
+        return False
+    ys, xs = np.nonzero(alpha)
+    x, y, width, height = loop["box"]
+    if not (xs.min() >= x and xs.max() < x + width and ys.min() >= y and ys.max() < y + height):
+        return False
+    piece = next((entry for entry in loop["layers"] if entry["id"] == loop["layer"]), None)
+    if piece is None:
+        return False
+    with Image.open(run.upstream[LOOPS_STAGE] / str(piece["file"])) as image:
+        first = np.asarray(image.convert("RGBA"))[:height, :width, 3] > 0  # frame 0: the region's pixels of the Layer
+    # the region, not only its box, must hold every opaque pixel, or the pixels left out would vanish in the game
+    return bool(first.shape == (height, width) and not (alpha[y:y + height, x:x + width] & ~first).any())
+
+
+def _export_loops(run: StageRun) -> list[dict[str, Any]]:
+    """The Loops as `room.json` lists them: their strips and index images copied to `loops/`, ordered by ID. `hframes` and
+    `vframes` are the strips' layout, which every piece of a Loop shares; `sequence` is flat frame, ticks pairs.
+    `moves_layer` is true for the one Loop per Layer whose strip stands in for the Layer's texture."""
+    listed: list[dict[str, Any]] = []
+    taken: set[str] = set()
+    for loop in sorted(read_loops(run.upstream[LOOPS_STAGE], run.asset_id), key=lambda entry: str(entry["id"])):
+        run.check_cancel()
+        moves = loop["layer"] not in taken and _takes_layer(run, loop)
+        if moves:
+            taken.add(str(loop["layer"]))
+
+        def copy(file: str) -> str:
+            target = f"{LOOPS_DIR_OUT}/{file}"
+            (run.output_dir / target).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(run.upstream[LOOPS_STAGE] / file, run.output_dir / target)
+            return target
+
+        listed.append({
+            "id": loop["id"], "form": loop["form"], "source": _loop_source(loop), "layer": loop["layer"],
+            "moves_layer": moves, "box": loop["box"],
+            "file": copy(str(loop["plate"])) if loop["plate"] else None,
+            "hframes": loop["columns"], "vframes": loop["rows"], "frames": loop["frames"],
+            "sequence": [value for pair in loop["sequence"] for value in pair], "ticks": loop["ticks"],
+            "phase": loop["phase"], "light": loop["light"],
+            "pieces": [{"layer": piece["id"], "file": copy(str(piece["file"])), "box": loop["box"]}
+                       for piece in loop["layers"]],
+            "index": copy(str(loop["index"])) if loop["index"] else None,
+            "colours": loop["colours"], "mode": loop["mode"],
+        })
+    return listed
 
 
 def _export(run: StageRun) -> None:
@@ -1243,10 +1379,17 @@ def _export(run: StageRun) -> None:
                        "y": None if position is None or above else position.y})
     tolerance = float(run.params["tolerance"])
     collision = {}
+    mask_files: dict[str, str] = {}  # a Look's own `solid` joins these as `<look>.solid`
     for name in _COLLISION_MASKS:
         run.check_cancel()
         path = run.upstream[MASKS_STAGE] / f"{name}.png"
+        if path.is_file():
+            (run.output_dir / MASKS_DIR).mkdir(exist_ok=True)
+            shutil.copyfile(path, run.output_dir / MASKS_DIR / path.name)  # byte for byte: 1-bit, the room's size
+            mask_files[name] = f"{MASKS_DIR}/{path.name}"
         collision[name] = collision_shapes(simplify(contours(_read_mask(path)), tolerance)) if path.is_file() else []
+    looks = _export_looks(run, mask_files, tolerance)
+    loops = _export_loops(run)
     run.check_cancel()
     ground = _read_mask(run.upstream["place"] / "walkable.png") & _read_mask(run.upstream["reach"] / "reachable.png")
     navigation = navigation_polygon(simplify(contours(ground), tolerance))
@@ -1259,15 +1402,50 @@ def _export(run: StageRun) -> None:
                        "outlines": navigation.outlines},
         "markers": markers,
         "layers": layers,
+        "masks": mask_files,
+        "looks": looks,
+        "loops": loops,
     }
     (run.output_dir / "room.json").write_text(json.dumps(room, indent=2) + "\n", encoding="utf-8")
 
 
+def _check_loop_lights(run: StageRun) -> list[Finding]:
+    """`loop.light_unknown`: a Loop's `light` names no light Marker. Here because `export` sees the Markers; `loops`
+    comes before `place` and doesn't."""
+    lights = {m["id"] for m in _current_markers(run.upstream_decisions["place"]) if m["type"] == "light"}
+    return [Finding(
+        code="loop.light_unknown",
+        message=f"the Loop {loop['id']} names the light '{loop['light']}', and the room has no light Marker with that ID",
+        position=Position(asset=run.asset_id, stage=LOOPS_STAGE),
+        owner_action=f"Place a light Marker with the ID {loop['light']} (kiripix decide {run.asset_id} place --help), or "
+                     f"declare the Loop again without `light` (kiripix decide {run.asset_id} {LOOPS_STAGE} --help).")
+        for loop in read_loops(run.upstream[LOOPS_STAGE], run.asset_id) if loop["light"] and loop["light"] not in lights]
+
+
+def _check_loop_sizes(run: StageRun) -> list[Finding]:
+    """`export.loop_too_large`: a Loop's strip, wrapped into rows, is taller than `STRIP_LIMIT`."""
+    findings: list[Finding] = []
+    for loop in read_loops(run.upstream[LOOPS_STAGE], run.asset_id):
+        if loop["box"] is None:
+            continue
+        width, height = int(loop["box"][2]) * int(loop["columns"]), int(loop["box"][3]) * int(loop["rows"])
+        if width > STRIP_LIMIT or height > STRIP_LIMIT:
+            findings.append(Finding(
+                code="export.loop_too_large",
+                message=f"the strip of the Loop {loop['id']} is {width} x {height} px ({loop['frames']} frames of "
+                        f"{loop['box'][2]} x {loop['box'][3]}), over {STRIP_LIMIT} x {STRIP_LIMIT}",
+                position=Position(asset=run.asset_id, stage=LOOPS_STAGE),
+                owner_action=f"Give the Loop {loop['id']} fewer frames or a smaller region "
+                             f"(kiripix decide {run.asset_id} {LOOPS_STAGE} --help)."))
+    return findings
+
+
 def _check_export(run: StageRun) -> list[Finding]:
+    findings = [*_check_loop_lights(run), *_check_loop_sizes(run)]
     if run.settings["export.godot"].get("project"):
-        return []
-    return [Finding(code="export.no_target", message="no Godot project to export into",
-                    position=Position(asset=run.asset_id, stage="export"), owner_action=_NO_TARGET)]
+        return findings
+    return [*findings, Finding(code="export.no_target", message="no Godot project to export into",
+                               position=Position(asset=run.asset_id, stage="export"), owner_action=_NO_TARGET)]
 
 
 ROOM = KindSpec(
@@ -1454,6 +1632,52 @@ ROOM = KindSpec(
             check=check_room_palette,
         ),
         StageSpec(
+            name="looks",
+            description="A room's other appearances (a door shut, a lamp unlit). Each Look is an edit of the Source: "
+                        "`kiripix import <asset> <png> --look <look>`, then `kiripix pick <asset> <variant> --look "
+                        "<look>`. The Stage fits and registers the edit, maps it with the palette Stage's own "
+                        "parameters, and cuts it to the Look's region: a `polygon`, a `brush`, or a `difference` over a "
+                        "box that picks out what the edit really redrew (measured before the palette). The Look's "
+                        "image is written cropped to the region, in one piece for the Plate and one per Layer the "
+                        "region meets. A Look may have a `solid` Mask of its own. A new edit makes only this Stage "
+                        "stale; a palette change rebuilds the Looks, a refit or a Layer change puts a `difference` in "
+                        "needs-review. No Looks: done.",
+            # `layers` first: a `difference` is made on the Plate, so a refit or a Layer change replays it, and a palette change doesn't
+            inputs=StageInputs(files=[f"{LOOKS_DIR}/**/*.png"],
+                               upstream=["layers", "palette", "source", "fit", MASKS_STAGE], settings=["palette"]),
+            params=LOOK_PARAMS,
+            decisions=LOOK_DECISIONS,
+            checks=LOOK_CHECKS,
+            owner_input="Imports an edit of the room, picks it, and marks where it changes the room.",
+            available_from="M4",
+            run=run_looks,
+            needs_input=looks_needs_input,
+            check=check_looks,
+        ),
+        StageSpec(
+            name="loops",
+            description="A room's Loops: parts that play by themselves, over and over, cut to a region. " + LOOP_TEXT
+                        + " Here a Loop is a colour cycle: chosen palette colours step through a list (`rotate`) or "
+                        "along their ramps and back (`pulse`) inside the region, on the room's own mapped pixels, so "
+                        "frame 0 is the room. The Stage writes each Loop's distinct frames as strips, one per piece "
+                        "(Plate, and each foreground Layer the region meets), the cycle's index image and `loops.json` "
+                        "with the `sequence` of (frame, ticks) that `timing` expands to. The region is a `polygon`, a "
+                        "`brush` or a `flood`. A palette change rebuilds the Loops; a refit or a Layer change puts a "
+                        "`flood` in needs-review. No Loops: done. `place` and `reach` don't read it.",
+            # `layers` first: a `flood` is made on the fitted room, so a refit or a Layer change replays it, and a palette change doesn't
+            inputs=StageInputs(files=[KIT_GLOB], upstream=["layers", "palette", "source", "fit", MASKS_STAGE, LOOKS_STAGE],
+                               settings=["palette", "project.resolution"]),
+            decisions=LOOP_DECISIONS,
+            checks=LOOP_CHECKS,
+            owner_input="Declares a Loop, marks its region, and picks its colours and timing.",
+            available_from="M4",
+            run=run_loops,
+            needs_input=loops_needs_input,
+            check=check_loops,
+            review=kits_moved,
+            review_reason=KIT_REVIEW_REASON,
+        ),
+        StageSpec(
             name="place",
             description="Places Markers: Exits, Spawns, lights, emitters, areas (boxes) and y-sort lines, one for each "
                         "foreground Layer unless it is always above.",
@@ -1511,12 +1735,16 @@ ROOM = KindSpec(
             name="export",
             description="Builds what the game gets: the mapped Plate, collision shapes, navigation polygon and Markers. "
                         "`kiripix export` then writes them into the Godot project.",
-            inputs=StageInputs(upstream=["reach", "place", "palette", MASKS_STAGE], settings=["export.godot"]),
+            inputs=StageInputs(upstream=["reach", "place", "palette", MASKS_STAGE, LOOKS_STAGE, LOOPS_STAGE],
+                               settings=["export.godot"]),
             params=(ParamSpec(name="tolerance", type="float", description="How far collision and navigation outlines "
                               "may stray from the Mask, in px. 0 keeps every corner.", default=1.0, minimum=0),),
             checks=(
                 CheckSpec(code="export.no_target", description="The export target is set."),
                 CheckSpec(code="exit.unpaired", description="Every Exit points to an Exit that points back."),
+                CheckSpec(code="loop.light_unknown", description="A Loop's `light` names a light Marker of the room."),
+                CheckSpec(code="export.loop_too_large", description="A Loop's strip, wrapped into rows, is no larger than "
+                                                                      "4096 x 4096 px."),
             ),
             output_root="out",
             available_from="M1",

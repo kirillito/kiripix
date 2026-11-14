@@ -28,7 +28,10 @@ import {
   type Filter,
 } from "./components";
 import { isTyping, type PixelCanvas } from "./pixelCanvas";
+import { useActiveTime } from "./activeTime";
 import { MASKS_STAGE, MasksPanel } from "./maskScreen";
+import { LOOKS_DECISION, LOOKS_STAGE, LooksPanel, roomImageOf } from "./lookScreen";
+import { LOOPS_DECISION, LOOPS_STAGE, LoopsPanel } from "./loopScreen";
 import { ambiguousCells } from "./markerTool";
 import { ABOVE_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
 import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
@@ -106,6 +109,8 @@ export function App() {
   const [gameFrame, setGameFrame] = useState(false);
   const [rebuild, setRebuild] = useState(true);
   const [layersRebuild, setLayersRebuild] = useState(false); // each rebuild is a Runner call, so it's the Owner's to ask for
+  const [looksRebuild, setLooksRebuild] = useState(true); // a Look is built with no Runner, so a rebuild is cheap
+  const [loopsRebuild, setLoopsRebuild] = useState(true); // so is a colour-cycle Loop
   const [focusLayer, setFocusLayer] = useState<{ layer: string; count: number } | null>(null); // a `layer.no_ysort` jump
   const [focusFrame, setFocusFrame] = useState<FrameFocus | null>(null); // a frame finding's jump
   const [, setRefocus] = useState(0); // one more render, to run the focus effect when a finding is on this Stage
@@ -203,14 +208,21 @@ export function App() {
     history.replaceState(null, "", window.location.pathname + (search ? `?${search}` : ""));
   }, [asset, current]);
 
+  useActiveTime(asset, show ? current : null);
+
   const description = kind ? recipes[kind]?.find((entry) => entry.name === current) : undefined;
   const detail = show?.stages.find((entry) => entry.stage === current);
-  const isSource = description?.decisions.some((decision) => decision.name === PICK) ?? false;
+  // The looks Stage has a `pick` too, of a Look's edit: its own screen takes that.
+  const isSource = current !== LOOKS_STAGE && (description?.decisions.some((decision) => decision.name === PICK) ?? false);
   const isPlace = description?.decisions.some((decision) => decision.name === PLACE_DECISION) ?? false;
   const isMasks =
     current === MASKS_STAGE && (description?.decisions.some((decision) => decision.name === "brush") ?? false);
   const isLayers =
     current === LAYERS_STAGE && (description?.decisions.some((decision) => decision.name === LAYERS_DECISION) ?? false);
+  const isLooks =
+    current === LOOKS_STAGE && show?.kind === "room" && (description?.decisions.some((decision) => decision.name === LOOKS_DECISION) ?? false);
+  const isLoops =
+    current === LOOPS_STAGE && show?.kind === "room" && (description?.decisions.some((decision) => decision.name === LOOPS_DECISION) ?? false);
   const isReach = current === REACH_STAGE && show?.kind === "room";
   const isCharacterScreen =
     show?.kind === CHARACTER_KIND && current !== null && CHARACTER_SCREENS.includes(current) && description !== undefined;
@@ -289,7 +301,7 @@ export function App() {
   const rebuilt = useCallback(
     async <T,>(result: Envelope<T>, rerun = false, force = false): Promise<Envelope<unknown>> => {
       // `force`: a removed Layer is taken out by a plain `run layers`, with no rerun and no accept (ticket 0091).
-      if (!(force || (isMasks ? rebuild : isLayers && layersRebuild)) || !result.ok) return result;
+      if (!(force || (isMasks ? rebuild : isLooks ? looksRebuild : isLoops ? loopsRebuild : isLayers && layersRebuild)) || !result.ok) return result;
       const id = crypto.randomUUID();
       setRebuilding(id);
       try {
@@ -300,12 +312,12 @@ export function App() {
         setProgress(null);
       }
     },
-    [asset, current, isMasks, isLayers, rebuild, layersRebuild],
+    [asset, current, isMasks, isLayers, isLooks, isLoops, rebuild, layersRebuild, looksRebuild, loopsRebuild],
   );
   const decideMask = useCallback(
     (name: string, data: Record<string, unknown>, settled?: () => void) => {
       const decision = JSON.stringify({ decision: name, data });
-      const into = String(data.layer ?? data.mask ?? "");
+      const into = String(data.layer ?? data.mask ?? data.look ?? data.loop ?? "");
       const verbs: Record<string, string> = {
         trim: "Trimming",
         brush: data.erase ? "Erasing" : "Painting",
@@ -313,6 +325,14 @@ export function App() {
         click: "Clicking into",
         border: "Bordering",
         remove: "Removing",
+        polygon: "Filling",
+        solid: "Painting the solid of",
+        difference: "Measuring the difference of",
+        look: "Naming",
+        loop: "Declaring",
+        cycle: "Setting the cycle of",
+        timing: "Setting the timing of",
+        frames: "Setting the frames of",
       };
       const label =
         name === "click" && isLayers
@@ -349,6 +369,36 @@ export function App() {
     (file: File) => void perform(async () => rebuilt(await callWithFile("plate-import", { asset }, "png", file)), "Importing a Plate image"),
     [asset, perform, rebuilt],
   );
+  // An edit dropped on the looks screen is stored as a Variant of its Look and picked at once: the Owner dropped it to use it.
+  const importEdit = useCallback(
+    (file: File, look: string) =>
+      void perform(async () => {
+        const stored = await callWithFile<{ variant: string }>("import", { asset, look }, "file", file);
+        if (!stored.ok || !stored.data) return stored;
+        const picked = await call("pick", { asset, look, variant: stored.data.variant });
+        return rebuilt({ ...picked, findings: [...stored.findings, ...picked.findings] });
+      }, `Importing an edit of ${look}`),
+    [asset, perform, rebuilt],
+  );
+  // A frame Loop's kit (ticket 0196): written to a folder on the server's machine; the painted frames come back from there.
+  // `import --loop` takes a JSON list of paths over REST (multipart takes one file), so the folder is named, not uploaded.
+  const writeKit = useCallback(
+    (loop: string, folder: string, frames: number, force: boolean, written: (folder: string | null) => void) =>
+      void perform(async () => {
+        const result = await call<{ folder: string }>("loop kit", { asset, loop, folder, frames, force });
+        written(result.ok && result.data ? result.data.folder : null);
+        return result;
+      }, `Writing the kit of ${loop}`),
+    [asset, perform],
+  );
+  const importFrames = useCallback(
+    (loop: string, paths: string[]) =>
+      void perform(async () => {
+        const [file, ...frames] = paths;
+        return rebuilt(await call("import", { asset, loop, file, frames }));
+      }, `Importing the frames of ${loop}`),
+    [asset, perform, rebuilt],
+  );
   const pick = useCallback(
     (variant: string) => {
       if (!busy) void perform(() => call("pick", { asset, variant }), "Picking a Variant");
@@ -376,12 +426,12 @@ export function App() {
             // Runner call still missing waits for the Owner). Every step on `layers` does it, because which Decision a
             // queued step undoes is only known once the steps before it have landed.
             const result = await call(command, { asset, stage: current });
-            return rebuilt(result, false, isLayers || isPivot);
+            return rebuilt(result, false, isLayers || isPivot || (isLooks && looksRebuild) || (isLoops && loopsRebuild));
           },
           command === "undo" ? "Undoing" : "Redoing",
         );
     },
-    [asset, busy, current, isLayers, isPivot, perform, rebuilt],
+    [asset, busy, current, isLayers, isLooks, isLoops, isPivot, looksRebuild, loopsRebuild, perform, rebuilt],
   );
 
   // The job exists once it reaches the front of the queue, and only then can it be cancelled.
@@ -482,6 +532,8 @@ export function App() {
   const wantsRerun = next?.stage === detail?.stage && !!next?.command?.includes("--rerun");
   // The rig screen lists the Mixamo steps itself, so the panel doesn't say them twice.
   const stepsShown = isCharacterScreen && current === "rig" && !!next?.owner_action && next.stage === detail?.stage;
+  // A Loop that flashes too fast is an error that holds the Stage back: its timing is changed first.
+  const blocked = isLoops && stageChecks.some((finding) => finding.severity === "error");
   const asking = pressing([...stageChecks, ...noticeShown, ...problemsShown]);
   const nextLine =
     next && next.stage === detail?.stage && next.owner_action
@@ -491,7 +543,7 @@ export function App() {
         : asking?.owner_action;
   // Reach has no image of its own, and the Body walks on the mapped room that `place` is made on.
   const reachImage = isReach ? show?.stages.find((entry) => entry.stage === "place")?.input_image : null;
-  const image = detail?.image ?? detail?.input_image ?? reachImage ?? null;
+  const image = ((isLooks || isLoops) && show ? roomImageOf(show) : null) ?? detail?.image ?? detail?.input_image ?? reachImage ?? null;
   const after = image ? fileUrl(image, imageVersion) : null;
   const before = detail?.image && detail.input_image ? fileUrl(detail.input_image, imageVersion) : null;
 
@@ -510,6 +562,10 @@ export function App() {
   const primary = cancellable ? (
     <button className="primary" data-testid="cancel" onClick={() => void cancelJob(cancellable)}>
       Cancel
+    </button>
+  ) : blocked ? (
+    <button className="primary" data-testid="accept" disabled title="Fix the errors of the Loops first">
+      Accept ▶
     </button>
   ) : detail?.status === "needs-review" ? (
     <button className="primary" data-testid="accept" onClick={accept} disabled={accepting} aria-busy={accepting}>
@@ -606,7 +662,7 @@ export function App() {
               <div className="next-line" data-testid="next-hint">
                 <span>{nextLine ?? <code>{next?.command}</code>}</span>
                 {!cancellable && wantsReview && (
-                  <button data-testid="next-accept" onClick={accept} disabled={accepting}>
+                  <button data-testid="next-accept" onClick={accept} disabled={accepting || blocked}>
                     Accept
                   </button>
                 )}
@@ -669,6 +725,43 @@ export function App() {
                 onRebuild={setLayersRebuild}
                 decide={decideMask}
                 importPlate={importPlate}
+              />
+            )}
+            {isLooks && (
+              <LooksPanel
+                key={asset}
+                canvas={canvas}
+                asset={asset ?? ""}
+                show={show}
+                detail={detail}
+                decisions={description.decisions}
+                imageVersion={imageVersion}
+                refreshes={data.refreshes}
+                disabled={busy}
+                rebuild={looksRebuild}
+                onRebuild={setLooksRebuild}
+                decide={decideMask}
+                importEdit={importEdit}
+              />
+            )}
+            {isLoops && (
+              <LoopsPanel
+                key={asset}
+                canvas={canvas}
+                show={show}
+                detail={detail}
+                decisions={description.decisions}
+                findings={stageChecks}
+                imageVersion={imageVersion}
+                refreshes={data.refreshes}
+                disabled={busy}
+                rebuild={loopsRebuild}
+                onRebuild={setLoopsRebuild}
+                roomImage={roomImageOf(show)}
+                decide={decideMask}
+                writeKit={writeKit}
+                importFrames={importFrames}
+                onStage={setStage}
               />
             )}
             {isReach && (

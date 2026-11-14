@@ -380,6 +380,10 @@ def accept(project: Project, asset: Asset, stage: str) -> list[journal.JournalEn
         appended.append(_append(path, last, decision=decision.name, data=decision.data, image_hash=current,
                                 replaces=decision.id))
         last = appended[-1].id
+    for decision, data in graph.moved_inputs(spec):  # a Stage's own review: re-record against what is now (ticket 0194)
+        appended.append(_append(path, last, decision=decision.name, data=data, image_hash=decision.image_hash,
+                                replaces=decision.id))
+        last = appended[-1].id
     return appended
 
 

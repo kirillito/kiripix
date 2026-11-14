@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -25,6 +25,18 @@ they came in with earlier commits (0137, 0167).
 
 ## Acceptance criteria
 
-- [ ] The four tests pass, and the full suite has no other failure.
+- [x] The four tests pass, and the full suite has no other failure.
 
 Budget: 20–50k tokens.
+
+## Result (2026-11-13)
+
+Fixed in the M4 Looks and Loops batch, while running its full suite:
+
+- `BODIES` has `ramps-add` (and `extend`, new in 0136).
+- The describe test expects `area.not_reached`.
+- The Probe reports areas, as recommended: the walkable `area` Markers travel with the flood targets
+  (`_with_areas` in `kiripix/recipes/room.py`) and `_reach_report` builds `areas` for both the Stage and the Probe, so the
+  answer is the Stage's report again. 0137's note that the Probe doesn't report areas no longer holds.
+- The same run found `tests/cli/test_manifest_merge.py` conflicting in the exported `room.json` (new in 0140): `room.json` is
+  now one of the `kiripix-ours` merge rules (`kiripix/export/merge.py`, spec §9).

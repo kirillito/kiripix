@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: godot-export
 type: ticket
@@ -36,11 +36,29 @@ frame counter, so the export gives frames and a sequence, never a clock.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a room with a Plate Loop, a Loop over a Layer and a Loop on a Layer exports the nodes, metadata and files
+- [x] CLI seam: a room with a Plate Loop, a Loop over a Layer and a Loop on a Layer exports the nodes, metadata and files
       above; `room.json` matches the scene.
-- [ ] Golden or byte check: every strip's frame 0 equals the exported Plate (or Layer) inside its box.
-- [ ] Prune and ID freeze: renaming an exported Loop is refused, as for a Look.
-- [ ] In Godot 4.7, a scratch script steps one exported Loop by its `sequence` for 600 ticks, and two runs give byte-identical
+- [x] Golden or byte check: every strip's frame 0 equals the exported Plate (or Layer) inside its box.
+- [x] Prune and ID freeze: renaming an exported Loop is refused, as for a Look.
+- [x] In Godot 4.7, a scratch script steps one exported Loop by its `sequence` for 600 ticks, and two runs give byte-identical
       captures (done once, by hand, recorded here).
 
 Budget: 150–250k tokens.
+
+## Result (2026-11-13)
+
+- `ROOM_SCHEMA_VERSION` is 7. `room.json` `loops` (by ID): `id`, `form`, `layer`, `box`, `file` (Plate strip or `null`), `hframes`
+  and `vframes` (the strips' columns and rows), `frames`, `sequence` (flat frame, ticks), `ticks`, `phase`, `light`, `pieces`
+  (`layer`, `file`, `box`), `index`, `colours`, `mode`. Files are `loops/<loop>/plate.png`, `layer.<id>.png`, `index.png`.
+- Scene: `Loops` after `Looks`; a visible, unshaded (`CanvasItemMaterial`, `light_mode = 1`, shared by every Loop sprite)
+  `Sprite2D` per Plate strip; each piece a child of its Layer's node, after the Look pieces. Metadata `kiripix_id`,
+  `kiripix_type = "loop"`, `sequence`, `phase`, `light` when set.
+- Deviation: a Loop with `layer = <id>` is a child piece of that Layer too, not the Layer's own sprite: its strip is cut to the
+  box, so replacing the Layer's texture would lose the rest of the Layer. 0195 (Layers that move) should settle this.
+- Manifest `ids.loops` (omitted when empty; merge unions it); the freeze reads the `loop` Decisions of `loops`.
+- Left for the Owner: the Godot 4.7 by-hand check.
+- Tests: `tests/cli/test_export_loops.py`; schema counts in `test_export.py`, `test_export_layers.py`, `test_emitter.py`.
+
+## Closing notes (2026-11-13)
+
+- Checked with Godot 4.7.2 (headless unless noted), 2026-11-13: a scratch script stepped the Plate Loop by `sequence` and `phase` for 600 ticks, hashing each shown frame's pixels; two runs gave the same SHA-256 (`d42364b3…`), frames 0, 1, 2 with 18 ticks a cycle.

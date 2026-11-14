@@ -13,10 +13,15 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from .claude_agent import ALLOWED, Stream, claude_args
 from .harness import (
+    AREA,
+    AREA_CELL,
     ASSET,
+    HEIGHT,
+    WIDTH,
     AgentTurn,
     CommandRun,
     Outcome,
@@ -122,6 +127,37 @@ def test_dry_run_takes_the_character_from_import_of_its_model_to_export_with_its
         manifest["ids"]["clips"])
 
 
+def test_dry_run_joins_the_second_piece_with_extend_and_picks_the_joined_variant_first(dry_run: tuple[Setup, Outcome]) -> None:
+    setup, outcome = dry_run
+
+    ran = [c.command for c in outcome.commands]
+    steps = [i for i, c in enumerate(ran) if c.startswith("kiripix extend room.alley")]
+    assert [ran[i].split()[3] for i in steps] == ["canvas", "add", "done"], "the room's first moves, in this order"
+    assert steps == [0, 1, 2] and ran[3].startswith("kiripix pick room.alley "), "`done` says to pick the joined Variant"
+    assert "piece-east.png" in ran[steps[1]] and all(outcome.commands[i].exit_code == 0 for i in (*steps, 3))
+    journal = (setup.project / "assets" / "room" / "alley" / "extend" / "journal.jsonl").read_text("utf-8")
+    assert [json.loads(line)["action"] for line in journal.splitlines()] == ["add", "done"]
+    assert outcome.verification and any(f"masks/solid.png and room.json" in d for d in outcome.verification.details)
+    solid = setup.game / "kiripix" / "room" / "alley" / "masks" / "solid.png"
+    assert Image.open(solid).size == (WIDTH, HEIGHT), "the export is the whole room, both pieces"
+
+
+def test_dry_run_the_area_is_put_wrong_first_and_the_owner_moves_it_when_the_agent_reports_the_finding(
+        dry_run: tuple[Setup, Outcome]) -> None:
+    setup, outcome = dry_run
+
+    assert any("area.no_walkable" in c.output for c in outcome.commands), "the agent was shown the finding"
+    moves = [i for i in outcome.interventions if "decide room.alley place marker" in i and "masks" not in i]
+    assert len(moves) == 1, f"one owner step moved the area: {outcome.interventions}"
+    first = next(i for i in outcome.interventions if "decide room.alley masks brush" in i)
+    assert outcome.interventions.index(first) < outcome.interventions.index(moves[0])
+    decisions = (setup.project / "assets" / "room" / "alley" / "decisions" / "place.jsonl").read_text("utf-8")
+    areas = [json.loads(line)["data"] for line in decisions.splitlines() if '"type":"area"' in line.replace(" ", "")]
+    assert [a["id"] for a in areas] == [AREA, AREA] and areas[0]["x"] == 0 and areas[1]["x"] == 40
+    assert all(a["cell"] == AREA_CELL and a["walkable"] for a in areas)
+    assert outcome.verification and any("Area2D" in d for d in outcome.verification.details)
+
+
 def test_the_agent_sees_only_the_real_kinds_and_runners_though_the_fakes_are_loaded(setup: Setup) -> None:
     env = agent_env(shim_dir=setup.shims)
 
@@ -165,20 +201,26 @@ def test_an_agent_that_stops_with_nothing_for_the_owner_is_lost_at_a_named_step(
 
 
 class AskingAgent(StoppedAgent):
-    """Runs the room up to `source`, then asks the owner for the Pick although `next` names `kiripix pick`."""
+    """Stops at once and asks the owner for something, although `next` names `kiripix run`."""
 
     def start(self, task: str, cwd: Path, env: Mapping[str, str], budget_left: int) -> AgentTurn:
-        subprocess.run([shutil.which("kiripix", path=env["PATH"]) or "kiripix", "run", "room.alley"], cwd=cwd, env=dict(env),
-                       stdin=subprocess.DEVNULL, capture_output=True)
-        return AgentTurn(final_text="Picking the Source is the owner's call.")
+        return AgentTurn(final_text="The first Mask is the owner's call.")
 
 
-def test_the_owner_answers_what_the_agent_reports_and_the_contradiction_is_recorded(setup: Setup) -> None:
-    outcome = run_acceptance(AskingAgent(), setup, BUDGET, dry_run=True)
+def test_the_owner_answers_what_the_agent_reports_and_the_contradiction_is_recorded(setup: Setup, tmp_path: Path) -> None:
+    fixture = tmp_path / "owner-brief.json"  # one answer for the brief; the others wait until they are asked for
+    fixture.write_text(json.dumps({"asset": ASSET, "decisions": [
+        {"when_stage": "brief", "stage": "masks", "decision": "brush",
+         "data": {"mask": "solid", "erase": False, "radius": 4, "points": [[8, 0], [8, 40]]}},
+        {"stage": "place", "decision": "marker", "data": {"id": "spawn.main", "type": "spawn", "x": 64, "y": 16}}]}),
+        encoding="utf-8")
 
-    assert any("pick room.alley" in i and "the agent asked the owner" in i for i in outcome.interventions)
-    assert outcome.failure_step and outcome.failure_step.startswith("room.alley source is todo"), "the Pick moved it on"
-    assert not any("decide" in i for i in outcome.interventions), "the Masks and Markers wait until they are asked for"
+    outcome = run_acceptance(AskingAgent(), setup, BUDGET, dry_run=True, fixture=fixture)
+
+    assert any("decide room.alley masks brush: exit 0" in i and "the agent asked the owner" in i
+               for i in outcome.interventions)
+    assert outcome.failure_step and outcome.failure_step.startswith("room.alley brief is todo"), "the owner moved nothing on"
+    assert len(outcome.interventions) == 1, "the Markers wait until they are asked for"
     assert "Still stuck." in render(outcome, "m1", datetime.date(2026, 11, 4)), "the closing message is in the report"
 
 

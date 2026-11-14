@@ -191,7 +191,7 @@ def test_a_built_room_exports_the_emitter_fields_in_room_json_schema_4(project: 
     project.json("run", ROOM, expect=2)  # the colour is off the palette; the Stages still build
 
     room = json.loads((folder / "out" / "export" / "room.json").read_text("utf-8"))
-    assert room["schema_version"] == 4
+    assert room["schema_version"] == 8
     by_id = {m["id"]: m for m in room["markers"]}
     assert by_id["plain"]["shape"] is None and by_id["steam"]["colours"] == ["#112233"]
     assert isinstance(folder, Path)

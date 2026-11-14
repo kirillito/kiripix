@@ -70,5 +70,9 @@ Put the room preview with all the Loops on in front of the Owner, then again wit
 - [ ] A recommendation written into 0183: the first route to build (expected: (b)), the frame sources worth building for (c),
       and whether 0193's and 0194's Part B (edit frames) stays or is cut.
 - [ ] Every default marked "set by 0184" in 0188, 0189, 0192 and 0194 replaced with the trial's value, or confirmed.
+- [ ] Part B (edit frames): 0193 and 0194 closed with Part A only, and 0196 hides the Edits source, so no ticket carries Part
+      B now. If the trial keeps it, write three tickets from those Part B sections, with the trial's numbers (including
+      `loop.flicker`'s share of the region): core (`import --loop --frame`, `pick --loop --frame`), imaging (building edit
+      frames), UI (the Edits source on the loops screen). If the trial cuts it, say so in 0183's Order.
 
 Budget: 80–150k tokens.

@@ -26,6 +26,7 @@ import pytest
 
 from conftest import MARK, Kiripix, in_review, kiripix_args, kiripix_env, make_demo, make_sketch, save_image, sketched
 from test_contract import SAMPLES
+import test_extend
 from test_locks import start_holding, wait_for
 from test_masks import ROOM, built_room, decide
 
@@ -227,6 +228,11 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "preview": lambda a: {"asset": a[1], "stage": a[3], "region": a[5], "grid": int(a[7])},
     "export": lambda a: {"asset": a[1]},
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
+    "loop kit": lambda a: {"asset": a[2], "loop": a[3], "folder": a[4], "frames": int(a[6])},
+    "track": lambda a: {"asset": a[1], "stage": a[2], "seconds": int(a[4])},
+    "stats": lambda a: {"all": True},
+    "extend": lambda a: {"asset": a[1], "action": a[2], "side": a[4]},
+    "ramps-add": lambda a: {"character": a[1], "parts": a[3]},
     "op quantize": lambda a: {"input": a[2], "output": a[3]},
     "op conformance": lambda a: {"image": a[2]},
     "op palette-suggest": lambda a: {"image": a[2], "add": int(a[4]), "scale": float(a[6])},
@@ -271,13 +277,15 @@ def test_the_rest_response_equals_the_cli_json(project: Kiripix, tmp_path_factor
     arguments = SAMPLES[name](project)
     twin = tmp_path_factory.mktemp("twin") / "project"
     shutil.copytree(project.cwd, twin)  # the same Project, so each side starts from the same state
-    owner = name in {"accept", "palette-add"}
+    owner = name in {"accept", "palette-add", "ramps-add", "track"}
 
     expected = project.json(*arguments, owner=owner)
     with serving(twin) as running:
         reply = running.call("/api/" + name.replace(" ", "/"), BODIES[name](arguments),
                              token=running.token if owner else None)
 
+    if name == "track":
+        expected["data"]["source"] = "ui"  # the one difference: a span over REST came through the session token
     roots = [str(project.cwd), str(twin), str(project.cwd.resolve()), str(twin.resolve())]
     assert reply.status == 200 and reply.headers["x-kiripix-exit-code"] == "0"
     assert _normal(reply.json, roots) == _normal(expected, roots)
@@ -381,6 +389,18 @@ def test_accept_over_rest_needs_the_session_token(project: Kiripix, server: Serv
 
     assert accepted.status == 200 and accepted.json["ok"] is True and accepted.json["findings"] == []
     project.json("run", "sketch.a")  # nothing left to review
+
+
+def test_track_over_rest_logs_ui_time_only_with_the_session_token(project: Kiripix, server: Server) -> None:
+    make_demo(project)
+    body = {"asset": "demo.a", "stage": "copy", "seconds": 42}
+
+    refused = server.call("/api/track", body)
+    logged = server.call("/api/track", body, token=server.token)
+
+    assert refused.status == 403 and refused.json["findings"][0]["code"] == "owner.required"
+    assert logged.status == 200 and logged.json["data"]["source"] == "ui"
+    assert project.json("stats", "demo.a")["data"]["total"]["minutes"] == 0.7
 
 
 def test_the_token_is_not_in_the_ready_line_unless_asked_for(project: Kiripix) -> None:
@@ -656,7 +676,7 @@ def test_the_file_route_stays_inside_the_project(project: Kiripix, server: Serve
 
 # The Commands with file inputs, and those inputs. Over REST each is a multipart part of the Command's own request.
 FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file"], "mask-import": ["png"],
-                                     "plate-import": ["png"]}
+                                     "plate-import": ["png"], "extend": ["piece"]}
 
 
 def test_every_file_input_has_a_multipart_test(server: Server) -> None:
@@ -672,7 +692,7 @@ def _as_parts(project: Kiripix, name: str, body: dict[str, Any]) -> list[tuple[s
     return parts + [(field, Path(path).name, (project.cwd / path).read_bytes()) for field, path in files.items()]
 
 
-@pytest.mark.parametrize("name", sorted(FILE_INPUTS))
+@pytest.mark.parametrize("name", sorted(set(FILE_INPUTS) - {"extend"}))  # extend's sample writes a canvas; see below
 def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, tmp_path_factory: pytest.TempPathFactory,
                                                               name: str) -> None:
     arguments = SAMPLES[name](project)
@@ -690,6 +710,27 @@ def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, 
     assert _normal(reply.json, roots) == _normal(expected, roots)
     assert left == [], "the file inputs' temporary folder is deleted when the Command ends"
     assert not (twin / ".kiripix" / "uploads").exists()
+
+
+def test_an_extend_piece_as_a_multipart_part_equals_the_cli_json(project: Kiripix,
+                                                                 tmp_path_factory: pytest.TempPathFactory) -> None:
+    full = test_extend.room(project)
+    test_extend.canvas(project, "east", "--keep", "80")
+    piece = test_extend.save(project, "east.png", full[:160, 160:400])
+    twin = tmp_path_factory.mktemp("twin") / "project"
+    shutil.copytree(project.cwd, twin)
+    temp = tmp_path_factory.mktemp("server_temp")
+
+    expected = project.json("extend", test_extend.ROOM, "add", piece)
+    with serving(twin, temp=temp) as running:
+        reply = running.call("/api/extend", parts=_as_parts(
+            project, "extend", {"asset": test_extend.ROOM, "action": "add", "piece": piece}))
+        left = list(temp.iterdir())
+
+    roots = [str(project.cwd), str(twin), str(project.cwd.resolve()), str(twin.resolve())]
+    assert reply.status == 200 and reply.headers["x-kiripix-exit-code"] == "0"
+    assert _normal(reply.json, roots) == _normal(expected, roots)
+    assert left == []
 
 
 def test_a_refused_file_input_leaves_nothing_behind(project: Kiripix, tmp_path_factory: pytest.TempPathFactory) -> None:

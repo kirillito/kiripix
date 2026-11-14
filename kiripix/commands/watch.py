@@ -1,7 +1,8 @@
 """The folder watch: tells the UI when something other than the UI changed the Project (an agent's CLI call).
 
 It polls file times, so it needs no extra dependency and behaves the same on Windows and Linux. The state folder
-(`.kiripix/`), `.git` and the half-built `.tmp-*` folders are ignored.
+(`.kiripix/`), `.git`, the half-built `.tmp-*` folders and each Asset's `time.jsonl` (the UI itself appends to it every
+minute, and nothing on screen shows it) are ignored.
 """
 
 import os
@@ -21,7 +22,7 @@ def snapshot(root: Path) -> Snapshot:
         try:
             with os.scandir(folder) as entries:
                 for entry in entries:
-                    if entry.name in _SKIP or entry.name.startswith(".tmp-"):
+                    if entry.name in _SKIP or entry.name == "time.jsonl" or entry.name.startswith(".tmp-"):
                         continue
                     try:
                         if entry.is_dir(follow_symlinks=False):

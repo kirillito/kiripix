@@ -25,7 +25,7 @@ from kiripix.export.target import GodotTarget
 
 DRIVER = "kiripix-manifest"
 OURS_DRIVER = "kiripix-ours"  # keeps our side of an exported image or scene; the next export rewrites it
-OURS_PATTERNS = ("*.png", "*.tscn", "*.tres")
+OURS_PATTERNS = ("*.png", "*.tscn", "*.tres", "room.json")  # room.json: a room's exported data (ticket 0140)
 INSTALL_FIX = "kiripix manifest install"
 _GIT_TIMEOUT = 20
 
@@ -45,7 +45,9 @@ def merge_manifests(ours: Manifest, theirs: Manifest) -> Manifest:
             replacing[res] = hashed
     ids = ExportedIds(markers=_union(ours.ids.markers, theirs.ids.markers),
                       layers=_union(ours.ids.layers, theirs.ids.layers),
-                      masks=_union(ours.ids.masks, theirs.ids.masks), clips=_union(ours.ids.clips, theirs.ids.clips))
+                      masks=_union(ours.ids.masks, theirs.ids.masks), clips=_union(ours.ids.clips, theirs.ids.clips),
+                      looks=_union(ours.ids.looks, theirs.ids.looks),
+                      loops=_union(ours.ids.loops, theirs.ids.loops))
     return Manifest(kiripix_version=ours.kiripix_version, asset=ours.asset, exported=ours.exported or theirs.exported,
                     counter=max(ours.counter, theirs.counter) + 1, ids=ids, files=files, replacing=replacing or None)
 
@@ -185,7 +187,7 @@ def driver_installed(target: GodotTarget) -> bool | None:
         return False
     base = target.root.removeprefix("res://")
     probes = [(f"{base}/{MANIFEST_DIR}/probe.json", DRIVER)]
-    probes += [(f"{base}/probe/probe{pattern[1:]}", OURS_DRIVER) for pattern in OURS_PATTERNS]
+    probes += [(f"{base}/probe/{pattern.replace('*', 'probe')}", OURS_DRIVER) for pattern in OURS_PATTERNS]
     for probe, driver in probes:
         attr = _git(target.folder, "check-attr", "merge", "--", probe)
         if attr is None or attr.returncode != 0 or not attr.stdout.strip().endswith(f": merge: {driver}"):
@@ -200,7 +202,7 @@ def driver_finding(target: GodotTarget) -> Finding | None:
     return Finding(code="export.merge_driver_missing", severity="warning",
                    message="the game's clone has no Manifest merge driver or no merge rule for the exported images and "
                            "scenes, so two branches that export the same Asset will conflict in its Manifest, "
-                           "`.png`, `.tscn` and `.tres` files (`.gitattributes` alone does nothing; the clone needs "
+                           "`.png`, `.tscn`, `.tres` and `room.json` files (`.gitattributes` alone does nothing; the clone needs "
                            "the drivers configured)",
                    fix=INSTALL_FIX)
 

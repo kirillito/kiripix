@@ -156,11 +156,13 @@ function headers(job?: string): Record<string, string> {
   return { ...(token ? { "X-Kiripix-Token": token } : {}), ...(job ? { "X-Kiripix-Job": job } : {}) };
 }
 
-export async function call<T>(command: string, input: object, job?: string): Promise<Envelope<T>> {
+// `keepalive` lets the request outlive the page, for a last `track` while the tab closes.
+export async function call<T>(command: string, input: object, job?: string, keepalive = false): Promise<Envelope<T>> {
   const response = await fetch(url(command), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers(job) },
     body: JSON.stringify(input),
+    keepalive,
   });
   return (await response.json()) as Envelope<T>;
 }

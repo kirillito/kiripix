@@ -29,3 +29,13 @@ The renderer is the fake Blender that `tests/fixtures/kiripix_test_recipes.py` s
 Runners. The stand-in owner's three `clip` Decisions (idle, walk, attack) are the `character.hero` entries of
 `owner.json`. A pass also needs every `<clip>_<dir>` animation in the character's Manifest, both Assets' exports
 up to date, and `check --all` clean. Use `--milestone m3` for that record.
+
+**M4 and later.** The room is 240 x 160 and arrives in two pieces. The Project starts with the first (144 x 160, imported and
+picked, `[extend] canvas = [144, 160]` set as the Owner's own setting) and the task names the file of the second, outside
+the Project, which is what `extend canvas --side east` writes the canvas for, filled in: the agent runs `extend canvas`,
+`add`, `done` and picks the joined Variant. The floor is blobs of two palette colours, because `extend` registers a piece
+on texture, and the room has only the four colours the `palette` Stage keeps. The task also asks for an `area` Marker
+`battle.test` on 32 px cells that can be stood on. The stand-in owner first puts it on the wall (`area.no_walkable`), and
+moves it onto the floor when the agent reports the finding (the entry with `when_stage: place`). A pass also needs the
+room's export to hold the `Area2D` (the box snapped to cells, `walkable`, `cell`), `masks/solid.png` at the room's size and
+`room.json` beside the scene. Use `--milestone m4` for that record; the token count is the one to set against M3's.

@@ -2,7 +2,18 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { call, fileUrl, type Finding, type ShowData, type SortPosition, type StageDetail, type StatusData } from "./api";
-import { ambiguousCells, isDrawnFromTwoPoints, MarkerTool, type Marker } from "./markerTool";
+import {
+  ambiguousCells,
+  arrowLength,
+  coloursOf,
+  directionOf,
+  isDrawnFromTwoPoints,
+  MarkerTool,
+  shapeOf,
+  type EmitterGesture,
+  type EmitterMode,
+  type Marker,
+} from "./markerTool";
 import type { CanvasPixel, PixelCanvas } from "./pixelCanvas";
 import { LayerHighlight, layerFiles, loadImage } from "./sortView";
 import { loadMask, WalkTest, type SortedLayers } from "./walkTest";
@@ -68,6 +79,29 @@ function freeId(type: string, markers: Marker[]): string {
   }
 }
 
+const MOST_COLOURS = 16; // an emitter's colours, as the Decision allows
+const PALETTE_FILE = "style/palette.gpl";
+
+// A Decision leaves out an emitter's unset fields; `show` writes them as null.
+function forDecision(marker: Marker): Record<string, unknown> {
+  if (marker.type !== "emitter") return marker;
+  const kept: Marker = { ...marker };
+  for (const key of ["shape", "direction", "colours"]) if (kept[key] === null) delete kept[key];
+  return kept;
+}
+
+// The colours of a .gpl palette as #RRGGBB, in file order.
+export function paletteColours(text: string): string[] {
+  const found: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const parts = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line);
+    if (!parts) continue;
+    const hex = "#" + [1, 2, 3].map((index) => Number(parts[index]).toString(16).padStart(2, "0")).join("").toUpperCase();
+    if (!found.includes(hex)) found.push(hex);
+  }
+  return found;
+}
+
 function ownFields(type: string, fields: Fields, layer: string): Record<string, unknown> {
   if (type === "ysort") return { layer };
   if (type === "exit") return { target_room: fields.target_room, target_exit: fields.target_exit };
@@ -79,6 +113,8 @@ function ownFields(type: string, fields: Fields, layer: string): Record<string, 
   }
   return {};
 }
+
+const EMITTER_KEYS: Record<string, EmitterMode> = { s: "shape", d: "direction", e: "eyedrop" };
 
 export function PlacePanel(props: {
   canvas: RefObject<PixelCanvas | null>;
@@ -107,8 +143,68 @@ export function PlacePanel(props: {
   const layer = chosenLayer !== null && files.has(chosenLayer) ? chosenLayer : (layerIds[0] ?? "");
   const sorts = detail.sort ?? [];
 
-  const form = useRef({ type, id, fields, layer, decide, disabled, markers });
-  form.current = { type, id, fields, layer, decide, disabled, markers };
+  const [mode, setMode] = useState<EmitterMode>("shape");
+  const [drawingPolygon, setDrawingPolygon] = useState(false);
+  const [palette, setPalette] = useState<string[]>([]);
+  const [hint, setHint] = useState("");
+  const sampler = useRef<ImageData | null>(null);
+  const send = (marker: Marker) => decide(forDecision(marker));
+  const emitter = selected?.type === "emitter" ? selected : null;
+  const shapeKind = drawingPolygon ? "polygon" : (emitter ? shapeOf(emitter)?.type ?? "point" : "point");
+  const chosenColours = emitter ? coloursOf(emitter) : [];
+
+  // One click of the eyedropper adds the room pixel's colour, if it is a colour of the palette.
+  function pickColour(pixel: CanvasPixel) {
+    const image = sampler.current;
+    if (!emitter || !image) return;
+    const at = (pixel.y * image.width + pixel.x) * 4;
+    const [red, green, blue, alpha] = image.data.slice(at, at + 4);
+    const hex = "#" + [red, green, blue].map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase();
+    if (alpha === 0) setHint("That pixel is transparent; it has no colour to add.");
+    else if (!palette.includes(hex)) setHint(`${hex} is not on the Project palette, so an emitter can't use it.`);
+    else addColour(hex);
+  }
+
+  function addColour(hex: string) {
+    if (!emitter) return;
+    if (chosenColours.includes(hex)) setHint(`${hex} is already in the list.`);
+    else if (chosenColours.length >= MOST_COLOURS) setHint(`An emitter has at most ${MOST_COLOURS} colours.`);
+    else {
+      setHint("");
+      setColours([...chosenColours, hex]);
+    }
+  }
+
+  function setColours(list: string[]) {
+    if (emitter) send({ ...emitter, colours: list.length > 0 ? list : null });
+  }
+
+  function reorder(index: number, by: number) {
+    const list = [...chosenColours];
+    const [moved] = list.splice(index, 1);
+    list.splice(index + by, 0, moved);
+    setColours(list);
+  }
+
+  function chooseShape(kind: string) {
+    if (!emitter) return;
+    const room = sampler.current ?? { width: 48, height: 32 };
+    if (kind === "polygon") {
+      setDrawingPolygon(true);
+      setMode("shape");
+      return;
+    }
+    setDrawingPolygon(false);
+    const reaching = (value: number, limit: number) => Math.min(value + 8, limit - 1);
+    const shape =
+      kind === "point"
+        ? { type: "point" }
+        : { type: kind, x2: reaching(emitter.x, room.width), y2: kind === "box" ? reaching(emitter.y, room.height) : emitter.y };
+    send({ ...emitter, shape });
+  }
+
+  const form = useRef({ type, id, fields, layer, decide: send, disabled, markers, selectedId, pickColour, drawingPolygon, mode });
+  form.current = { type, id, fields, layer, decide: send, disabled, markers, selectedId, pickColour, drawingPolygon, mode };
   const tool = useRef<MarkerTool | null>(null);
   const highlight = useRef(new LayerHighlight());
 
@@ -116,6 +212,8 @@ export function PlacePanel(props: {
     setSelectedId(marker.id);
     setType(marker.type);
     setTypedId(marker.id);
+    setDrawingPolygon(false);
+    setHint("");
     setFields((before) => ({
       ...before,
       ...(marker as unknown as Partial<Fields>),
@@ -170,12 +268,29 @@ export function PlacePanel(props: {
           ...ownFields(chosen, own, sorted),
         });
         setTypedId(null);
-        setSelectedId(null);
+        setSelectedId(chosen === "emitter" ? name : null); // a new emitter stays selected, ready for its shape
       },
       move(marker: Marker) {
         form.current.decide(marker); // queued behind a Run, never dropped (ticket 0083)
       },
       select: choose,
+      emitter(gesture: EmitterGesture) {
+        const { markers: all, selectedId: current, decide: record, pickColour: pick } = form.current;
+        const target = all.find((marker) => marker.id === current && marker.type === "emitter");
+        if (!target) return;
+        if (gesture.kind === "pick") pick(gesture.pixel);
+        else if (gesture.kind === "box") {
+          const [a, b] = [gesture.start, gesture.end];
+          record({ ...target, x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), shape: { type: "box", x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y) } });
+        } else if (gesture.kind === "line") {
+          record({ ...target, x: gesture.start.x, y: gesture.start.y, shape: { type: "line", x2: gesture.end.x, y2: gesture.end.y } });
+        } else if (gesture.kind === "polygon") {
+          record({ ...target, shape: { type: "polygon", points: gesture.points } });
+          setDrawingPolygon(false);
+        } else if (gesture.end.x !== target.x || gesture.end.y !== target.y) {
+          record({ ...target, direction: { x: gesture.end.x, y: gesture.end.y } });
+        }
+      },
     });
     tool.current = placing;
     canvas.current?.setTools([highlight.current, placing]);
@@ -211,16 +326,64 @@ export function PlacePanel(props: {
     tool.current?.setMarkers(markersOf(detail));
     tool.current?.setSelected(selectedId);
     tool.current?.setDrawing(type, drawnCell);
+    tool.current?.setEmitter(mode, shapeKind, drawingPolygon);
     tool.current?.setAmbiguous(JSON.parse(ambiguousKey) as typeof ambiguous);
     canvas.current?.redraw();
-  }, [canvas, detail, selectedId, type, drawnCell, ambiguousKey]);
+  }, [canvas, detail, selectedId, type, drawnCell, ambiguousKey, mode, shapeKind, drawingPolygon]);
 
-  // The letter A picks the area tool (spec §11: letters switch tools).
+  // The room's pixels for the eyedropper, and the Project palette for the swatches: only an emitter needs either.
+  const placeImage = detail.image ?? detail.input_image;
+  const emitting = type === "emitter";
+  useEffect(() => {
+    if (!emitting) return;
+    let current = true;
+    if (placeImage) {
+      loadImage(fileUrl(placeImage, imageVersion))
+        .then((image) => {
+          const scratch = document.createElement("canvas");
+          scratch.width = image.naturalWidth;
+          scratch.height = image.naturalHeight;
+          const context = scratch.getContext("2d", { willReadFrequently: true })!;
+          context.drawImage(image, 0, 0);
+          if (current) sampler.current = context.getImageData(0, 0, scratch.width, scratch.height);
+        })
+        .catch(() => undefined);
+    }
+    fetch(fileUrl(PALETTE_FILE, imageVersion))
+      .then((response) => (response.ok ? response.text() : ""))
+      .then((text) => current && setPalette(paletteColours(text)))
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [emitting, placeImage, imageVersion]);
+
+  // The letter A picks the area tool (spec §11: letters switch tools). With an emitter selected, S, D and E pick its shape,
+  // direction and eyedropper; Enter closes a polygon and Escape drops it.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName))) return;
-      if (event.key.toLowerCase() !== "a" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const { markers: all, selectedId: current, drawingPolygon: open } = form.current;
+      const chosen = all.find((marker) => marker.id === current && marker.type === "emitter");
+      const key = event.key.toLowerCase();
+      if (chosen && open && event.key === "Enter") {
+        const points = tool.current?.closePolygon();
+        if (points) form.current.decide({ ...chosen, shape: { type: "polygon", points } });
+        setDrawingPolygon(false);
+        return;
+      }
+      if (chosen && open && event.key === "Escape") {
+        setDrawingPolygon(false);
+        return;
+      }
+      if (chosen && key in EMITTER_KEYS) {
+        setMode(EMITTER_KEYS[key]);
+        setDrawingPolygon(false);
+        return;
+      }
+      if (key !== "a") return;
       setType("area");
       setTypedId(null);
       setSelectedId(null);
@@ -373,15 +536,107 @@ export function PlacePanel(props: {
         </>
       )}
       {type === "emitter" && (
-        <div className="param">
-          <label htmlFor="marker-name">Name</label>
-          <input
-            id="marker-name"
-            data-testid="marker-name"
-            value={fields.name}
-            onChange={(event) => update({ name: event.target.value })}
-          />
-        </div>
+        <>
+          <div className="param">
+            <label htmlFor="marker-name">Name</label>
+            <input
+              id="marker-name"
+              data-testid="marker-name"
+              value={fields.name}
+              onChange={(event) => update({ name: event.target.value })}
+            />
+          </div>
+          {emitter ? (
+            <section data-testid="emitter-panel">
+              <h2>Emitter {emitter.id}</h2>
+              <div className="param">
+                <label htmlFor="emitter-shape">Shape</label>
+                <select id="emitter-shape" data-testid="emitter-shape" value={shapeKind} onChange={(event) => chooseShape(event.target.value)}>
+                  {["point", "line", "box", "polygon"].map((name) => (
+                    <option key={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+              {shapeKind === "polygon" && !drawingPolygon && (
+                <button data-testid="emitter-polygon-again" onClick={() => setDrawingPolygon(true)}>
+                  Draw the polygon again
+                </button>
+              )}
+              <div className="tool-row" role="group" aria-label="Emitter tool">
+                {(
+                  [
+                    ["shape", "Shape (S)"],
+                    ["direction", "Direction (D)"],
+                    ["eyedrop", "Eyedropper (E)"],
+                  ] as const
+                ).map(([name, label]) => (
+                  <button key={name} data-testid={`emitter-mode-${name}`} aria-pressed={mode === name} onClick={() => setMode(name)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="hint" data-testid="emitter-help">
+                {mode === "eyedrop"
+                  ? "Click the room: each click adds that pixel's colour."
+                  : mode === "direction"
+                    ? "Drag on the room: the arrow from the Marker to where you let go is the direction."
+                    : drawingPolygon
+                      ? "Click the points; click the first point or press Enter to close, Escape to drop it."
+                      : shapeKind === "box" || shapeKind === "line"
+                        ? "Drag on the room to draw the shape; drag a corner or point to change it, or its inside to move it."
+                        : "Pick a shape above."}
+              </p>
+              <p data-testid="emitter-direction">
+                {directionOf(emitter)
+                  ? `Direction: ${arrowLength(emitter)} px, to (${directionOf(emitter)!.x}, ${directionOf(emitter)!.y})`
+                  : "No direction yet"}
+              </p>
+              {directionOf(emitter) && (
+                <button data-testid="emitter-direction-clear" onClick={() => send({ ...emitter, direction: null })}>
+                  Clear the direction
+                </button>
+              )}
+              <h2>Colours</h2>
+              <div className="strip" data-testid="emitter-colours">
+                {chosenColours.length === 0 && <span className="hint">None yet: the game uses its own.</span>}
+                {chosenColours.map((colour, index) => (
+                  <span key={colour} className="chip" data-testid={`emitter-colour-${index}`} title={colour}>
+                    <span className="chip-colour" style={{ background: colour }} />
+                    <button aria-label={`Move ${colour} earlier`} disabled={index === 0} onClick={() => reorder(index, -1)}>
+                      {"\u2039"}
+                    </button>
+                    <button aria-label={`Move ${colour} later`} disabled={index === chosenColours.length - 1} onClick={() => reorder(index, 1)}>
+                      {"\u203a"}
+                    </button>
+                    <button aria-label={`Remove ${colour}`} data-testid={`emitter-colour-remove-${index}`} onClick={() => setColours(chosenColours.filter((_, at) => at !== index))}>
+                      {"\u00d7"}
+                    </button>
+                  </span>
+                ))}
+              </div>
+              {hint && (
+                <p className="hint" data-testid="emitter-hint">
+                  {hint}
+                </p>
+              )}
+              <div className="swatches" data-testid="palette-swatches">
+                {palette.map((colour) => (
+                  <button
+                    key={colour}
+                    className="palette-swatch"
+                    data-testid={`palette-${colour}`}
+                    title={colour}
+                    aria-label={`Add ${colour}`}
+                    style={{ background: colour }}
+                    onClick={() => addColour(colour)}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : (
+            <p className="hint">Select an emitter (a click on it, or in the list) to draw its shape and direction and pick its colours.</p>
+          )}
+        </>
       )}
       {type === "area" && (
         <>
@@ -417,14 +672,15 @@ export function PlacePanel(props: {
           data-testid="marker-save"
           onClick={() => {
             const { x, y, x2, y2 } = selected;
-            decide({
+            send({
               id: selected.id,
               type: selected.type,
               x,
               y,
               ...(x2 !== undefined ? { x2, y2 } : {}),
               ...ownFields(selected.type, fields, String(selected.layer ?? layer)),
-            });
+              ...(selected.type === "emitter" ? { shape: selected.shape, direction: selected.direction, colours: selected.colours } : {}),
+            } as Marker);
           }}
         >
           Save {selected.id}

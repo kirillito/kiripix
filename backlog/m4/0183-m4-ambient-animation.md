@@ -24,6 +24,11 @@ drafted with 0189.
 4. Route (c), on (b): [0192](0192-m4-frame-ops.md) (imaging: frame Ops), [0193](0193-m4-loop-kit-and-import.md) (core: kit
    and import), [0194](0194-m4-loops-build-imported-frames.md) (imaging: building imported frames),
    [0195](0195-m4-export-layer-loops.md) (export), [0196](0196-m4-ui-frame-loops.md) (UI).
+5. Follow-ups found while building (b) and (c), 2026-11-13: [0204](0204-m4-palette-command.md),
+   [0206](0206-m4-loops-hold-one-loop.md), [0207](0207-m4-rename-and-remove-a-loop.md),
+   [0208](0208-m4-import-several-frames-over-rest.md), [0210](0210-m4-ui-loops-screen-follow-ups.md),
+   [0211](0211-m4-export-layer-remainder.md), and the ADR, [0212](0212-m4-adr-the-loops-stage.md). Part B is carried by
+   0184's last criterion.
 
 Background: [the spec](../../docs/KIRIPIX_SPEC.md) §6.1 (`layers`, `masks`, `palette`, `place`, Looks), §9 (room export,
 `room.json`), §16 open decision 8; [ADR 0009](../../docs/adr/0009-a-rooms-looks-are-a-stage-on-the-room.md);

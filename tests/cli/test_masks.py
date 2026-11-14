@@ -80,7 +80,7 @@ def test_a_painted_mask_leaves_next_without_the_advice(project: Kiripix) -> None
 
     assert "mask.none_painted" not in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
-    assert advice["data"]["stage"] == "place"  # the flood made it stale
+    assert advice["data"]["stage"] == "looks"  # the flood made it stale, and `looks` reads the Masks (a Look's solid)
     assert "mask.none_painted" not in [f["code"] for f in advice["findings"]]
 
 

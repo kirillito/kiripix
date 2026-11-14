@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -35,11 +35,37 @@ is cut with it.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: kit frames with one off-palette pixel and a stray stroke outside the region raise the two findings and build;
+- [x] CLI seam: kit frames with one off-palette pixel and a stray stroke outside the region raise the two findings and build;
       on a Layer Loop, a frame that moves past the silhouette shows the Plate's fill.
-- [ ] CLI seam: a palette change remaps kit frames into `needs-review`.
-- [ ] CLI seam (Part B): two edit frames, one shifted by 2 target px, raise `loop.misaligned` on that frame only; an edit
+- [x] CLI seam: a palette change remaps kit frames into `needs-review`.
+- [ ] CLI seam (Part B; left until trial 0184 has run, the Owner's decision, as for 0193's Part B): two edit frames, one shifted by 2 target px, raise `loop.misaligned` on that frame only; an edit
       that redraws the whole region raises `loop.flicker`.
-- [ ] `loop.seam`, `loop.still` and `loop.flash` from 0189 apply to imported frames unchanged.
+- [x] `loop.seam`, `loop.still` and `loop.flash` from 0189 apply to imported frames unchanged.
 
 Budget: 150–250k tokens (Part A alone: 80–140k).
+
+## Result (Part A, 2026-11-13)
+
+Part B (edit frames) is left until trial 0184 has run (the Owner's decision); its criterion stays unchecked.
+
+- **Build** (`recipes/loops.py`, `_kit_frames`): a frame Loop takes its frames from its kit when its `frames` Decision has `source`
+  `kit`, or when it has no `frames` Decision and a kit is imported. Frame 0 is the room; frames 1..N-1 are the stored frames, taken as
+  painted. Inside the region: alpha >= 128 is opaque (a partial alpha is reported, `loop.partial_alpha` error); alpha 0 keeps the room's
+  pixel on the Plate and leaves the pixel empty on a Layer (the Layer's strip carries the frame's own alpha, so the Plate's fill shows).
+  A pixel off the palette takes the nearest colour in OKLab (`quantize`, ties to the lowest index) and is counted. A frame whose size
+  differs from the built box fails the build ("write a new kit").
+- **Findings:** `loop.off_palette` per frame, warning, error above `KIT_OFF_PALETTE_ERROR` = 1 % of the region (`# set by 0184`);
+  `loop.outside_region` (warning) per 8-connected patch with its box; `loop.partial_alpha` (error). `loop.seam`, `loop.still`,
+  `loop.flash`, `loop.frame0` apply unchanged.
+- **`loops.json`:** the record gains `kit` (null unless a kit Loop): `{box, remapped, frames: [{frame, file, off_palette, remapped,
+  first_off_palette, region_pixels, partial_alpha, outside: [[x,y,w,h]...], outside_pixels}]}`; `source` is `kit`, `op` and `params` null.
+  No schema bump (a key was added). `frames`/`steps` are 1 + the imported count.
+- **Palette change:** the build remaps with the new palette (no `off_palette` finding for those pixels; `remapped` counts them) and
+  the Stage is `needs-review`. This needed a small generic hook: `StageSpec.review` / `review_reason` (`recipes/base.py`),
+  `AssetGraph.moved_inputs` and its use in `state` and `accept` (`core/graph.py`, `core/editing.py`). `kits_moved` (`recipes/kit_record.py`)
+  lists each kit Decision painted on another palette; `accept` re-records it with the current palette hash.
+- Tests: `tests/cli/test_loop_kit_frames.py`; `test_loop_kit.py` updated (a palette change is now needs-review, not needs-input).
+
+## Closing notes (2026-11-13)
+
+- Closed 2026-11-13 with Part A; Part B (edit frames) waits for trial 0184, the Owner's decision.

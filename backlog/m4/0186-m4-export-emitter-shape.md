@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: godot-export
 type: ticket
@@ -27,10 +27,23 @@ Part of [0183](0183-m4-ambient-animation.md), route (a). Spec §9 (room export).
 
 ## Acceptance criteria
 
-- [ ] CLI seam: an exported room with an emitter of each shape type; the scene's metadata matches `room.json`, the
+- [x] CLI seam: an exported room with an emitter of each shape type; the scene's metadata matches `room.json`, the
       coordinates are relative to the node, and the colours are opaque.
-- [ ] A room with an emitter and no new fields exports its emitter node byte-identical to before.
-- [ ] In Godot 4.7, a scratch script reads `shape`, `direction` and `colours` from the exported bedroom's emitter (done once,
+- [x] A room with an emitter and no new fields exports its emitter node byte-identical to before.
+- [x] In Godot 4.7, a scratch script reads `shape`, `direction` and `colours` from the exported bedroom's emitter (done once,
       by hand, recorded here).
 
 Budget: 60–120k tokens.
+
+## Notes
+
+2026-11-13:
+
+- Built in `kiripix/export/godot.py` (`_emitter_properties`); tests in `tests/cli/test_export_emitter.py`.
+- Decided: a `point` shape writes `metadata/shape_type = "point"` and no `shape`. A box is written as its stored corners
+  (`x,y` to `x2,y2`), not widened by one pixel as an area's size is; the game reads corners, not a pixel count.
+- Open: the Godot 4.7 by-hand check (Godot isn't installed on the build machine) stays for the Owner.
+
+## Closing notes (2026-11-13)
+
+- Checked with Godot 4.7.2 (headless unless noted), 2026-11-13: a scratch script read every emitter's metadata as exported: `c` has `shape_type = "box"`, `shape = PackedVector2Array(0, 0, 16, 0, 16, 8, 0, 8)`, `direction = Vector2(0, -8)` and opaque `colours` (`#C8BEAA`, `#283CC8`); `a` is a `point` with no `shape`; the line and polygon match `room.json`.

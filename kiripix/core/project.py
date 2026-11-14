@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 4
+PROJECT_TEMPLATE = """schema_version = 5
 
 [project]
 name = "{name}"
@@ -84,6 +84,9 @@ foreground = {{ derived = true }}
 # project = "C:/Workspace/my-game"   # the Godot project to export into
 root = "res://kiripix"         # everything Kiripix writes goes under here, Manifest included
 version = "4.7"                # the pinned Godot version (docs/versions.md in Kiripix)
+
+[extend]                       # `kiripix extend <id> canvas`: the canvas pasted into the image model
+canvas = [1376, 768]           # width and height in px
 
 [character]
 height = 52                    # target height in px; a character's own `height` parameter overrides it
@@ -138,6 +141,7 @@ GITATTRIBUTES = [
     "*.fbx filter=lfs diff=lfs merge=lfs -text",
     "*.blend filter=lfs diff=lfs merge=lfs -text",
     "history.jsonl merge=union text eol=lf",
+    "time.jsonl merge=union text eol=lf",
     "**/decisions/*.jsonl merge=union text eol=lf",
     "imported.jsonl merge=union text eol=lf",
 ]

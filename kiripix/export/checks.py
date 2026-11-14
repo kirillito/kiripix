@@ -20,6 +20,8 @@ from kiripix.export.manifest import ExportedIds, Manifest, read_manifest
 from kiripix.export.room import EXPORT_STAGE, ROOM_FILE, ROOM_SCHEMA_VERSION
 from kiripix.export.target import resolve_target
 from kiripix.recipes.clips import CLIP, DIRECTIONS
+from kiripix.recipes.looks import LOOKS_STAGE
+from kiripix.recipes.loops import LOOPS_STAGE
 from kiripix.recipes.sprite_frames import FRAMES_FILE
 
 EXPORTERS = frozenset({"room", "prop", "character", "sprite"})  # the Kinds that have an exporter
@@ -34,7 +36,12 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
         if spec.markers is not None:
             markers.update(str(marker["id"]) for marker in spec.markers(graph.replay(spec.name).current)
                            if marker["type"] in EXPORTED_MARKER_TYPES)
-    layers, masks = manifest.ids.layers, manifest.ids.masks
+    layers, masks, looks, loops = manifest.ids.layers, manifest.ids.masks, manifest.ids.looks, manifest.ids.loops
+    if graph.asset.kind == "room":
+        # a Look's ID is its `pick`'s, so one taken away fails before anything is run again
+        looks = sorted({str(d.data["look"]) for d in graph.replay(LOOKS_STAGE).current if d.name == "pick"})
+        # a Loop's ID is its `loop` Decision's, and shares the namespace with the Looks'
+        loops = sorted({str(d.data["loop"]) for d in graph.replay(LOOPS_STAGE).current if d.name == "loop"})
     spec = graph.spec(EXPORT_STAGE)
     if graph.asset.kind == "room" and graph.built_hash(spec) is not None:
         try:
@@ -52,7 +59,7 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
                        for d in graph.replay("clips").current if d.name == CLIP.name for direction in DIRECTIONS)
     if graph.asset.kind == "sprite":
         clips = _sprite_animations(graph, clips)
-    return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips)
+    return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips, looks=looks, loops=loops)
 
 
 def _sprite_animations(graph: AssetGraph, unchanged: list[str]) -> list[str]:
@@ -87,7 +94,8 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     where = ", ".join(sorted(res for res in manifest.files if res.endswith(".tscn"))) or shown
     found: list[Finding] = []
     for noun, was, is_now in (("Marker", manifest.ids.markers, now.markers), ("Layer", manifest.ids.layers, now.layers),
-                              ("Mask", manifest.ids.masks, now.masks), ("clip animation", manifest.ids.clips, now.clips)):
+                              ("Mask", manifest.ids.masks, now.masks), ("Look", manifest.ids.looks, now.looks), ("Loop", manifest.ids.loops, now.loops),
+                              ("clip animation", manifest.ids.clips, now.clips)):
         for gone in sorted(set(was) - set(is_now)):
             found.append(Finding(
                 code="export.id_frozen",

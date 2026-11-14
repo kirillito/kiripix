@@ -10,7 +10,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_serializer
 
 from kiripix.core import atomic
 from kiripix.core.errors import fail
@@ -30,6 +30,17 @@ class ExportedIds(BaseModel):
     layers: list[str]
     masks: list[str]
     clips: list[str] = Field(default_factory=list)  # a character's animations, `<clip>_<dir>`
+    looks: list[str] = Field(default_factory=list)  # a room's Look IDs (ticket 0131); left out of the file when empty
+    loops: list[str] = Field(default_factory=list)  # a room's Loop IDs (ticket 0190); left out of the file when empty
+
+    @model_serializer(mode="wrap")
+    def _without_empty_looks(self, handler: Any) -> dict[str, Any]:
+        """A Manifest of an Asset with no Looks or Loops is the file it was before they existed: byte for byte."""
+        data: dict[str, Any] = handler(self)
+        for noun in ("looks", "loops"):
+            if not data.get(noun):
+                data.pop(noun, None)
+        return data
 
 
 class Manifest(BaseModel):

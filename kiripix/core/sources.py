@@ -7,6 +7,7 @@ Decision's `source` names) and one rigged file (`src/rigged/<hash>.<ext>`, the M
 caller holds the Asset lock.
 """
 
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -21,12 +22,14 @@ from kiripix.core.images import read_as_png
 from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
 from kiripix.recipes.base import PICK, StageSpec
+from kiripix.recipes.looks import LOOK_ID, LOOKS_DIR, LOOKS_STAGE
 
 VARIANT_NAME_LENGTH = 16  # hex digits of the SHA-256: 64 bits, plenty for one Asset's Variants
 MODEL_SUFFIXES = (".glb", ".fbx", ".blend")
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 _IMAGE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")
 CHARACTER = "character"
+ROOM = "room"
 
 
 def takes_sheets(asset: Asset) -> bool:
@@ -200,12 +203,55 @@ def _store(folder: Path, digest: str, suffix: str, data: bytes) -> tuple[str, Pa
     return digest, path, True
 
 
+def look_variants(asset: Asset, look: str) -> dict[str, Path]:
+    """A room's Look's edit Variants by name, sorted: `src/looks/<look>/<hash>.png`."""
+    return {path.stem: path for path in sorted((asset.dir / LOOKS_DIR / look).glob("*.png")) if path.is_file()}
+
+
+def _check_look_id(asset: Asset, look: str) -> None:
+    if re.fullmatch(LOOK_ID, look) is None:
+        raise fail("look.invalid_id", f"'{look}' is not a Look ID: lower-case letters, digits and underscores, in "
+                   "parts joined by dots", owner_action="Choose an ID such as door_cell_3 or circuit.hall.",
+                   position=Position(asset=asset.id))
+
+
+def import_look(project: Project, asset: Asset, file: Path, shown: str, role: str, look: str) -> tuple[str, Path, bool]:
+    """Add an image as an edit Variant of a room's Look, in `src/looks/<look>/` (a JPEG is stored as a PNG), so the room's
+    `source` Stage is untouched. Refused for a non-room Asset, and for a room with no picked Source (an edit is of a
+    Source). Records the name the file was imported with."""
+    position = Position(asset=asset.id, file=shown)
+    if asset.kind != ROOM:
+        raise fail("import.look_needs_room", f"--look is for a room; {asset.id} is a {asset.kind}",
+                   owner_action="Import a Look's edit into a room Asset.", position=position)
+    if role != "variant":
+        raise fail("import.look_takes_images", f"--role {role} doesn't apply to a Look's edit, which is an image",
+                   fix=f"kiripix import {asset.id} {shown} --look {look}", position=position)
+    _check_look_id(asset, look)
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    if picked(graph) is None:
+        found = variants(asset)
+        if len(found) == 1:
+            raise fail("import.look_needs_source", f"{asset.id} has no picked Source for the edit to be made on",
+                       fix=f"kiripix pick {asset.id} {next(iter(found))}", position=position)
+        raise fail("import.look_needs_source", f"{asset.id} has no picked Source for the edit to be made on",
+                   owner_action=f"Pick the room's Source first: kiripix pick {asset.id} <variant>.", position=position)
+    name, path, created = _store_image(asset.dir / LOOKS_DIR / look, file, shown)
+    if imported_as(asset, path) != file.name:
+        atomic.append_jsonl_many(asset.dir / IMPORTED_FILE, [
+            {"schema_version": IMPORTED_SCHEMA_VERSION, "file": _relative(asset, path), "imported_as": file.name}])
+    return name, path, created
+
+
 def import_variant(asset: Asset, file: Path, shown: str) -> tuple[str, Path, bool]:
     """Copy a PNG (or a JPEG, stored as a PNG) into `src/` as a Variant. Returns its name, its path, and whether it
     is new."""
+    return _store_image(asset.dir / "src", file, shown)
+
+
+def _store_image(folder: Path, file: Path, shown: str) -> tuple[str, Path, bool]:
     data, _ = read_as_png(file, shown)
     name = hash_bytes(data)[:VARIANT_NAME_LENGTH]
-    path = asset.dir / "src" / f"{name}.png"
+    path = folder / f"{name}.png"
     if path.exists():
         return name, path, False
     atomic.write_bytes(path, data)
@@ -243,5 +289,32 @@ def pick(project: Project, asset: Asset, variant: str) -> tuple[StageSpec, journ
                    f"{', '.join(known)}", position=position,
                    owner_action=f"Pick one of them: kiripix pick {asset.id} <variant>")
     document = editing.DecisionDocument(decision=PICK.name, data={"variant": variant})
+    entry, _ = editing.record_decision(project, asset, spec.name, document)
+    return spec, entry
+
+
+def pick_look(project: Project, asset: Asset, look: str, variant: str) -> tuple[StageSpec, journal.JournalEntry]:
+    """Record a `pick` Decision on the `looks` Stage: the edit Variant of a Look, with the hash (Variant name) of the
+    room's Source at this moment. The same entry `decide` would write."""
+    position = Position(asset=asset.id, stage=LOOKS_STAGE)
+    if asset.kind != ROOM:
+        raise fail("pick.look_needs_room", f"--look is for a room; {asset.id} is a {asset.kind}",
+                   owner_action="Pick a Look's edit on a room Asset.", position=position)
+    _check_look_id(asset, look)
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    source = picked(graph)
+    if source is None:
+        raise fail("pick.look_needs_source", f"{asset.id} has no picked Source for the edit to be made on",
+                   owner_action=f"Pick the room's Source first: kiripix pick {asset.id} <variant>.", position=position)
+    known = look_variants(asset, look)
+    if variant not in known:
+        if not known:
+            raise fail("pick.unknown_variant", f"Look {look} of {asset.id} has no edits yet", position=position,
+                       fix=f"kiripix import {asset.id} <file> --look {look}")
+        raise fail("pick.unknown_variant", f"Look {look} of {asset.id} has no edit '{variant}'; its edits are "
+                   f"{', '.join(known)}", position=position,
+                   owner_action=f"Pick one of them: kiripix pick {asset.id} <variant> --look {look}")
+    spec = graph.spec(LOOKS_STAGE)
+    document = editing.DecisionDocument(decision=PICK.name, data={"look": look, "variant": variant, "source": source})
     entry, _ = editing.record_decision(project, asset, spec.name, document)
     return spec, entry

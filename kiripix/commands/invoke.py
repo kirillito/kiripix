@@ -4,6 +4,7 @@ Every adapter calls Commands through `invoke`, so validation, locking and errors
 """
 
 import os
+import time
 import traceback
 from contextlib import nullcontext
 from typing import Any
@@ -70,6 +71,25 @@ def _owner_refusal(command: Command[Any, Any], context: Context) -> Outcome[Any]
     return Outcome(None, [finding], ExitCode.NEEDS_OWNER)
 
 
+def _note_owner_time(command: Command[Any, Any], arguments: BaseModel, context: Context, started: float) -> None:
+    """The CLI's share of the Owner's measured time (ticket 0182): an interactive writing or owner-only Command that
+    names an Asset and a Stage counts the time since the Owner's previous one on that Asset. Never fails the Command."""
+    if command.kind == "probe" or command.name == "track":
+        return
+    asset_id = getattr(arguments, "asset", None)
+    stage = getattr(arguments, "stage", None) or ("extend" if command.name == "extend" else None)
+    if not isinstance(asset_id, str) or not isinstance(stage, str):
+        return
+    try:
+        from kiripix.core import timespans
+        from kiripix.core.assets import load_asset
+
+        project = find_project(context.cwd)
+        timespans.note_cli(project, load_asset(project, asset_id), stage, started, time.time())
+    except (KiripixError, OSError):
+        pass
+
+
 def invoke(command: Command[Any, Any], raw: dict[str, Any], context: Context) -> tuple[Envelope[Any], ExitCode]:
     try:
         arguments = command.input.model_validate(raw)
@@ -81,7 +101,10 @@ def invoke(command: Command[Any, Any], raw: dict[str, Any], context: Context) ->
             guard = hold(find_project(context.cwd).state_dir, locks, context.wait, context.command_line,
                          on_wait=gpu_wait_notice(context.progress)) if locks else nullcontext()
             with guard:
+                started = time.time()
                 outcome: Outcome[Any] = command.handler(arguments, context)
+                if outcome.exit_code == ExitCode.OK and context.interactive and context.via == "cli":
+                    _note_owner_time(command, arguments, context, started)
     except ValidationError as error:
         outcome = Outcome(None, _input_findings(error, command), ExitCode.ERROR)
     except KiripixError as error:

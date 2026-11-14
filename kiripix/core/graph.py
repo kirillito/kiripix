@@ -46,7 +46,7 @@ from kiripix.core.locks import GPU_LOCK, asset_lock, hold
 from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
-from kiripix.recipes.base import COMPUTED_SETTINGS, CurrentDecision, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
+from kiripix.recipes.base import COMPUTED_SETTINGS, CurrentDecision, LazyMap, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
 import kiripix.ops as ops_package
 import kiripix.recipes as recipes_package
 import kiripix.runners as runners_package
@@ -416,6 +416,12 @@ class AssetGraph:
                 moved.append((decision, current))
         return moved
 
+    def moved_inputs(self, spec: StageSpec) -> list[tuple[CurrentDecision, dict[str, Any]]]:
+        """The Decisions a Stage's own `review` function says were made on inputs that have moved (none without one)."""
+        if spec.review is None:
+            return []
+        return spec.review(self.stage_run(spec, self.output_dir(spec)))
+
     def stage_run(self, spec: StageSpec, output_dir: Path,
                   progress: Callable[[int, int, str], None] | None = None) -> StageRun:
         """What the Stage's run, `needs_input` and `check` functions are handed."""
@@ -432,6 +438,8 @@ class AssetGraph:
             pinned=self.pinned_path,
             decisions=self.replay(spec.name).current,
             asset_params=dict(self.asset.settings.params),
+            upstream_decisions=LazyMap(spec.inputs.upstream, lambda name: self.replay(name).current),
+            upstream_params=LazyMap(spec.inputs.upstream, lambda name: self.params(self.spec(name))),
         )
 
     def needs_input(self, spec: StageSpec) -> NeedsInput | None:
@@ -490,6 +498,8 @@ class AssetGraph:
             return StageState(stage=stage, status="needs-review", reason=REPLAYED_ON_CHANGED_IMAGE)
         if self.unreviewed_pins(spec):
             return StageState(stage=stage, status="needs-review", reason=RUNNER_RESULT_NEW)
+        if self.moved_inputs(spec):
+            return StageState(stage=stage, status="needs-review", reason=spec.review_reason)
         return StageState(stage=stage, status="done")
 
     def states(self) -> list[StageState]:

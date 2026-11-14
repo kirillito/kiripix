@@ -32,7 +32,7 @@ from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
 from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
 from kiripix.export.prop import SPRITE_FILE, read_prop
-from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, built_dir, read_room
+from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, ROOM_FILE, built_dir, read_room
 from kiripix.export.target import GodotTarget, resolve_target
 
 
@@ -78,10 +78,21 @@ def _room_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
     name = graph.asset.id.split(".", 1)[1]
     folder = f"{target.root}/{graph.kind.name}/{name}"
     plate = f"{folder}/{PLATE_FILE}"
+    description = f"{folder}/{ROOM_FILE}"
     files = {
-        f"{folder}/{name}.tscn": room_scene(room, name, plate).encode("utf-8"),
+        f"{folder}/{name}.tscn": room_scene(room, name, plate, description).encode("utf-8"),
         plate: (built_dir(graph) / PLATE_FILE).read_bytes(),
+        description: (built_dir(graph) / ROOM_FILE).read_bytes(),
     }
+    for file in room["masks"].values():  # the Masks beside the scene, with each Look's own `solid` (ticket 0131)
+        files[f"{folder}/{file}"] = (built_dir(graph) / str(file)).read_bytes()
+    for look in room["looks"]:  # a Look's pieces, hidden in the scene
+        for file in ([look["file"]] if look["file"] else []) + [piece["file"] for piece in look["pieces"]]:
+            files[f"{folder}/{file}"] = (built_dir(graph) / str(file)).read_bytes()
+    for loop in room["loops"]:  # a Loop's strips and its cycle's index image
+        for file in ([loop["file"]] if loop["file"] else []) + [piece["file"] for piece in loop["pieces"]] + (
+                [loop["index"]] if loop["index"] else []):
+            files[f"{folder}/{file}"] = (built_dir(graph) / str(file)).read_bytes()
     for layer in room["layers"]:
         files[f"{folder}/{layer['file']}"] = (built_dir(graph) / str(layer["file"])).read_bytes()
     return files, room_ids(room)

@@ -47,7 +47,7 @@ def test_room_json_lists_each_layer_with_its_file_and_sort_position(project: Kir
 
     room = room_json(folder)
 
-    assert room["schema_version"] == 4
+    assert room["schema_version"] == 8
     assert room["layers"] == [{"id": "lamp", "file": "layer.lamp.png", "above": False, "y": 20},
                               {"id": "crate", "file": "layer.crate.png", "above": True, "y": None}]
     out = folder / "out" / "export"
@@ -61,7 +61,9 @@ def test_the_scene_has_a_node_per_layer_at_its_sort_position_and_the_manifest_li
     data = project.json("export", ROOM)["data"]
 
     assert sorted(data["written"]) == sorted([
-        "res://kiripix/room/alley/alley.tscn", "res://kiripix/room/alley/plate.png", LAMP_RES, CRATE_RES])
+        "res://kiripix/room/alley/alley.tscn", "res://kiripix/room/alley/plate.png", LAMP_RES, CRATE_RES,
+        "res://kiripix/room/alley/room.json", "res://kiripix/room/alley/masks/solid.png",
+        "res://kiripix/room/alley/masks/pit.png"])
     text = scene(project)
     assert f'[ext_resource type="Texture2D" path="{LAMP_RES}" id="layer_lamp"]' in text
     assert "y_sort_enabled = true" in node(text, "alley")
@@ -105,7 +107,7 @@ def test_the_scene_is_byte_identical_across_a_rebuild(project: Kiripix) -> None:
     assert room_json(folder)["layers"][0]["y"] == 20
 
 
-def test_moving_the_line_changes_only_the_scene(project: Kiripix) -> None:
+def test_moving_the_line_changes_only_the_scene_and_room_json(project: Kiripix) -> None:
     layered_room(project)
     project.json("export", ROOM)
 
@@ -113,7 +115,8 @@ def test_moving_the_line_changes_only_the_scene(project: Kiripix) -> None:
     project.json("run", ROOM)
     data = project.json("export", ROOM)["data"]
 
-    assert data["written"] == ["res://kiripix/room/alley/alley.tscn"] and data["counter"] == 2
+    assert sorted(data["written"]) == ["res://kiripix/room/alley/alley.tscn", "res://kiripix/room/alley/room.json"]
+    assert data["counter"] == 2
     assert "position = Vector2(0, 24)" in scene(project) and "offset = Vector2(0, -24)" in scene(project)
 
 

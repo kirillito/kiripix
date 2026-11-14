@@ -12,9 +12,11 @@ from test_place import findings, place
 
 STREET_PLATE = "game/kiripix/room/street/plate.png"
 STREET_FOLDER = "game/kiripix/room/street"
-STREET_FILES = [STREET_SCENE, STREET_PLATE, STREET_MANIFEST]
-STREET_RES = ["res://kiripix/manifest/room.street.json", "res://kiripix/room/street/plate.png",
-              "res://kiripix/room/street/street.tscn"]
+STREET_MASKS = ["masks/pit.png", "masks/solid.png", "room.json"]  # ticket 0140
+STREET_FILES = [STREET_SCENE, STREET_PLATE, STREET_MANIFEST, *(f"{STREET_FOLDER}/{name}" for name in STREET_MASKS)]
+STREET_RES = sorted(["res://kiripix/manifest/room.street.json", "res://kiripix/room/street/plate.png",
+                     "res://kiripix/room/street/street.tscn",
+                     *(f"res://kiripix/room/street/{name}" for name in STREET_MASKS)])
 
 
 def exported_pair(project: Kiripix) -> None:
@@ -133,7 +135,7 @@ def test_force_backs_the_edited_file_up_and_removes_it(project: Kiripix) -> None
 
     [folder] = backups(project)
     assert (folder / STREET_SCENE).read_text("utf-8") == "my edit\n"
-    assert data["backed_up"] == ["res://kiripix/room/street/street.tscn"] and len(data["removed"]) == 3
+    assert data["backed_up"] == ["res://kiripix/room/street/street.tscn"] and len(data["removed"]) == 6
     assert not (project.cwd / STREET_FOLDER).exists()
 
 
@@ -146,8 +148,7 @@ def test_dry_run_removes_nothing_and_lists_both_cases(project: Kiripix) -> None:
 
     data = result["data"]
     assert data["removed"] == [] and data["changed"] == ["res://kiripix/room/street/street.tscn"]
-    assert sorted(data["would_remove"]) == ["res://kiripix/manifest/room.street.json",
-                                            "res://kiripix/room/street/plate.png"]
+    assert sorted(data["would_remove"]) == [res for res in STREET_RES if not res.endswith("street.tscn")]
     assert [f["code"] for f in result["findings"]] == ["export.file_changed"]
     assert result["findings"][0]["severity"] == "warning"
     assert snapshot(project.cwd / "game") == before and not backups(project)
@@ -159,7 +160,7 @@ def test_dry_run_with_force_says_what_would_be_backed_up(project: Kiripix) -> No
 
     data = project.json("export", "--prune", "--dry-run", "--force")["data"]
 
-    assert data["backed_up"] == ["res://kiripix/room/street/street.tscn"] and len(data["would_remove"]) == 3
+    assert data["backed_up"] == ["res://kiripix/room/street/street.tscn"] and len(data["would_remove"]) == 6
     assert (project.cwd / STREET_SCENE).is_file() and not backups(project)
 
 

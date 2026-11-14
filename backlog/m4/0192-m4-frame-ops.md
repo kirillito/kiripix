@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -33,10 +33,27 @@ output pixel is a copy of an input pixel, so frames are on the palette by constr
 
 ## Acceptance criteria
 
-- [ ] Golden tests: each Op on a small fixture (a plant Layer over a Plate, a puddle, a window), pixel-exact; every output
+- [x] Golden tests: each Op on a small fixture (a plant Layer over a Plate, a puddle, a window), pixel-exact; every output
       pixel exists in the input; frame 0 equals the input.
-- [ ] CLI seam: a `sway` Loop on a Layer builds a strip whose frames carry their own alpha; on `plate` it raises
+- [x] CLI seam: a `sway` Loop on a Layer builds a strip whose frames carry their own alpha; on `plate` it raises
       `loop.no_fill`.
-- [ ] `loop.seam` is quiet on `sway` and `shimmer` at their defaults (they are periodic).
+- [x] `loop.seam` is quiet on `sway` and `shimmer` at their defaults (they are periodic).
 
 Budget: 150–250k tokens.
+
+## Result (2026-11-13)
+
+Trial 0184 hadn't run: defaults are placeholders with `# set by 0184` in `kiripix/ops/frames.py` (sway 1 px / 4 frames,
+shimmer 1 px / 6 rows / 6 frames).
+
+- Ops `sway`, `shimmer`, `scroll`, `scroll_period` in `kiripix/ops/frames.py`; goldens `sway_plant.png`, `shimmer_puddle.png`,
+  `scroll_window.png`, test `tests/golden/test_frame_ops.py`. Shimmer's wave is taken relative to frame 0's so that frame 0 is
+  the input (shifts up to twice the amplitude); a rounding is half away from zero.
+- Stage: `frames` Decision `{loop, source: op|kit, op: sway|shimmer|scroll, params: {anchor_row, amplitude, wavelength, dx, dy,
+  frames}}`. `source = kit` is held (needs-input, names 0194). `sway` on `plate` gives `loop.no_fill` (error, owner_action only)
+  from `check`; a `sway` Loop with no region drawn moves the whole Layer; its box widens by the amplitude. `difference` is
+  refused for Op frames. Tests: `tests/cli/test_loop_frame_ops.py`.
+
+## Closing notes (2026-11-13)
+
+- The Owner approved the golden images (`sway_plant`, `shimmer_puddle`, `scroll_window`) on 2026-11-13.

@@ -26,3 +26,9 @@ the cores.
 - [ ] `npm run test:e2e` passes three times in a row on Windows with the config's default workers.
 
 Budget: 50–100k tokens.
+
+## Notes
+
+- 2026-11-13, after the M4 Looks and Loops batch (0187–0196): at default workers, 5 failed and 110 passed
+  (`character.spec.ts:203`, and `loops.spec.ts:64`, `:135`, `:167` and `:215`), all timeouts. Rerun with `--workers=1`, all 7 tests in those two files
+  passed, `loops.spec.ts:135` on its retry. The 0196 agent saw the same timeouts while other agents loaded the machine.

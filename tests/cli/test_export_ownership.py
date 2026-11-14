@@ -83,7 +83,8 @@ def test_force_backs_up_the_edited_file_and_writes_the_new_one(project: Kiripix)
 
     [folder] = backups(project)
     assert (folder / SCENE).read_text("utf-8") == edited, "the game's edit is kept whole"
-    assert data["backed_up"] == [SCENE_RES] and data["written"] == [SCENE_RES]
+    assert data["backed_up"] == [SCENE_RES]
+    assert sorted(data["written"]) == [SCENE_RES, SCENE_RES.replace("alley.tscn", "room.json")]
     assert "position = Vector2(31, 16)" in scene(project) and "my own edit" not in scene(project)
     assert manifest(project)["counter"] == 2 and "replacing" not in manifest(project)
     assert project.json("export", ROOM)["data"]["written"] == [], "the file is the game's again to edit, owned again"
@@ -149,8 +150,10 @@ def test_dry_run_writes_nothing_and_lists_what_would_be_written(project: Kiripix
     data = project.json("export", ROOM, "--dry-run")["data"]
 
     assert data["dry_run"] is True and data["written"] == []
-    assert sorted(data["would_write"]) == ["res://kiripix/manifest/room.alley.json", SCENE_RES,
-                                           "res://kiripix/room/alley/plate.png"]
+    assert sorted(data["would_write"]) == sorted([
+        "res://kiripix/manifest/room.alley.json", SCENE_RES, "res://kiripix/room/alley/plate.png",
+        "res://kiripix/room/alley/room.json", "res://kiripix/room/alley/masks/solid.png",
+        "res://kiripix/room/alley/masks/pit.png"])
     assert data["changed"] == [] and data["unmanaged"] == [] and data["counter"] == 1
     assert not (project.cwd / MANIFEST).exists() and not (project.cwd / SCENE).exists() and not backups(project)
 
@@ -162,7 +165,7 @@ def test_dry_run_lists_the_two_conflicts_separately_and_still_writes_nothing(pro
     (project.cwd / PLATE).write_bytes(b"the game's own picture")
     record = manifest(project)
     plate_res = "res://kiripix/room/alley/plate.png"
-    (project.cwd / MANIFEST).write_text(json.dumps({**record, "files": {SCENE_RES: record["files"][SCENE_RES]}}), "utf-8")
+    (project.cwd / MANIFEST).write_text(json.dumps({**record, "files": {res: hashed for res, hashed in record["files"].items() if res != plate_res}}), "utf-8")
     place(project, "spawn.main", "spawn", at=(31, 16))
     project.json("run", ROOM)
     before = (project.cwd / MANIFEST).read_bytes()
@@ -170,7 +173,7 @@ def test_dry_run_lists_the_two_conflicts_separately_and_still_writes_nothing(pro
     result = project.json("export", ROOM, "--dry-run")
 
     assert result["data"]["changed"] == [SCENE_RES] and result["data"]["unmanaged"] == [plate_res]
-    assert result["data"]["would_write"] == ["res://kiripix/manifest/room.alley.json"], "not the files it would refuse"
+    assert result["data"]["would_write"] == ["res://kiripix/room/alley/room.json", "res://kiripix/manifest/room.alley.json"],         "not the files it would refuse"
     assert {f["code"] for f in result["findings"]} == {"export.file_changed", "export.file_unmanaged"}
     assert all(f["severity"] == "warning" and f["owner_action"] for f in result["findings"])
     assert (project.cwd / SCENE).read_text("utf-8") == edited and (project.cwd / MANIFEST).read_bytes() == before
@@ -334,10 +337,10 @@ def test_export_all_exports_every_room_and_a_second_run_writes_nothing(project: 
     data = project.json("export", "--all")["data"]
 
     assert [a["asset"] for a in data["assets"]] == [ROOM, STREET] and data["asset"] is None
-    assert len(data["written"]) == 4 and (project.cwd / STREET_SCENE).is_file() and (project.cwd / SCENE).is_file()
+    assert len(data["written"]) == 10 and (project.cwd / STREET_SCENE).is_file() and (project.cwd / SCENE).is_file()
     assert json.loads((project.cwd / STREET_MANIFEST).read_text("utf-8"))["counter"] == 1
     again = project.json("export", "--all")["data"]
-    assert again["written"] == [] and len(again["unchanged"]) == 4
+    assert again["written"] == [] and len(again["unchanged"]) == 10
 
 
 def test_export_all_fails_on_exit_pairing_before_writing_anything(project: Kiripix) -> None:
@@ -371,7 +374,7 @@ def test_export_all_dry_run_writes_nothing(project: Kiripix) -> None:
 
     data = project.json("export", "--all", "--dry-run")["data"]
 
-    assert len(data["would_write"]) == 6 and not (project.cwd / SCENE).exists()  # two rooms' two files and Manifest
+    assert len(data["would_write"]) == 12 and not (project.cwd / SCENE).exists()  # two rooms' five files and Manifest
 
 
 def test_export_wants_an_asset_or_all_but_not_both(project: Kiripix) -> None:

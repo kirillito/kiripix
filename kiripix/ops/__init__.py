@@ -23,6 +23,18 @@ from kiripix.ops.character import (
     quantize_by_part,
     remove_orphans_by_part,
 )
+from kiripix.ops.frames import scroll, scroll_period, shimmer, sway
+from kiripix.ops.cycle import (
+    cycle_index,
+    cycle_pulse,
+    cycle_rotate,
+    cycle_seam_ratio,
+    even_sequence,
+    flash_count,
+    flicker_sequence,
+    ramps,
+    seam_ratio,
+)
 from kiripix.ops.chroma import chroma_key, key_fringe
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
 from kiripix.ops.compose import overlay
@@ -48,6 +60,19 @@ from kiripix.ops.layers import (
     partial_cells,
     recompose,
     remove_small_pieces,
+)
+from kiripix.ops.looks import (
+    Alignment,
+    Drift,
+    dilate,
+    difference_map,
+    difference_region,
+    drift_boxes,
+    mask_box,
+    regrade,
+    register,
+    resize_nearest,
+    warp_nearest,
 )
 from kiripix.ops.masks import (
     SIDES,
@@ -87,6 +112,30 @@ from kiripix.ops.resample import (
 )
 
 __all__ = [
+    "scroll",
+    "scroll_period",
+    "shimmer",
+    "sway",
+    "cycle_index",
+    "cycle_pulse",
+    "cycle_rotate",
+    "cycle_seam_ratio",
+    "even_sequence",
+    "flash_count",
+    "flicker_sequence",
+    "ramps",
+    "seam_ratio",
+    "Alignment",
+    "Drift",
+    "dilate",
+    "difference_map",
+    "difference_region",
+    "drift_boxes",
+    "mask_box",
+    "regrade",
+    "register",
+    "resize_nearest",
+    "warp_nearest",
     "BayerSize",
     "ConformanceReport",
     "GainRange",

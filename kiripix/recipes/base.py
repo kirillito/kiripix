@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from kiripix.ops.lazy import lazy_module
 if TYPE_CHECKING:
@@ -164,6 +164,32 @@ def _no_pinned_results(call: RunnerCall) -> Path:
     raise StageFailure(f"this Stage has no pinned result for {call.runner}")
 
 
+_Value = TypeVar("_Value")
+
+
+class LazyMap(Mapping[str, _Value], Generic[_Value]):
+    """A read-only map whose values are loaded on first read, one key at a time: a Stage pays for (and sees the errors of)
+    only the upstream Decisions or parameters it reads."""
+
+    def __init__(self, keys: list[str], load: Callable[[str], _Value]) -> None:
+        self._keys = list(keys)
+        self._load = load
+        self._loaded: dict[str, _Value] = {}
+
+    def __getitem__(self, key: str) -> _Value:
+        if key not in self._keys:
+            raise KeyError(key)
+        if key not in self._loaded:
+            self._loaded[key] = self._load(key)
+        return self._loaded[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
 @dataclass(frozen=True)
 class StageRun:
     """What core hands a Stage's run function. Outputs go into `output_dir`, which core moves into place."""
@@ -178,6 +204,12 @@ class StageRun:
     progress: ProgressCallback
     decisions: tuple[CurrentDecision, ...] = ()
     asset_params: dict[str, Scalar] = field(default_factory=dict)
+    # The current Decisions of each upstream Stage, by name, for a Stage that must know what an earlier Stage was told
+    # (the `looks` Stage reads which Source the room picked). Read-only; it is already part of the upstream's input hash.
+    upstream_decisions: Mapping[str, tuple[CurrentDecision, ...]] = field(default_factory=dict)
+    # The parameters of each upstream Stage, by name: the `looks` Stage maps an edit with the `palette` Stage's own
+    # parameters. Read-only; they are already part of the upstream's input hash.
+    upstream_params: Mapping[str, dict[str, Scalar]] = field(default_factory=dict)
     # Raises if the Command was cancelled. Call it between chunks of work (tiles, frames, batches); `progress` calls it
     # too. A Stage never catches what it raises.
     check_cancel: Callable[[], None] = lambda: None
@@ -289,6 +321,11 @@ class StageSpec:
     # (`output_dir`), so it sees the image as painted and its Checks see what it wrote. The image's unpainted hash and
     # the Stage's input hash don't depend on it. A Stage without it behaves as before.
     after_overrides: StageFunction | None = None
+    # A built, current Stage whose Decisions were made on inputs that have since moved without making it stale (a kit
+    # painted on another palette, ticket 0194) lists them here: each current Decision with the data that re-records it
+    # against what is now. Any makes the Stage needs-review with `review_reason`; `accept` appends the re-recordings.
+    review: Callable[[StageRun], list[tuple[CurrentDecision, dict[str, Any]]]] | None = None
+    review_reason: str | None = None
     runner_calls: RunnerCallsFunction | None = None
     segment: SegmentHooks | None = None
     layer_stats: LayerStatsHooks | None = None

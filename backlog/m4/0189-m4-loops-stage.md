@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -47,11 +47,40 @@ This ticket builds the Stage that frame loops (0192, 0194) extend, so it carries
 
 ## Acceptance criteria
 
-- [ ] CLI seam on the `demo` test Kind or a test room: a `rotate` and a `pulse` Loop, a `flicker` timing, a Loop over a
+- [x] CLI seam on the `demo` test Kind or a test room: a `rotate` and a `pulse` Loop, a `flicker` timing, a Loop over a
       foreground Layer giving a piece; each finding above; `undo` of a region.
-- [ ] CLI seam: `looks`' existing tests pass unchanged after the move to the shared module.
-- [ ] CLI seam: frame 0 of every strip equals the room inside its region, pixel for pixel; a palette change rebuilds and stays
+- [x] CLI seam: `looks`' existing tests pass unchanged after the move to the shared module.
+- [x] CLI seam: frame 0 of every strip equals the room inside its region, pixel for pixel; a palette change rebuilds and stays
       `done`.
-- [ ] The contract sample passes; `lint-imports` and `mypy` pass.
+- [x] The contract sample passes; `lint-imports` and `mypy` pass.
 
 Budget: 250–350k tokens.
+
+## Result (2026-11-13)
+
+Trial 0184 hadn't run: every default it sets is a placeholder with a `# set by 0184` comment (flood tolerance 0.04, `SEAM_LIMIT` 3.0,
+`PULSE_REACH` 2 px; the Ops' own defaults are 0188's).
+
+- **Shared code** is `kiripix/recipes/regions.py`: `EditRoom` (the old `_Room`, plus `own_solid`), `registered`, `fitted`,
+  `paint_region(run, key, owner, ...)` (replays `polygon`, `brush`, `flood`, `difference` for the owner named by the Decision's
+  `look` or `loop` field), `read_mask`/`write_mask`, `decisions_of`, and the Decision spec factories. `looks` uses them; its
+  Decisions' schemas and descriptions are unchanged, and its tests pass unchanged.
+- **The Stage** is `kiripix/recipes/loops.py`, registered in `recipes/room.py` between `looks` and `place`. Upstream, in order:
+  `layers` (first, so a `flood` or `difference` is replayed on a refit or Layer change), `palette`, `source`, `fit`, `masks`,
+  `looks`. Settings: `palette`, `project.resolution`. No parameters.
+- **Decisions** (each has `loop`, the ID): `loop` {form `cycle`|`frames`, layer, light, phase}; `polygon`, `brush`, `flood`
+  {x, y, tolerance?}, `difference`; `cycle` {colours, mode, depth, steps, emissive}; `timing` {ticks (int or list), pingpong, or
+  flicker {seed, mean_ticks, spread, length_ticks}}. A Loop exists once a `loop` Decision declares it; the latest of `loop`,
+  `cycle` and `timing` counts. `flood` is measured on the fitted room (`fit.png`, before the palette), so the region is the same
+  whatever the palette. A cycle Loop holds a `difference` back (needs-input): it has no edit to compare.
+- **Held back (needs-input):** a Decision naming an undeclared Loop; a Loop with a Look's ID; `form: frames` (until 0192); a
+  `layer` the room lacks; no `cycle`; a rotating cycle under two colours; a repeated colour; a `ticks` list that isn't one per
+  frame.
+- **Checks:** all as listed, plus `loop.no_region` (warning). `loop.light_unknown` can't be a Check of `loops`, because the
+  light Markers are in `place`, after it and not upstream: it is checked by `export`, which gained `loops` upstream (so an old
+  export is stale until `loops` is built), and runs only when `export` is built. An ADR should record that and the choice
+  that a Loop's `light` is a plain Marker ID.
+- **Open for the ADR:** a Loop's and a Look's IDs are one set (checked here, not yet at the Manifest); a pulse on a ramp's
+  light end doesn't move; the flash area is measured against `project.resolution`; `flicker` has no seam measure.
+- Tests: `tests/cli/test_loops.py`. The room's Stage list in `test_project.py` gained `loops`.
+- `tests/cli/test_looks.py` changed by one assertion: the Recipe now has `loops` between `looks` and `place`.

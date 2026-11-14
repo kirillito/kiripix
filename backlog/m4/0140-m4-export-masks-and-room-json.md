@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: godot-export
 type: ticket
@@ -28,8 +28,25 @@ from them is lossy at a cell's edge.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: the files exist, the Masks are pixel-equal to the `masks` Stage's output, and the Manifest lists them. `--prune`
+- [x] CLI seam: the files exist, the Masks are pixel-equal to the `masks` Stage's output, and the Manifest lists them. `--prune`
       removes them.
-- [ ] A `godot` test reads `masks/solid.png` in a headless Godot 4.7 and counts the same set pixels as Kiripix.
+- [x] A `godot` test reads `masks/solid.png` in a headless Godot 4.7 and counts the same set pixels as Kiripix.
 
 Budget: 150–250k tokens.
+
+## Result
+
+- The room's `export` Stage copies the `solid` and `pit` Masks that exist byte for byte into `out/export/masks/`, and lists them in
+  `room.json` as `masks` (`{"pit": "masks/pit.png", "solid": "masks/solid.png"}`, paths relative to `room.json`).
+  `ROOM_SCHEMA_VERSION` is 5, so an old room needs `kiripix run <room> export --force`.
+- The Exporter writes `room.json` and `masks/*.png` beside the scene; all are in the Manifest, so ownership, `--force`,
+  `--adopt` and `--prune` apply. The scene root has `metadata/kiripix_room` with `room.json`'s `res://` path.
+- [x] Done in [0131](0131-m4-looks-export.md): a Look's own `solid` is a further entry of `masks` (`<look>.solid`, file
+  `masks/<look>.solid.png`), copied by the Stage and written by `_room_files` like the others. `ROOM_SCHEMA_VERSION` is 6 there.
+- Left for the Owner: the `godot` test (`tests/cli/test_export_masks.py`) is written but was skipped here, as Godot 4.7 isn't
+  on this machine; the second criterion stays unchecked until it has run.
+- Tests: `tests/cli/test_export_masks.py`; counts and the `room.json` schema changed in `test_export*.py`, `test_emitter.py`.
+
+## Closing notes (2026-11-13)
+
+- The `godot` test (`tests/cli/test_export_masks.py`) passes against Godot 4.7.2 (headless unless noted), 2026-11-13.

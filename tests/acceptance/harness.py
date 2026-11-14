@@ -27,18 +27,25 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RECIPES = "acceptance_recipes"  # FIXTURES/acceptance_recipes.py: the fake Runners and nothing else
 RECIPE_PATH = (FIXTURES, Path(__file__).resolve().parents[1] / "fixtures")  # it imports tests/fixtures' fakes
 ASSET = "room.alley"
+AREA = "battle.test"  # the `area` Marker the stand-in owner places (fixtures/owner.json)
+AREA_CELL = 32
+AREA_BOX = (32, 0, 95, 31)  # the box fixtures/owner.json finally gives it ((40, 8)-(70, 24)), snapped outward to 32 px cells
 CHARACTER = "character.hero"
 ASSETS = (ASSET, CHARACTER)
 MODEL = Path(__file__).resolve().parents[1] / "fixtures" / "characters" / "rigged.glb"  # pre-rigged: `rig` needs no Mixamo
 CLIPS = ("idle", "walk", "attack")  # the stand-in owner's `clip` Decisions (fixtures/owner.json)
 DIRECTIONS = ("s", "sw", "w", "nw", "n", "ne", "e", "se")
 LAYER = "crate"  # the Layer the stand-in owner lifts (fixtures/owner.json)
-WIDTH, HEIGHT = 48, 32
+CANVAS = (144, 160)  # `[extend] canvas`: the size of one piece, and of the canvas `extend` writes for it
+KEEP = CANVAS[0] // 3  # `extend canvas`'s default strip along x, a third of the canvas: what a piece shares with the base
+WIDTH, HEIGHT = 2 * CANVAS[0] - KEEP, CANVAS[1]  # 240 x 160: the first piece, and the second one past it
 TOOL_NAMES = ("kiripix", "kpx")
 GAME_FILES = (
     "kiripix/room/alley/alley.tscn",
     "kiripix/room/alley/plate.png",
     f"kiripix/room/alley/layer.{LAYER}.png",
+    "kiripix/room/alley/masks/solid.png",
+    "kiripix/room/alley/room.json",
     "kiripix/manifest/room.alley.json",
     "kiripix/character/hero/hero.tscn",
     "kiripix/character/hero/frames.tres",
@@ -55,8 +62,13 @@ You are working in a Kiripix Project, a folder of pixel art assets for a Godot g
 `kiripix` command per call, from the current folder, because shell syntax such as `$?` can get a call denied. A failing \
 command's exit code is shown to you.
 
-The Project has one room, {ASSET}. Its image is already imported. Take it from import to export: get it exported into \
-the Godot project, and get `kiripix check --all` to pass.
+The Project has one room, {ASSET}. Its image is in two pieces. The first is already imported. The second piece is \
+the file "{{piece}}": the owner made it in the image model's own UI, from the canvas that `kiripix` writes for the next \
+piece (the room continues to the east). Join it onto the room's image, then take the room from there to export: get it \
+exported into the Godot project, and get `kiripix check --all` to pass.
+
+The room also needs a battle area for the game's fights: an `area` Marker with the ID `{AREA}`, on 32 px cells, \
+on ground that can be stood on.
 
 The Project also has one character, {CHARACTER}, with nothing imported yet. Its 3D Model is the file "{{model}}". Take the \
 character from import of that Model to export as well, beside the room.
@@ -239,13 +251,27 @@ def kiripix(cwd: Path, env: Mapping[str, str], *args: str, expect: int | None = 
 
 
 def room_image() -> np.ndarray:
-    """48 x 32, drawn in code so there is no PNG to keep: a blue wall on the left third, a floor, a rug, and a red crate
-    near (41, 22) for the owner to lift into a foreground Layer."""
-    image = np.full((HEIGHT, WIDTH, 4), (194, 195, 199, 255), dtype=np.uint8)  # colours from `init`'s palette, so
-    image[:, :16] = (29, 43, 83, 255)  # `palette.mapping_error` has nothing to say
-    image[8:14, 24:36] = (171, 82, 54, 255)
+    """The whole room, 240 x 160, drawn in code so there is no PNG to keep: a blue wall (32 px) on the left, a floor of
+    two colours in blobs (the texture an image model's pieces register on, as for `extend`), and a red crate near
+    (41, 22) for the owner to lift into a foreground Layer. Four colours of `init`'s palette in all: the `palette` Stage
+    takes four by default, so `palette.mapping_error` has nothing to say."""
+    rng = np.random.default_rng(7)
+    step = 8  # blobs of about 8 px, from a coarse random field blown up smoothly: no single pixels for the `palette`
+    coarse = rng.random((HEIGHT // step + 2, WIDTH // step + 2))  # Stage to call orphans, and no pixel grid for `fit` to find
+    rows, columns = np.arange(HEIGHT) / step, np.arange(WIDTH) / step
+    along_x = np.stack([np.interp(columns, np.arange(coarse.shape[1]), line) for line in coarse])
+    field = np.stack([np.interp(rows, np.arange(coarse.shape[0]), column) for column in along_x.T], axis=1)
+    image = np.array([(194, 195, 199, 255), (95, 87, 79, 255)], dtype=np.uint8)[(field > 0.5).astype(int)]
+    image[:, :32] = (29, 43, 83, 255)
     image[19:26, 38:45] = (255, 0, 77, 255)
     return image
+
+
+def room_pieces() -> tuple[np.ndarray, np.ndarray]:
+    """The two pieces: the left `CANVAS` of the room, and the one that continues it east, which is the canvas `extend`
+    writes (its first `KEEP` columns are the first piece's last ones) as the image model would fill it in."""
+    room = room_image()
+    return room[:, :CANVAS[0]], room[:, WIDTH - CANVAS[0]:]
 
 
 @dataclass
@@ -253,13 +279,14 @@ class Setup:
     root: Path  # the temporary folder holding all of it
     project: Path
     game: Path
-    variant: str  # the imported Variant
+    variant: str  # the imported Variant: the room's first piece
     shims: Path  # the agent's `kiripix` and `kpx`, with the fake Runners
     model: Path  # the character's 3D Model, outside the Project: the agent imports it
+    piece: Path  # the room's second piece, outside the Project: the agent joins it with `extend`
 
     @property
     def task(self) -> str:
-        return TASK.replace("{model}", self.model.as_posix())
+        return TASK.replace("{model}", self.model.as_posix()).replace("{piece}", self.piece.as_posix())
 
 
 def make_setup(root: Path) -> Setup:
@@ -280,15 +307,23 @@ def make_setup(root: Path) -> Setup:
     wired = re.sub(r'^# project = ".*"', f'project = "{game.as_posix()}"', text, count=1, flags=re.MULTILINE)
     assert wired != text, "kiripix.toml no longer has the commented `# project = ...` line to wire up"
     settings.write_text(wired, "utf-8", newline="")
+    unsized = settings.read_text("utf-8")  # `[extend] canvas`: the size of a piece, which the owner's image model sets
+    sized = unsized.replace("canvas = [1376, 768]", f"canvas = {list(CANVAS)}", 1)
+    assert sized != unsized, "kiripix.toml no longer has `canvas = [1376, 768]` under [extend]"
+    settings.write_text(sized, "utf-8", newline="")
     kiripix(project, env, "new", "room", "alley", "--view", "top")
+    first, second = room_pieces()
     source = root / "room.png"  # outside the Project: the agent's folder holds only what `import` copied
-    Image.fromarray(room_image(), "RGBA").save(source)
+    Image.fromarray(first, "RGBA").save(source)
+    piece = root / "piece-east.png"
+    Image.fromarray(second, "RGBA").save(piece)
     variant = str(kiripix(project, env, "import", ASSET, str(source)).json["data"]["variant"])
+    kiripix(project, env, "pick", ASSET, variant)  # `extend` grows the picked Source, so the first piece is picked
     kiripix(project, env, "set", ASSET, "brief", f"width={WIDTH}", f"height={HEIGHT}")
     kiripix(project, env, "new", "character", "hero")  # nothing imported: the agent starts the character from its Model
     model = root / "hero.glb"
     shutil.copyfile(MODEL, model)
-    return Setup(root, project, game, variant, make_shims(root / "bin"), model)
+    return Setup(root, project, game, variant, make_shims(root / "bin"), model, piece)
 
 
 # What the Project is waiting on
@@ -387,6 +422,36 @@ def manifest_ids(setup: Setup, asset: str, kind: str) -> list[str]:
         return []
 
 
+def room_export_problems(setup: Setup) -> list[str]:
+    """What the room's export in the Godot project lacks of the M4 room: the `area` as an `Area2D` of the right place and
+    size, `masks/solid.png` at the room's size, and `room.json` listing both. Read from the files, whoever wrote them."""
+    folder = setup.game / "kiripix" / "room" / "alley"
+    problems: list[str] = []
+    try:
+        scene = (folder / "alley.tscn").read_text("utf-8")
+        room = json.loads((folder / "room.json").read_text("utf-8"))
+        with Image.open(folder / "masks" / "solid.png") as solid:
+            solid_size = solid.size
+    except (OSError, ValueError) as error:
+        return [f"the room's scene, room.json or masks/solid.png can't be read: {error}"]
+    if 'type="Area2D"' not in scene or f'metadata/kiripix_id = "{AREA}"' not in scene:
+        problems.append(f"the scene has no Area2D for `{AREA}`")
+    box = AREA_BOX  # the box the owner's last Decision asks for, on whole cells
+    if f"size = Vector2({box[2] - box[0] + 1}, {box[3] - box[1] + 1})" not in scene             or f"position = Vector2({(box[0] + box[2] + 1) / 2:g}, {(box[1] + box[3] + 1) / 2:g})" not in scene:
+        problems.append(f"the Area2D `{AREA}` is not the box {list(box)} (the owner's move onto the floor)")
+    if "metadata/walkable = true" not in scene or f"metadata/cell = {AREA_CELL}" not in scene:
+        problems.append(f"the Area2D `{AREA}` lacks walkable = true or cell = {AREA_CELL}")
+    if solid_size != (WIDTH, HEIGHT):
+        problems.append(f"masks/solid.png is {solid_size}, not the room's {(WIDTH, HEIGHT)}")
+    if room.get("masks", {}).get("solid") != "masks/solid.png":
+        problems.append(f"room.json does not list masks/solid.png: {room.get('masks')}")
+    if AREA not in [m.get("id") for m in room.get("markers", [])]:
+        problems.append(f"room.json does not list the area `{AREA}`")
+    if "kiripix_room" not in scene:
+        problems.append("the scene root has no metadata/kiripix_room")
+    return problems
+
+
 def verify(setup: Setup) -> Verification:
     """The harness's own check of the Project and the Godot folder. Ignores whatever the agent said."""
     env, details = project_env(), []
@@ -396,6 +461,9 @@ def verify(setup: Setup) -> Verification:
     listed = LAYER in frozen
     details.append(f"the Manifest lists the Layer `{LAYER}`" if listed else f"the Manifest does not list the Layer `{LAYER}`: {frozen}")
     missing += [] if listed else [f"Manifest id layers/{LAYER}"]
+    problems = room_export_problems(setup)
+    details.append("the room's export has the Area2D, masks/solid.png and room.json" if not problems else "; ".join(problems))
+    missing += problems
     animations = manifest_ids(setup, CHARACTER, "clips")
     absent = [f"{clip}_{d}" for clip in CLIPS for d in DIRECTIONS if f"{clip}_{d}" not in animations]
     details.append(f"the character's Manifest lists every clip ({', '.join(CLIPS)}) in all {len(DIRECTIONS)} directions"
@@ -538,16 +606,28 @@ class ScriptedAgent:
     def __init__(self, assets: tuple[str, ...] = ASSETS) -> None:
         self.assets = assets
         self.model = ""
+        self.piece = ""
         self.cwd = Path()
         self.env: Mapping[str, str] = {}
 
     def start(self, task: str, cwd: Path, env: Mapping[str, str], budget_left: int) -> AgentTurn:
         assert all(asset in task for asset in self.assets), "the task must name the Assets, as the real agent's does"
-        quoted = re.search(r'the file "([^"]+)"', task)  # all it is told of the Model's place
+        quoted = re.search(r'Model is the file "([^"]+)"', task)  # all it is told of the Model's place
         self.model = quoted.group(1) if quoted else ""
+        piece = re.search(r'second piece is the file "([^"]+)"', task)  # the task's one mention of the room's second piece
+        self.piece = piece.group(1) if piece else ""
         assert_agent_env_clean(env)
         self.cwd, self.env = cwd, env
-        return self._follow_next()
+        turn = AgentTurn()
+        if self.piece:  # what the task says to do first; `next` knows nothing of the owner's second piece
+            for step in ("canvas --side east", f'add "{self.piece}"', "done"):
+                run = self._run(turn, f"kiripix extend {ASSET} {step} --json")
+                if run.exit_code != 0:
+                    turn.final_text = f"`extend {step.split()[0]}` failed: {run.output}"
+                    return turn
+            joined = json.loads(run.output)["data"]["variant"]  # `done` says to pick it; so does the scripted agent
+            self._run(turn, f"kiripix pick {ASSET} {joined} --json")
+        return self._follow_next(turn)
 
     def resume(self, message: str, budget_left: int) -> AgentTurn:
         return self._follow_next()
@@ -565,8 +645,8 @@ class ScriptedAgent:
         turn.commands.append(run)
         return run
 
-    def _follow_next(self) -> AgentTurn:
-        turn, previous = AgentTurn(), None
+    def _follow_next(self, turn: AgentTurn | None = None) -> AgentTurn:
+        turn, previous = turn or AgentTurn(), None
         for _ in range(self.MAX_STEPS):
             for asset in self.assets:  # in the task's order: the room, then the character
                 data = json.loads(self._run(turn, f"kiripix next {asset} --json").output)["data"]

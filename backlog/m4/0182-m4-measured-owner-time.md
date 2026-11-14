@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -45,13 +45,41 @@ active time is missing.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: `track` refuses without the Owner (exit 3) and appends a span with it; `stats --json` on a Project with
+- [x] CLI seam: `track` refuses without the Owner (exit 3) and appends a span with it; `stats --json` on a Project with
       spans and journal entries gives the right minutes and counts per Stage, and `--since` drops the older ones.
-- [ ] Two branches that each append spans merge with no conflict, and `stats` counts both.
-- [ ] Contract samples for `track` and `stats`.
+- [x] Two branches that each append spans merge with no conflict, and `stats` counts both.
+- [x] Contract samples for `track` and `stats`.
 - [ ] The UI: ten minutes on a room's masks screen with a five-minute pause in the middle records about seven minutes
       (Owner, by hand, recorded here).
-- [ ] The CLI half is built or dropped in writing.
+- [x] The CLI half is built or dropped in writing.
 
 Budget: 150–250k tokens. The UI half is small (a hook on the Stage screens); if it grows past that, split it out for
 `ui-engineer`.
+
+## Result
+
+Built (2026-11-13):
+
+- `kiripix/core/timespans.py` (spans, `stats` maths, the CLI's count), `kiripix/commands/timing.py` (`track`, owner-only,
+  never an MCP tool; `stats`, a Probe). A span's `source` is `ui` over the session token and `cli` at a terminal; `track`
+  has no `source` option, so nothing can claim one. Findings: `time.invalid`, `time.stage_unknown`,
+  `time.seconds_invalid`, `stats.since_invalid`, `time.merge_attribute_missing`.
+- `kiripix init` writes `time.jsonl merge=union text eol=lf`. An existing Project gets it by hand: `track` warns with
+  `time.merge_attribute_missing` (an `owner_action`) while its `.gitattributes` lacks the line.
+- The UI hook, `web/src/activeTime.ts` (`useActiveTime`, called once in `App.tsx` for the open Asset and Stage): a visible,
+  focused tab with an input in the last 3 minutes is active; a span is sent on blur, hide, idle, leaving the screen, tab
+  close (keepalive) and every 60 s. The folder watch skips `time.jsonl`, or the UI would refresh itself every minute.
+- **CLI half: built.** `invoke` (about 15 lines, imports lazily, only for `interactive` CLI calls) counts, for a writing or
+  owner-only Command naming an Asset and a Stage (`extend` counts as the stage `extend`), the time from the end of the
+  Owner's previous such Command on that Asset to the start of this one, when under 3 minutes. The previous end is kept in
+  `.kiripix/cli-time.json`. `KIRIPIX_TEST_OWNER` doesn't count (it isn't a terminal), so the test drives `invoke` with an
+  interactive Context.
+- `stats` counts a Decision entry without `replaces`, and undo and redo entries; `--since` filters by the ULID's time
+  (a date is local midnight).
+
+Still the Owner's: the ten-minute masks screen check (the idle rule is the literal one, so the five-minute pause counts
+its first three minutes: expect about eight, not seven; say if that should be stricter).
+
+## Closing notes (2026-11-13)
+
+- Closed 2026-11-13; the ten-minute UI check stays the Owner's, by hand, to be recorded here.

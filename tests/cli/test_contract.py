@@ -42,6 +42,13 @@ def _built_hero(project: Kiripix) -> None:
     hero(project)
 
 
+def _loop_kit_ready(project: Kiripix) -> None:
+    """A room with a frame Loop that has a region, and the room built: the start of `loop kit`."""
+    from test_loop_kit import a_frame_loop  # imported here: test_loop_kit reaches test_serve, which imports SAMPLES
+
+    a_frame_loop(project)
+
+
 def _decided(project: Kiripix) -> None:
     make_demo(project)
     project.json("decide", "demo.a", "choose", "--decision", MARK)
@@ -62,6 +69,11 @@ def _imported(project: Kiripix) -> str:
     if not (project.cwd / "in.png").exists():
         _room_image(project)
     return str(project.json("import", "room.alley", "in.png")["data"]["variant"])
+
+
+def _extend_ready(project: Kiripix) -> None:
+    """A room with a picked Source, the start of `extend`."""
+    project.json("pick", "room.alley", _imported(project))
 
 
 def _character_files(project: Kiripix) -> None:
@@ -122,6 +134,10 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "op register-piece": lambda p: (_join_images(p), ["op", "register-piece", "base.png", "piece.png", "--overlap", "east:100", "--output", "reg.png"])[1],
     "op match-tone": lambda p: (_join_images(p), ["op", "match-tone", "base.png", "piece.png", "toned.png", "--overlap", "east:100"])[1],
     "op seam-join": lambda p: (_join_images(p), ["op", "seam-join", "base.png", "piece.png", "joined.png", "--overlap", "east:100"])[1],
+    "extend": lambda p: (_extend_ready(p), ["extend", "room.alley", "canvas", "--side", "east"])[1],
+    "loop kit": lambda p: (_loop_kit_ready(p), ["loop", "kit", "room.alley", "lamp_glow", "kit_a", "--frames", "3"])[1],
+    "track": lambda p: (_room_image(p), ["track", "room.alley", "source", "--seconds", "30"])[1],
+    "stats": lambda p: (_room_image(p), ["stats", "--all"])[1],
     "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
     "ramps-add": lambda p: (_built_hero(p), ["ramps-add", "character.hero", "--parts", "skin"])[1],
     "runners list": lambda p: ["runners", "list"],
@@ -182,6 +198,75 @@ def test_import_and_show_of_a_sprite_sheet_validate(project: Kiripix, schemas: d
     jsonschema.validate(imported, schemas["import"]["output"])
     jsonschema.validate(shown, schemas["show"]["output"])
     assert imported["data"]["sheet"] and shown["data"]["sheets"][0]["name"] == imported["data"]["sheet"]
+
+
+def test_import_and_pick_of_a_look_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The Look shapes of `import --look` and `pick --look` (ticket 0129)."""
+    variant = _imported(project)
+    project.json("pick", "room.alley", variant)
+
+    imported = project.json("import", "room.alley", "in.png", "--look", "door")
+    picked = project.json("pick", "room.alley", variant, "--look", "door")
+
+    jsonschema.validate(imported, schemas["import"]["output"])
+    jsonschema.validate(picked, schemas["pick"]["output"])
+    assert imported["data"]["look"] == "door" and picked["data"]["look"] == "door" and picked["data"]["stage"] == "looks"
+    for name in ("import", "pick"):
+        assert "look" in schemas[name]["input"]["properties"]  # type: ignore[index]
+
+
+def test_import_of_loop_frames_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The Loop shape of `import --loop` (ticket 0193)."""
+    from test_loop_kit import a_frame_loop, painted, write_kit
+
+    a_frame_loop(project)
+    write_kit(project, 3)
+
+    imported = project.json("import", "room.alley", painted(project, 1), painted(project, 2), "--loop", "lamp_glow")
+
+    jsonschema.validate(imported, schemas["import"]["output"])
+    assert imported["data"]["loop"] == "lamp_glow"
+    properties = schemas["import"]["input"]["properties"]  # type: ignore[index]
+    assert "loop" in properties and "frames" in properties
+
+
+LOOK_DECISIONS = {
+    "look": {"look": "door", "condition": "door:shut"},
+    "polygon": {"look": "door", "points": [[0, 0], [4, 0], [4, 4]]},
+    "brush": {"look": "door", "radius": 1, "points": [[1, 1], [2, 2]]},
+    "difference": {"look": "door", "x0": 0, "y0": 0, "x1": 5, "y1": 5, "tolerance": 4, "specks": 16},
+    "solid": {"look": "door", "points": [[0, 0], [4, 0], [4, 4]]},
+}
+
+
+@pytest.mark.parametrize("decision", sorted(LOOK_DECISIONS))
+def test_the_decisions_of_a_look_validate(project: Kiripix, schemas: dict[str, dict[str, object]],
+                                          decision: str) -> None:
+    """The `looks` Stage's Decisions (ticket 0130): each is recorded, and `describe room` lists it."""
+    variant = _imported(project)
+    if decision == "difference":  # made on the Plate, which has to exist
+        project.json("pick", "room.alley", variant)
+        project("run", "room.alley", "--json")
+    entry = json.dumps({"decision": decision, "data": LOOK_DECISIONS[decision]})
+
+    result = project.json("decide", "room.alley", "looks", "--decision", entry)
+
+    jsonschema.validate(result, schemas["decide"]["output"])
+    kind = next(k for k in project.json("describe", "room")["data"]["kinds"] if k["name"] == "room")
+    stage = next(s for s in kind["stages"] if s["name"] == "looks")
+    assert decision in [d["name"] for d in stage["decisions"]]
+
+
+def test_a_bad_decision_of_a_look_is_refused(project: Kiripix) -> None:
+    _imported(project)
+
+    for decision, data in (("polygon", {"look": "door", "points": [[0, 0], [1, 1]]}),
+                           ("solid", {"look": "door", "points": [[0, 0], [1, 1]]}),
+                           ("difference", {"look": "door", "x0": 0, "y0": 0, "x1": 5}),
+                           ("brush", {"look": "Door", "radius": 1, "points": [[1, 1]]}),
+                           ("look", {"look": "door", "condition": ""})):
+        entry = json.dumps({"decision": decision, "data": data})
+        assert project("decide", "room.alley", "looks", "--decision", entry, "--json").code == 1, decision
 
 
 def test_an_error_result_validates_too(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:

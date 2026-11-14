@@ -43,6 +43,11 @@ def _decode(ulid: str) -> int:
     return number
 
 
+def ulid_time(ulid: str) -> float:
+    """When the ULID was made, in seconds since the epoch (the 48 bits above the random part are milliseconds)."""
+    return (_decode(ulid) >> 80) / 1000
+
+
 def new_ulid(after: str | None = None) -> str:
     """A ULID for now. Given the latest ID in the journal, the result sorts after it even within the same millisecond
     or when this machine's clock is behind the one that wrote `after`."""
