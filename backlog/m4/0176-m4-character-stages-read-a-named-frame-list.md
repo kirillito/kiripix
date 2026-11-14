@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -29,8 +29,8 @@ unchanged, so they must stop assuming that the frame list comes from a Stage nam
 
 ## Acceptance criteria
 
-- [ ] Every existing character test and golden passes unchanged, and `character.mc02`'s Stages stay `done` after the change
-      (no input hash changed): checked with `kiripix status` on a copy of the art Project.
+- [x] Every existing character test and golden passes unchanged, and `character.mc03_female` and `mc03_male` Stages stay `done`
+      after the change (no input hash changed): checked with `kiripix status` on a copy of the art Project (mc02 is retired).
 - [x] CLI seam on the fake renderer: `finish normals=flat` and `normals=height` write a normal frame of the colour frame's size;
       `flat` is (128, 128, 255) on every opaque pixel.
 - [x] A test frame list with `feet` makes `sheet.pivot_drift` report the frame whose feet moved, and not one whose pivot alone
@@ -47,6 +47,16 @@ Budget: 80–120k tokens.
   (a declared default is hashed), and its `finish` reads `pass` when the parameter isn't declared. `flat` is written as the
   encoded value on the final colour frame's opaque pixels, not quantised again (8 levels would turn (128, 128, 255) into a tilt).
   `sheet` takes the expected frame counts from the frame list when the Recipe has no `clips` Stage.
-- First box not ticked: the character's Stage specs (inputs, params, Checks) are identical before and after, so no input hash
-  can change, and the existing tests and goldens pass. But on a copy of the art Project `render` is already `stale` without this
-  change (another change in the tree), so `palette` to `export` can't show `done` there.
+- The character's Stage specs (inputs, params, Checks) are identical before and after, so no input hash can change.
+
+## Notes (2026-11-13): first box checked on mc03
+
+- Copied `kiripix.toml`, `style/` and the four `mc03_*` Assets of the art Project to temporary folders, and ran `kiripix status`
+  with the code at `f6a6d0d^` (before 0172 and 0176) and at `f6a6d0d` (after).
+  `mc03_female` and `mc03_male`: `model` to `sheet` are `done` in both. The 0176 Stages (`palette`, `finish`, `sheet`) did not change a hash.
+- `export` went from `stale` to `done` between the two, because of 0172 (`character.json` schema 4, clip `events`), not 0176.
+  The Assets were last built with code from after that commit.
+- At the current tree `render` is `stale` on `mc03_female` and `mc03_male` (and everything after it). That comes from later changes
+  to `render.py` (the Render material pass, 0148 and after), not 0176. `mc03_*_clothes01`, built with the current tree, are `done`
+  through `export`.
+- Both runs print `config.invalid` twice on the partial copy of the art Project. I didn't look into it; it appears in the before and after runs alike, so it isn't 0176.

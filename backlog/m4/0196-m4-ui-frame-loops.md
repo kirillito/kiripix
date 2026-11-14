@@ -59,3 +59,7 @@ Edits (Part B) are hidden: 0193 and 0194 cut it until trial 0184 has run, so the
 ## Closing notes (2026-11-13)
 
 - Closed 2026-11-13; the Owner's timed kitchen run stays open, as in 0191.
+
+## After trial 0184 (2026-11-14)
+
+Part B is kept: the Edits source moves to [0221](0221-m4-ui-loop-edits-source.md).

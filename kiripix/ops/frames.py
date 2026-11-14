@@ -5,7 +5,7 @@ pixel and the frames are on the palette by construction. Pure: arrays in, arrays
 a region is an (H, W) bool mask; the result is (frames, H, W, 4). Frame 0 is the input. Alpha moves with the pixels
 (`sway`) or stays where the region is (`shimmer`, `scroll`: a whole pixel, alpha included, is copied).
 
-The defaults marked "set by 0184" are placeholders until the trial reports.
+The defaults were checked by trial 0184 (the kitchen's plant): "confirmed by 0184", or kept untried.
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ else:
     U8 = Any
     BoolMask = Any
 
-SWAY_AMPLITUDE = 1  # px at the far end (set by 0184)
-SWAY_FRAMES = 4  # (set by 0184)
-SHIMMER_AMPLITUDE = 1  # px (set by 0184)
-SHIMMER_WAVELENGTH = 6  # rows (set by 0184)
-SHIMMER_FRAMES = 6  # (set by 0184)
+SWAY_AMPLITUDE = 1  # px at the far end (confirmed by 0184: 2 looked like a gale indoors)
+SWAY_FRAMES = 4  # (confirmed by 0184: at 1 px, 6 frames repeat two of them)
+SHIMMER_AMPLITUDE = 1  # px (not tried by 0184; kept)
+SHIMMER_WAVELENGTH = 6  # rows (not tried by 0184; kept)
+SHIMMER_FRAMES = 6  # (not tried by 0184; kept)
 
 
 def _check(image: U8, region: BoolMask | None = None) -> None:

@@ -13,10 +13,16 @@ handle, on a real file, before [0178](0178-m4-import-a-sheet.md) and [0179](0179
 
 ## Input
 
-The PixelLab export the game makes for Sanjay in its M02
-(`../urban-mystery-club/docs/backlog/m2/0041-m02-sanjay-sleeping-mc.md`): a PixFlux figure on a 56×56 canvas, idle in 4 or
-more directions, steered to the 30° view. The Owner provides both the ZIP and the PNG sheet export, if PixelLab offers both.
-If 0041 isn't done yet, any PixelLab figure in 4 directions will do.
+A PixelLab export of a figure the game makes in its M3 (changed 2026-11-13; not Sanjay: his sprites are built from the 3D
+Model, so he is no sprite case). Either:
+
+- a **raccoon from the fight**, or
+- the **animal services person** who tries to catch the raccoons.
+
+The Owner picks one and provides both the ZIP and the PNG sheet export, if PixelLab offers both: a figure on a canvas of the
+game's size (56×56 unless the game says otherwise), idle in 4 or more directions, steered to the 30° view. If neither is made
+yet, any PixelLab figure in 4 directions will do. A raccoon is the better test of `fit` (a low, wide body, not a standing
+figure), the person the better test against `[character] height` 52; if the Owner can provide both, take the raccoon first.
 
 ## What to find out
 
@@ -28,7 +34,7 @@ If 0041 isn't done yet, any PixelLab figure in 4 directions will do.
   edge is a 1 px dark line (which decides `placement = edge` as the default); whether it casts a shadow onto the lowest rows
   (which would put the measured feet in the wrong place); how much it shifts on the canvas between directions.
 - **Normals:** the game's `tools/normal_map.py` output and a flat map, side by side in Godot under a `PointLight2D` beside
-  `character.mc02`. Which reads better beside the 3D character?
+  a 3D character (Sanjay, `character.mc02`). Which reads better beside the 3D character?
 - **Palette:** map one frame with `kiripix op quantize` (or the room's `palette` Op) to the Project palette with 16 colours,
   and note what is lost.
 

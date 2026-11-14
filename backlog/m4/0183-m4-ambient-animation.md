@@ -27,8 +27,11 @@ drafted with 0189.
 5. Follow-ups found while building (b) and (c), 2026-11-13: [0204](0204-m4-palette-command.md),
    [0206](0206-m4-loops-hold-one-loop.md), [0207](0207-m4-rename-and-remove-a-loop.md),
    [0208](0208-m4-import-several-frames-over-rest.md), [0210](0210-m4-ui-loops-screen-follow-ups.md),
-   [0211](0211-m4-export-layer-remainder.md), and the ADR, [0212](0212-m4-adr-the-loops-stage.md). Part B is carried by
-   0184's last criterion.
+   [0211](0211-m4-export-layer-remainder.md), and the ADR, [0212](0212-m4-adr-the-loops-stage.md).
+6. After the trial (2026-11-14), Part B (edit frames) stays: [0219](0219-m4-import-and-pick-edit-frames.md) (core), then
+   [0220](0220-m4-loops-build-edit-frames.md) (imaging), then [0221](0221-m4-ui-loop-edits-source.md) (UI). Independent of
+   them: [0222](0222-m4-loop-rest-frame.md) (imaging), a Loop that never shows frame 0 while it plays, which a TV that is
+   always on needs.
 
 Background: [the spec](../../docs/KIRIPIX_SPEC.md) §6.1 (`layers`, `masks`, `palette`, `place`, Looks), §9 (room export,
 `room.json`), §16 open decision 8; [ADR 0009](../../docs/adr/0009-a-rooms-looks-are-a-stage-on-the-room.md);
@@ -285,6 +288,20 @@ Whole: about 1.8–2.9M tokens for (a), (b) and (c), close to M2's props.
    stop being typed into the game's data.
 
 All of it is in M4 (the Owner, 2026-11-12).
+
+### After the trial (0184, 2026-11-14)
+
+(b) and (c) were built before the trial ran, so the order no longer matters. What the trial says about them:
+- **(b) cycles:** a `pulse` reads as the object glowing (Option A stands), and the Owner would use it on dungeon lamps. On a
+  large palette the pulse jumped hue; that was fixed in `ramps` during the trial. A note for the Owner's planned palette
+  of 512 to 1024 colours: `depth` counts places along a ramp, so on a palette 2 to 4 times denser the same depth gives a
+  visibly smaller pulse. [0223](0223-m4-pulse-depth-in-lightness.md) gives it in OKLab lightness instead.
+- **(c) frame sources worth building:** edits, first. The Owner's favourite Loop was a TV news broadcast from six edits,
+  about 15 minutes. Edits must each be made from the Source, never from an edit: the drift outside the region climbed from
+  ΔE 1.65 to 4.67 over a chain of edits. Inside the region a still picture boils (25-37 % of the region changes between
+  edits), so the region's still part is held from one frame (0220). Op frames work, but `sway` as tried was too strong for
+  a small indoor plant. Kits stay as built (Part A).
+- **Part B stays:** 0219, 0220 and 0221 carry it.
 
 ## User Stories
 

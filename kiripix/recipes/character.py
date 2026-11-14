@@ -263,6 +263,10 @@ CHARACTER = KindSpec(
                                       "rendered eyes' pixels have."),
                 ParamSpec(name="eye_white", type="int", minimum=-1, default=-1,
                           description="The white's colour: an index into the Project palette; -1: its lightest colour."),
+                ParamSpec(name="eye_gap", type="int", minimum=-3, maximum=4, default=0,
+                          description="With stamped eyes: px added to the gap between the two eyes (negative takes them "
+                                      "away; the gap stays at least 1). The pair stays centred where the Model's eyes are. "
+                                      "Front views only: a face turned to a side keeps the Model's gap."),
             ),
             checks=(
                 CheckSpec(code="normal.size_mismatch", description="Normal map size equals the colour frame's."),

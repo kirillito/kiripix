@@ -58,3 +58,10 @@ seam measure. Frame ids in `flicker_sequence` and `even_sequence` are given as a
 ## Closing notes (2026-11-13)
 
 - The Owner approved the golden images (`cycle_neon_rotate`, `cycle_puddle_pulse`) on 2026-11-13.
+
+## After trial 0184 (2026-11-14)
+
+- `ramps` changed: the hue gap of 40 degrees made one ramp of 187 colours on the Owner's 283-colour palette, and a navy
+  screen pulsed through brown and green. A colour's ramp is now every coloured palette colour within 25 degrees of its own
+  hue (`RAMP_HUE_WINDOW`), not a partition. Grey chroma 0.03 confirmed. The puddle golden changed in 10 pixels.
+- Confirmed: pulse `depth` 2 and `steps` 4; flicker 6 / 0.6 / 600; even `ticks` 8; the flash thresholds.

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: godot-export
 type: ticket
@@ -26,8 +26,12 @@ Spec §9 (character export). Part of [0147](0147-m4-character-palette-ramps.md).
 
 - [x] CLI seam: an export of the fake character with `parts` writes `ramps.png` with the ramps' exact colours, and
       `character.json` lists them; a re-export writes nothing.
-- [ ] In Godot 4.7 (headless, as 0113 did): a test shader swapping one row of `ramps.png` for other colours changes only that
+- [x] In Godot 4.7 (headless, as 0113 did): a test shader swapping one row of `ramps.png` for other colours changes only that
       part's pixels on mc02.
+      2026-11-13: run on mc03_female_clothes01 instead of mc02 (the owner's choice), in a scratch copy of the art Project
+      (export pointed at a scratch Godot project; the art Project untouched), with `palette parts=skin,hair,jacket,jeans,shoes`.
+      `export` wrote `ramps.png`; the probe (the test's `SWAP_PROBE`) in Godot 4.7.2 headless changed only the swapped row's
+      part for each of the five rows (skin 41 px, hair 105, jacket 120, jeans 226, shoes 28), and kept the rest (250 fixed).
       2026-11-12: `test_godot_swapping_one_row_of_ramps_png_changes_only_that_parts_pixels` passes in Godot 4.7.2 headless
       (`KIRIPIX_GODOT` set to the console build), on the fake character. Headless runs the shader's rule in a probe script,
       not the shader itself. Not yet run on mc02: that needs mc02 rebuilt (`render`, `palette`, `export`) in a scratch copy of

@@ -69,3 +69,10 @@ Part B (edit frames) is left until trial 0184 has run (the Owner's decision); it
 ## Closing notes (2026-11-13)
 
 - Closed 2026-11-13 with Part A; Part B (edit frames) waits for trial 0184, the Owner's decision.
+
+## After trial 0184 (2026-11-14)
+
+- `KIT_OFF_PALETTE_ERROR` 1 % kept: the trial painted no kit.
+- Part B is kept, and moves to [0220](0220-m4-loops-build-edit-frames.md), with the trial's numbers. Its `loop.flicker`
+  changes: the union of the frames' differences against frame 0 covers a whole TV screen that turns on, so it would never
+  fire. 0220 measures flicker between edit frames instead, and adds a `hold`.

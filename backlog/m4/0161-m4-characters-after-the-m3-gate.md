@@ -43,6 +43,21 @@ Added 2026-11-12 for the game's M03 (four character Assets: 2 bodies x 2 outfits
 Ramps that match across the four characters are a spec of their own, [0166](0166-m4-ramps-match-across-characters.md), after
 0147's tickets.
 
+Filed 2026-11-13 after the Owner chose in 0160 (the flatter look, `24_cel_s_lines_d`):
+
+| # | Ticket | Kind |
+|---|---|---|
+| 8 | [0213](0213-m4-render-cel-band-edge.md) | work: `band_edge` and `band_smooth` on `render` (`render_frames.py`: not with 0162 or 0148) |
+| 9 | [0214](0214-m4-inner-lines-op.md), then [0215](0215-m4-finish-inner-lines.md) | work: the inner-lines Op, then `inner_lines` on `finish` |
+| 10 | [0216](0216-m4-inner-lines-with-part-ramps.md) | work, after 0215: lines with part ramps; the Owner decides how first |
+| 11 | [0217](0217-m4-character-normal-map-trial.md) | trial, after 0213 and 0215: where the normal map is flattened, and by how much |
+
+Filed 2026-11-13 after the Owner chose in 0158 (option 1, a transition clip):
+
+| # | Ticket | Kind |
+|---|---|---|
+| 12 | [0218](0218-m4-transition-clips.md) | work: a `transition` Decision, rendered as its own clip (`render_frames.py`, `clips.py`) |
+
 A trial files its build tickets here when the Owner has chosen.
 
 ## Order

@@ -102,9 +102,9 @@ LOOPS_FILE = "loops.json"
 LOOPS_SCHEMA_VERSION = 1
 PLATE = "plate"  # a Loop's `layer` when it sits on the Plate
 STRIP_WIDTH = 4096  # px: a strip wraps into rows past this
-SEAM_LIMIT = 3.0  # `loop.seam` warns over this ratio (set by 0184)
-PULSE_REACH = 2  # px: a pulse region beyond this from the pixels of its picked colours is `loop.pulse_spills` (set by 0184)
-KIT_OFF_PALETTE_ERROR = 0.01  # a kit frame with more than this share of its region off the palette is an error (set by 0184)
+SEAM_LIMIT = 3.0  # `loop.seam` warns over this ratio (confirmed by 0184: its Loops measured 0.94 to 1.6)
+PULSE_REACH = 2  # px: a pulse region beyond this from the pixels of its picked colours is `loop.pulse_spills` (kept: 0184 didn't measure it)
+KIT_OFF_PALETTE_ERROR = 0.01  # a kit frame with more than this share of its region off the palette is an error (kept)
 SLOWER = (2, 3, 4, 6, 8, 12, 16)  # the factors `loop.flash` tries for the timing it suggests
 HEX = "^#[0-9A-Fa-f]{6}$"
 

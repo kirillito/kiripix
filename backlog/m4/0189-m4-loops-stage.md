@@ -84,3 +84,9 @@ Trial 0184 hadn't run: every default it sets is a placeholder with a `# set by 0
   light end doesn't move; the flash area is measured against `project.resolution`; `flicker` has no seam measure.
 - Tests: `tests/cli/test_loops.py`. The room's Stage list in `test_project.py` gained `loops`.
 - `tests/cli/test_looks.py` changed by one assertion: the Recipe now has `loops` between `looks` and `place`.
+
+## After trial 0184 (2026-11-14)
+
+- Flood tolerance 0.04 changed to 0.03 (`FLOOD_TOLERANCE`, shared with `looks`, and the loops screen): at 0.04 a TV's
+  screen leaked 11 px into its bezel.
+- `SEAM_LIMIT` 3.0 confirmed (the trial's Loops measured 0.94 to 1.6). `PULSE_REACH` 2 was not measured; kept.

@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 milestone: M4
 agent: none
 type: ticket
@@ -45,7 +45,20 @@ in the Model doesn't end that. Three more things the Owner asked for, which the 
 - [x] A sway of less than a pixel doesn't move the eyes; a bigger one moves both together (`tests/golden/test_eye_ops.py`).
 - [x] An eye facing away is not painted; `eyes=stamp` without followed eyes fails with a fix.
 - [x] `still`, `speed` and `blink` reach `clips.json`; a blink past the last frame fails with a fix.
-- [ ] The Owner sees it in the game on mc03 (male and female) and says the eyes read as eyes.
+- [x] The Owner sees it in the game on mc03 (male and female) and says the eyes read as eyes (2026-11-13).
+
+## Owner's follow-up, 2026-11-13: eyes further apart
+
+The Owner wants to see the eyes one pixel further apart. **`finish eye_gap=<px>`** (-3 to 4, default 0) adds that many pixels
+to the gap `plan_eyes` takes from the Model; the gap stays at least 1 and the pair stays centred on the Model's eyes, so with
+`eye_gap=1` one eye moves out by a pixel (which one depends on the rounding). Only front views: on mc03 the three-quarter
+views' outer eye sits against the outline, and a wider gap pushed its pupil onto it, so a face turned to a side (`TURNED`)
+keeps the Model's gap. Tested in `tests/golden/test_eye_ops.py`.
+To try it: `kiripix set character.mc03 finish eye_gap=1`, then `finish`, `sheet` and `export`. A new parameter's default
+counts in `finish`'s inputs, so `finish` is stale on every character after this change even at `eye_gap=0`.
+
+- [x] The Owner compared `eye_gap=0` and `eye_gap=1` on mc03 (2026-11-14) and approved the front-view-only gap. The default
+      stays 0; a character that wants it sets `eye_gap=1`.
 
 ## Open
 

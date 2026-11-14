@@ -6,7 +6,7 @@ measures behind the `loop.flash` and seam findings. Pure: arrays in, arrays out.
 region is an (H, W) bool mask, colours and palettes are (N, 3) uint8 RGB. Every output pixel is a colour the input had
 or a colour of the palette; alpha is copied. Ties are broken by palette order, then index.
 
-The defaults marked "set by 0184" are placeholders until the trial reports.
+The defaults were checked by trial 0184 (the kitchen's TV): "confirmed by 0184" or set from it.
 """
 
 from __future__ import annotations
@@ -30,20 +30,20 @@ if TYPE_CHECKING:
 else:
     BoolMask = Any
 
-PULSE_DEPTH = 2  # places along the ramp (set by 0184)
-PULSE_STEPS = 4  # frames in a pulse (set by 0184)
-FLICKER_MEAN_TICKS = 6  # (set by 0184)
-FLICKER_SPREAD = 0.6  # a hold is the mean plus or minus this share of it (set by 0184)
-FLICKER_LENGTH_TICKS = 600  # (set by 0184)
-EVEN_TICKS = 8  # (set by 0184)
-RAMP_HUE_GAP = math.radians(40)  # colours further apart in hue than this are in different ramps (set by 0184)
-RAMP_NEUTRAL_CHROMA = 0.03  # OKLab chroma below which a colour is grey and has no hue (set by 0184)
+PULSE_DEPTH = 2  # places along the ramp (confirmed by 0184: 4 reached a ramp's end on a 283-colour palette)
+PULSE_STEPS = 4  # frames in a pulse (confirmed by 0184)
+FLICKER_MEAN_TICKS = 6  # (confirmed by 0184)
+FLICKER_SPREAD = 0.6  # a hold is the mean plus or minus this share of it (confirmed by 0184)
+FLICKER_LENGTH_TICKS = 600  # (confirmed by 0184)
+EVEN_TICKS = 8  # (confirmed by 0184 for cycles; the Owner wants a sway slower, see 0192)
+RAMP_HUE_WINDOW = math.radians(25)  # a colour's ramp holds colours this close to its hue (trial 0184)
+RAMP_NEUTRAL_CHROMA = 0.03  # OKLab chroma below which a colour is grey and has no hue (confirmed by 0184)
 
 TICKS_PER_SECOND = 60
-FLASH_STEP = 0.10  # WCAG 2.3.1: a change of at least 10 % of the maximum relative luminance (set by 0184)
-FLASH_DARK_BELOW = 0.80  # ... where the darker state is below this (set by 0184)
+FLASH_STEP = 0.10  # WCAG 2.3.1: a change of at least 10 % of the maximum relative luminance (confirmed by 0184)
+FLASH_DARK_BELOW = 0.80  # ... where the darker state is below this (confirmed by 0184)
 FLASH_AREA_FRACTION = 0.25 * (341 * 256) / (1024 * 768)  # a quarter of 341 x 256 at 1024 x 768, as a share of the screen
-FLASH_PER_SECOND = 3  # more than this is the finding (the caller's rule); kept here with the measure (set by 0184)
+FLASH_PER_SECOND = 3  # more than this is the finding (the caller's rule), kept here with the measure (0184)
 
 _DECIMALS = 12
 
@@ -100,44 +100,29 @@ def cycle_rotate(image: U8, index: U8, colours: U8, steps: int | None = None) ->
 
 
 def ramps(palette: U8) -> list[tuple[int, ...]]:
-    """For each palette colour, its ramp: the palette indices of its hue group, darkest first.
+    """For each palette colour, its ramp: the palette indices of the colours like it, darkest first.
 
-    Colours are grouped by hue in OKLab: greys (chroma below `RAMP_NEUTRAL_CHROMA`) are one group; the rest are sorted
-    round the hue circle and a new group starts at every gap wider than `RAMP_HUE_GAP`. A group is ordered by lightness,
-    ties by palette index, so a colour's neighbours in its ramp are its next darker and lighter colour.
+    Greys (OKLab chroma below `RAMP_NEUTRAL_CHROMA`) share one ramp. A coloured colour's ramp holds every coloured
+    colour within `RAMP_HUE_WINDOW` of its own hue, itself included. It is the colour's own neighbourhood, not a
+    partition: on a large palette every hue has neighbours, so any grouping by gaps would join the whole hue circle
+    (trial 0184: a navy screen pulsed through brown and green). Ordered by lightness, ties by palette index, so a
+    colour's neighbours in its ramp are its next darker and lighter colour.
     """
     _check_colours(palette)
     lab = srgb_to_oklab(palette)
     lightness = np.round(lab[:, 0], _DECIMALS)
     chroma = np.hypot(lab[:, 1], lab[:, 2])
     hue = np.arctan2(lab[:, 2], lab[:, 1])
-    groups: list[list[int]] = []
-    neutral = [i for i in range(len(palette)) if chroma[i] < RAMP_NEUTRAL_CHROMA]
-    if neutral:
-        groups.append(neutral)
-    coloured = [i for i in range(len(palette)) if chroma[i] >= RAMP_NEUTRAL_CHROMA]
-    if coloured:
-        order = sorted(coloured, key=lambda i: (round(float(hue[i]), _DECIMALS), i))
-        gaps = [(float(hue[order[(j + 1) % len(order)]] - hue[order[j]]) % math.tau) for j in range(len(order))]
-        if len(order) == 1:
-            groups.append(order)
-        else:
-            # start after the widest gap, so a group is never cut by the wrap at +-pi; the first widest gap wins a tie
-            widest = max(range(len(gaps)), key=lambda j: (round(gaps[j], _DECIMALS), -j))
-            start = (widest + 1) % len(order)
-            current = [order[start]]
-            for step in range(1, len(order)):
-                j = (start + step) % len(order)
-                if gaps[(j - 1) % len(order)] > RAMP_HUE_GAP:
-                    groups.append(current)
-                    current = []
-                current.append(order[j])
-            groups.append(current)
-    result: list[tuple[int, ...]] = [()] * len(palette)
-    for group in groups:
-        ordered = tuple(sorted(group, key=lambda i: (float(lightness[i]), i)))
-        for i in group:
-            result[i] = ordered
+    neutral = chroma < RAMP_NEUTRAL_CHROMA
+    greys = tuple(sorted(np.nonzero(neutral)[0].tolist(), key=lambda i: (float(lightness[i]), i)))
+    result: list[tuple[int, ...]] = []
+    for i in range(len(palette)):
+        if neutral[i]:
+            result.append(greys)
+            continue
+        apart = np.abs((hue - hue[i] + math.pi) % math.tau - math.pi)
+        near = ~neutral & (np.round(apart, _DECIMALS) <= round(RAMP_HUE_WINDOW, _DECIMALS))
+        result.append(tuple(sorted(np.nonzero(near)[0].tolist(), key=lambda j: (float(lightness[j]), j))))
     return result
 
 

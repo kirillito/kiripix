@@ -25,6 +25,20 @@ def test_two_eyes_facing_the_camera_get_a_white_each_and_pupils_toward_each_othe
     assert stamps == [EyeStamp(left=8, top=9, columns=2, rows=2, pupil=1), EyeStamp(left=11, top=9, columns=2, rows=2, pupil=0)]
 
 
+def test_a_wider_gap_moves_the_eyes_apart_round_their_middle_and_a_narrower_one_keeps_a_pixel_between() -> None:
+    [wider] = plan_eyes([pair()], gap=1)
+    [narrower] = plan_eyes([pair()], gap=-2)
+
+    assert [(s.left, s.pupil) for s in wider if s] == [(7, 1), (11, 0)]
+    assert [s.left for s in narrower if s] == [8, 11], "the gap stays 1 px"
+
+
+def test_a_face_turned_to_a_side_keeps_the_models_gap() -> None:
+    turned = [eye(8.5, turn=-0.5), eye(11.8, turn=-0.5, facing=0.6)]
+
+    assert plan_eyes([turned], gap=2) == plan_eyes([turned])
+
+
 def test_a_sway_of_less_than_a_pixel_does_not_move_the_eyes_and_a_bigger_one_moves_both_together() -> None:
     plans = plan_eyes([pair(), pair(0.3), pair(-0.3), pair(0.4), pair(1.2), pair(0.7)])
 

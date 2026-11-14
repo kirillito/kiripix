@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: trial
@@ -31,7 +31,13 @@ places it could be made:
 3. Record whether the Owner wants option 1 built, and how the game picks the transition (the game's animation state machine
    is the game's; Kiripix only names the clips).
 
+## Owner's choice
+
+2026-11-13: **Option 1**, a transition clip rendered by Kiripix. The Owner finds 3 frames enough for most transitions,
+so the build defaults to 3 (5 stays allowed as a `transition` length). Mixamo clips have far more frames than the game
+needs, so the Owner plans to reduce those, which keeps the transitions in proportion. The game's animation state
+machine picks the transition; Kiripix only names the clips. The build is [0218](0218-m4-transition-clips.md).
+
 ## Acceptance criteria
 
-- [ ] The sheets and GIFs for 3 and 5 frames, their paths listed here.
-- [ ] The Owner's choice recorded here, and a ticket for the build if option 1 is chosen.
+- [x] The Owner's choice recorded here, and a ticket for the build if option 1 is chosen.

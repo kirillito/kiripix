@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: none
 type: ticket
@@ -34,3 +34,11 @@ a scratch folder, not the art Project.
 - [ ] Before: the finding lists the frames where the eyes go missing.
 - [ ] After the Owner's bigger eyes: no `sheet.part_vanishes` for `eyes`. Any that remain for other materials are listed here,
       each with the Owner's call: fix the Model, raise `height`, or leave it out of `watch_parts`.
+
+## Closed, 2026-11-13: superseded by 0203
+
+Bigger eyes in the Model (tried on mc03) made the eyes vanish less, but they still changed shape in every frame. The fix is
+[0203](0203-m4-stamped-eyes-blinks-and-still-clips.md): `finish eyes=stamp` paints each eye as a fixed pattern, so it can't
+vanish, and `sheet.part_vanishes` no longer watches the eye materials. The Owner saw the stamped eyes in the game and says
+they read as eyes. The before and after counts above weren't recorded, and aren't needed now. `sheet.part_vanishes` findings
+for other materials go to whichever character ticket meets them.

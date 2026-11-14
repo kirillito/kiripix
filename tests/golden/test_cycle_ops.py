@@ -142,14 +142,38 @@ def test_rotate_takes_the_number_of_frames_asked_for() -> None:
 # ramps and pulse
 
 
-def test_ramps_group_by_hue_and_order_by_lightness() -> None:
+def test_ramps_hold_the_colours_near_each_colours_own_hue_ordered_by_lightness() -> None:
     result = ramps(PALETTE)
 
     assert result[1] == result[2] == result[0] == (0, 1, 2)
-    assert result[3] == result[5] == (3, 4, 5, 6)
-    assert result[8] == (7, 8, 9, 10)
+    assert result[3] == (3, 4, 5), "light orange is 59 degrees from the dark red"
+    assert result[8] == (7, 8, 9), "pale blue is 27 degrees from the blue"
+    assert result[10] == (9, 10)
+    assert all(i in ramp for i, ramp in enumerate(result))
     assert result == ramps(PALETTE), "stable for a given palette"
     assert len(result) == len(PALETTE)
+
+
+def test_a_dense_palette_never_ramps_across_hues() -> None:
+    """Trial 0184: a palette of 283 colours had no hue gap wider than 40 degrees, so one ramp ran round the whole hue
+    circle and a navy screen pulsed through brown and green. 36 hues 10 degrees apart, 4 lightnesses each."""
+    import colorsys
+
+    from kiripix.ops import srgb_to_oklab
+
+    ring = np.array([[round(c * 255) for c in colorsys.hsv_to_rgb(h / 36, 0.6, v)] for h in range(36)
+                     for v in (0.3, 0.5, 0.7, 0.9)], dtype=np.uint8)
+    lab = srgb_to_oklab(ring)
+    hue = np.degrees(np.arctan2(lab[:, 2], lab[:, 1]))
+
+    result = ramps(ring)
+
+    for i, ramp in enumerate(result):
+        apart = np.abs((hue[list(ramp)] - hue[i] + 180) % 360 - 180)
+        assert apart.max() <= 25 + 1e-9, f"colour {i}'s ramp reaches {apart.max():.0f} degrees from its hue"
+        assert len(ramp) >= 4, f"colour {i} keeps its own hue's lightnesses"
+        lightness = lab[list(ramp), 0]
+        assert (np.diff(lightness) >= 0).all(), "darkest first"
 
 
 def test_pulse_moves_up_the_ramp_and_back_and_stays_at_the_end(request: pytest.FixtureRequest) -> None:
@@ -162,6 +186,7 @@ def test_pulse_moves_up_the_ramp_and_back_and_stays_at_the_end(request: pytest.F
     assert (frames[1, 1, 1, :3] == PALETTE[8]).all() and (frames[2, 1, 1, :3] == PALETTE[9]).all()
     assert (frames[3] == frames[1]).all(), "back down the way it came"
     assert (frames[2, 3, 5, :3] == PALETTE[10]).all(), "stops at the end of the ramp"
+    assert (frames[2, 2, 3, :3] == PALETTE[9]).all(), "the blue's ramp ends at light blue: pale blue is too far in hue"
     assert (frames[:, 1, 10, :3] == PALETTE[10]).all(), "the pale pixel is at the end already"
     assert (frames[2, 4, 1, :3] == PALETTE[2]).all(), "the lightest grey is its ramp's end"
     assert (frames[:, 0] == image[0]).all(), "outside the region"

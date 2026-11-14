@@ -199,6 +199,7 @@ class _Eyes:
                 f"parameter (kiripix set {run.asset_id} render eyes=<materials>), or leave the eyes as rendered",
                 code="finish.eyes_not_followed", fix=f"kiripix set {run.asset_id} finish eyes=render")
         self.whites = _eyes_mode(run) == "stamp"
+        gap = int(run.params.get("eye_gap", 0))
         near, far = (float(v) for v in document["depth_range"])
         margin = SEEN_MARGIN * float(document["height"]) / float(document["px_per_unit"])
         self.stamps: dict[tuple[str, str, int], list[EyeStamp | None]] = {}
@@ -222,7 +223,7 @@ class _Eyes:
                             seen_colours[found_rgb] = seen_colours.get(found_rgb, 0) + int(count)
                     depth = near + _read_depth(run.upstream[source] / str(frame["files"]["depth"])) / 65535.0 * (far - near)
                     anchors.append([self._anchor(found, depth, margin) for found in frame.get("eyes", [])])
-                for frame, stamps in zip(listed, plan_eyes(anchors, self.whites), strict=True):
+                for frame, stamps in zip(listed, plan_eyes(anchors, self.whites, gap), strict=True):
                     self.stamps[(str(entry["name"]), direction, int(frame["index"]))] = stamps
         wanted = int(run.params.get("eye_colour", -1))
         if wanted >= 0:

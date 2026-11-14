@@ -57,3 +57,9 @@ shimmer 1 px / 6 rows / 6 frames).
 ## Closing notes (2026-11-13)
 
 - The Owner approved the golden images (`sway_plant`, `shimmer_puddle`, `scroll_window`) on 2026-11-13.
+
+## After trial 0184 (2026-11-14)
+
+- `sway` 1 px and 4 frames confirmed: at 1 px, 6 frames repeat two of them (`loop.still`), and 2 px made a small indoor plant
+  look like it was in a gale. The Owner wants a sway slower than 12 ticks a frame, and at most 1 px. Use it outdoors.
+- `shimmer` and `scroll` defaults weren't tried; kept. `scroll` (dx -1) made a TV's news ticker from one edit with no flicker.

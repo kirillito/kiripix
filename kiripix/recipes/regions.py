@@ -56,7 +56,7 @@ SCALE_LIMIT = 0.015  # registration: the scale may differ from 1 by this much on
 SHIFT_LIMIT = 4.0  # registration: the shift, in target px
 MISALIGNED_RESIDUAL = 0.5  # target px: the median miss of the tiles after registration
 REGISTER_GROW = 48  # Source px of the region's reach that registration leaves out
-FLOOD_TOLERANCE = 0.04  # OKLab distance: a `flood` Decision's default (set by 0184)
+FLOOD_TOLERANCE = 0.03  # OKLab distance: a `flood` Decision's default (trial 0184: 0.04 leaked into a TV's bezel)
 FLOOD_TOLERANCE_MAX = 0.2
 
 _POINTS: dict[str, Any] = {"type": "array", "items": {"type": "array", "items": {"type": "integer"},

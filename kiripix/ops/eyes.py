@@ -75,14 +75,15 @@ def _snap(ideal: float, held: int | None) -> int:
     return int(np.floor(ideal + 0.5))
 
 
-def plan_eyes(frames: Sequence[Sequence[EyeAnchor]], whites: bool = True) -> list[list[EyeStamp | None]]:
+def plan_eyes(frames: Sequence[Sequence[EyeAnchor]], whites: bool = True, gap: int = 0) -> list[list[EyeStamp | None]]:
     """The pattern of each eye in each frame of one clip in one direction; None where an eye isn't drawn. `frames` has one
     list per frame, the same eyes in the same order in each.
 
     What is decided once for all the frames, from their middle values: which eyes are drawn at all, each one's columns (2
     with `whites` when it is `WIDE`, else 1; on a face turned to a side, the eye that faces the camera less is 1), the rows,
     the gap between two eyes, and which column is the pupil (toward the other eye when the face looks at the camera, on the
-    side it is turned to otherwise). Per frame, only the place: the
+    side it is turned to otherwise). `gap` px are added to the Model's gap between two eyes (it stays at least 1), and the
+    pattern stays centred on the eyes' middle; not on a face turned to a side, where the eyes are foreshortened. Per frame, only the place: the
     middle of the eyes that are drawn, on whole pixels, held until it has moved `STICK` px; and an eye is left out of a frame
     where it faces away or wasn't seen."""
     if not frames or not frames[0]:
@@ -104,6 +105,8 @@ def plan_eyes(frames: Sequence[Sequence[EyeAnchor]], whites: bool = True) -> lis
     order = sorted(drawn, key=lambda i: median(f[i].x for f in frames))  # screen left to right
     # where each drawn eye's block starts, from the pattern's left edge, for every set of eyes a frame can show
     centres = {i: median(f[i].x for f in frames) for i in order}
+    if abs(turn) > TURNED:
+        gap = 0  # a turned face's outer eye sits at the silhouette's edge: a wider gap would push it onto the outline
 
     def blocks(present: tuple[int, ...]) -> tuple[dict[int, int], int]:
         offsets: dict[int, int] = {}
@@ -112,7 +115,7 @@ def plan_eyes(frames: Sequence[Sequence[EyeAnchor]], whites: bool = True) -> lis
             if n:
                 before = present[n - 1]
                 apart = centres[i] - centres[before] - (columns[i] + columns[before]) / 2
-                at += max(1, int(np.floor(apart + 0.5)))
+                at += max(1, int(np.floor(apart + 0.5)) + gap)
             offsets[i] = at
             at += columns[i]
         return offsets, at

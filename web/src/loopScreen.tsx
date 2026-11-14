@@ -18,7 +18,7 @@ export const LOOPS_DECISION = "cycle"; // what tells the loops Stage's screen fr
 const REGION = "region";
 const PALETTE_FILE = "style/palette.gpl";
 const PLATE = "plate";
-const DEFAULT_TOLERANCE = 0.04; // the Stage's own default (a `flood` Decision without one)
+const DEFAULT_TOLERANCE = 0.03; // the Stage's own default (a `flood` Decision without one; trial 0184)
 const DEFAULT_EVEN_TICKS = 8;
 
 type Tool = "brush" | "erase" | "polygon" | "polygon-erase" | "flood" | "eyedrop" | "anchor";

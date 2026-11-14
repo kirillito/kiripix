@@ -79,3 +79,7 @@ Part B is left until trial 0184 has run (the Owner's decision).
 ## Closing notes (2026-11-13)
 
 - Closed 2026-11-13 with Part A; Part B (edit frames) waits for trial 0184, the Owner's decision.
+
+## After trial 0184 (2026-11-14)
+
+Part B is kept, and moves to [0219](0219-m4-import-and-pick-edit-frames.md).
