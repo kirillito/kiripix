@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -42,9 +42,23 @@ per part, which reads as drawn.
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake Blender: `kiripix set <character> render band_edge=0.62 band_smooth=1.5` reaches the `toon`
+- [x] CLI seam, on the fake Blender: `kiripix set <character> render band_edge=0.62 band_smooth=1.5` reaches the `toon`
       object of `render.json`, and a value out of range is refused with a finding.
-- [ ] Marked `blender` test, on the fixture: with the defaults the colour pass is byte-equal to before; with
+- [x] Marked `blender` test, on the fixture: with the defaults the colour pass is byte-equal to before; with
       `band_edge=0.62` more opaque pixels are in the shadow band than at 0.5; with `band_smooth=1.5` the normal pass is
       byte-equal to the unsmoothed one.
-- [ ] `uv run pytest`, `uv run lint-imports` and `uv run mypy` pass.
+- [x] `uv run pytest`, `uv run lint-imports` and `uv run mypy` pass.
+
+## Result (2026-11-14)
+
+- `render` has `band_edge` (float 0 to 1, default 0.5) and `band_smooth` (float px, 0 or more, default 0), refused out of range by
+  the parameter check. Both are in the `toon` object that goes to Blender and into `render.json`, so they are in every clip's key.
+  `RENDER_SCHEMA_VERSION` is 4; an older render is stale and rebuilds.
+- `shade` in `kiripix/blender/render_frames.py` shifts half-Lambert by `0.5 - band_edge` and clips it before the cut. `smooth_normal`
+  blurs the camera-space normals by a separable Gaussian (radius 3 sigma) as a normalised convolution over the mask, then scales
+  them to unit length. Only `shade` sees the smoothed normals; the normal, depth, mask and material passes are written from the
+  unsmoothed ones. At the defaults neither step runs, so the colour pass is the code path it was.
+- Tests: `tests/cli/test_character_render.py`, 2 new CLI tests on the fake Blender (the values reach `toon` and `render.json`, make
+  render stale, out of range is refused) and 1 marked `blender` test on the walk fixture (2 bands: `band_edge=0.62` shadows more
+  pixels than 0.5; with `band_edge` or `band_smooth` set the four other passes are byte-equal to the defaults').
+- Not tested byte for byte against the pre-change colour pass: no golden of it exists; the defaults skip the new code.

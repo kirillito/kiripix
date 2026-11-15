@@ -41,10 +41,12 @@ class FileInputs:
     def __init__(self) -> None:
         self.folder = Path(tempfile.mkdtemp(prefix="kiripix-files-"))
 
-    def store(self, field: str, filename: str | None, data: bytes) -> Path:
-        """Store one file under its cleaned name (the field's name when it has none); returns its path."""
+    def store(self, field: str, filename: str | None, data: bytes, number: int | None = None) -> Path:
+        """Store one file under its cleaned name (the field's name when it has none); returns its path. The files of a
+        list input are each in a folder of their own (`number`, their place in the list), so two can share a name."""
         clean = re.sub(r"[^A-Za-z0-9._-]", "_", Path((filename or "").replace("\\", "/")).name).lstrip(".")
-        path = self.folder / field / (clean or field)
+        folder = self.folder / field if number is None else self.folder / field / str(number)
+        path = folder / (clean or field)
         atomic.write_bytes(path, data)
         return path
 

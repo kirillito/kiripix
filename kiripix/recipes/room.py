@@ -113,6 +113,7 @@ from kiripix.recipes.loops import (
     DECISIONS as LOOP_DECISIONS,
     LOOPS_STAGE,
     STAGE_TEXT as LOOP_TEXT,
+    apply_edits as apply_loop_edits,
     check_loops,
     loops_needs_input,
     read_loops,
@@ -1032,7 +1033,8 @@ def _check_areas(run: StageRun, areas: list[dict[str, Any]]) -> list[Finding]:
                     severity="info",
                     message=f"{len(ambiguous)} cells of the area '{name}' are between a quarter and three quarters "
                             f"covered by solid or pit, with their top-left pixels at {listed}{more}",
-                    position=at,
+                    position=at.model_copy(update={"field": f"area.{name}"}),  # the area's ID, for the place screen
+                    points=ambiguous,
                     owner_action="Make the Mask decide those cells: paint them fully solid or pit, or fully open "
                                  f"(kiripix decide {asset} {MASKS_STAGE} --help). Kiripix doesn't choose which cells "
                                  "are open; the game does.",
@@ -1246,13 +1248,15 @@ def _check_reach(run: StageRun) -> list[Finding]:
 # export: what the game gets, with nothing of Godot in it: the mapped Plate, the collision Masks and `room.json` with the collision shapes, the
 # navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
 
-ROOM_SCHEMA_VERSION = 8  # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
+ROOM_SCHEMA_VERSION = 10 # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
 #                          3: `area` Markers, with `walkable` and a snapped box (ticket 0137)
 #                          4: an emitter's `shape`, `direction` and `colours`, `null` when unset (ticket 0185)
 #                          5: `masks`, the collision Masks' PNG files, by name (ticket 0140)
 #                          6: `looks`, each Look's pieces, box and own `solid` (ticket 0131)
 #                          7: `loops`, each Loop's strips, frame layout and sequence (ticket 0190)
 #                          8: a Loop's `source` and `moves_layer` (ticket 0195)
+#                          9: a Layer's `remainder`, its file with the frame Loops' regions cleared, or None (ticket 0211)
+#                          10: a Loop's `rest`, true when frame 0 is the room's and `sequence` never plays it (ticket 0222)
 STRIP_LIMIT = 4096  # px: a Loop's strip wraps into rows at this width, and none may be taller (a texture's safe size)
 MASKS_DIR = "masks"  # in `out/export/`, and beside the scene in the game: the game builds its grid from `masks/solid.png`
 _COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
@@ -1303,8 +1307,8 @@ LOOPS_DIR_OUT = "loops"  # in `out/export/`, and beside the scene in the game: e
 
 
 def _loop_source(loop: dict[str, Any]) -> str:
-    """Where a Loop's frames come from: `cycle` (a colour cycle), `op` (an Op on the room's pixels) or `kit` (frames the
-    Owner imported). `edit` (frames drawn in the editor) is held until trial 0184."""
+    """Where a Loop's frames come from: `cycle` (a colour cycle), `op` (an Op on the room's pixels), `kit` (frames the
+    Owner imported) or `edits` (picked edits of the Source, 0219 and 0220)."""
     return "cycle" if loop["form"] == "cycle" else str(loop.get("source") or "op")
 
 
@@ -1331,15 +1335,60 @@ def _takes_layer(run: StageRun, loop: dict[str, Any]) -> bool:
     return bool(first.shape == (height, width) and not (alpha[y:y + height, x:x + width] & ~first).any())
 
 
-def _export_loops(run: StageRun) -> list[dict[str, Any]]:
+def _moves_a_layer(loop: dict[str, Any]) -> bool:
+    """A frame Loop on a Layer: its pieces move the Layer's pixels, so the Layer needs a remainder unless the Loop takes the
+    Layer's own Sprite2D. A Plate Loop's pieces over a Layer and every colour cycle are left as they were (ticket 0211)."""
+    return loop["form"] == "frames" and loop["layer"] != "plate" and loop["box"] is not None
+
+
+REMAINDERS_DIR = "remainders"  # in `out/export/`, and beside the scene in the game: a Layer's remainder, `remainders/<layer>.png`
+
+
+def _write_remainders(run: StageRun, loops: list[dict[str, Any]], taken: set[str]) -> dict[str, str]:
+    """For each Layer under a frame Loop that doesn't take its Sprite2D, the Layer with each such Loop's region (its
+    frame-0 alpha) cleared, in `remainders/`; the Layer's `Sprite2D` shows it, and the strips are children over it, so the
+    pixels a Loop moves away from show the Plate's fill. Returns the files by Layer ID."""
+    regions: dict[str, list[dict[str, Any]]] = {}
+    for loop in loops:
+        if _moves_a_layer(loop):
+            for piece in loop["layers"]:
+                if str(piece["id"]) not in taken:
+                    regions.setdefault(str(piece["id"]), []).append({"loop": loop, "file": piece["file"]})
+    files: dict[str, str] = {}
+    for layer, entries in sorted(regions.items()):
+        run.check_cancel()
+        with Image.open(run.upstream["palette"] / layer_file(layer)) as image:
+            pixels = np.array(image.convert("RGBA"))
+        for entry in entries:
+            x, y, width, height = entry["loop"]["box"]
+            with Image.open(run.upstream[LOOPS_STAGE] / str(entry["file"])) as strip:
+                first = np.asarray(strip.convert("RGBA"))[:height, :width, 3] > 0  # frame 0
+            cut = pixels[y:y + first.shape[0], x:x + first.shape[1]]
+            cut[first[:cut.shape[0], :cut.shape[1]]] = 0
+        target = f"{REMAINDERS_DIR}/{layer}.png"
+        (run.output_dir / target).parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(pixels, "RGBA").save(run.output_dir / target)
+        files[layer] = target
+    return files
+
+
+def _export_loops(run: StageRun) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """The Loops as `room.json` lists them: their strips and index images copied to `loops/`, ordered by ID. `hframes` and
     `vframes` are the strips' layout, which every piece of a Loop shares; `sequence` is flat frame, ticks pairs.
-    `moves_layer` is true for the one Loop per Layer whose strip stands in for the Layer's texture."""
+    `moves_layer` is true for the one Loop whose strip stands in for a Layer's texture, which is a Layer no other frame
+    Loop touches. Every other Layer under a frame Loop gets a remainder (ticket 0211); the second result names them."""
     listed: list[dict[str, Any]] = []
     taken: set[str] = set()
-    for loop in sorted(read_loops(run.upstream[LOOPS_STAGE], run.asset_id), key=lambda entry: str(entry["id"])):
+    built = [loop for loop in sorted(read_loops(run.upstream[LOOPS_STAGE], run.asset_id), key=lambda entry: str(entry["id"]))
+             if not loop.get("held")]  # a held Loop isn't exported, and `export.loop_held` refuses the room while there is one
+    touched: dict[str, int] = {}  # the frame Loops on a Layer with a piece on each Layer
+    for loop in built:
+        if _moves_a_layer(loop):
+            for piece in loop["layers"]:
+                touched[str(piece["id"])] = touched.get(str(piece["id"]), 0) + 1
+    for loop in built:
         run.check_cancel()
-        moves = loop["layer"] not in taken and _takes_layer(run, loop)
+        moves = touched.get(str(loop["layer"])) == 1 and _takes_layer(run, loop)
         if moves:
             taken.add(str(loop["layer"]))
 
@@ -1355,13 +1404,14 @@ def _export_loops(run: StageRun) -> list[dict[str, Any]]:
             "file": copy(str(loop["plate"])) if loop["plate"] else None,
             "hframes": loop["columns"], "vframes": loop["rows"], "frames": loop["frames"],
             "sequence": [value for pair in loop["sequence"] for value in pair], "ticks": loop["ticks"],
+            "rest": bool(loop["timing"].get("rest", False)),
             "phase": loop["phase"], "light": loop["light"],
             "pieces": [{"layer": piece["id"], "file": copy(str(piece["file"])), "box": loop["box"]}
                        for piece in loop["layers"]],
             "index": copy(str(loop["index"])) if loop["index"] else None,
             "colours": loop["colours"], "mode": loop["mode"],
         })
-    return listed
+    return listed, _write_remainders(run, built, taken)
 
 
 def _export(run: StageRun) -> None:
@@ -1389,7 +1439,9 @@ def _export(run: StageRun) -> None:
             mask_files[name] = f"{MASKS_DIR}/{path.name}"
         collision[name] = collision_shapes(simplify(contours(_read_mask(path)), tolerance)) if path.is_file() else []
     looks = _export_looks(run, mask_files, tolerance)
-    loops = _export_loops(run)
+    loops, remainders = _export_loops(run)
+    for layer in layers:  # the Layer's remainder file, or None when no frame Loop moves part of it (ticket 0211)
+        layer["remainder"] = remainders.get(str(layer["id"]))
     run.check_cancel()
     ground = _read_mask(run.upstream["place"] / "walkable.png") & _read_mask(run.upstream["reach"] / "reachable.png")
     navigation = navigation_polygon(simplify(contours(ground), tolerance))
@@ -1419,14 +1471,15 @@ def _check_loop_lights(run: StageRun) -> list[Finding]:
         position=Position(asset=run.asset_id, stage=LOOPS_STAGE),
         owner_action=f"Place a light Marker with the ID {loop['light']} (kiripix decide {run.asset_id} place --help), or "
                      f"declare the Loop again without `light` (kiripix decide {run.asset_id} {LOOPS_STAGE} --help).")
-        for loop in read_loops(run.upstream[LOOPS_STAGE], run.asset_id) if loop["light"] and loop["light"] not in lights]
+        for loop in read_loops(run.upstream[LOOPS_STAGE], run.asset_id)
+        if not loop.get("held") and loop["light"] and loop["light"] not in lights]
 
 
 def _check_loop_sizes(run: StageRun) -> list[Finding]:
     """`export.loop_too_large`: a Loop's strip, wrapped into rows, is taller than `STRIP_LIMIT`."""
     findings: list[Finding] = []
     for loop in read_loops(run.upstream[LOOPS_STAGE], run.asset_id):
-        if loop["box"] is None:
+        if loop["box"] is None or loop.get("held"):
             continue
         width, height = int(loop["box"][2]) * int(loop["columns"]), int(loop["box"][3]) * int(loop["rows"])
         if width > STRIP_LIMIT or height > STRIP_LIMIT:
@@ -1440,8 +1493,19 @@ def _check_loop_sizes(run: StageRun) -> list[Finding]:
     return findings
 
 
+def _check_loops_held(run: StageRun) -> list[Finding]:
+    """`export.loop_held`: a Loop is held, so it would drop out of the scene. The room isn't exported until every Loop is
+    built, because a Loop the game has must never vanish in silence."""
+    return [Finding(
+        code="export.loop_held",
+        message=f"the Loop {loop['id']} is held ({loop['held']}), so the room can't be exported with it",
+        position=Position(asset=run.asset_id, stage=LOOPS_STAGE, field=f"loop.{loop['id']}"),
+        fix=loop.get("held_fix"), owner_action=None if loop.get("held_fix") else loop.get("held_owner_action"))
+        for loop in read_loops(run.upstream[LOOPS_STAGE], run.asset_id) if loop.get("held")]
+
+
 def _check_export(run: StageRun) -> list[Finding]:
-    findings = [*_check_loop_lights(run), *_check_loop_sizes(run)]
+    findings = [*_check_loops_held(run), *_check_loop_lights(run), *_check_loop_sizes(run)]
     if run.settings["export.godot"].get("project"):
         return findings
     return [*findings, Finding(code="export.no_target", message="no Godot project to export into",
@@ -1673,6 +1737,7 @@ ROOM = KindSpec(
             available_from="M4",
             run=run_loops,
             needs_input=loops_needs_input,
+            decisions_view=apply_loop_edits,
             check=check_loops,
             review=kits_moved,
             review_reason=KIT_REVIEW_REASON,
@@ -1742,6 +1807,8 @@ ROOM = KindSpec(
             checks=(
                 CheckSpec(code="export.no_target", description="The export target is set."),
                 CheckSpec(code="exit.unpaired", description="Every Exit points to an Exit that points back."),
+                CheckSpec(code="export.loop_held", description="No Loop is held: a held Loop isn't exported, so the room "
+                                                               "isn't either."),
                 CheckSpec(code="loop.light_unknown", description="A Loop's `light` names a light Marker of the room."),
                 CheckSpec(code="export.loop_too_large", description="A Loop's strip, wrapped into rows, is no larger than "
                                                                       "4096 x 4096 px."),

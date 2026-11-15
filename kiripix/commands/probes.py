@@ -24,6 +24,7 @@ from kiripix.core.assets import Asset, load_asset
 from kiripix.core.errors import fail
 from kiripix.core.file_inspect import inspect_file
 from kiripix.core.layer_stats import layer_stats, piece_numbers
+from kiripix.core.look_probe import look_difference
 from kiripix.core.project import find_project
 from kiripix.core.reach_probe import reach_report
 from kiripix.core.graph import ProgressEvent
@@ -39,7 +40,7 @@ class ProbeInput(BaseModel):
     args: list[str] = Field([], description="The Probe's own arguments. segment-preview takes clicks in target pixels: "
                                             "x,y for a positive one and x,y,neg for a negative one, as does click-preview; or one box, x0,y0,x1,y1, "
                                             "the pixels from (x0, y0) to (x1, y1) both included. flood-preview takes "
-                                            "x,y,tolerance, one or more. layer-stats and reach take none. inspect takes one file name.")
+                                            "x,y,tolerance, one or more. look-difference takes a Look, x0,y0,x1,y1, then an optional tolerance and specks count. layer-stats and reach take none. inspect takes one file name.")
     cpu: bool = Field(False, description="Run any Runner on the CPU, without the GPU lock.")
     summary: bool = Field(False, description="Leave `runs` out of a Mask answer; `pixels` and `box` stay.")
 
@@ -168,6 +169,27 @@ def _flood_preview(asset: Asset, arguments: ProbeInput, context: Context) -> dic
     regions = flood_preview(find_project(context.cwd), asset, floods)
     return {"floods": [{"x": x, "y": y, "tolerance": tolerance, **_mask_answer(region, arguments)}
                        for (x, y, tolerance), region in zip(floods, regions)]}
+
+
+@probe("look-difference", summary="The region a `difference` Decision on a Look would add: args are the Look, x0,y0,x1,y1, "
+                                  "then an optional tolerance and an optional specks count (the Decision's defaults). "
+                                  "Measured as the `looks` Stage measures it, on the picked edit; records nothing.")
+def _look_difference(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    usage = f"kiripix probe look-difference {asset.id} <look> 10,12,40,30"
+    if not 2 <= len(arguments.args) <= 4:
+        raise fail("input.invalid", "look-difference takes a Look, a box x0,y0,x1,y1, and optionally a tolerance and a "
+                                    "specks count", fix=usage)
+    look, text, *rest = arguments.args
+    try:
+        tolerance = float(rest[0]) if rest else None
+        specks = int(rest[1]) if len(rest) > 1 else None
+        if (tolerance is not None and tolerance < 0) or (specks is not None and specks < 0):
+            raise ValueError
+    except ValueError:
+        raise fail("input.invalid", f"'{' '.join(rest)}' isn't a tolerance and a specks count: a number, then a whole "
+                                    "number, neither negative", fix=usage) from None
+    region = look_difference(find_project(context.cwd), asset, look, _box(text, asset), tolerance, specks)
+    return _mask_answer(region, arguments)
 
 
 @probe("layer-stats", summary="Each Layer's pixels, box, pieces, holes, partial pixels, sort and a suggested y-sort line.")

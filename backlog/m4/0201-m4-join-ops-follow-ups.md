@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -33,8 +33,28 @@ Found in the review of [0135](0135-m4-join-ops.md) (2026-11-12).
 
 ## Acceptance criteria
 
-- [ ] CLI seam: each failure has its own code, with a `fix` or `owner_action` that fits it.
-- [ ] A cancel during `op seam-join` on a large synthetic pair stops within a second and leaves no output file.
-- [ ] Golden: a corner piece joined to two neighbours.
+- [x] CLI seam: each failure has its own code, with a `fix` or `owner_action` that fits it.
+- [x] A cancel during `op seam-join` on a large synthetic pair stops within a second and leaves no output file.
+- [x] Golden: a corner piece joined to two neighbours.
 
 Budget: 100–180k tokens.
+
+## Result (2026-11-14)
+
+- **A code per failure.** The Ops raise `JoinError(reason, message)`, a `ValueError` subclass in `kiripix/ops/join.py`. The
+  Commands turn it into `join.<reason>`: `join.no_overlap`, `join.overlap_width` (the overlap is wider than the images),
+  `join.too_few_patches`, `join.overlap_too_narrow` and `join.no_shared_pixels`. The argument errors (`no_overlap`,
+  `overlap_width`, `overlap_too_narrow`) have the Command's `--help` as `fix`; `join.no_shared_pixels` has the
+  `op register-piece` command for that pair as `fix` (since the review of 2026-11-14); `join.too_few_patches` has an
+  `owner_action` (register by hand). Any other `ValueError` (a bad blend or sigma,
+  a wrong image type) is still `join.failed`. All exit 1, like `image.partial_alpha`.
+- **Cancellable.** `register_piece`, `match_tone` and `seam_join` take `chunk`, a callable run per patch (register), every 64
+  rows (tone, seam). The Commands pass `context.cancel.check` and also check between load, compute and save, so a cancel leaves
+  no output file. `kiripix/core/extend.py` already checks between its own steps; it doesn't pass `chunk` yet.
+- **`Overlap.parse`** is in ops, next to `Overlap`; the Command's `parse_overlaps` keeps only the `join.overlap_invalid` finding.
+- **A corner join.** `op seam-join`'s summary and the module text say a corner piece is seamed once per overlap, and that
+  `register-piece` takes both.
+- **Glossary:** Base, Piece, Overlap, Join.
+- Tests: `tests/cli/test_join_failures.py` (6, including the cancel on a 16000 x 800 pair through `serve`),
+  `test_a_corner_piece_is_seamed_once_per_neighbour` in `tests/golden/test_join_ops.py`.
+- For the Owner to review: `tests/golden/expected/join_corner.png`.

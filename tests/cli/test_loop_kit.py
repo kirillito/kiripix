@@ -215,17 +215,55 @@ def test_a_region_that_moved_since_the_kit_was_written_is_refused(project: Kirip
     assert refused["findings"][0]["code"] in ("import.loop_region_changed", "import.size_mismatch")
 
 
+def test_kit_names_the_kit_json_of_frames_that_sit_elsewhere(project: Kiripix) -> None:
+    a_frame_loop(project)
+    write_kit(project, 3)
+    elsewhere = project.cwd / "painted"
+    elsewhere.mkdir()
+    one = elsewhere / "frame_001.png"
+    one.write_bytes(painted(project, 1).read_bytes())
+    kit = project.cwd / KIT / "kit.json"
+
+    plain = project.json("import", ROOM, one, "--loop", LOOP)
+    assert [f["code"] for f in plain["findings"]] == ["import.loop_no_kit"]
+    assert plain["findings"][0]["severity"] == "warning" and plain["findings"][0]["fix"]
+
+    named = project.json("import", ROOM, one, "--loop", LOOP, "--kit", kit)
+    assert named["findings"] == []
+
+    bad = project.json("import", ROOM, one, "--loop", LOOP, "--kit", project.cwd / KIT / "palette.gpl", expect=1)
+    assert bad["findings"][0]["code"] == "import.kit_invalid"
+    alone = project.json("import", ROOM, one, "--kit", kit, expect=1)
+    assert alone["findings"][0]["code"] == "import.kit_needs_loop"
+
+
+def test_a_kit_json_from_before_a_region_change_is_refused(project: Kiripix) -> None:
+    a_frame_loop(project)
+    write_kit(project, 3)
+    elsewhere = project.cwd / "painted"
+    elsewhere.mkdir()
+    one = elsewhere / "frame_001.png"
+    one.write_bytes(painted(project, 1).read_bytes())
+    kit = json.loads((project.cwd / KIT / "kit.json").read_text("utf-8"))
+    kit["box"] = [1, 1, 30, 29]  # the box the kit was written for is no longer the region's
+    (project.cwd / "old_kit.json").write_text(json.dumps(kit), "utf-8")
+
+    refused = project.json("import", ROOM, one, "--loop", LOOP, "--kit", project.cwd / "old_kit.json", expect=1)
+
+    assert refused["findings"][0]["code"] == "import.loop_region_changed"
+
+
 # staleness, and `next`
 
 
 def test_a_frame_loop_with_no_frames_has_next_suggest_a_kit(project: Kiripix) -> None:
     a_frame_loop(project)
     project.json("run", ROOM, "looks")
+    project.json("run", ROOM, "loops", expect=2)  # the Loop is held; `next` points at its finding
 
     data = project.json("next", ROOM)["data"]
 
     assert data["stage"] == "loops" and data["command"] == f"kiripix loop kit {ROOM} {LOOP} kits/{LOOP} --frames 4"
-    assert project.json("run", ROOM, "loops", expect=3)["ok"] is False
 
 
 def test_a_refit_puts_the_kit_frames_in_needs_input_and_a_palette_change_keeps_them(project: Kiripix) -> None:
@@ -245,9 +283,9 @@ def test_a_refit_puts_the_kit_frames_in_needs_input_and_a_palette_change_keeps_t
     assert stage_status(project, ROOM)["loops"] == "needs-review", "a palette change keeps the kit, remapped (0194)"
 
     refit(project)
-    project.json("run", ROOM, "loops", expect=3)
-    assert stage_status(project, ROOM)["loops"] == "needs-input"
-    assert "painted on another fit" in reason(project)
+    project.json("run", ROOM, "loops", expect=2)
+    assert stage_status(project, ROOM)["loops"] != "needs-input", "the Loop is held, not the Stage"
+    assert any("painted on another fit" in f["message"] for f in project.json("check", ROOM, expect=2)["findings"] if f["code"] == "loop.held")
 
 
 def test_frames_painted_before_a_refit_are_stale_when_imported_after_it(project: Kiripix) -> None:
@@ -259,7 +297,7 @@ def test_frames_painted_before_a_refit_are_stale_when_imported_after_it(project:
 
     project.json("import", ROOM, one, "--loop", LOOP)
 
-    project.json("run", ROOM, "loops", expect=3)
+    project.json("run", ROOM, "loops", expect=2)
     assert "painted on another fit" in reason(project), "the kit remembers the fit it was written on"
 
 

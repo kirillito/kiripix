@@ -16,6 +16,7 @@ import { layerFiles } from "./sortView";
 export const LOOPS_STAGE = "loops";
 export const LOOPS_DECISION = "cycle"; // what tells the loops Stage's screen from another's
 const REGION = "region";
+const HOLD = "hold";
 const PALETTE_FILE = "style/palette.gpl";
 const PLATE = "plate";
 const DEFAULT_TOLERANCE = 0.03; // the Stage's own default (a `flood` Decision without one; trial 0184)
@@ -40,7 +41,7 @@ export interface BuiltLoop {
   phase: number;
   mode: string;
   colours: string[];
-  depth: number | null;
+  lift: number | null;
   steps: number;
   emissive: boolean | null;
   box: [number, number, number, number] | null;
@@ -56,10 +57,14 @@ export interface BuiltLoop {
   op: string | null;
   params: Record<string, number> | null;
   kit: { frames: { frame: number; file: string }[] } | null;
+  edits?: { frame: number; file: string }[] | null;
+  flicker?: { from: number; to: number; share: number }[] | null;
+  holds?: { pixels: number; outside: number; file: string } | null;
+  past_layer?: number;
 }
 
 export interface FramesData {
-  source?: "op" | "kit";
+  source?: "op" | "kit" | "edits";
   op?: "sway" | "shimmer" | "scroll";
   params?: Record<string, number>;
 }
@@ -90,7 +95,7 @@ interface Journal {
 export interface CycleData {
   colours: string[];
   mode: "rotate" | "pulse";
-  depth?: number;
+  lift?: number;
   steps?: number;
   emissive?: boolean;
 }
@@ -104,6 +109,8 @@ export interface LoopEntry {
   cycle: CycleData | null;
   timing: Record<string, unknown> | null;
   frames: FramesData | null;
+  picks: number[]; // the frames that have a picked edit
+  holds: Record<string, unknown>[]; // the `hold` Decisions, in order
   built: BuiltLoop | null;
 }
 
@@ -131,13 +138,15 @@ export function loopsOf(decisions: Journal[], built: BuiltLoop[]): LoopEntry[] {
         ? {
             colours: Array.isArray(cycle.colours) ? (cycle.colours as string[]) : [],
             mode: cycle.mode === "pulse" ? "pulse" : "rotate",
-            depth: typeof cycle.depth === "number" ? cycle.depth : undefined,
+            lift: typeof cycle.lift === "number" ? cycle.lift : undefined,
             steps: typeof cycle.steps === "number" ? cycle.steps : undefined,
             emissive: typeof cycle.emissive === "boolean" ? cycle.emissive : undefined,
           }
         : null,
       timing: timing ? rest : null,
       frames: framesOf ? (framesOf as FramesData) : null,
+      picks: [...new Set(decisions.filter((decision) => decision.name === "pick" && decision.data.loop === id).map((decision) => Number(decision.data.frame)))].sort((a, b) => a - b),
+      holds: decisions.filter((decision) => decision.name === "hold" && decision.data.loop === id).map((decision) => decision.data),
       built: built.find((one) => one.id === id) ?? null,
     };
   });
@@ -147,7 +156,7 @@ export function loopsOf(decisions: Journal[], built: BuiltLoop[]): LoopEntry[] {
 export function cycleData(id: string, cycle: CycleData): Record<string, unknown> {
   const data: Record<string, unknown> = { loop: id, mode: cycle.mode };
   if (cycle.colours.length > 0) data.colours = cycle.colours;
-  if (cycle.depth !== undefined) data.depth = cycle.depth;
+  if (cycle.lift !== undefined) data.lift = cycle.lift;
   if (cycle.steps !== undefined) data.steps = cycle.steps;
   if (cycle.emissive !== undefined) data.emissive = cycle.emissive;
   return data;
@@ -166,6 +175,9 @@ export function fixDecision(finding: Finding): { name: string; data: Record<stri
 }
 
 function findingLoop(finding: Finding, ids: string[]): string | null {
+  const field = finding.position?.field ?? "";
+  const named = ids.filter((id) => field === `loop.${id}` || field.startsWith(`loop.${id}.frame.`)).sort((a, b) => b.length - a.length)[0];
+  if (named) return named;
   const fixed = fixDecision(finding)?.data.loop;
   if (typeof fixed === "string") return fixed;
   return ids.find((id) => new RegExp(`(^|[^a-z0-9_.])${id.replace(/\./g, "\\.")}($|[^a-z0-9_.])`).test(finding.message)) ?? null;
@@ -254,9 +266,11 @@ function Slider(props: { id: string; testid: string; min: number; max: number; v
   );
 }
 
-const FRAME_CODES = ["loop.drift", "loop.misaligned", "loop.flicker", "loop.outside_region", "loop.off_palette", "loop.partial_alpha"];
+const FRAME_CODES = ["loop.drift", "loop.misaligned", "loop.flicker", "loop.past_layer", "loop.outside_region", "loop.off_palette", "loop.partial_alpha"];
 const FRAME_SCALE = 4;
 
+// The pixels the `hold` Decisions of a Loop hold, to shade them: each replayed in order (the latest over a pixel wins, `erase`
+// gives pixels back) and cut to the region. The Stage's own held pixels are what it builds; this only draws where they are.
 // One thumbnail of a frame: the Loop's pieces cut to the tile, at x4 and nearest.
 function Thumbnail(props: { loop: PlayingLoop; frame: number }) {
   const { loop, frame } = props;
@@ -293,6 +307,7 @@ export function LoopsPanel(props: {
   decide: (decision: string, data: Record<string, unknown>, settled?: () => void) => void;
   writeKit: (loop: string, folder: string, frames: number, force: boolean, written: (folder: string | null) => void) => void;
   importFrames: (loop: string, paths: string[]) => void;
+  importEdit: (loop: string, frame: number, file: File, noted: (findings: Finding[]) => void) => void;
   onStage: (stage: string) => void;
 }) {
   const { canvas, show, detail, imageVersion, refreshes, disabled, rebuild, onRebuild, roomImage, findings } = props;
@@ -318,12 +333,16 @@ export function LoopsPanel(props: {
   const [kitFrames, setKitFrames] = useState("4");
   const [kitForce, setKitForce] = useState(false);
   const [kitWritten, setKitWritten] = useState<Record<string, string>>({});
+  const [holdFrame, setHoldFrame] = useState<number | null>(null);
+  const [editFrame, setEditFrame] = useState("1");
+  const [importNotes, setImportNotes] = useState<Record<string, Record<number, Finding[]>>>({});
+  const editInput = useRef<HTMLInputElement>(null);
   const [flicker, setFlicker] = useState<{ mean: string; spread: string; length: string }>({ mean: "", spread: "", length: "" });
 
   const entries = loopsOf(detail.decisions, built);
   const current = entries.find((entry) => entry.id === selected) ?? entries[0] ?? null;
-  const latestProps = useRef({ ...props, current, entries, palette, room, region, tolerance, tool });
-  latestProps.current = { ...props, current, entries, palette, room, region, tolerance, tool };
+  const latestProps = useRef({ ...props, current, entries, palette, room, region, tolerance, tool, holdFrame });
+  latestProps.current = { ...props, current, entries, palette, room, region, tolerance, tool, holdFrame };
   const painter = useRef<MaskTool | null>(null);
   const player = useRef<LoopTool | null>(null);
 
@@ -338,17 +357,19 @@ export function LoopsPanel(props: {
   useEffect(() => {
     const painting = new MaskTool(
       {
-        stroke(_on, erase, size, points) {
-          const { decide, current: here } = latestProps.current;
+        stroke(on, erase, size, points) {
+          const { decide, current: here, holdFrame: holding } = latestProps.current;
           if (!here) return;
-          const done = painter.current?.addMark({ kind: "stroke", mask: REGION, erase, radius: size, points });
-          decide("brush", { loop: here.id, erase, radius: size, points }, done);
+          const done = painter.current?.addMark({ kind: "stroke", mask: on, erase, radius: size, points });
+          if (on === HOLD && holding !== null) decide("hold", { loop: here.id, frame: holding, erase, radius: size, points }, done);
+          else decide("brush", { loop: here.id, erase, radius: size, points }, done);
         },
-        polygon(_on, erase, points) {
-          const { decide, current: here } = latestProps.current;
+        polygon(on, erase, points) {
+          const { decide, current: here, holdFrame: holding } = latestProps.current;
           if (!here) return;
-          const done = painter.current?.addMark({ kind: "polygon", mask: REGION, erase, points });
-          decide("polygon", { loop: here.id, erase, points }, done);
+          const done = painter.current?.addMark({ kind: "polygon", mask: on, erase, points });
+          if (on === HOLD && holding !== null) decide("hold", { loop: here.id, frame: holding, erase, points }, done);
+          else decide("polygon", { loop: here.id, erase, points }, done);
         },
         point(_tool, _on, pixel) {
           const { decide, current: here, tolerance: within } = latestProps.current;
@@ -384,11 +405,15 @@ export function LoopsPanel(props: {
     const picking = tool === "eyedrop" || tool === "anchor";
     playingTool.picking = picking;
     painting.setTool(picking ? "flood" : tool);
-    painting.mask = picking ? "" : REGION;
+    painting.mask = picking ? "" : holdFrame !== null ? HOLD : REGION;
     painting.radius = radius;
     painting.opacity = opacity / 100;
     canvas.current?.redraw();
-  }, [canvas, tool, radius, opacity]);
+  }, [canvas, tool, radius, opacity, holdFrame]);
+  useEffect(() => {
+    if (tool === "flood" || tool === "eyedrop" || tool === "anchor") setHoldFrame(null); // a hold is drawn, not flooded
+  }, [tool]);
+  useEffect(() => setHoldFrame(null), [current?.id]);
 
   // The built loops.json, read again at each refresh.
   useEffect(() => {
@@ -451,6 +476,28 @@ export function LoopsPanel(props: {
     canvas.current?.redraw();
   }, [canvas, playing]);
 
+  // The selected Loop's held pixels, as the build replayed its `hold` Decisions (`<loop>/hold.png`, white where held).
+  const [held, setHeld] = useState<Uint8Array | null>(null);
+  const heldFile = built.find((loop) => loop.id === current?.id)?.holds?.file ?? null;
+  useEffect(() => {
+    let live = true;
+    if (!heldFile) {
+      setHeld(null);
+      return;
+    }
+    void readPixels(fileUrl(`${stageFolder}/${heldFile}`, refreshes))
+      .then((pixels) => {
+        if (!live) return;
+        const set = new Uint8Array(pixels.width * pixels.height);
+        for (let at = 0; at < set.length; at++) set[at] = pixels.data[at * 4] > 0 ? 1 : 0;
+        setHeld(set);
+      })
+      .catch(() => undefined); // Rebuilt while it was read; the next refresh reads it again.
+    return () => {
+      live = false;
+    };
+  }, [heldFile, stageFolder, refreshes]);
+
   useEffect(() => {
     if (!room) return;
     const { width, height } = room;
@@ -463,10 +510,13 @@ export function LoopsPanel(props: {
         for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) if (alpha[(py * w + px) * 4 + 3] > 0) set[(y + py) * width + x + px] = 1;
       }
     }
-    painter.current?.setMasks([{ name: REGION, pixels: { width, height, set } }]);
+    painter.current?.setMasks([
+      { name: REGION, pixels: { width, height, set } },
+      { name: HOLD, pixels: { width, height, set: held && held.length === set.length ? held : new Uint8Array(width * height) } },
+    ]);
     setRegion(set);
     canvas.current?.redraw();
-  }, [canvas, room, playing, current?.id]);
+  }, [canvas, room, playing, current?.id, held]);
 
   // The pixels of the lit colour, in the region when there is one and in the whole room when the Loop isn't built yet.
   useEffect(() => {
@@ -616,7 +666,7 @@ export function LoopsPanel(props: {
   }
 
   function setTiming(timing: Record<string, unknown>) {
-    if (current) props.decide("timing", { loop: current.id, ...timing });
+    if (current) props.decide("timing", { loop: current.id, ...(current.timing?.rest === true ? { rest: true } : {}), ...timing });
   }
 
   function setLoop(patch: Record<string, unknown>) {
@@ -664,7 +714,10 @@ export function LoopsPanel(props: {
 
   const isFrames = current?.form === "frames";
   const kitImported = (current?.built?.kit?.frames.length ?? 0) > 0;
-  const source: "op" | "kit" | null = current?.frames?.source ?? (current?.frames?.op ? "op" : kitImported ? "kit" : null);
+  const source: "op" | "kit" | "edits" | null =
+    current?.frames?.source ?? (current?.frames?.op ? "op" : kitImported ? "kit" : (current?.picks.length ?? 0) > 0 ? "edits" : null);
+  const nextFrame = (current?.picks.at(-1) ?? 0) + 1;
+  useEffect(() => setEditFrame(String(nextFrame)), [current?.id, nextFrame]);
   const opName = source === "op" ? (current?.frames?.op ?? null) : null;
   const playingHere = playing.find((loop) => loop.id === current?.id) ?? null;
   const NO_FILL = mine.find((finding) => finding.code === "loop.no_fill")?.message ?? "A sway on the plate has no fill for what it uncovers: lift the object onto its own Layer first.";
@@ -672,11 +725,19 @@ export function LoopsPanel(props: {
   // The findings that belong to one frame: a kit frame's by its file, any other by the frame number in its message.
   function frameFindings(n: number): Finding[] {
     const file = current?.built?.kit?.frames.find((entry) => entry.frame === n)?.file;
-    return mine.filter((finding) => {
+    const found = mine.filter((finding) => {
       if (!FRAME_CODES.includes(finding.code)) return false;
+      if (finding.code === "loop.past_layer") return n >= 1 && current?.built?.source === "edits"; // the Loop's, not a frame's
+      if (finding.code === "loop.flicker") {
+        const to = Number(finding.position?.field?.match(/\.frame\.(\d+)$/)?.[1]); // the pair is the later frame and the one before it
+        return (current?.built?.flicker ?? []).some((pair) => pair.to === to && (pair.from === n || pair.to === n));
+      }
+      if (finding.position?.field === `loop.${current?.id}.frame.${n}`) return true;
       if (file && finding.position?.file === file) return true;
       return new RegExp(`frame ${n}\b`).test(finding.message);
     });
+    const unique = new Map(found.map((finding) => [finding.code, finding])); // two pairs can meet on one frame: one badge
+    return [...unique.values(), ...(current ? (importNotes[current.id]?.[n] ?? []) : [])];
   }
 
   function importKit() {
@@ -720,7 +781,7 @@ export function LoopsPanel(props: {
                 </button>
                 <small>
                   {entry.form}, on {entry.layer}
-                  {entry.built === null ? ", not built yet" : entry.built.box === null ? ", no region" : `, ${entry.built.pixels} px, ${entry.built.frames} frames, ${entry.built.ticks} ticks`}
+                  {entry.built === null ? ", not built yet" : entry.built.box === null ? ", no region" : `, ${entry.built.pixels} px, ${entry.built.frames} frames, ${entry.built.ticks} ticks${entry.built.holds ? `, ${entry.built.holds.pixels} px held` : ""}`}
                   {own.length > 0 && <span data-testid={`loop-findings-${entry.id}`}>{`, ${own.map((finding) => finding.code).join(" ")}`}</span>}
                 </small>
               </li>
@@ -821,9 +882,11 @@ export function LoopsPanel(props: {
             <button data-testid="source-kit" aria-pressed={source === "kit"} onClick={() => source !== "kit" && setFramesOp({ source: "kit" })}>
               Kit
             </button>
+            <button data-testid="source-edits" aria-pressed={source === "edits"} onClick={() => source !== "edits" && setFramesOp({ source: "edits" })}>
+              Edits
+            </button>
           </div>
-          <p className="hint">Edits (frames made by an image model) wait for trial 0184; an Op or a hand-painted kit make the frames for now.</p>
-          {source !== "kit" && (
+          {source !== "kit" && source !== "edits" && (
             <>
               <div className="tools" role="group" aria-label="Op">
                 {OPS.map((op) => {
@@ -896,6 +959,59 @@ export function LoopsPanel(props: {
               <p className="hint">Imports frame_001 onward from the kit folder. A browser sends one file at a time, so the frames are read from the folder, on this machine.</p>
             </>
           )}
+          {source === "edits" && (
+            <>
+              <p className="hint" data-testid="edit-hint">
+                Edit the room's Source each time, not an earlier edit. Each frame is an edit of the Source; draw a hold over what should stay still, and only the rest of the region moves.
+              </p>
+              <div className="param">
+                <label htmlFor="edit-frame">Frame</label>
+                <input id="edit-frame" data-testid="edit-frame" type="number" min={1} value={editFrame} onChange={(event) => setEditFrame(event.target.value)} />
+              </div>
+              <button data-testid="edit-import" disabled={!(Math.trunc(Number(editFrame)) >= 1)} onClick={() => editInput.current?.click()}>
+                Import an edit for frame {editFrame}
+              </button>
+              <input
+                ref={editInput}
+                type="file"
+                accept="image/png,image/jpeg"
+                hidden
+                data-testid="edit-import-input"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  const frame = Math.trunc(Number(editFrame));
+                  if (file && frame >= 1) {
+                    const loop = current.id;
+                    setImportNotes((now) => ({ ...now, [loop]: { ...now[loop], [frame]: [] } }));
+                    props.importEdit(loop, frame, file, (found) => setImportNotes((now) => ({ ...now, [loop]: { ...now[loop], [frame]: found.filter((finding) => finding.code === "import.edit_of_an_edit") } })));
+                    if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); // the tool keys work again
+                  }
+                  event.target.value = "";
+                }}
+              />
+              <p className="hint">The edit is stored and picked for its frame at once; importing again to the same frame picks the new one.</p>
+              <ul className="looks" data-testid="edit-picks">
+                {current.picks.map((frame) => (
+                  <li key={frame} data-testid={`edit-picked-${frame}`}>
+                    Frame {frame} has an edit
+                    {(importNotes[current.id]?.[frame] ?? []).map((finding, at) => (
+                      <span key={at} className="badge" data-severity={finding.severity} data-testid={`edit-note-${frame}`} title={finding.owner_action ?? ""}>
+                        {finding.message}
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+              {holdFrame !== null && (
+                <p className="hint" data-testid="hold-mode">
+                  Drawing a hold of frame {holdFrame}: the held part takes that frame's pixels in every frame.{" "}
+                  <button data-testid="hold-off" onClick={() => setHoldFrame(null)}>
+                    Draw the region again
+                  </button>
+                </p>
+              )}
+            </>
+          )}
         </>
       )}
       {current && !isFrames && (
@@ -952,8 +1068,8 @@ export function LoopsPanel(props: {
           {mode === "pulse" && (
             <>
               <div className="param">
-                <label htmlFor="loop-depth">Depth (ramp places)</label>
-                <NumberField id="loop-depth" testid="loop-depth" value={cycle?.depth !== undefined ? String(cycle.depth) : ""} placeholder="default" onCommit={(text) => Number.isInteger(Number(text)) && Number(text) >= 1 && setCycle({ depth: Number(text) })} />
+                <label htmlFor="loop-lift">Lift (lightness, OKLab L)</label>
+                <NumberField id="loop-lift" testid="loop-lift" value={cycle?.lift !== undefined ? String(cycle.lift) : ""} placeholder="0.15" onCommit={(text) => Number.isFinite(Number(text)) && Number(text) > 0 && setCycle({ lift: Number(text) })} />
               </div>
               <label className="toggle">
                 <input type="checkbox" data-testid="loop-emissive" checked={cycle?.emissive !== false} onChange={(event) => setCycle({ emissive: event.target.checked })} />
@@ -979,6 +1095,10 @@ export function LoopsPanel(props: {
               Flicker
             </button>
           </div>
+          <label className="toggle">
+            <input type="checkbox" data-testid="loop-rest" checked={timing?.rest === true} onChange={(event) => setTiming({ ...(flickering ? { flicker: timing!.flicker } : { ticks: ticksNow, ...(pingpong ? { pingpong: true } : {}) }), rest: event.target.checked })} />
+            Rest: frame 0 (the room) is never played
+          </label>
           {!flickering ? (
             <>
               <div className="param">
@@ -1036,6 +1156,19 @@ export function LoopsPanel(props: {
                         <Thumbnail loop={playingHere} frame={n} />
                       </button>
                       <span>{n === 0 ? "0 (the room's)" : n}</span>
+                      {source === "edits" && n >= 1 && (
+                        <button
+                          data-testid={`frame-hold-${n}`}
+                          aria-pressed={holdFrame === n}
+                          title="Draw a hold of this frame: the polygon or brush then holds the region it covers from this frame"
+                          onClick={() => {
+                            setHoldFrame(holdFrame === n ? null : n);
+                            if (tool === "flood" || tool === "eyedrop" || tool === "anchor") setTool("polygon");
+                          }}
+                        >
+                          Hold from this frame
+                        </button>
+                      )}
                       <NumberField
                         id={`frame-ticks-${n}`}
                         testid={`frame-ticks-${n}`}

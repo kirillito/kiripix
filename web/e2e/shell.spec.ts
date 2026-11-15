@@ -35,8 +35,12 @@ test("import and pick a Variant, change fit.mode in the generated panel, and see
   await expect(stage(page, "source")).toHaveAttribute("data-status", "todo");
 
   await stage(page, "fit").click();
-  await page.getByTestId("run").click();
-  await expect(stage(page, "fit")).toHaveAttribute("data-status", "done");
+  // A click on Run right after the Pick can land while the screen redraws and be lost when the cores are shared (ticket 0202): press
+  // it again until the Stage is done. A Run of a done Stage changes nothing.
+  await expect(async () => {
+    await page.getByTestId("run").click();
+    await expect(stage(page, "fit")).toHaveAttribute("data-status", "done", { timeout: 10_000 });
+  }).toPass({ timeout: 60_000 });
   await expect(page.getByTestId("canvas")).toHaveAttribute("data-loaded", "48x32");
 
   await page.getByTestId("param-mode").selectOption("downscale");

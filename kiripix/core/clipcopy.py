@@ -8,7 +8,7 @@ from pathlib import Path
 
 from kiripix.checks import Position
 from kiripix.core import atomic, editing, sources
-from kiripix.core.assets import Asset
+from kiripix.core.assets import Asset, base_of
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache
@@ -32,7 +32,9 @@ class ClipCopy:
 
 
 def _clips(project: Project, asset: Asset) -> list[CurrentDecision]:
-    return latest_clips(AssetGraph(project, asset, HashCache(project.state_dir)).replay(CLIPS_STAGE).current)
+    """The character's clips as its `clips` Stage reads them: for one made from a base, the base's too (ADR 0012)."""
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    return latest_clips(graph.decisions(graph.spec(CLIPS_STAGE)))
 
 
 def _need_character(asset: Asset) -> None:
@@ -68,18 +70,27 @@ def plan(project: Project, asset: Asset, other: Asset, names: list[str] | None, 
             continue
         (result.replaced if name in ours else result.copied).append(name)
         result.decisions.append(decision)
-    _plan_files(asset, other, result, replace)
+    _plan_files(project, asset, other, result, replace)
     return result
 
 
-def _plan_files(asset: Asset, other: Asset, result: ClipCopy, replace: bool) -> None:
-    theirs, ours = sources.clip_sources(other), sources.clip_sources(asset)
+def _base_sources(project: Project, asset: Asset) -> dict[str, Path]:
+    """The clip sources of the character's base (ADR 0012), which it reads where they are; none without a base."""
+    base = base_of(project, asset)
+    return sources.clip_sources(base) if base is not None else {}
+
+
+def _plan_files(project: Project, asset: Asset, other: Asset, result: ClipCopy, replace: bool) -> None:
+    theirs = {**_base_sources(project, other), **sources.clip_sources(other)}  # its own file wins a name both have
+    ours, inherited = sources.clip_sources(asset), _base_sources(project, asset)
     for stem in dict.fromkeys(str(d.data["source"]).split("/")[0] for d in result.decisions):
         if stem not in theirs:
             continue  # an action of the rig's file: copied as it is
         mine = ours.get(stem)
         if mine is not None and mine.name == theirs[stem].name:
             continue  # the same bytes are already there
+        if mine is None and stem in inherited and inherited[stem].name == theirs[stem].name:
+            continue  # its base has the same bytes, and they are never copied
         if mine is not None:
             if not replace:
                 raise fail("clips.source_differs", f"{asset.id} has its own clip source {stem}, which isn't the file "
@@ -94,12 +105,13 @@ def apply(asset: Asset, other: Asset, project: Project, result: ClipCopy) -> lis
     """Copy the files, then record the Decisions. Returns the files added, in this Asset's folder."""
     added: list[Path] = []
     folder = asset.dir / "src" / "clips"
-    names = sources.imported_names(other)
+    owners = [owner for owner in (other, base_of(project, other)) if owner is not None]  # a file may be the other's base's
     for path in result.files:
         target = folder / path.name
         atomic.write_bytes(target, path.read_bytes())
         added.append(target)
-        imported = names.get(path.relative_to(other.dir).as_posix())
+        owner = next(o for o in owners if path.is_relative_to(o.dir))
+        imported = sources.imported_names(owner).get(path.relative_to(owner.dir).as_posix())
         if imported is not None and sources.imported_as(asset, target) != imported:
             atomic.append_jsonl_many(asset.dir / sources.IMPORTED_FILE, [
                 {"schema_version": sources.IMPORTED_SCHEMA_VERSION, "file": target.relative_to(asset.dir).as_posix(),

@@ -153,12 +153,12 @@ def test_a_kit_loop_with_no_import_asks_for_a_kit_and_timing_counts_the_frames(p
     a_frame_loop(project)
     decide(project, "frames", {"loop": LOOP, "source": "kit"})
     project.json("run", ROOM, "looks")
-    assert project.json("run", ROOM, "loops", expect=3)["ok"] is False
+    assert project.json("run", ROOM, "loops", expect=2)["ok"] is False
     write_kit(project, 3)
     project.json("import", ROOM, painted(project, 1), painted(project, 2), "--loop", LOOP)
     decide(project, "timing", {"loop": LOOP, "ticks": [5, 5]})
 
-    refused = project.json("run", ROOM, "loops", expect=3)
+    refused = project.json("run", ROOM, "loops", expect=2)
 
     assert not refused["ok"], "two numbers for three frames"
     decide(project, "timing", {"loop": LOOP, "ticks": [5, 5, 5]})
@@ -208,3 +208,18 @@ def test_a_kit_the_loop_no_longer_uses_is_not_reviewed_after_a_palette_change(pr
     project.json("run", ROOM, "loops")
 
     assert stage_status(project, ROOM)["loops"] == "done"
+
+
+def test_a_resting_loop_whose_played_frames_are_all_the_same_is_still(project: Kiripix) -> None:
+    a_frame_loop(project, lamp_layer=False)
+    write_kit(project, 3)
+    # frames 1 and 2 differ from the room (frame 0) the same way: under `rest` the Loop plays one still picture
+    project.json("import", ROOM, painted(project, 1), painted(project, 1, name="frame_002.png"), "--loop", LOOP)
+    project.json("run", ROOM, "looks")
+    project.json("run", ROOM, "loops")
+    assert "loop.still" not in codes(project), "without rest, frames 1 and 2 differ from frame 0"
+
+    decide(project, "timing", {"loop": LOOP, "rest": True})
+    build(project)
+    [still] = [f for f in findings(project) if f["code"] == "loop.still"]
+    assert "played frames" in still["message"]

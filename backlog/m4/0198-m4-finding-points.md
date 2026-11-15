@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -27,7 +27,19 @@ and `owner_action` are.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a test room with more than 8 ambiguous cells returns all of them in the new field, in a stable order.
-- [ ] Every other finding's JSON is unchanged (the contract test passes without new samples).
+- [x] CLI seam: a test room with more than 8 ambiguous cells returns all of them in the new field, in a stable order.
+- [x] Every other finding's JSON is unchanged (the contract test passes without new samples).
 
 Budget: 40–80k tokens.
+
+## Result (2026-11-14)
+
+- `Finding` gains `points`, a list of `[x, y]` in target px (Owner's decision, 2026-11-14). It is omitted from the JSON when
+  empty (a wrap serializer on `Finding`), so every existing finding's JSON is byte-identical and the contract test needs no
+  new sample. Input accepts `points` too; no other field changed.
+- `area.ambiguous_cells` fills `points` with the top-left pixel of every ambiguous cell, in row order (y, then x). The message
+  keeps its short list ("and N more").
+- Spec §10 (Findings and errors) names the field. `describe` shows no finding schema, so nothing changed there.
+- Tests: `tests/cli/test_area.py::test_every_ambiguous_cell_is_in_points_not_only_the_eight_the_message_lists` (11 cells, and no
+  other finding carries `points`).
+- Left for the Owner: 0199 should read `points` instead of parsing the message.

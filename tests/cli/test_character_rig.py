@@ -37,7 +37,8 @@ def test_a_rigged_model_makes_rig_done_and_next_names_clips(project: Kiripix) ->
 
     assert [(r["stage"], r["outcome"]) for r in result["data"]["results"]] == [("rig", "done")]
     document = rig_json(folder)
-    assert document["schema_version"] == 1 and document["source"] == "model" and document["armature"] == "Armature"
+    assert document["schema_version"] == 2 and document["source"] == "model" and document["armature"] == "Armature"
+    assert document["parents"]["root"] is None and document["parents"]["mixamorig:Hips"] == "root"  # ADR 0012
     assert document["mapping"]["hips"] == "mixamorig:Hips" and document["mapping"]["left_leg"] == "mixamorig:LeftUpLeg"
     assert {"hips", "spine", "head", "left_arm", "right_arm", "left_leg", "right_leg"} <= set(document["mapping"])
     assert [c["script"] for c in calls(project)] == ["normalise_model", "validate_rig"]

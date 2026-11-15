@@ -37,12 +37,28 @@ _INSTALL = ("Install Blender 5.2 LTS from https://www.blender.org/download/lts/,
             "kiripix.toml to its executable, or put it on PATH.")
 
 
+class ScriptFailure(StageFailure):
+    """A Blender script that ended badly: it exited with `exit_code` other than 0, or it ended without writing its result
+    (`exit_code` 0). `tail` holds the last lines it printed, 20 at most."""
+
+    def __init__(self, shown: str, exit_code: int, tail: list[str]) -> None:
+        super().__init__(f"Blender failed (exit {exit_code}) running {shown}: " + " | ".join(tail[-5:]))
+        self.exit_code = exit_code
+        self.tail = tail
+
+
 class Launcher(Protocol):
     """What a Stage needs of Blender. `executable` is the `[character] blender` setting, or None."""
 
     def run(self, script: str, args: dict[str, Any], *, executable: str | None, progress: Callable[[int, int, str], None],
             check_cancel: Callable[[], None]) -> dict[str, Any]:
         """Run `kiripix/blender/<script>.py` with `args`; return the result JSON the script wrote."""
+        ...
+
+    def run_file(self, path: Path, args: dict[str, Any], *, executable: str | None,
+                 progress: Callable[[int, int, str], None], check_cancel: Callable[[], None]) -> dict[str, Any]:
+        """Run a script of the Project's own (a generator, ticket 0224) the same way: `-- <args.json> <result.json>`.
+        Raises ScriptFailure when it exits with an error or writes no result."""
         ...
 
 
@@ -89,10 +105,19 @@ class ProcessLauncher:
 
     def run(self, script: str, args: dict[str, Any], *, executable: str | None, progress: Callable[[int, int, str], None],
             check_cancel: Callable[[], None]) -> dict[str, Any]:
-        blender = find_blender(executable)
         path = SCRIPTS / f"{script}.py"
         if not path.is_file():
             raise StageFailure(f"there is no Blender script {script}")
+        return self._run(path, script, args, executable, progress, check_cancel)
+
+    def run_file(self, path: Path, args: dict[str, Any], *, executable: str | None,
+                 progress: Callable[[int, int, str], None], check_cancel: Callable[[], None]) -> dict[str, Any]:
+        return self._run(path, path.name, args, executable, progress, check_cancel)
+
+    @staticmethod
+    def _run(path: Path, shown: str, args: dict[str, Any], executable: str | None,
+             progress: Callable[[int, int, str], None], check_cancel: Callable[[], None]) -> dict[str, Any]:
+        blender = find_blender(executable)
         with tempfile.TemporaryDirectory(prefix="kiripix-blender-") as temporary:
             arguments, result = Path(temporary, "args.json"), Path(temporary, "result.json")
             arguments.write_text(json.dumps(args), encoding="utf-8")
@@ -122,7 +147,7 @@ class ProcessLauncher:
                     process.kill()
                     process.wait()
             if code != 0 or not result.is_file():
-                raise StageFailure(f"Blender failed (exit {code}) running {script}: " + " | ".join(tail[-5:]))
+                raise ScriptFailure(shown, code, tail)
             document: dict[str, Any] = json.loads(result.read_text(encoding="utf-8"))
         if "error" in document:
             raise StageFailure(str(document["error"]))
@@ -158,6 +183,14 @@ def launch(run: StageRun, script: str, args: dict[str, Any]) -> dict[str, Any]:
     executable = run.settings.get(SETTING)
     return launch_for(script, args, executable=executable if isinstance(executable, str) else None,
                       progress=run.progress, check_cancel=run.check_cancel)
+
+
+def launch_file(run: StageRun, path: Path, args: dict[str, Any]) -> dict[str, Any]:
+    """Run a script of the Project's own in Blender for a Stage, as `launch` runs one of Kiripix's. Raises ScriptFailure
+    when the script fails or writes no result, and StageFailure when Blender can't be run."""
+    executable = run.settings.get(SETTING)
+    return _launcher.run_file(path, args, executable=executable if isinstance(executable, str) else None,
+                              progress=run.progress, check_cancel=run.check_cancel)
 
 
 def launch_for(script: str, args: dict[str, Any], *, executable: str | None, progress: Callable[[int, int, str], None],

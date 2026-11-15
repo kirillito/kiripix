@@ -14,14 +14,30 @@ export interface Marker {
   [field: string]: unknown;
 }
 
-// The cells `area.ambiguous_cells` names, as the finding's message lists them (the finding has no field for them yet).
-export function ambiguousCells(finding: { code: string; message: string }): { id: string; cells: CanvasPixel[] } | null {
-  if (finding.code !== "area.ambiguous_cells") return null;
-  const id = /the area '([^']+)'/.exec(finding.message)?.[1];
-  const listed = /top-left pixels at (.*)$/.exec(finding.message)?.[1];
-  if (!id || !listed) return null;
-  const cells = [...listed.matchAll(/\((\d+), (\d+)\)/g)].map((found) => ({ x: Number(found[1]), y: Number(found[2]) }));
-  return { id, cells };
+// The cells `area.ambiguous_cells` names: the finding's `points`, each the top-left pixel of one cell. Its position's
+// `field` is `area.<id>`, the area's ID; its box is the area's (corners included).
+export interface AmbiguousCells {
+  area: string | null;
+  box: { x: number; y: number; x2: number; y2: number };
+  cells: CanvasPixel[];
+}
+
+export function ambiguousCells(finding: {
+  code: string;
+  position: {
+    x?: number | null;
+    y?: number | null;
+    width?: number | null;
+    height?: number | null;
+    field?: string | null;
+  } | null;
+  points?: [number, number][];
+}): AmbiguousCells | null {
+  const at = finding.position;
+  if (finding.code !== "area.ambiguous_cells" || at?.x == null || at.y == null) return null;
+  const box = { x: at.x, y: at.y, x2: at.x + (at.width ?? 1) - 1, y2: at.y + (at.height ?? 1) - 1 };
+  const area = at.field?.startsWith("area.") ? at.field.slice("area.".length) : null;
+  return { area, box, cells: (finding.points ?? []).map(([x, y]) => ({ x, y })) };
 }
 
 export type EmitterShape =
@@ -174,7 +190,7 @@ export class MarkerTool implements CanvasTool {
   private unreachable = new Set<string>();
   private selected: string | null = null;
   private drag: Drag | null = null;
-  private ambiguous = new Map<string, CanvasPixel[]>();
+  private ambiguous: AmbiguousCells[] = [];
   private drawing: { type: string; cell: number | null } = { type: "", cell: null };
   private mode: EmitterMode = "shape";
   private shapeKind = "point";
@@ -216,8 +232,18 @@ export class MarkerTool implements CanvasTool {
     return points.length >= 3 ? points : null;
   }
 
-  setAmbiguous(found: { id: string; cells: CanvasPixel[] }[]): void {
-    this.ambiguous = new Map(found.map((entry) => [entry.id, entry.cells]));
+  setAmbiguous(found: AmbiguousCells[]): void {
+    this.ambiguous = found;
+  }
+
+  // The ambiguous cells of this area: by its ID, or by its box when the finding names none.
+  private ambiguousOf(marker: Marker): CanvasPixel[] {
+    const { x, y, x2, y2 } = boxOf(marker);
+    return this.ambiguous
+      .filter(({ area, box }) =>
+        area !== null ? area === marker.id : box.x === x && box.y === y && box.x2 === x2 && box.y2 === y2,
+      )
+      .flatMap((entry) => entry.cells);
   }
 
   // An area is resized by any corner, and moved by its inside once it is selected.
@@ -563,7 +589,7 @@ export class MarkerTool implements CanvasTool {
         const cell = cellOf(marker);
         const colour = this.unreachable.has(marker.id) ? UNREACHABLE : COLOURS.area;
         grid(box, cell, colour);
-        for (const found of this.ambiguous.get(marker.id) ?? []) {
+        for (const found of this.ambiguousOf(marker)) {
           const size = (cell ?? 1) * frame.zoom;
           context.fillStyle = "#ffd400aa";
           context.fillRect(frame.left + found.x * frame.zoom, frame.top + found.y * frame.zoom, size, size);
@@ -615,8 +641,9 @@ export class MarkerTool implements CanvasTool {
     frame.element.dataset.markers = this.markers
       .map((marker) => `${marker.id}@${marker.x},${marker.y}${marker.type === "area" ? `-${marker.x2},${marker.y2}` : ""}`)
       .join(" ");
-    frame.element.dataset.ambiguous = [...this.ambiguous]
-      .flatMap(([id, cells]) => cells.map((found) => `${id}@${found.x},${found.y}`))
+    frame.element.dataset.ambiguous = this.markers
+      .filter((marker) => marker.type === "area")
+      .flatMap((marker) => this.ambiguousOf(marker).map((found) => `${marker.id}@${found.x},${found.y}`))
       .join(" ");
     frame.element.dataset.unreachable = [...this.unreachable].join(" ");
   }

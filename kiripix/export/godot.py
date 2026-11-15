@@ -181,7 +181,8 @@ def _foreground(layers: list[dict[str, Any]], folder: str, loops: list[dict[str,
     `Foreground` is y-sorted and holds each sorted Layer as a Sprite2D at its sort position, its offset cancelling the
     position so the pixels stay where they are. `Above` holds the "always above" Layers on a z_index over the actors."""
     moving = _moving_layers(loops or [], idents or {})
-    resources = [f'[ext_resource type="Texture2D" path="{folder}/{layer["file"]}" id="layer_{layer["id"]}"]\n'
+    resources = [f'[ext_resource type="Texture2D" path="{folder}/{layer.get("remainder") or layer["file"]}" '
+                 f'id="layer_{layer["id"]}"]\n'
                  for layer in layers if str(layer["id"]) not in moving]
     sorted_layers = [layer for layer in layers if not layer["above"]]
     above = [layer for layer in layers if layer["above"]]

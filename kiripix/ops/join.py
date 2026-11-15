@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from kiripix.ops.lazy import lazy_module
@@ -46,6 +47,17 @@ _MIN_SPAN = 64.0  # an axis' scale needs samples at least this far apart
 _MIN_PATCHES = 4
 _BIG = 3 * 255 * 4  # a seam pixel where only one image has colour costs more than any difference
 
+Chunk = Callable[[], None] | None  # called between chunks of a long Op; the caller raises from it to stop the Op
+
+
+class JoinError(ValueError):
+    """A join Op refused its input. `reason` is a stable word the Command turns into a finding code (`join.<reason>`):
+    `no_overlap`, `overlap_width`, `too_few_patches`, `overlap_too_narrow` or `no_shared_pixels`."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
 
 @dataclass(frozen=True)
 class Overlap:
@@ -54,6 +66,18 @@ class Overlap:
     side: Side
     width: int
     offset: int = 0
+
+    @classmethod
+    def parse(cls, text: str) -> list["Overlap"]:
+        """Overlaps written `side:width[:offset]`, comma separated (`east:200,south:120:-3`). Raises ValueError with the
+        offending part as its argument."""
+        overlaps = []
+        for part in text.split(","):
+            fields = part.strip().split(":")
+            if not 2 <= len(fields) <= 3 or fields[0] not in JOIN_SIDES:
+                raise ValueError(part)
+            overlaps.append(cls(fields[0], int(fields[1]), int(fields[2]) if len(fields) == 3 else 0))  # type: ignore[arg-type]
+        return overlaps
 
     def origin(self, base_shape: tuple[int, ...], piece_shape: tuple[int, ...]) -> tuple[int, int]:
         """Where the piece's top-left pixel lands in the base's coordinates (may be negative)."""
@@ -143,7 +167,7 @@ def _check_overlap(base: U8, piece: U8, overlap: Overlap) -> None:
     along = 1 if overlap.side in ("east", "west") else 0
     most = min(base.shape[along], piece.shape[along])
     if not 1 <= overlap.width <= most:
-        raise ValueError(f"an overlap of {overlap.width} px doesn't fit images {most} px across the join")
+        raise JoinError("overlap_width", f"an overlap of {overlap.width} px doesn't fit images {most} px across the join")
 
 
 def _normal(side: str, array: Any) -> Any:
@@ -246,6 +270,7 @@ def _measure(
     box: tuple[int, int, int, int],
     boxes: list[tuple[int, int, int, int]],
     reach: int,
+    chunk: Chunk = None,
 ) -> list[tuple[float, float, float, float]]:
     """Where each edge patch of the warped piece (kept inside `boxes`) sits in the base: (x, y, dx, dy) with the
     patch's centre and its displacement, for the patches that correlate well. `box` is the warped array's place."""
@@ -258,6 +283,8 @@ def _measure(
         ys = _positions(max(y0, reach), min(y1 - _PATCH, bh - _PATCH - reach), 12 if y1 - y0 < x1 - x0 else 48)
         for y in ys:
             for x in xs:
+                if chunk is not None:
+                    chunk()
                 if (x, y) in seen:
                     continue
                 seen.add((x, y))
@@ -333,7 +360,7 @@ def _fit(samples: list[tuple[float, float, float, float]]) -> tuple[tuple[float,
     return (ax, bx, ay, by), float(np.sqrt(np.mean(miss[keep] ** 2))), int(keep.sum())
 
 
-def register_piece(base: U8, piece: U8, overlaps: list[Overlap]) -> Registration:
+def register_piece(base: U8, piece: U8, overlaps: list[Overlap], chunk: Chunk = None) -> Registration:
     """Estimate the scale and shift (no rotation) that put `piece` on `base`, from patches along each overlap.
 
     Each Overlap gives the first guess and says which edge of the base to look along; a corner piece has two (one east
@@ -343,7 +370,8 @@ def register_piece(base: U8, piece: U8, overlaps: list[Overlap]) -> Registration
     narrow the search (16, 4, 2 px), each on the piece resampled with the last pass' result.
 
     The first overlap with a side in each direction sets the first guess; with two on the same direction, the first.
-    Raises ValueError when the overlap has too few textured patches (flat sky, a wall of one colour) to fit.
+    Raises JoinError (a ValueError) when the piece doesn't overlap the base (`no_overlap`) or the overlap has too few
+    textured patches (flat sky, a wall of one colour) to fit (`too_few_patches`). `chunk` is called per patch.
     """
     _check(base, piece)
     if not overlaps:
@@ -373,17 +401,18 @@ def register_piece(base: U8, piece: U8, overlaps: list[Overlap]) -> Registration
         )
         box = (max(footprint[0], 0), max(footprint[1], 0), min(footprint[2], bw), min(footprint[3], bh))
         if box[2] <= box[0] or box[3] <= box[1]:
-            raise ValueError("the piece doesn't overlap the base: check the overlap widths")
+            raise JoinError("no_overlap", "the piece doesn't overlap the base: check the overlap widths")
         warped, inside = _warp(piece_luma, sx, sy, tx, ty, box)
         valid_map, _ = _warp(piece_valid[..., None].astype(np.float64), sx, sy, tx, ty, box)
         warped_valid = inside & (valid_map[..., 0] > 0.999)
         samples = _measure(
-            base_luma, base_valid, warped[..., 0], warped_valid, box, _strip_boxes(overlaps, base.shape, footprint), reach
+            base_luma, base_valid, warped[..., 0], warped_valid, box, _strip_boxes(overlaps, base.shape, footprint), reach, chunk
         )
         if len(samples) < _MIN_PATCHES:
-            raise ValueError(
+            raise JoinError(
+                "too_few_patches",
                 f"only {len(samples)} textured patches along the overlap (at least {_MIN_PATCHES} needed to register); "
-                "widen the overlap or register by hand"
+                "widen the overlap or register by hand",
             )
         (ax, bx, ay, by), residual, used = _fit(samples)
         sx, sy = sx * (1 + ax), sy * (1 + ay)
@@ -418,7 +447,7 @@ def _smooth(values: F64, sigma: float) -> F64:
     return np.convolve(values, kernel, mode="full")[radius : radius + len(values)]
 
 
-def match_tone(base: U8, piece: U8, overlap: Overlap, sigma: float = 24.0) -> tuple[U8, GainRange]:
+def match_tone(base: U8, piece: U8, overlap: Overlap, sigma: float = 24.0, chunk: Chunk = None) -> tuple[U8, GainRange]:
     """Scale the piece's brightness to the base's, with one gain per row for an east or west join (per column for north
     or south), taken from the overlap and smoothed along the join with a Gaussian of `sigma` px.
 
@@ -442,6 +471,8 @@ def match_tone(base: U8, piece: U8, overlap: Overlap, sigma: float = 24.0) -> tu
     base_rows = rows + oy
     usable = (base_rows >= 0) & (base_rows < bh)
     for j in rows[usable]:
+        if chunk is not None and j % 64 == 0:
+            chunk()
         b = nb[base_rows[j], ox:bw]
         p = np_[j, : bw - ox]
         both = (b[:, 3] == 255) & (p[:, 3] == 255)
@@ -450,7 +481,7 @@ def match_tone(base: U8, piece: U8, overlap: Overlap, sigma: float = 24.0) -> tu
     num_s, den_s = _smooth(numerator, sigma), _smooth(denominator, sigma)
     known = den_s > 1e-6
     if not known.any():
-        raise ValueError("the overlap holds no pixel present in both images")
+        raise JoinError("no_shared_pixels", "the overlap holds no pixel present in both images")
     gain = np.interp(rows, rows[known], num_s[known] / den_s[known])
     toned = np_.copy()
     scaled = np.floor(np.clip(np_[..., :3].astype(np.float64) * gain[:, None, None], 0, 255) + 0.5).astype(np.uint8)
@@ -461,14 +492,14 @@ def match_tone(base: U8, piece: U8, overlap: Overlap, sigma: float = 24.0) -> tu
 # --- seam_join --------------------------------------------------------------------------------------------------
 
 
-def seam_join(base: U8, piece: U8, overlap: Overlap, blend: int = 6) -> tuple[U8, Seam]:
+def seam_join(base: U8, piece: U8, overlap: Overlap, blend: int = 6, chunk: Chunk = None) -> tuple[U8, Seam]:
     """Join `piece` to `base` along the least-difference path through their overlap, blended over `blend` px.
 
     The piece must lie on the base's grid as `overlap` says. The path runs the length of the join (top to bottom for
     an east or west join, left to right for north or south), moves at most 1 px across per step, and avoids pixels
     where only one image has colour. Ties go to the straighter step, then to the lower coordinate. Base pixels before
     the path and piece pixels after it are blended over `blend` px (0 is a hard cut); where only one image has colour,
-    that image shows. The canvas grows to hold both. Returns the joined RGBA image and the Seam.
+    that image shows. The canvas grows to hold both. `chunk` is called every 64 rows of the path search. Returns the joined RGBA image and the Seam.
     """
     _check(base, piece)
     _check_overlap(base, piece, overlap)
@@ -494,7 +525,7 @@ def seam_join(base: U8, piece: U8, overlap: Overlap, blend: int = 6) -> tuple[U8
     if low + margin > high - margin:
         margin = 1
     if low + margin > high - margin:
-        raise ValueError("the overlap is too narrow to put a seam in")
+        raise JoinError("overlap_too_narrow", "the overlap is too narrow to put a seam in")
     diff = np.abs(cb[:, low:high, :3].astype(np.int64) - cp[:, low:high, :3].astype(np.int64)).sum(axis=2)
     cost_pixel = np.where(both[:, low:high], diff, _BIG)
     first, last = low + margin, high - margin
@@ -506,6 +537,8 @@ def seam_join(base: U8, piece: U8, overlap: Overlap, blend: int = 6) -> tuple[U8
     accumulated[0] = cost[0]
     infinity = np.iinfo(np.int64).max // 4
     for r in range(1, height):
+        if chunk is not None and r % 64 == 0:
+            chunk()
         previous = accumulated[r - 1]
         candidates = np.stack(
             [

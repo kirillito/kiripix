@@ -9,7 +9,7 @@ Pure numpy: arrays in, arrays out.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from statistics import median
 from typing import TYPE_CHECKING, Any
@@ -196,7 +196,23 @@ def paint_eyes(colour: U8, stamps: Sequence[EyeStamp | None], pupil_rgb: Sequenc
     the rows above it are left as they are: the lid. `closed` is true for every eye (a blink), or the places in `stamps` of
     the eyes that are (a wink)."""
     out = colour.copy()
-    height, width = out.shape[:2]
+    for y, x, dark in _stamped(out, stamps, closed):
+        out[y, x, :3] = np.asarray(pupil_rgb if dark or white_rgb is None else white_rgb, dtype=np.uint8)
+    return out
+
+
+def stamped_mask(colour: U8, stamps: Sequence[EyeStamp | None], closed: bool | Collection[int] = False) -> Bool:
+    """The pixels `paint_eyes` paints with these stamps, whatever colour they had before."""
+    mask = np.zeros(colour.shape[:2], dtype=np.bool_)
+    for y, x, _ in _stamped(colour, stamps, closed):
+        mask[y, x] = True
+    return mask
+
+
+def _stamped(colour: U8, stamps: Sequence[EyeStamp | None], closed: bool | Collection[int]) -> Iterator[tuple[int, int, bool]]:
+    """Each pixel an eye stamp paints, (y, x, whether it takes the pupil's colour): the opaque pixels of each open eye's
+    pattern, or of a closed eye's bottom row."""
+    height, width = colour.shape[:2]
     for place, stamp in enumerate(stamps):
         if stamp is None:
             continue
@@ -206,8 +222,5 @@ def paint_eyes(colour: U8, stamps: Sequence[EyeStamp | None], pupil_rgb: Sequenc
                 continue
             for column in range(stamp.columns):
                 y, x = stamp.top + row, stamp.left + column
-                if not (0 <= y < height and 0 <= x < width) or out[y, x, 3] == 0:
-                    continue
-                dark = shut or column == stamp.pupil or white_rgb is None
-                out[y, x, :3] = np.asarray(pupil_rgb if dark else white_rgb, dtype=np.uint8)
-    return out
+                if 0 <= y < height and 0 <= x < width and colour[y, x, 3] != 0:
+                    yield y, x, shut or column == stamp.pupil

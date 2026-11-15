@@ -22,6 +22,15 @@ trial's own folder under `.kiripix/`, not in `kiripix/`.
 4. Try the outline both ways (per layer; once on the stack) and lay them out as sheets for the Owner.
 5. Measure the render time per layer against the full body.
 
+## Since the generator trial (2026-11-14)
+
+The generator trial ([0164](../m4/0164-m4-claude-built-base-models-trial.md)) didn't answer 0152's three questions: it
+merged every part into one mesh and rendered the whole character. But it gives this trial an easier start than mc02: the
+art repo's `chargen/` already builds hair, tops, coats, hats and skirts as parts on mc03's skeletons, so step 1 can build
+the body and each layer as separate objects with `chargen/generate.py` instead of from `build_mc02.py`. A long coat and a
+hood-like hat are in its library already (question 1). What it showed about bases went to
+[0165](../m4/0165-m4-characters-share-a-base.md), which no longer waits for this trial.
+
 ## What to record, in this ticket
 
 - The differing-pixel counts, the sheets' paths and the Owner's view of each.

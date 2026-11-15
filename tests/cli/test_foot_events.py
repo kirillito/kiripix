@@ -50,7 +50,7 @@ def test_a_walk_that_touches_the_ground_twice_has_two_foot_frames_and_an_idle_no
     folder = with_steps(project)
 
     document = clips_json(folder)
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert [c for c in document["clips"] if c["name"] == "step"][0]["frames"] == [0, 3, 6, 9, 12, 15, 18, 21, 24, 27]
     assert events(folder) == {"idle": [], "step": [1, 6]}  # frames 3 (left) and 18 (right): the first frame of each run
 

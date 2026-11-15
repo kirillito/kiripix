@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_origin
 
 from pydantic import BaseModel
 
@@ -176,12 +176,14 @@ def _multipart(command: Command[Any, Any], parts: list[Part], files: FileInputs)
     set to the stored path."""
     help_line = f"kiripix {command.name} --help"
     names = [part.name for part in parts]
-    if repeated := sorted({name for name in names if names.count(name) > 1}):
+    lists = {name for name in command.files if _is_list(command, name)}  # file inputs that may repeat
+    if repeated := sorted({name for name in names if names.count(name) > 1 and name not in lists}):
         raise fail("input.invalid", f"the parts {', '.join(repeated)} are sent more than once", fix=help_line)
     given = next((part for part in parts if part.name == INPUT_PART), None)
     raw = _json(command, given.data) if given is not None else {}
     if not isinstance(raw, dict):
         raise fail("input.invalid", f"the '{INPUT_PART}' part must be a JSON object", fix=help_line)
+    listed: dict[str, list[str]] = {}
     for part in parts:
         if part.name == INPUT_PART:
             continue
@@ -191,8 +193,18 @@ def _multipart(command: Command[Any, Any], parts: list[Part], files: FileInputs)
                        f"{accepted}); send the other fields as JSON in the '{INPUT_PART}' part", fix=help_line)
         if not part.data:
             raise fail("input.invalid", f"the file '{part.name}' is empty", fix=help_line)
-        raw[part.name] = str(files.store(part.name, part.filename, part.data))
+        if part.name in lists:  # a list input: its parts in the order sent, each with the name it came with
+            if part.name not in listed:
+                listed[part.name] = []
+                raw[part.name] = listed[part.name]  # the JSON part's own value for it is replaced
+            listed[part.name].append(str(files.store(part.name, part.filename, part.data, number=len(listed[part.name]))))
+        else:
+            raw[part.name] = str(files.store(part.name, part.filename, part.data))
     return raw
+
+
+def _is_list(command: Command[Any, Any], field: str) -> bool:
+    return get_origin(command.input.model_fields[field].annotation) is list
 
 
 __all__ = ["CancelData", "INPUT_PART", "Part", "Session", "built_web"]

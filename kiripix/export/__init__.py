@@ -23,7 +23,15 @@ from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
-from kiripix.export.checks import EXPORTERS, exits_naming, frozen_findings, frozen_layer_findings, pairing_findings
+from kiripix.export.checks import (
+    EXPORTERS,
+    exits_naming,
+    frozen_findings,
+    frozen_layer_findings,
+    frozen_loop_findings,
+    loop_edit_findings,
+    pairing_findings,
+)
 from kiripix.export.character import COLOR_FILE, NORMAL_FILE, RAMPS_FILE, ramp_rows, ramps_png, read_character
 from kiripix.export.godot import (
     character_frames, character_ids, character_scene, character_texture, prop_ids, prop_scene, room_ids, room_scene,
@@ -95,6 +103,8 @@ def _room_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
             files[f"{folder}/{file}"] = (built_dir(graph) / str(file)).read_bytes()
     for layer in room["layers"]:
         files[f"{folder}/{layer['file']}"] = (built_dir(graph) / str(layer["file"])).read_bytes()
+        if layer.get("remainder"):  # what the Layer's Sprite2D shows when a frame Loop moves part of it
+            files[f"{folder}/{layer['remainder']}"] = (built_dir(graph) / str(layer["remainder"])).read_bytes()
     return files, room_ids(room)
 
 
@@ -372,5 +382,5 @@ def export_command(project: Project, asset: Asset, cache: HashCache, states: lis
 
 
 __all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "ExportRun", "PruneResult", "export_assets",
-           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "install_driver", "merge_files", "pairing_findings",
+           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "frozen_loop_findings", "loop_edit_findings", "install_driver", "merge_files", "pairing_findings",
            "apply_repairs", "plan_repairs", "prune_assets", "resolve_target"]

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -44,11 +44,31 @@ the look is [0213](0213-m4-render-cel-band-edge.md).
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the character fixture: with `inner_lines=outline` a border pixel between two materials has the colour of
+- [x] CLI seam, on the character fixture: with `inner_lines=outline` a border pixel between two materials has the colour of
       the outline, and it is the farther one; with `dark` it has the colour `finish.json` lists for its material; with `off`
       the frames are byte-equal to a run without the parameter.
-- [ ] `line_skip` drops the named border and keeps the others; an unknown material name fails with a finding that lists the
+- [x] `line_skip` drops the named border and keeps the others; an unknown material name fails with a finding that lists the
       materials.
-- [ ] `inner_lines=dark` with `parts` set exits with `finish.inner_lines_with_parts` and its fix.
-- [ ] With `eyes=stamp`, no stamped eye pixel is changed by a line.
-- [ ] `uv run pytest`, `uv run lint-imports` and `uv run mypy` pass.
+- [x] `inner_lines=dark` with `parts` set exits with `finish.inner_lines_with_parts` and its fix.
+- [x] With `eyes=stamp`, no stamped eye pixel is changed by a line.
+- [x] `uv run pytest`, `uv run lint-imports` and `uv run mypy` pass.
+
+## Result (2026-11-14)
+
+- `FINISH_SCHEMA_VERSION` is 2. `finish` declares `inner_lines` (`off`, `outline`, `dark`; default `off`), `line_skip` and
+  `line_darkness` (0.55); declaring them makes every existing character stale once, as the Owner accepted. With `off` the frames
+  are byte-equal to the palette frames plus the outline, and `finish.json` has no `inner_lines` key.
+- Order in `_run_finish`: the eyes, the inner lines, the outline. The line is the Op's mask cut by the render's mask pass, minus
+  the pixels the eyes changed; the eye materials (`render.json`'s `eyes`) are always added to the Op's `skip`. The normal pass is
+  not touched.
+- `dark` chooses the colours once, before the first frame is painted, from every palette frame and its material pass
+  (`line_colours`); the cancel token is checked per frame in that read pass. `outline` uses `outline_colour` even when
+  `outline=false`, and it is refused as before when that colour is in a part's ramp (`finish.outline_in_ramp`).
+- `finish.json` `inner_lines`: `mode`, `skip` (as written, `a+b` or `a`), and with `dark` `darkness` and `colours`
+  `{material name: {material, colour, rgb}}`; with `outline` `colour` `{colour, rgb}`.
+- Findings: `finish.line_skip_unknown` (lists the materials; fix `kiripix set <asset> finish line_skip=`, also for a token with
+  more than two names) and `finish.inner_lines_with_parts` (fix `kiripix set <asset> finish inner_lines=outline`). The parts
+  refusal comes after the outline colour's own check, so a character whose outline colour is in a ramp hears about that first.
+- The sprite's `finish` shares the code and doesn't declare the parameters, so it reads `off`.
+- Tests: `tests/cli/test_character_inner_lines.py` (8), on the fake Blender's banded material pass; its depth is flat, so the
+  "farther pixel" is the tie rule (the right-hand one). The farther-pixel rule itself is the golden test of 0214.

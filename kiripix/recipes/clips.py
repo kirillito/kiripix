@@ -6,6 +6,11 @@ A clip's `source` is a clip-source file's stem (`walk` for `src/clips/walk.<hash
 several actions), else the name of an action in the rig's file (the Model's own `model.blend`, or the rigged file the Mixamo
 round trip brought back). A clip-source file wins over an action of the same name.
 
+A character made from a base (ADR 0012) starts with the base's clips: the base's current Decisions come first, then its own,
+which add a clip, replace one of the same name or `remove` one. The base's clip-source files are read where they are, in the
+base's folder; a file of the character's own with the same stem wins. Only clip-source files cross: a base clip that plays an
+action of the base's own Model file is looked for in the character's Model, and fails `clips.source_missing` without it.
+
 Blender is asked once per file, for its actions, how far the root travels in each, and the foot bones' height and speed at
 each frame; the Stage does the rest, among it the frames where a foot plants (`find_plants`, ticket 0172), listed per clip in
 `events`: the same on every direction, as a direction is only the camera's view of one action.
@@ -24,7 +29,8 @@ from kiripix.recipes.base import CurrentDecision, DecisionSpec, NeedsInput, Stag
 from kiripix.recipes.blender_launcher import launch
 
 # 2: each clip's `events` ({"foot": [index into `frames`, ...]}, ticket 0172); refused when older
-CLIPS_SCHEMA_VERSION = 2
+# 3: a `transition` clip's entry (`transition`: its two ends and `length`, ticket 0218)
+CLIPS_SCHEMA_VERSION = 3
 PLANT_HEIGHT = 0.03  # a foot within this fraction of the rig's height of the clip's lowest foot point is on the ground
 PLANT_SPEED = 0.25  # with root motion, a planted foot moves less than this many rig heights a second
 CLIP_SOURCES = "src/clips/"
@@ -70,18 +76,91 @@ CLIP = DecisionSpec(
     },
 )
 
+_END = {
+    "type": "object",
+    "properties": {"clip": {"type": "string", "minLength": 1}, "frame": {"type": "integer", "minimum": 0}},
+    "required": ["clip"],
+    "additionalProperties": False,
+}
+
+TRANSITION = DecisionSpec(
+    name="transition",
+    description="A clip that blends one clip's pose into another's, rendered by Kiripix and exported like any clip, so an idle "
+                "character that attacks doesn't snap into the attack's first frame. `name` is its ID in the game, with the "
+                "same pattern as a clip's and frozen at its first export; by convention `<from>_to_<to>`. `from` and `to` "
+                "name a `clip` and one of its frames (`frame`, from 0 in the clip's own frames: `from` defaults to the last, "
+                "`to` to the first). `length` (default 3) is the number of frames between the two poses, not including "
+                "them: frame i of n is the blend at (i + 1) / (n + 1), every bone's location and scale linear and its "
+                "rotation spherical, with the root kept in place. `fps` defaults to the `from` clip's. It never loops. "
+                "Deciding a transition again under a name it already has changes it; `undo` brings the old one back. "
+                "A name a `clip` has fails clips.duplicate_name.",
+    entry_schema={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "pattern": NAME_PATTERN},
+            "from": _END,
+            "to": _END,
+            "length": {"type": "integer", "minimum": 1, "default": 3},
+            "fps": {"type": "integer", "minimum": 1},
+        },
+        "required": ["name", "from", "to"],
+        "additionalProperties": False,
+    },
+)
+
+REMOVE = DecisionSpec(
+    name="remove",
+    description="Take a clip or a transition away by its `name`, together with every transition from or to it, as far as "
+                "they were decided before this. On a character made from a base it takes a clip of the base away from this "
+                "character only; the base keeps it. A `clip` Decision under the name afterwards brings the clip back, and "
+                "`undo` takes the removal back. A name no clip has at that point changes nothing (a warning, "
+                "clips.remove_unknown).",
+    entry_schema={
+        "type": "object",
+        "properties": {"name": {"type": "string", "pattern": NAME_PATTERN}},
+        "required": ["name"],
+        "additionalProperties": False,
+    },
+)
+
 _NAME = re.compile(NAME_PATTERN)
+
+
+def _replayed(decisions: Iterable[CurrentDecision]) -> tuple[dict[str, CurrentDecision], dict[str, CurrentDecision], list[str]]:
+    """The clips and the transitions, one Decision per name, and the names a `remove` found nothing under. The Decisions
+    are taken in order (a base's first, ADR 0012): a `clip` or `transition` under a name an earlier one has replaces it
+    and keeps its place; a `remove` takes away the clip or transition of that name and every transition from or to it."""
+    clips: dict[str, CurrentDecision] = {}
+    transitions: dict[str, CurrentDecision] = {}
+    unknown: list[str] = []
+    for decision in decisions:
+        name = str(decision.data.get("name", ""))
+        if decision.name == CLIP.name:
+            clips[name] = decision  # a dict keeps the first insertion's place
+        elif decision.name == TRANSITION.name:
+            transitions[name] = decision
+        elif decision.name == REMOVE.name:
+            if name not in clips and name not in transitions:
+                unknown.append(name)
+                continue
+            clips.pop(name, None)
+            transitions.pop(name, None)
+            for other in [n for n, t in transitions.items() if name in (str(t.data["from"]["clip"]), str(t.data["to"]["clip"]))]:
+                del transitions[other]
+    return clips, transitions, unknown
 
 
 def latest_clips(decisions: Iterable[CurrentDecision]) -> list[CurrentDecision]:
     """The clips, one Decision per name: a `clip` Decision under a name an earlier one has replaces it (ticket 0156), so
     the latest wins and the clip keeps the earlier one's place. The earlier one stays current in the journal, which is
-    why `undo` of the new one brings it back."""
-    latest: dict[str, CurrentDecision] = {}
-    for decision in decisions:
-        if decision.name == CLIP.name:
-            latest[str(decision.data["name"])] = decision  # a dict keeps the first insertion's place
-    return list(latest.values())
+    why `undo` of the new one brings it back. A clip a later `remove` names is gone."""
+    return list(_replayed(decisions)[0].values())
+
+
+def latest_transitions(decisions: Iterable[CurrentDecision]) -> list[CurrentDecision]:
+    """The transitions, one Decision per name, the latest winning as for the clips (ticket 0218); without the ones a
+    `remove` took away, by their own name or with a clip they start or end on."""
+    return list(_replayed(decisions)[1].values())
 
 
 def clip_decisions(run: StageRun) -> list[CurrentDecision]:
@@ -103,7 +182,7 @@ def clips_needs_input(run: StageRun) -> NeedsInput | None:
 
 def _sources_known(run: StageRun) -> str:
     """The sources a clip can name, as far as is known without reading a file in Blender."""
-    known = [f"clip source {stem}" for stem in sorted(_clip_files(run))]
+    known = [f"clip source {stem}" for stem in sorted(clip_files(run))]
     try:
         rig = json.loads((run.upstream["rig"] / "rig.json").read_text(encoding="utf-8"))
         if rig["source"] == "rigged":
@@ -116,8 +195,14 @@ def _sources_known(run: StageRun) -> str:
     return f"Sources: {'; '.join(known)}." if known else "Import an animation file as a clip source first."
 
 
-def _clip_files(run: StageRun) -> dict[str, Path]:
-    return {Path(Path(name).stem).stem: path for name, path in sorted(run.files.items()) if name.startswith(CLIP_SOURCES)}
+def clip_files(run: StageRun) -> dict[str, Path]:
+    """The clip-source files a clip's `source` can name, by stem: the character's own, and its base's (ADR 0012), which
+    stay in the base's folder. Its own file wins a stem both have, so a character can play a base clip from another file."""
+    found: dict[str, Path] = {}
+    for files in ((run.base.files if run.base is not None else {}), run.files):
+        found.update({Path(Path(name).stem).stem: path for name, path in sorted(files.items())
+                      if name.startswith(CLIP_SOURCES)})
+    return found
 
 
 def _hash_file(path: Path) -> str:
@@ -234,7 +319,7 @@ def run_clips(run: StageRun) -> None:
     root = ["root", str(rig["mapping"].get("hips", "hips"))]
     mapping = rig["mapping"]
     feet = {side: str(mapping[key]) for side, key in (("left", "left_foot"), ("right", "right_foot")) if key in mapping}
-    files = _clip_files(run)
+    files = clip_files(run)
     cache: dict[Path, dict[str, Any]] = {}
     missing: list[str] = []
     out_of_range: list[str] = []
@@ -295,27 +380,103 @@ def run_clips(run: StageRun) -> None:
             **extras,
         })
     if missing:
+        of_base = "" if run.base is None else (
+            f" A clip of the base {run.base.asset_id} that plays an action of the base's own Model doesn't reach this "
+            "character: only the base's clip-source files do, so give the base that animation as a clip source.")
         raise StageFailure("a clip's source can't be found: " + "; ".join(missing), code="clips.source_missing",
                            owner_action="Add the animation file (kiripix import "
                                         f"{run.asset_id} <file.fbx> --role clip-source), or name an action of the rigged "
-                                        "Model as the clip's source.")
+                                        f"Model as the clip's source.{of_base}")
     if out_of_range:
         raise StageFailure("a clip's frames are outside its action: " + "; ".join(out_of_range), code="clips.range",
                            fix=f"kiripix undo {run.asset_id} clips")
     if bad_blinks:
         raise StageFailure("a clip's blink or wink is not one of its frames: " + "; ".join(bad_blinks), code="clips.blink_range",
                            fix=f"kiripix undo {run.asset_id} clips")
+    clips += _resolve_transitions(run, clips, names)
+    clips.sort(key=lambda c: str(c["name"]))
     document = {"schema_version": CLIPS_SCHEMA_VERSION, "clips": clips}
     (run.output_dir / "clips.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
+def _resolve_transitions(run: StageRun, clips: list[dict[str, Any]], clip_names: list[str]) -> list[dict[str, Any]]:
+    """The entries of the `transition` Decisions: the blend positions as `frames`, and each end with the source's hash, the
+    action and the action's frame, taken from the named clip's own `frames` (ticket 0218). A transition's failures name the
+    clip, the frame or the pair at fault and are taken back with `undo`."""
+    transitions = latest_transitions(run.decisions)
+    by_name = {str(c["name"]): c for c in clips}
+    undo = f"kiripix undo {run.asset_id} clips"
+    shared = sorted(n for n in (str(t.data["name"]) for t in transitions) if n in clip_names)
+    if shared:
+        raise StageFailure(f"a transition has the name of a clip: {', '.join(shared)}", code="clips.duplicate_name", fix=undo)
+    bad = sorted(str(t.data["name"]) for t in transitions if not _NAME.match(str(t.data["name"])))
+    if bad:
+        raise StageFailure(f"clip names must be lower-case snake_case and not end in a direction suffix: {', '.join(bad)}",
+                           code="clips.bad_name", fix=undo)
+    named = {str(t.data["name"]) for t in transitions}
+    looping = sorted({f"{t.data['name']}: {t.data[end]['clip']} is a transition" for t in transitions for end in ("from", "to")
+                      if str(t.data[end]["clip"]) in named})
+    if looping:
+        raise StageFailure("a transition between transitions has no meaning: " + "; ".join(looping),
+                           code="clips.transition_loop", fix=undo)
+    unknown = sorted({f"{t.data['name']}: no clip {t.data[end]['clip']}" for t in transitions for end in ("from", "to")
+                      if str(t.data[end]["clip"]) not in by_name})
+    if unknown:
+        raise StageFailure(f"a transition names no clip ({'; '.join(unknown)}); the clips are {', '.join(sorted(by_name))}",
+                           code="clips.transition_missing_clip", fix=undo)  # then decide the clip, or undo
+    found: list[dict[str, Any]] = []
+    outside: list[str] = []
+    for decision in transitions:
+        data = decision.data
+        ends: dict[str, dict[str, Any]] = {}
+        for end, default in (("from", -1), ("to", 0)):
+            source = by_name[str(data[end]["clip"])]
+            count = len(source["frames"])
+            index = int(data[end].get("frame", default % count))
+            if not 0 <= index < count:
+                outside.append(f"{data['name']}: {source['name']} has frames 0 to {count - 1}, and {end} names {index}")
+                continue
+            ends[end] = {"clip": source["name"], "frame": index, "source": source["source"],
+                         "source_hash": source["source_hash"], "action": source["action"],
+                         "action_frame": source["frames"][index], "root_motion": source["root_motion"]}
+        if len(ends) < 2:
+            continue
+        length = int(data.get("length", 3))
+        first = by_name[str(data["from"]["clip"])]
+        found.append({
+            "name": str(data["name"]),
+            "transition": {**ends, "length": length},
+            "fps": int(data.get("fps", first["fps"])),
+            "loop": False,
+            "stationary": bool(first["stationary"] and by_name[str(data["to"]["clip"])]["stationary"]),
+            "root_travel": 0.0,
+            "root_motion": False,
+            "frames": [round((i + 1) / (length + 1), 6) for i in range(length)],
+            "events": {"foot": []},
+        })
+    if outside:
+        raise StageFailure("a transition names a frame its clip doesn't have: " + "; ".join(outside),
+                           code="clips.transition_frame", fix=undo)  # then decide it again with a frame in range
+    return found
+
+
 def check_clips(run: StageRun) -> list[Finding]:
-    """Root motion is reported, not refused: the render keeps the feet at the pivot either way."""
+    """Root motion is reported, not refused: the render keeps the feet at the pivot either way. So is a `remove` that
+    found no clip under its name, which a base that dropped the clip leaves behind."""
     path = run.output_dir / "clips.json"
     if not path.is_file():
         return []
     document = json.loads(path.read_text(encoding="utf-8"))
-    return [
+    unknown = [
+        Finding(
+            code="clips.remove_unknown", severity="warning",
+            message=f"a `remove` names the clip {name}, and there was no clip or transition of that name to take away",
+            position=Position(asset=run.asset_id, stage="clips"),
+            owner_action=f"Nothing is needed if {name} is meant to be gone. If the name is a typo, undo the `remove` "
+                         f"(kiripix undo {run.asset_id} clips, while it is the latest Decision) and decide it again.")
+        for name in dict.fromkeys(_replayed(run.decisions)[2])
+    ]
+    return unknown + [
         Finding(
             code="clips.root_motion", severity="warning",
             message=f"the clip {clip['name']} moves its root ({clip['root_travel']:.0%} of the character's height): "

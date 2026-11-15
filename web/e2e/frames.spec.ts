@@ -74,12 +74,14 @@ test("a Clip is stepped through, a Direction is chosen by the number pad, and th
   // The picture is the frame's own, scaled by a whole number, with the browser told not to smooth it.
   const canvas = page.getByTestId("frame-canvas");
   await expect(canvas).toHaveCSS("image-rendering", "pixelated");
-  const drawn = await canvas.evaluate((element: HTMLCanvasElement) => {
-    const pixel = element.getContext("2d")!.getImageData(1, 1, 1, 1).data;
-    return { ratio: element.getBoundingClientRect().width / element.width, pixel: [...pixel] };
-  });
-  expect(Number.isInteger(drawn.ratio)).toBe(true);
-  expect(drawn.pixel).toEqual([200, 100, 50, 255]);
+  const drawnNow = () =>
+    canvas.evaluate((element: HTMLCanvasElement) => {
+      const pixel = element.getContext("2d")!.getImageData(1, 1, 1, 1).data;
+      return { ratio: element.getBoundingClientRect().width / element.width, pixel: [...pixel] };
+    });
+  // The frame's image decodes after the screen says which frame it is (a race under load, ticket 0202), so wait for its pixel.
+  await expect.poll(async () => (await drawnNow()).pixel).toEqual([200, 100, 50, 255]);
+  expect(Number.isInteger((await drawnNow()).ratio)).toBe(true);
   await page.keyboard.press("KeyZ");
   await expect(canvas).toHaveAttribute("data-zoom", "6");
   expect(Number.isInteger(await canvas.evaluate((element) => element.getBoundingClientRect().width / (element as HTMLCanvasElement).width))).toBe(true);

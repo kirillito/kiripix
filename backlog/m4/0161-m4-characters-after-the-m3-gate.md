@@ -93,5 +93,5 @@ The game's M03 waits on 0156 (its idle is 10 to 20 frames), 0160 (the Owner appr
 
 - The game's animation state machine (when to play an idle on a timer, which transition to pick).
 - Base Models made by Claude in Blender, and characters sharing a base's rig and clips: M5
-  ([0164](../m5/0164-m5-claude-built-base-models-trial.md), [0165](../m5/0165-m5-characters-share-a-base.md)); 0171 is only
+  ([0164](../m4/0164-m4-claude-built-base-models-trial.md), [0165](../m4/0165-m4-characters-share-a-base.md)); 0171 is only
   a stop-gap for the clip Decisions.

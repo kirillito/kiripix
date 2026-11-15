@@ -22,6 +22,7 @@ export interface Finding {
   position: Position | null;
   fix: string | null;
   owner_action: string | null;
+  points?: [number, number][]; // further pixels the finding is about; absent when it has none
 }
 
 export interface Envelope<T> {

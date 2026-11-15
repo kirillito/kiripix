@@ -37,7 +37,7 @@ from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
 from kiripix.core import atomic, cancel, journal, pinning, warm
-from kiripix.core.assets import HISTORY_FILE, Asset, list_assets
+from kiripix.core.assets import HISTORY_FILE, Asset, base_of, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.hashing import HashCache, hash_bytes, hash_json
 from kiripix.core.images import load_rgba, save_png
@@ -46,7 +46,10 @@ from kiripix.core.locks import GPU_LOCK, asset_lock, hold
 from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
-from kiripix.recipes.base import COMPUTED_SETTINGS, CurrentDecision, LazyMap, NeedsInput, RunnerCall, Scalar, StageFailure, StageRun, StageSpec
+from kiripix.recipes.base import (
+    BASE_PARAM, COMPUTED_SETTINGS, BaseInputs, BaseView, CurrentDecision, LazyMap, NeedsInput, ParamSource, RunnerCall, Scalar,
+    StageFailure, StageRun, StageSpec,
+)
 import kiripix.ops as ops_package
 import kiripix.recipes as recipes_package
 import kiripix.runners as runners_package
@@ -58,6 +61,19 @@ Status = Literal["todo", "stale", "done", "needs-input", "needs-review", "failed
 Outcome = Literal["done", "skipped", "failed", "needs-input", "needs-review", "cancelled"]
 
 STAMP_FILE = ".stage.json"
+
+# A function that may rewrite a Stage's findings with what only the Project knows (the game's Manifest, which a Stage can't
+# read). `export` registers one; it changes a finding's advice, never its code, and adds or drops none.
+Adviser = Callable[["AssetGraph", StageSpec, list[Finding]], list[Finding]]
+_ADVISERS: list[Adviser] = []
+
+
+def register_adviser(adviser: Adviser) -> Adviser:
+    """Add an adviser of a Stage's findings; usable as a decorator."""
+    _ADVISERS.append(adviser)
+    return adviser
+
+
 REPLAYED_ON_CHANGED_IMAGE = "clicks or Overrides were replayed onto a changed image"
 RUNNER_NOT_RUN = "Runner not run yet"
 RUNNER_INPUT_CHANGED = "Runner input changed"
@@ -171,8 +187,12 @@ class AssetGraph:
         self._replays: dict[str, journal.Replay] = {}
         self._calls: dict[str, list[RunnerCall]] = {}
         self._files: dict[str, dict[str, Path]] = {}
+        self._base_files: dict[str, dict[str, Path]] = {}
+        self._project_files: dict[str, dict[str, Path]] = {}
         self._settings = settings_document(project.settings)
         self._known_settings: dict[str, Any] | None = None
+        self._base_asset = base_of(project, asset)  # refuses a base that can't be one (`asset.base_invalid`)
+        self._base: AssetGraph | None = None
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
         if unknown:
             file = project.relative(asset.dir / "asset.toml")
@@ -205,8 +225,24 @@ class AssetGraph:
             )
         return spec
 
+    @property
+    def base(self) -> AssetGraph | None:
+        """The graph of the Asset's base (ADR 0012), or None. It is only read: nothing of the base is ever written or
+        locked from here."""
+        if self._base is None and self._base_asset is not None:
+            self._base = AssetGraph(self.project, self._base_asset, self.cache)
+        return self._base
+
     def params(self, spec: StageSpec) -> dict[str, Scalar]:
-        """The Stage's parameters: declared defaults, overridden by `[stages.<stage>]` in `asset.toml`."""
+        """The Stage's parameters: declared defaults, overridden by the base's `[stages.<stage>]` for an Asset made from a
+        base (ADR 0012; but for a parameter never taken from a base), overridden by `[stages.<stage>]` in `asset.toml`."""
+        return self._resolved_params(spec)[0]
+
+    def param_sources(self, spec: StageSpec) -> dict[str, ParamSource]:
+        """Who set each of the Stage's parameters: the Asset's own `asset.toml`, its base's, or nobody (the default)."""
+        return self._resolved_params(spec)[1]
+
+    def _resolved_params(self, spec: StageSpec) -> tuple[dict[str, Scalar], dict[str, ParamSource]]:
         overrides = self.asset.settings.stages.get(spec.name, {})
         declared = {p.name: p for p in spec.params}
         file = self.project.relative(self.asset.dir / "asset.toml")
@@ -226,8 +262,17 @@ class AssetGraph:
         if findings:
             raise KiripixError(findings)
         result: dict[str, Scalar] = {p.name: p.default for p in spec.params if p.default is not None}
+        sources: dict[str, ParamSource] = {name: "default" for name in result}
+        base = self.base
+        if base is not None:
+            base.params(spec)  # the base's own `asset.toml` is checked as the base's, and a finding names its file
+            taken = {name: value for name, value in base.asset.settings.stages.get(spec.name, {}).items()
+                     if declared[name].from_base}
+            result.update(taken)
+            sources.update({name: "base" for name in taken})
         result.update(overrides)
-        return result
+        sources.update({name: "asset" for name in overrides})
+        return result, sources
 
     def replay(self, stage: str) -> journal.Replay:
         """The Stage's Decision journal, replayed: its current Decisions and whether the journal diverged."""
@@ -246,6 +291,111 @@ class AssetGraph:
                         found[path.relative_to(self.asset.dir).as_posix()] = path
             self._files[spec.name] = found
         return dict(self._files[spec.name])
+
+    def base_files(self, spec: StageSpec) -> dict[str, Path]:
+        """The base's files the Stage reads (`StageInputs.base.files`), by their path relative to the base's folder; none
+        for an Asset without a base."""
+        base, wanted = self.base, spec.inputs.base
+        if base is None or wanted is None:
+            return {}
+        if spec.name not in self._base_files:
+            found: dict[str, Path] = {}
+            for pattern in wanted.files:
+                for path in sorted(base.asset.dir.glob(pattern)):
+                    if path.is_file():
+                        found[path.relative_to(base.asset.dir).as_posix()] = path
+            self._base_files[spec.name] = found
+        return dict(self._base_files[spec.name])
+
+    def _base_params(self, spec: StageSpec) -> dict[str, Scalar]:
+        """The base's own values of the Stage's parameters that are never taken over from a base (`BaseView.params`)."""
+        base = self.base
+        if base is None or spec.inputs.base is None:
+            return {}
+        theirs = base.params(spec)
+        return {p.name: theirs[p.name] for p in spec.params if not p.from_base and p.name in theirs}
+
+    def _base_view(self, spec: StageSpec) -> BaseView | None:
+        base, wanted = self.base, spec.inputs.base
+        if base is None or wanted is None:
+            return None
+        return BaseView(
+            asset_id=base.asset.id,
+            asset_dir=base.asset.dir,
+            files=self.base_files(spec),
+            decisions=LazyMap(wanted.decisions, lambda name: base.replay(name).current),
+            built={name: base.output_dir(base.spec(name)) for name in wanted.built},
+            params=self._base_params(spec),
+        )
+
+    def _base_not_built(self, spec: StageSpec) -> NeedsInput | None:
+        """Why the Stage must wait for its base: a Stage of the base whose built output it reads isn't done."""
+        base, wanted = self.base, spec.inputs.base
+        if base is None or wanted is None:
+            return None
+        for name in wanted.built:
+            state = base.state(name)
+            if state.status != "done":
+                return NeedsInput(f"its base {base.asset.id} has no built {name} (it is {state.status})",
+                                  command=f"kiripix run {base.asset.id} {name}")
+        return None
+
+    def project_files(self, spec: StageSpec) -> dict[str, Path]:
+        """The Project's own files that build this Asset in the Stage (`StageSpec.project_files`), by the path the Stage
+        gave, relative to the Project's root; none for a Stage without the hook."""
+        if spec.project_files is None:
+            return {}
+        if spec.name not in self._project_files:
+            found: dict[str, Path] = {}
+            for name in spec.project_files(self._run(spec, self.output_dir(spec), None)):
+                if Path(name).is_absolute() or ".." in Path(name).parts:
+                    raise ValueError(f"the Stage '{spec.name}' names {name}, which is not a path inside the Project")
+                found[name] = self.project.root / name
+            self._project_files[spec.name] = found
+        return dict(self._project_files[spec.name])
+
+    def _project_hashes(self, files: dict[str, Path]) -> dict[str, str | None]:
+        """The content hash of each file, and of every file under each folder (Python's own caches left out, which running
+        a script can write); None for a path that isn't there."""
+        found: dict[str, str | None] = {}
+        for name, path in files.items():
+            if path.is_file():
+                found[name] = self.cache.file_hash(path)
+            elif path.is_dir():
+                found[name] = "folder"
+                for inner in sorted(path.rglob("*")):
+                    if inner.is_file() and "__pycache__" not in inner.parts and inner.suffix != ".pyc":
+                        found[f"{name}/{inner.relative_to(path).as_posix()}"] = self.cache.file_hash(inner)
+            else:
+                found[name] = None
+        return found
+
+    def _built_by_project(self) -> bool:
+        """Whether a file of the Project builds this Asset in some Stage, as a generator builds a Model."""
+        return any(self.project_files(s) for s in self.kind.stages if s.project_files is not None)
+
+    def _outside_inputs(self, spec: StageSpec) -> dict[str, Any]:
+        """The part of the input hash that comes from outside the Asset's own folder and the settings: its base (ADR 0012)
+        and the Project's files that build it (ticket 0224). With either, who set a parameter can change what a Stage
+        builds, so the parameters the Asset sets itself are part of it too. Nothing for an Asset with neither, so its
+        hashes are what they were before either existed."""
+        extra: dict[str, Any] = {}
+        base = self.base
+        if base is not None:
+            wanted = spec.inputs.base or BaseInputs()
+            extra["base"] = {
+                "asset": base.asset.id,
+                "files": {name: self.cache.file_hash(path) for name, path in self.base_files(spec).items()},
+                "decisions": {name: journal.hashable(base.replay(name)) for name in wanted.decisions},
+                "built": {name: base.input_hash(name) for name in wanted.built},
+                "params": self._base_params(spec),
+            }
+        files = self.project_files(spec)
+        if files:
+            extra["project_files"] = self._project_hashes(files)
+        if base is not None or self._built_by_project():
+            extra["own_params"] = sorted(self.asset.settings.stages.get(spec.name, {}))
+        return extra
 
     def palette_path(self) -> Path:
         return self.project.root / self.project.settings.project.palette
@@ -285,6 +435,7 @@ class AssetGraph:
                     "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
                     "upstream": {name: self.input_hash(name) for name in spec.inputs.upstream},
                     **self._pinned_for_hash(spec),
+                    **self._outside_inputs(spec),
                 }
             )
         return self._hashes[stage]
@@ -302,6 +453,10 @@ class AssetGraph:
         self._image_hashes.clear()
         self._calls.clear()
         self._files.clear()
+        self._base_files.clear()
+        self._project_files.clear()
+        if self._base is not None:
+            self._base.forget_hashes()  # the base may have been built again meanwhile, by another Command
 
     def _calls_key(self, spec: StageSpec) -> str:
         """What a Stage's Runner calls derive from: its own inputs, every file of its upstream outputs, and which
@@ -321,7 +476,7 @@ class AssetGraph:
             "params": self.params(spec), "decisions": journal.hashable(self.replay(spec.name)),
             "files": {name: self.cache.file_hash(path) for name, path in self.files(spec).items()},
             "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
-            "upstream": upstream, "pinned": pinned,
+            "upstream": upstream, "pinned": pinned, **self._outside_inputs(spec),
         })
 
     def runner_calls(self, spec: StageSpec) -> list[RunnerCall]:
@@ -422,9 +577,28 @@ class AssetGraph:
             return []
         return spec.review(self.stage_run(spec, self.output_dir(spec)))
 
+    def decisions(self, spec: StageSpec) -> tuple[CurrentDecision, ...]:
+        """The Stage's current Decisions as its Stage reads them: replayed, then through its `decisions_view` (a Loop's
+        `rename` and `remove`), so the Stage itself and the Stages downstream of it see the same IDs."""
+        current = (*self.base_decisions(spec), *self.replay(spec.name).current)
+        return spec.decisions_view(current) if spec.decisions_view is not None else current
+
+    def base_decisions(self, spec: StageSpec) -> tuple[CurrentDecision, ...]:
+        """The base's current Decisions of this Stage, which come before the Asset's own (ADR 0012): for a Stage that names
+        itself in `StageInputs.base.decisions`, on an Asset made from a base; else none. They stay in the base's journal:
+        `undo` and `redo` on this Asset never reach them."""
+        base, wanted = self.base, spec.inputs.base
+        if base is None or wanted is None or spec.name not in wanted.decisions:
+            return ()
+        return base.replay(spec.name).current
+
     def stage_run(self, spec: StageSpec, output_dir: Path,
                   progress: Callable[[int, int, str], None] | None = None) -> StageRun:
         """What the Stage's run, `needs_input` and `check` functions are handed."""
+        run = self._run(spec, output_dir, progress)
+        return replace(run, project_files=self.project_files(spec)) if spec.project_files is not None else run
+
+    def _run(self, spec: StageSpec, output_dir: Path, progress: Callable[[int, int, str], None] | None) -> StageRun:
         return StageRun(
             asset_id=self.asset.id,
             asset_dir=self.asset.dir,
@@ -436,14 +610,20 @@ class AssetGraph:
             progress=progress or (lambda done, total, message: None),
             check_cancel=cancel.check,
             pinned=self.pinned_path,
-            decisions=self.replay(spec.name).current,
+            decisions=self.decisions(spec),
             asset_params=dict(self.asset.settings.params),
-            upstream_decisions=LazyMap(spec.inputs.upstream, lambda name: self.replay(name).current),
+            upstream_decisions=LazyMap(spec.inputs.upstream, lambda name: self.decisions(self.spec(name))),
             upstream_params=LazyMap(spec.inputs.upstream, lambda name: self.params(self.spec(name))),
+            base=self._base_view(spec),
+            param_sources=self.param_sources(spec),
         )
 
     def needs_input(self, spec: StageSpec) -> NeedsInput | None:
-        """Why the Stage can't run until the Owner acts, from its inputs alone, or until its Runner calls are made."""
+        """Why the Stage can't run until the Owner acts, from its inputs alone, or until its Runner calls are made, or
+        until a Stage of its base that it reads is built."""
+        waiting = self._base_not_built(spec)
+        if waiting is not None:
+            return waiting
         if spec.needs_input is not None:
             waiting = spec.needs_input(self.stage_run(spec, self.output_dir(spec)))
             if waiting is not None:
@@ -459,7 +639,10 @@ class AssetGraph:
         """The Stage's Checks on its built output; nothing when it has no output."""
         if spec.check is None or self.built_hash(spec) is None:
             return []
-        return spec.check(self.stage_run(spec, self.output_dir(spec)))
+        found = spec.check(self.stage_run(spec, self.output_dir(spec)))
+        for advise in _ADVISERS:
+            found = advise(self, spec, found)
+        return found
 
     def _stamp(self, spec: StageSpec) -> dict[str, Any]:
         """The stamp beside a complete output; empty when there is none."""
@@ -954,7 +1137,9 @@ def run_all(
     assets, findings = list_assets(project)
     exit_code = ExitCode.ERROR if findings else ExitCode.OK
     results: list[StageRunResult] = []
-    for asset in assets:
+    # A base is built before the Assets made from it (ADR 0012); a base has no base, so two groups are the whole order.
+    bases = {str(a.settings.params[BASE_PARAM]) for a in assets if BASE_PARAM in a.settings.params}
+    for asset in sorted(assets, key=lambda a: a.id not in bases):
         if kind is not None and asset.kind != kind:
             continue
         cancel.check()

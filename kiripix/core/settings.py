@@ -130,12 +130,49 @@ class RampSpec(_Strict):
         None, description="The ramp's colours dark to light, `length` of them; unset when each character fits its own.")
 
 
+def _in_project(path: str) -> str:
+    """A path inside the Project, relative to its root, with forward slashes."""
+    parts = Path(path.replace("\\", "/")).parts
+    if not path.strip() or Path(path).is_absolute() or Path(path).drive or path.startswith(("/", "\\")) or ".." in parts:
+        raise ValueError(f"must be a path inside the Project, relative to its root, got {path!r}")
+    return "/".join(parts)
+
+
+class Generator(_Strict):
+    """`[character.generators.<name>]` (ticket 0224): a script of the Project's own that builds a Model from a parameter
+    file, run in the Project's Blender. Kiripix runs it and reads what it wrote; the script, the parts and the parameter
+    files are the Project's."""
+
+    script: str = Field(description="The Blender Python script, a path in the Project.")
+    library: list[str] = Field(
+        default_factory=list,
+        description="The files and folders the script reads besides the parameter file (parts, base bodies, its own "
+                    "modules), as paths in the Project. A change to any makes the `model` Stage of every character it "
+                    "builds stale. One path may be given as text.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _one_path_as_text(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("library"), str):
+            return {**data, "library": [data["library"]]}
+        return data
+
+    @model_validator(mode="after")
+    def _paths_in_project(self) -> Self:
+        self.script = _in_project(self.script)
+        self.library = [_in_project(path) for path in self.library]
+        return self
+
+
 class CharacterSettings(_Strict):
     """`[character]`: how characters are rendered, the same for every character in the Project."""
 
     height: int = Field(52, gt=0)  # the target height in px; a character's own `height` parameter overrides it
     blender: str | None = None  # the Blender executable; `PATH` when unset
     camera: dict[str, CameraPreset] = Field(default_factory=_default_cameras)
+    generators: dict[str, Generator] = Field(
+        default_factory=dict,
+        description="The Project's Model generators by name; a character with a parameter file is built by one.")
     ramps: list[RampSpec] = Field(
         default_factory=list,
         description="The Project's ramp table: its order is the row order of every character's ramps. Empty: each character "
@@ -163,14 +200,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 5
+PROJECT_SCHEMA_VERSION = 6
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[5] = 5
+    schema_version: Literal[6] = 6
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -220,9 +257,16 @@ def _add_extend_section(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 5}
 
 
+def _add_generators(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 5 had no Model generators; version 6 adds `character.generators` (ticket 0224), empty."""
+    character = {**document.get("character", {})}
+    character.setdefault("generators", {})
+    return {**document, "character": character, "schema_version": 6}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
-    4: _add_extend_section}
+    4: _add_extend_section, 5: _add_generators}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 

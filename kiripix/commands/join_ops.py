@@ -1,7 +1,8 @@
 """`kiripix op register-piece`, `op match-tone` and `op seam-join` (ticket 0135): the join Ops on any images.
 
 An Overlap is written `side:width[:offset]`, for example `east:200` or `south:120:-3`; a corner piece has two, comma
-separated (`east:200,south:120`).
+separated (`east:200,south:120`). A corner piece is registered once against both overlaps, then seamed once per
+overlap: `op seam-join` takes one, so join it to the first neighbour, then join that result to the second.
 """
 
 from __future__ import annotations
@@ -17,26 +18,20 @@ from kiripix.commands.image_ops import OP_GROUP
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core.errors import KiripixError, fail
 from kiripix.core.images import load_rgba, save_png
-from kiripix.ops import JOIN_SIDES, Overlap, has_partial_alpha, match_tone, register_piece, resample_piece, seam_join
+from kiripix.ops import JOIN_SIDES, JoinError, Overlap, has_partial_alpha, match_tone, register_piece, resample_piece, seam_join
 
 _FORMAT = "side:width[:offset], side one of " + ", ".join(JOIN_SIDES)
 
 
 def parse_overlaps(text: str, example: str) -> list[Overlap]:
-    overlaps = []
-    for part in text.split(","):
-        fields = part.strip().split(":")
-        try:
-            if not 2 <= len(fields) <= 3 or fields[0] not in JOIN_SIDES:
-                raise ValueError(part)
-            overlaps.append(Overlap(fields[0], int(fields[1]), int(fields[2]) if len(fields) == 3 else 0))  # type: ignore[arg-type]
-        except ValueError:
-            raise fail(
-                "join.overlap_invalid",
-                f"{part!r} is not an overlap; write {_FORMAT}",
-                fix=_help(example),
-            ) from None
-    return overlaps
+    try:
+        return Overlap.parse(text)
+    except ValueError as error:
+        raise fail(
+            "join.overlap_invalid",
+            f"{error.args[0]!r} is not an overlap; write {_FORMAT}",
+            fix=_help(example),
+        ) from None
 
 
 def _spec(overlap: Overlap) -> str:
@@ -60,8 +55,24 @@ def _help(example: str) -> str:
     return " ".join(example.split()[:3]) + " --help"
 
 
-def _refused(error: ValueError, example: str) -> KiripixError:
-    return fail("join.failed", str(error), fix=_help(example))
+def _refused(error: ValueError, example: str, base: Path, piece: Path, overlap: str) -> KiripixError:
+    """One code per cause (`JoinError.reason`), each with the remedy that fits it; any other ValueError from an Op is
+    `join.failed`.
+
+    - `overlap_width`, `no_overlap`, `overlap_too_narrow`: the `--overlap` widths don't fit the images (wider than they
+      are, missing the piece, or under 3 px for a seam); the caller corrects them, and the Command's help gives the format.
+    - `no_shared_pixels`: the piece isn't on the base's pixel grid yet; `op register-piece --output` puts it there.
+    - `too_few_patches`: the overlap is too flat a part of the picture to match; only registering by hand helps."""
+    if not isinstance(error, JoinError):
+        return fail("join.failed", str(error), fix=_help(example))
+    code = f"join.{error.reason}"
+    if error.reason == "too_few_patches":
+        return fail(code, str(error), owner_action="Register the piece by hand: the overlap is too flat (sky, a plain "
+                                                   "wall) for its picture to be matched.")
+    if error.reason == "no_shared_pixels":
+        return fail(code, str(error), fix=f"kiripix op register-piece {base} {piece} --overlap {overlap} --output "
+                                          f"{piece.with_name(piece.stem + '.placed.png')}")
+    return fail(code, str(error), fix=_help(example))
 
 
 class RegisterInput(BaseModel):
@@ -93,6 +104,7 @@ class RegisterData(BaseModel):
         )
 
 
+
 @command(
     "op register-piece",
     summary="Estimate the scale and shift that put a piece on a base, from patches along the overlap.",
@@ -108,15 +120,18 @@ def op_register_piece(arguments: RegisterInput, context: Context) -> Outcome[Reg
     overlaps = parse_overlaps(arguments.overlap, example)
     base_name, base = _load(arguments.base, context)
     piece_name, piece = _load(arguments.piece, context)
+    context.cancel.check()
     try:
-        registration = register_piece(base, piece, overlaps)
+        registration = register_piece(base, piece, overlaps, context.cancel.check)
     except ValueError as error:
-        raise _refused(error, example) from None
+        raise _refused(error, example, arguments.base, arguments.piece, arguments.overlap) from None
+    context.cancel.check()
     output = None
     origin = None
     placed: list[str] = []
     if arguments.output is not None:
         resampled, origin = resample_piece(piece, registration)
+        context.cancel.check()
         save_png(context.cwd / arguments.output, resampled)
         output = str(arguments.output)
         placed = [_spec(Overlap.placed(o.side, base.shape, resampled.shape, origin)) for o in overlaps]
@@ -176,10 +191,12 @@ def op_match_tone(arguments: ToneInput, context: Context) -> Outcome[ToneData]:
         raise fail("join.overlap_invalid", "match-tone takes one overlap", fix=f"{example} --overlap {_spec(overlaps[0])}")
     base_name, base = _load(arguments.base, context)
     piece_name, piece = _load(arguments.piece, context)
+    context.cancel.check()
     try:
-        toned, gain = match_tone(base, piece, overlaps[0], arguments.sigma)
+        toned, gain = match_tone(base, piece, overlaps[0], arguments.sigma, context.cancel.check)
     except ValueError as error:
-        raise _refused(error, example) from None
+        raise _refused(error, example, arguments.base, arguments.piece, arguments.overlap) from None
+    context.cancel.check()
     save_png(context.cwd / arguments.output, toned)
     return Outcome(
         ToneData(
@@ -223,7 +240,7 @@ class SeamData(BaseModel):
 
 @command(
     "op seam-join",
-    summary="Join a piece to a base along the least-difference path through their overlap, blended.",
+    summary="Join a piece to a base along the least-difference path through their overlap, blended (a corner piece: once per overlap).",
     input=SeamInput,
     output=SeamData,
     kind="writing",
@@ -238,10 +255,12 @@ def op_seam_join(arguments: SeamInput, context: Context) -> Outcome[SeamData]:
         raise fail("join.overlap_invalid", "seam-join takes one overlap", fix=f"{example} --overlap {_spec(overlaps[0])}")
     base_name, base = _load(arguments.base, context)
     piece_name, piece = _load(arguments.piece, context)
+    context.cancel.check()
     try:
-        joined, seam = seam_join(base, piece, overlaps[0], arguments.blend)
+        joined, seam = seam_join(base, piece, overlaps[0], arguments.blend, context.cancel.check)
     except ValueError as error:
-        raise _refused(error, example) from None
+        raise _refused(error, example, arguments.base, arguments.piece, arguments.overlap) from None
+    context.cancel.check()
     save_png(context.cwd / arguments.output, joined)
     return Outcome(
         SeamData(

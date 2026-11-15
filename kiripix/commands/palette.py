@@ -24,7 +24,7 @@ from kiripix.core.assets import list_assets
 from kiripix.core.errors import KiripixError, fail
 from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
-from kiripix.core.images import load_rgba, png_bytes
+from kiripix.core.images import load_palette, load_rgba, png_bytes
 from kiripix.core.project import Project, find_project
 from kiripix.ops import Grid, downscale, parse_gpl, quantize, suggest_palette
 
@@ -299,3 +299,40 @@ def palette_add(arguments: PaletteAddInput, context: Context) -> Outcome[Palette
         PaletteAddData(palette=relative, added=added, colours_total=len(existing.entries) + len(lines),
                        assets_made_stale=stale)
     )
+
+
+# palette
+
+
+class PaletteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PaletteColour(BaseModel):
+    index: int = Field(description="Position in the palette file, from 0.")
+    hex: str = Field(description="#rrggbb, lower case.")
+    name: str | None = Field(description="The colour's name in the file, or null when it has none.")
+
+
+class PaletteData(BaseModel):
+    palette: str = Field(description="The palette file, as the `palette` setting gives it, relative to the Project.")
+    colours: list[PaletteColour] = Field(description="Every colour, in file order.")
+
+    def text(self) -> str:
+        return "\n".join(f"{c.index:3d}  {c.hex}  {c.name or ''}".rstrip() for c in self.colours)
+
+
+@command(
+    "palette",
+    summary="The Project's palette: its file and every colour, in file order, as the Stages read it.",
+    input=PaletteInput,
+    output=PaletteData,
+    kind="probe",
+    mcp="exposed",
+)
+def palette_show(arguments: PaletteInput, context: Context) -> Outcome[PaletteData]:
+    project = find_project(context.cwd)
+    relative = project.settings.project.palette
+    palette = load_palette(project.root / relative, relative)
+    colours = [PaletteColour(index=i, hex=e.hex.lower(), name=e.name or None) for i, e in enumerate(palette.entries)]
+    return Outcome(PaletteData(palette=relative, colours=colours))

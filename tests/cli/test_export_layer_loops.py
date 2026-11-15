@@ -6,9 +6,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from conftest import Kiripix
 from PIL import Image
-from test_export import godot_project, scene, set_target
+from test_export import godot_project, manifest, scene, set_target
 from test_export_looks import FOLDER, RES, exported_room, node
 from test_layers_stage import ROOM, rgba
 from test_loop_kit import KIT, TRIANGLE, painted
@@ -37,19 +38,24 @@ def exportable_room(project: Kiripix) -> Path:
 
 
 def moving_room(project: Kiripix) -> Path:
-    """A `sway` Loop that moves the lamp Layer, and a kit Loop on the Plate (and over the Layer), every Stage built."""
+    """A `sway` Loop that moves the whole lamp Layer, every Stage built."""
     folder = exportable_room(project)
     decide(project, "loop", {"loop": SWAY, "form": "frames", "layer": "lamp"})
     decide(project, "frames", {"loop": SWAY, "op": "sway", "params": {"amplitude": 2}})
-    decide(project, "loop", {"loop": FLAME, "form": "frames"})
-    decide(project, "polygon", {"loop": FLAME, "points": TRIANGLE})
-    project.json("run", ROOM, "masks")
-    project.json("run", ROOM, "palette")
-    project.json("loop", "kit", ROOM, FLAME, KIT, "--frames", "2")
-    painted(project, 1)
-    project.json("import", ROOM, project.cwd / KIT / "frame_001.png", "--loop", FLAME)
     project.json("run", ROOM)
     return folder
+
+
+def add_kit_loop(project: Kiripix, loop: str, layer: str | None = None) -> None:
+    """A two-frame kit Loop over the triangle, on the Plate or on a Layer, imported and built."""
+    decide(project, "loop", {"loop": loop, "form": "frames", **({"layer": layer} if layer else {})})
+    decide(project, "polygon", {"loop": loop, "points": TRIANGLE})
+    project.json("run", ROOM, "masks")
+    project.json("run", ROOM, "palette")
+    project.json("loop", "kit", ROOM, loop, KIT, "--frames", "2", "--force")
+    painted(project, 1)
+    project.json("import", ROOM, project.cwd / KIT / "frame_001.png", "--loop", loop)
+    project.json("run", ROOM)
 
 
 def test_a_moving_layer_shows_its_strip_at_the_same_sort_position(project: Kiripix) -> None:
@@ -58,10 +64,9 @@ def test_a_moving_layer_shows_its_strip_at_the_same_sort_position(project: Kirip
     data = project.json("export", ROOM)["data"]
 
     room = exported_room(project)
-    [flame, sway] = sorted(room["loops"], key=lambda loop: loop["id"] != FLAME)
+    [sway] = room["loops"]
     assert sway["source"] == "op" and sway["moves_layer"] is True and sway["file"] is None
     assert [piece["layer"] for piece in sway["pieces"]] == ["lamp"] and sway["frames"] == 4
-    assert flame["source"] == "kit" and flame["moves_layer"] is False and flame["frames"] == 2
     [lamp] = [layer for layer in room["layers"] if layer["id"] == "lamp"]
     y = lamp["y"]
     text = scene(project)
@@ -76,8 +81,7 @@ def test_a_moving_layer_shows_its_strip_at_the_same_sort_position(project: Kirip
         assert f"position = Vector2(0, {y})" in layer
     assert f'texture = ExtResource("loop_{SWAY}_lamp")' in layer and "layer_lamp" not in text
     assert not re.search(rf'name="{SWAY}"', text), "no second node for the Layer's Loop"
-    child = node(text, FLAME, "Foreground/lamp")  # the kit Loop's piece over the Layer is still a child
-    assert 'metadata/kiripix_type = "loop"' in child and 'metadata/kiripix_id = "flame"' in child
+    assert room["layers"][0]["remainder"] is None and not (project.cwd / FOLDER / "remainders").exists()
     assert f"{RES}/{sway['pieces'][0]['file']}" in data["written"] and f"{RES}/{lamp['file']}" in data["written"]
 
 
@@ -151,3 +155,85 @@ def test_a_region_whose_box_holds_the_layer_but_not_all_its_pixels_does_not_take
     text = scene(project)
     assert 'texture = ExtResource("layer_lamp")' in node(text, "lamp", "Foreground")
     assert 'metadata/kiripix_type = "loop"' in node(text, SWAY, "Foreground/lamp")
+
+
+def check_remainder(project: Kiripix, loops: list[dict[str, Any]], layer_id: str) -> None:
+    """The remainder with every strip's frame 0 over it equals the exported Layer, and it is transparent wherever a frame 0
+    pixel was (so a pixel a Loop moves away from shows the Plate's fill)."""
+    exported = project.cwd / FOLDER
+    room = exported_room(project)
+    [entry] = [layer for layer in room["layers"] if layer["id"] == layer_id]
+    assert entry["remainder"] == f"remainders/{layer_id}.png"
+    layer = rgba(exported / entry["file"])
+    remainder = rgba(exported / entry["remainder"])
+    assert remainder.shape == layer.shape
+    rebuilt = remainder.copy()
+    covered = np.zeros(layer.shape[:2], dtype=bool)
+    for loop in loops:
+        x, y, width, height = loop["box"]
+        [piece] = [p for p in loop["pieces"] if p["layer"] == layer_id]
+        frames = tiles(exported / piece["file"], loop["box"], loop["frames"], loop["hframes"])
+        first = frames[0][..., 3] > 0
+        assert first.any()
+        covered[y:y + height, x:x + width] |= first
+        rebuilt[y:y + height, x:x + width][first] = frames[0][first]
+        assert (remainder[y:y + height, x:x + width][first] == 0).all(), "the region is cleared"
+        moved = first & ~(frames[-1][..., 3] > 0)
+        assert (remainder[y:y + height, x:x + width][moved][:, 3] == 0).all(), "moved away: transparent"
+    assert covered.any() and (rebuilt == layer).all(), "remainder + frame 0 of every strip is the Layer"
+    assert (remainder[~covered] == layer[~covered]).all(), "outside the regions the Layer is untouched"
+    text = scene(project)
+    assert f'path="{RES}/remainders/{layer_id}.png" id="layer_{layer_id}"' in text
+    assert (exported / "remainders" / f"{layer_id}.png").is_file()
+    assert any(file.endswith(f"remainders/{layer_id}.png") for file in json.dumps(manifest(project)).split('"'))
+
+
+def test_a_sway_on_part_of_a_layer_exports_the_layer_s_remainder(project: Kiripix) -> None:
+    exportable_room(project)
+    decide(project, "loop", {"loop": SWAY, "form": "frames", "layer": "lamp"})
+    decide(project, "polygon", {"loop": SWAY, "points": [[1, 1], [30, 1], [30, 4], [4, 4], [4, 30], [1, 30]]})
+    decide(project, "frames", {"loop": SWAY, "op": "sway", "params": {"amplitude": 2}})
+    project.json("run", ROOM)
+
+    project.json("export", ROOM)
+
+    room = exported_room(project)
+    [sway] = room["loops"]
+    assert sway["moves_layer"] is False
+    check_remainder(project, [sway], "lamp")
+    assert 'metadata/kiripix_type = "loop"' in node(scene(project), SWAY, "Foreground/lamp")
+
+
+def test_two_kit_loops_on_one_layer_export_one_remainder_with_both_regions_cleared(project: Kiripix) -> None:
+    exportable_room(project)
+    add_kit_loop(project, FLAME, "lamp")
+    add_kit_loop(project, "torch", "lamp")
+
+    project.json("export", ROOM)
+
+    loops = exported_room(project)["loops"]
+    assert len(loops) == 2 and all(loop["moves_layer"] is False for loop in loops)
+    check_remainder(project, loops, "lamp")
+
+
+def test_a_room_with_no_part_layer_loop_has_no_remainder(project: Kiripix) -> None:
+    exportable_room(project)
+    project.json("run", ROOM)
+
+    project.json("export", ROOM)
+
+    assert all(layer["remainder"] is None for layer in exported_room(project)["layers"])
+    assert not (project.cwd / FOLDER / "remainders").exists()
+
+
+def test_a_plate_loop_over_a_layer_leaves_the_layer_as_it_was(project: Kiripix) -> None:
+    exportable_room(project)
+    add_kit_loop(project, FLAME)  # on the Plate, its region crossing the lamp Layer
+
+    project.json("export", ROOM)
+
+    room = exported_room(project)
+    [flame] = room["loops"]
+    assert "lamp" in [piece["layer"] for piece in flame["pieces"]], "the Plate Loop has a piece over the Layer"
+    assert all(layer["remainder"] is None for layer in room["layers"]), "Plate Loops are unchanged (ticket 0211)"
+    assert not (project.cwd / FOLDER / "remainders").exists()

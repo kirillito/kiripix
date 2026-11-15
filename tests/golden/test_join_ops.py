@@ -138,3 +138,20 @@ def test_a_west_join_grows_the_canvas_to_the_left() -> None:
     assert joined.shape == (60, 170, 4)
     assert seam.base_origin == (70, 0) and seam.piece_origin == (0, 0)
     assert np.abs(joined[:, 70:, :3].astype(int) - base[..., :3].astype(int)).max() < 10  # base side kept (blend aside)
+
+
+def test_a_corner_piece_is_seamed_once_per_neighbour(request: pytest.FixtureRequest) -> None:
+    """The base is an L whose corner is missing; the piece fills it and overlaps both arms (ticket 0201). A join takes one
+    overlap, so the piece is seamed to the base along its west edge (east:130:170), then along its north edge (south:130:170)."""
+    base = scene(300, 300)
+    base[200:, 200:] = 0  # the corner is transparent
+    piece = scene(130, 130, 1.0, 1.0, 170.0, 170.0)
+    piece[..., :3] = np.floor(piece[..., :3] * 0.97 + 0.5).astype(np.uint8)  # a little darker, so the seams have a cost
+    first, _ = seam_join(base, piece, Overlap("east", 130, 170), 6)
+    assert first.shape == (300, 300, 4)
+    joined, seam = seam_join(first, piece, Overlap("south", 130, 170), 6)
+    assert joined.shape == (300, 300, 4) and (joined[..., 3] == 255).all()  # the corner is filled
+    assert np.array_equal(joined[:150, :150], base[:150, :150])  # far from the piece, the base is untouched
+    assert np.array_equal(joined[280:, 280:], piece[110:, 110:])  # deep in the corner, the piece shows
+    assert seam.mean_difference < 10
+    assert_golden(request, joined, "join_corner.png")

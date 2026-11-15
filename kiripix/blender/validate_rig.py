@@ -3,9 +3,10 @@
     blender -b -P validate_rig.py -- <args.json> <result.json>
 
 args:   {"input": <a .glb, .fbx or .blend>}
-result: {"armature", "bones", "vertices", "size": [x, y, z]}
+result: {"armature", "bones", "parents": {<bone>: <its parent bone, or null>}, "vertices", "size": [x, y, z]}
 
-`armature` is the first armature's name (null when there is none) and `bones` its bone names. `vertices` and `size` describe
+`armature` is the first armature's name (null when there is none), `bones` its bone names and `parents` each bone's parent
+(null for a root), which a character made from a base is compared by (ADR 0012). `vertices` and `size` describe
 the character's meshes (the skinned ones, as `normalise_model.py` counts them) in the rest pose, in the same way as `normalise_model.py` does: `vertices` counts the distinct points of the
 meshes whatever their size and place, and `size` is the bounds' extent in the file's own units (Mixamo's differ from
 Kiripix's, so the Stage compares proportions only).
@@ -90,6 +91,8 @@ def validate(args: dict) -> dict:
     return {
         "armature": armatures[0].name if armatures else None,
         "bones": [bone.name for bone in armatures[0].data.bones] if armatures else [],
+        "parents": {bone.name: bone.parent.name if bone.parent else None for bone in armatures[0].data.bones}
+        if armatures else {},
         "vertices": len(points),
         "size": [high[i] - low[i] for i in range(3)],
     }

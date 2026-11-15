@@ -34,6 +34,9 @@ class ParamSpec(BaseModel):
     minimum: float | None = None
     maximum: float | None = None
     choices: list[str] | None = None
+    # False: an Asset made from a base (ADR 0012) never takes this parameter's value from its base, because the value
+    # describes the Asset's own files (a Model's `facing`) or is worked out another way (render's `height` is scaled).
+    from_base: bool = True
 
     def problem(self, value: object) -> str | None:
         """Why `value` isn't valid for this parameter, or None."""
@@ -95,6 +98,26 @@ class SortPosition(BaseModel):
     slope: int  # how far the line's ends differ in y, in px
 
 
+BASE_PARAM = "base"  # the Asset parameter that names the Asset's base, for a Kind that takes one (ADR 0012)
+
+
+class BaseInputs(BaseModel):
+    """What a Stage reads of the Asset's base (ADR 0012), when the Asset has one. All of it is part of the Stage's input
+    hash, so a change on the base makes the Stage stale.
+
+    `files` are globs relative to the base's folder. `decisions` names Stages whose current Decisions the base has: a
+    Stage that names itself is handed the base's Decisions first, then its own. `built` names Stages of the base whose
+    built output the Stage reads; each counts by its input hash and must be done, or the Stage is needs-input with the
+    command that builds it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    files: list[str] = []
+    decisions: list[str] = []
+    built: list[str] = []
+
+
 class StageInputs(BaseModel):
     """What a Stage's input hash covers.
 
@@ -102,6 +125,7 @@ class StageInputs(BaseModel):
     by dotted path into `kiripix.toml` (`body`, `project.tile`), where `palette` means the palette file's contents, or a
     computed setting (`computed_setting`). `given` names settings the Stage is given but that don't count as inputs, such
     as where a tool is installed: moving it must not make anything stale. Both reach the Stage in `StageRun.settings`.
+    `base` is what the Stage reads of the Asset's base (`BaseInputs`); a Stage without it reads nothing of a base.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -110,6 +134,7 @@ class StageInputs(BaseModel):
     upstream: list[str] = []
     settings: list[str] = []
     given: list[str] = []
+    base: BaseInputs | None = None
 
 
 COMPUTED_SETTINGS: dict[str, Callable[[], Any]] = {}
@@ -190,6 +215,27 @@ class LazyMap(Mapping[str, _Value], Generic[_Value]):
         return len(self._keys)
 
 
+ParamSource = Literal["asset", "base", "default"]  # who set a parameter's value: the Asset's own `asset.toml`, its base's, or nobody
+
+
+@dataclass(frozen=True)
+class BaseView:
+    """What a Stage is handed of the Asset's base (ADR 0012): what its `StageInputs.base` declares, and nothing else.
+    READ-ONLY: a Stage never writes into the base's folder. Everything here is part of the Stage's input hash.
+
+    `files` are the base's files the globs found, by their path relative to the base's folder. `decisions` are the current
+    Decisions of the base's Stages named. `built` are the output folders of the base's Stages named, each complete and
+    current when the Stage runs. `params` are the base's own values of this Stage's parameters that are never taken over
+    from a base (`ParamSpec.from_base` false), such as render's `height`; the others reach the Stage in `StageRun.params`."""
+
+    asset_id: str
+    asset_dir: Path
+    files: dict[str, Path] = field(default_factory=dict)
+    decisions: Mapping[str, tuple[CurrentDecision, ...]] = field(default_factory=dict)
+    built: dict[str, Path] = field(default_factory=dict)
+    params: dict[str, Scalar] = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class StageRun:
     """What core hands a Stage's run function. Outputs go into `output_dir`, which core moves into place."""
@@ -227,6 +273,23 @@ class StageRun:
     forced: bool = False
     # A Stage appends a short sentence about what it did (what it reused); core gives them as the run's message when it is done.
     notes: list[str] = field(default_factory=list)
+    # What the Stage's `StageInputs.base` declares of the Asset's base (ADR 0012); None for an Asset without a base and for
+    # a Stage that declares nothing.
+    base: BaseView | None = None
+    # Who set each of `params`: "asset" (the Asset's own `asset.toml`), "base" (its base's) or "default". A Stage that has
+    # a better value than a default (one a Model's generator worked out) uses it unless the Asset set the parameter itself.
+    param_sources: Mapping[str, ParamSource] = field(default_factory=dict)
+    # The files and folders the Stage's `project_files` names, by the path it gave (relative to the Project's root), each
+    # with its absolute path. They are the only files of the Project outside the Asset that the Stage may read.
+    project_files: dict[str, Path] = field(default_factory=dict)
+
+
+def param_or_generated(run: StageRun, name: str, generated: Mapping[str, Scalar]) -> Scalar | None:
+    """A parameter's value for a Stage whose upstream may give a better one than a default (`StageSpec.generated_params`):
+    the Asset's own value when it set one, then the generated one, then the base's, then the declared default."""
+    if name in generated and run.param_sources.get(name) != "asset":
+        return generated[name]
+    return run.params.get(name)
 
 
 StageFunction = Callable[[StageRun], None]
@@ -333,6 +396,19 @@ class StageSpec:
     markers: Callable[[tuple[CurrentDecision, ...]], list[dict[str, Any]]] | None = None  # for `show`, before any build
     # Each Layer's sort position, from the Decisions alone, for `show` (the Exporter and the walk test read the built file).
     sort: Callable[[tuple[CurrentDecision, ...]], list[SortPosition]] | None = None
+    # The Decisions the Stage's own functions see (`StageRun.decisions`), from the replayed journal: a Stage whose
+    # Decisions edit its earlier ones (a Loop's `rename` and `remove`, ticket 0207) applies them here. The input hash and
+    # `show` keep the journal as recorded.
+    decisions_view: Callable[[tuple[CurrentDecision, ...]], tuple[CurrentDecision, ...]] | None = None
+    # The Project's own files that build this Asset in this Stage (a generator's script and its library, ticket 0224), as
+    # paths relative to the Project's root, from the Stage's other inputs; none for an Asset that has none. Core adds each
+    # file's content (every file under a folder) to the input hash and hands the Stage their place in
+    # `StageRun.project_files`. It is called with a run whose `project_files` is still empty.
+    project_files: Callable[[StageRun], list[str]] | None = None
+    # The parameter values that what is built upstream gives this Stage (a generated Model's eye materials), by name; none
+    # before it is built. The Stage uses one unless the Asset set that parameter itself (`StageRun.param_sources`), and
+    # `show` reports it the same way.
+    generated_params: Callable[[StageRun], dict[str, Scalar]] | None = None
 
 
 @dataclass(frozen=True)
@@ -344,6 +420,9 @@ class KindSpec:
     stages: tuple[StageSpec, ...]
     params: tuple[ParamSpec, ...] = ()
     takes_sheets: bool = False  # imports 2D frame sheets (`import --role sheet`, `src/sheets/`) instead of Variants
+    # An Asset of this Kind can be made from a base (ADR 0012): its `base` parameter names another Asset of the Kind, whose
+    # parameters it falls back to and of which its Stages read what their `StageInputs.base` declares.
+    takes_base: bool = False
 
     def stage(self, name: str) -> StageSpec | None:
         return next((s for s in self.stages if s.name == name), None)

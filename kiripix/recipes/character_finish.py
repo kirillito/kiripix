@@ -13,6 +13,10 @@ Two things, both after `palette`:
   where the posed Model puts it (`plan_eyes`): chosen once for a clip and a direction, on whole pixels, moving only when the
   head has. A frame in its clip's `blink` list gets closed eyes, one in `wink_left` or `wink_right` that eye closed. The colours are Project palette colours (`eye_colour`,
   `eye_white`). The normal pass is not changed.
+- the inner lines (ticket 0215), with `inner_lines=outline` or `dark`, after the eyes and before the outline: the farther pixel
+  of each border between two materials (`inner_lines` in the ops), in the outline's colour or, with `dark`, a darker palette
+  colour of its own material chosen once over all the frames (`line_colours`). `line_skip` drops borders. Only inside the
+  render's mask, never over an eye pixel, never on the eye materials. The normal pass is not changed.
 - the normal pass, from `render`: quantised to `normal_levels` values per axis, encoded for Godot, and cut by the final colour
   frame's alpha, so an outline pixel gets a normal that faces the camera and the two images line up pixel for pixel. It is
   never palette-mapped.
@@ -45,16 +49,19 @@ from kiripix.ops import (
     encode_normals,
     fill_from_neighbours,
     height_from_alpha,
+    inner_lines,
+    line_colours,
     normals_from_height,
     paint_eyes,
     plan_eyes,
     quantise_normals,
+    stamped_mask,
 )
 from kiripix.recipes.base import CheckFunction, ParamSpec, StageFailure, StageFunction, StageRun
 from kiripix.recipes.character_palette import RENDER_FILE, _colour_files
 from kiripix.recipes.common import palette_rgb, read_rgba, write_rgba
 
-FINISH_SCHEMA_VERSION = 1
+FINISH_SCHEMA_VERSION = 2
 FINISH_FILE = "finish.json"
 FLAT = (128, 128, 255, 255)  # a normal facing the camera, as `encode_normals` writes it
 
@@ -84,9 +91,10 @@ def _normal_name(colour_name: str) -> str:
     return "normal/" + colour_name.partition("/")[2]
 
 
-def _outline_colour(run: StageRun, palette: np.ndarray) -> tuple[int, tuple[int, int, int]] | None:
-    """The outline's index and colour, or None for `outline=false`; StageFailure when the index isn't in the palette."""
-    if not run.params["outline"]:
+def _outline_colour(run: StageRun, palette: np.ndarray, force: bool = False) -> tuple[int, tuple[int, int, int]] | None:
+    """The outline's index and colour, or None for `outline=false` (unless `force`: the colour for `inner_lines=outline`);
+    StageFailure when the index isn't in the palette."""
+    if not run.params["outline"] and not force:
         return None
     index = int(run.params["outline_colour"])
     if not 0 <= index < len(palette):
@@ -247,15 +255,123 @@ class _Eyes:
         normal = found["normal"]
         return EyeAnchor(x, y, float(found["width"]), float(found["height"]), float(normal[0]), float(normal[2]), seen)
 
-    def paint(self, colour: np.ndarray, clip: str, direction: str, index: int, material: str) -> np.ndarray:
+    def paint(self, colour: np.ndarray, clip: str, direction: str, index: int,
+              material: str) -> tuple[np.ndarray, np.ndarray]:
+        """The frame with its eyes filled and stamped, and the pixels the eyes changed or drew (whatever their colour
+        was), which no line may paint over."""
         eye = np.isin(_read_labels(self.run.upstream[self.source] / material), self.labels)
-        filled = fill_from_neighbours(colour, eye) if eye.shape == colour.shape[:2] else colour
-        return cast("np.ndarray", paint_eyes(filled, self.stamps.get((clip, direction, index), []), self.pupil[1],
-                                             self.white[1] if self.whites else None, self.closed.get((clip, index), set())))
+        if eye.shape != colour.shape[:2]:
+            eye = np.zeros(colour.shape[:2], dtype=np.bool_)
+        filled = fill_from_neighbours(colour, eye)
+        stamps, closed = self.stamps.get((clip, direction, index), []), self.closed.get((clip, index), set())
+        painted = paint_eyes(filled, stamps, self.pupil[1], self.white[1] if self.whites else None, closed)
+        return cast("np.ndarray", painted), eye | stamped_mask(filled, stamps, closed)
 
     def drawn(self) -> dict[str, Any]:
         return {"mode": _eyes_mode(self.run), "pupil": {"colour": self.pupil[0], "rgb": list(self.pupil[1])},
                 "white": {"colour": self.white[0], "rgb": list(self.white[1])} if self.whites else None}
+
+
+def _lines_mode(run: StageRun) -> str:
+    return str(run.params.get("inner_lines", "off"))
+
+
+class _InnerLines:
+    """What `inner_lines=outline` or `dark` needs for a run (ticket 0215): the skipped borders, the eye materials that get no
+    line, and, for `dark`, each material's line colour, chosen once over all the palette frames before the first is painted."""
+
+    def __init__(self, run: StageRun, source: str, document: dict[str, Any], palette: np.ndarray,
+                 files: list[tuple[str, str, int, str]]) -> None:
+        self.run, self.source, self.mode = run, source, _lines_mode(run)
+        if source not in run.upstream:
+            raise StageFailure(f"finish can't draw inner lines: it has no material pass from {source}; run {source} again")
+        if self.mode == "dark" and _has_parts(run):
+            raise StageFailure("inner_lines=dark can't be used with palette parts: a line colour is outside the ramp of its "
+                               "part, so swapping the part would not recolour it; inner_lines=outline can",
+                               code="finish.inner_lines_with_parts",
+                               fix=f"kiripix set {run.asset_id} finish inner_lines=outline")
+        by_name = {str(m["name"]): int(m["index"]) for m in document.get("materials", [])}
+        self.skip_text: list[str] = []
+        self.skip: list[int | tuple[int, int]] = []
+        for token in (t.strip() for t in str(run.params.get("line_skip", "")).split(",")):
+            if not token:
+                continue
+            names = [n.strip() for n in token.split("+")]
+            unknown = [n for n in names if n not in by_name]
+            if unknown or len(names) > 2 or not all(names):
+                what = f"no material {unknown[0]!r}" if unknown else f"{token!r} is not a material or a pair a+b"
+                raise StageFailure(f"line_skip: {what} in {token!r}; the materials are {', '.join(sorted(by_name)) or 'none'}",
+                                   code="finish.line_skip_unknown", fix=f"kiripix set {run.asset_id} finish line_skip=")
+            self.skip_text.append("+".join(names))
+            self.skip.append(by_name[names[0]] if len(names) == 1 else (by_name[names[0]], by_name[names[1]]))
+        eye_names = {str(n) for n in document.get("eyes", [])}
+        self.skip += [i for n, i in by_name.items() if n in eye_names]
+        self.frames: dict[tuple[str, str, int], dict[str, str]] = {
+            (str(e["name"]), d, int(f["index"])): {k: str(v) for k, v in f["files"].items()}
+            for e in document["clips"] for d, listed in e["directions"].items() for f in listed}
+        self.names = {i: n for n, i in by_name.items()}
+        self.outline: tuple[int, tuple[int, int, int]] | None = None
+        self.colours: dict[int, tuple[int, tuple[int, int, int]]] = {}
+        if self.mode == "outline":
+            self.outline = _outline_colour(run, palette, force=True)
+        else:
+            self._choose(files, palette)
+
+    def _choose(self, files: list[tuple[str, str, int, str]], palette: np.ndarray) -> None:
+        mapped: list[np.ndarray] = []
+        labels: list[np.ndarray] = []
+        for clip, direction, index, name in files:
+            self.run.check_cancel()
+            mapped.append(read_rgba(self.run.upstream["palette"] / name))
+            labels.append(_read_labels(self._path(clip, direction, index, "material")))
+        try:
+            chosen = line_colours(mapped, labels, palette, float(self.run.params.get("line_darkness", 0.55)))
+        except ValueError as error:
+            raise StageFailure(f"can't choose the colours of the inner lines: {error}") from None
+        self.colours = {m: (c, (int(palette[c][0]), int(palette[c][1]), int(palette[c][2]))) for m, c in chosen.items()}
+
+    def _path(self, clip: str, direction: str, index: int, kind: str) -> Path:
+        return self.run.upstream[self.source] / self.frames[(clip, direction, index)][kind]
+
+    def paint(self, colour: np.ndarray, clip: str, direction: str, index: int, eyed: np.ndarray | None) -> np.ndarray:
+        """The frame with the lines painted, inside the render's mask and never over a pixel the eyes painted."""
+        try:
+            labels = _read_labels(self._path(clip, direction, index, "material"))
+            depth = _read_depth(self._path(clip, direction, index, "depth"))
+            inside = _read_labels(self._path(clip, direction, index, "mask")) > 0
+        except (OSError, KeyError):
+            raise StageFailure(f"{self.source} has no material, depth or mask pass for {clip}/{direction} frame {index}; "
+                               f"run {self.source} again") from None
+        if labels.shape != colour.shape[:2] or depth.shape != labels.shape or inside.shape != labels.shape:
+            return colour  # not the colour frame's size: `normal.size_mismatch` says so
+        line = inner_lines(labels, depth, self.skip) & inside
+        if eyed is not None:
+            line &= ~eyed
+        out = colour.copy()
+        if self.outline is not None:
+            out[line] = (*self.outline[1], 255)
+            return out
+        for material, (_, rgb) in self.colours.items():
+            out[line & (labels == material)] = (*rgb, 255)
+        return out
+
+    def drawn(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"mode": self.mode, "skip": self.skip_text}
+        if self.outline is not None:
+            out["colour"] = {"colour": self.outline[0], "rgb": list(self.outline[1])}
+        else:
+            out["darkness"] = float(self.run.params.get("line_darkness", 0.55))
+            out["colours"] = {self.names.get(m, str(m)): {"material": m, "colour": c, "rgb": list(rgb)}
+                              for m, (c, rgb) in sorted(self.colours.items())}
+        return out
+
+
+def _has_parts(run: StageRun) -> bool:
+    try:
+        document = json.loads((run.upstream["palette"] / "palette.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return bool(document.get("parts"))
 
 
 def _materials_by_frame(document: dict[str, Any]) -> dict[tuple[str, str, int], str]:
@@ -270,14 +386,19 @@ def _run_finish(run: StageRun, source: str) -> None:
     outline = _outline_colour(run, palette)
     levels, placement = int(run.params["normal_levels"]), str(run.params["placement"])
     eyes = _Eyes(run, source, document, palette) if _eyes_mode(run) != "render" else None
-    materials = _materials_by_frame(document) if eyes is not None else {}
     files = _colour_files(document)
+    lines = _InnerLines(run, source, document, palette, files) if _lines_mode(run) != "off" else None
+    materials = _materials_by_frame(document) if eyes is not None else {}
     for number, (clip, direction, index, name) in enumerate(files):
         run.check_cancel()
         run.progress(number, len(files), f"finishing {clip}/{direction}/{index:03d}")
         colour = read_rgba(run.upstream["palette"] / name)
         if eyes is not None:
-            colour = eyes.paint(colour, clip, direction, index, materials[(clip, direction, index)])
+            colour, eyed = eyes.paint(colour, clip, direction, index, materials[(clip, direction, index)])
+        else:
+            eyed = None
+        if lines is not None:
+            colour = lines.paint(colour, clip, direction, index, eyed)
         mapped = colour
         if outline is not None:
             colour = add_outline(colour, outline[1], cast(Placement, placement))
@@ -302,7 +423,8 @@ def _run_finish(run: StageRun, source: str) -> None:
     drawn = {"schema_version": FINISH_SCHEMA_VERSION, "normal_levels": levels,
              **({} if mode == "pass" else {"normals": mode}),
              "outline": None if outline is None else {"colour": outline[0], "rgb": list(outline[1]), "placement": placement},
-             **({} if eyes is None else {"eyes": eyes.drawn()})}
+             **({} if eyes is None else {"eyes": eyes.drawn()}),
+             **({} if lines is None else {"inner_lines": lines.drawn()})}
     (run.output_dir / FINISH_FILE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
 
 

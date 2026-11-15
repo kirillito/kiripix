@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,7 +41,7 @@ from kiripix.ops import (
     remove_orphans,
     remove_orphans_by_part,
 )
-from kiripix.recipes.base import CheckFunction, StageFailure, StageFunction, StageRun
+from kiripix.recipes.base import CheckFunction, Scalar, StageFailure, StageFunction, StageRun, param_or_generated
 from kiripix.recipes.common import BAYER, palette_rgb, read_rgba, write_rgba
 
 # 2: `parts` (each part's name, materials, indexes and RGB, dark to light); empty with no `parts`
@@ -58,6 +59,24 @@ def _render(run: StageRun, frames: str) -> dict[str, Any]:
     except (OSError, ValueError):
         raise StageFailure(f"{frames} has no render.json; run it again") from None
     return document
+
+
+def _generated(document: dict[str, Any]) -> dict[str, Scalar]:
+    """The `parts` a generated Model's generator gave (ticket 0224), which `render.json` passes on; nothing otherwise."""
+    made = document.get("generated")
+    return {"parts": str(made["parts"])} if isinstance(made, dict) and "parts" in made else {}
+
+
+def palette_generated_params(frames: str) -> Callable[[StageRun], dict[str, Scalar]]:
+    """`StageSpec.generated_params` of a palette Stage whose frames come from the Stage `frames`."""
+    def read(run: StageRun) -> dict[str, Scalar]:
+        if frames not in run.upstream:  # the Stage reused by a Recipe whose frames come from another Stage (a sprite's)
+            return {}
+        try:
+            return _generated(_render(run, frames))
+        except StageFailure:
+            return {}  # not built yet
+    return read
 
 
 def _colour_files(document: dict[str, Any]) -> list[tuple[str, str, int, str]]:
@@ -204,7 +223,8 @@ def _run_palette(run: StageRun, source: str) -> None:
     count = int(run.params["colors"])
     materials = {str(m["name"]): int(m["index"]) for m in document.get("materials", [])}
     table = _table(run)
-    specs = parse_parts(str(run.params.get("parts", "")), list(materials), int(document.get("bands", 3)), run.asset_id, table)
+    written = str(param_or_generated(run, "parts", _generated(document)) or "")
+    specs = parse_parts(written, list(materials), int(document.get("bands", 3)), run.asset_id, table)
     parts = {s.name: [materials[m] for m in s.materials] for s in specs}
     fitted = [s for s in specs if s.rgb is None]
     shared = [s for s in specs if s.rgb is not None]

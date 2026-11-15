@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -30,9 +30,26 @@ from a hue window since 0184, so a denser palette no longer changes their hue, o
 
 ## Acceptance criteria
 
-- [ ] Golden: the same lit region pulsed with one `lift` on a palette and on the same palette with a colour added between
+- [x] Golden: the same lit region pulsed with one `lift` on a palette and on the same palette with a colour added between
       each pair in every ramp reaches a peak lightness within 0.03 of each other.
-- [ ] Golden: no pixel ends darker than it started, or outside its ramp.
-- [ ] CLI seam: a `cycle` Decision with `depth` is refused, and the finding names `lift`.
+- [x] Golden: no pixel ends darker than it started, or outside its ramp.
+- [x] CLI seam: a `cycle` Decision with `depth` is refused, and the finding names `lift`.
 
 Budget: 60–100k tokens.
+
+## Result (2026-11-14)
+
+- `cycle_pulse(image, region, palette, lift=PULSE_LIFT, steps)` (`PULSE_LIFT` = 0.15 replaces `PULSE_DEPTH`): in a frame whose
+  share of the triangle is `a / steps`, each pixel takes the colour of its ramp, at or above its own place, whose OKLab L is
+  nearest its own L + `lift` x `a / steps`; a tie takes the darker one. Frame 0 is the input, the pulse is the same triangle.
+  The old whole-place rounding is gone, so a half-way frame may stay on the pixel's own colour when a place is wider than the
+  half lift.
+- **Refusal chosen: a held reason, per Loop.** `_held_cycle` in `recipes/loops.py` answers a `cycle` Decision with `depth`
+  (rotate or pulse) with `loop.held`: the message says `lift` = depth x 0.075 = the converted value, and the `owner_action`
+  says to decide the cycle again with that `lift`. The Stage is `done` and the other Loops build. `depth` stays in the
+  Decision's schema, so the Decision is accepted and refused at build, not at `decide`. `loops.json` entries have `lift`
+  (a number or null) in place of `depth` (no schema bump: nothing else reads it).
+- UI: the pulse's `loopScreen.tsx` control is a number field `loop-lift` (it was `loop-depth`; it was a field, not a slider),
+  a positive number, placeholder 0.15. `npm run build` passes; Playwright not run.
+- Spec §6.1 `loops` row names `lift`. Tests: `tests/golden/test_cycle_ops.py` (dense palette within 0.03; no pixel darker or
+  outside its ramp; `cycle_puddle_pulse.png` regenerated), `tests/cli/test_loops.py` (a `depth` is held and names the `lift`).

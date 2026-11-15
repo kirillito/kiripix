@@ -16,6 +16,9 @@ import hashlib
 import json
 import math
 import shutil
+import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -25,7 +28,7 @@ import numpy as np
 import kiripix.runners
 from kiripix.recipes import blender_launcher
 from kiripix.recipes import render as render_recipe
-from kiripix.recipes.blender_launcher import set_launcher
+from kiripix.recipes.blender_launcher import ScriptFailure, set_launcher
 from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
 from kiripix.core.project_checks import register_project_check
@@ -661,16 +664,29 @@ class FakeBlender:
             return self._render_frames(args)
         if script != "normalise_model":
             raise StageFailure(f"the fake Blender has no script {script}")
-        Path(args["output"]).write_bytes(b"fake normalised model")
+        data = Path(args["input"]).read_bytes()
+        # A Model whose content is JSON says what it holds ({"bones", "parents", "armature", "source_height"}): its
+        # skeleton goes on into `model.blend`, where `validate_rig` reads it. Any other file is the fake Model.
+        try:
+            said = json.loads(data)
+        except ValueError:
+            said = None
+        if isinstance(said, dict):
+            kept = {key: said[key] for key in ("bones", "parents", "armature") if key in said}
+            Path(args["output"]).write_text(json.dumps(kept), encoding="utf-8")
+        else:
+            said = {}
+            Path(args["output"]).write_bytes(b"fake normalised model")
         if args.get("still"):
             from PIL import Image
 
             Image.new("RGBA", (256, 256), (90, 140, 200, 255)).save(args["still"])  # a placeholder still
-        rigged = b"mixamorig" in Path(args["input"]).read_bytes()  # the rigged fixtures name their bones, the others don't
+        rigged = b"mixamorig" in data  # the rigged fixtures name their bones, the others don't
         if not rigged and args.get("upload"):
             Path(args["upload"]).write_bytes(b"fake upload for Mixamo")
         return {
             "height": args["height"],
+            "source_height": said.get("source_height", 1.8),  # the Model's own height, before it was scaled
             "up": "+Z",
             "facing": args.get("facing", "-y"),
             "bounds": {"min": [-0.5, -0.25, 0.0], "max": [0.5, 0.25, args["height"]]},
@@ -678,7 +694,7 @@ class FakeBlender:
             "upload": not rigged and bool(args.get("upload")),
             "still": bool(args.get("still")),
             "armature": "Armature" if rigged else None,
-            "bones": FAKE_BONES if rigged else [],
+            "bones": said.get("bones", FAKE_BONES) if rigged else [],
             "fps": 30,  # as _read_actions says of model.blend
             "actions": [{"name": "idle", "start": 0, "end": 24}, {"name": "walk", "start": 0, "end": 30}] if rigged else [],
             # a file that names an `Icosphere` has a stray mesh that isn't skinned (tests/fixtures/characters/rigged_stray.glb)
@@ -686,15 +702,41 @@ class FakeBlender:
             else [],
         }
 
+    def run_file(self, path: Path, args: dict[str, Any], *, executable: str | None, progress: Any,
+                 check_cancel: Any) -> dict[str, Any]:
+        """A script of the Project's own (a generator, ticket 0224), run with this Python in place of Blender's, the way
+        the real launcher runs it: `<script> -- <args.json> <result.json>`. A test writes the generator it needs."""
+        with Path("blender-calls.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"script": path.name, "args": args, "executable": executable}) + "\n")
+        progress(0, 1, "fake Blender")
+        failing = Path("blender-fails")
+        if failing.exists():
+            raise StageFailure(failing.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(prefix="kiripix-fake-blender-") as temporary:
+            arguments, result = Path(temporary, "args.json"), Path(temporary, "result.json")
+            arguments.write_text(json.dumps(args), encoding="utf-8")
+            done = subprocess.run([sys.executable, str(path), "--", str(arguments), str(result)], capture_output=True,
+                                  text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=60)
+            tail = [line.rstrip() for line in (done.stdout + done.stderr).splitlines() if line.strip()][-20:]
+            if done.returncode != 0 or not result.is_file():
+                raise ScriptFailure(path.name, done.returncode, tail)
+            document: dict[str, Any] = json.loads(result.read_text(encoding="utf-8"))
+        if "error" in document:
+            raise StageFailure(str(document["error"]))
+        return document
+
     @staticmethod
     def _validate_rig(path: Path) -> dict[str, Any]:
-        """A rigged file whose content is JSON says what it holds ({"bones", "vertices", "size", "armature"}); any other
-        file, such as the Model's own `model.blend`, is the full Mixamo rig of the fake Model."""
+        """A rigged file whose content is JSON says what it holds ({"bones", "parents", "vertices", "size", "armature"});
+        any other file, such as the Model's own `model.blend`, is the full Mixamo rig of the fake Model. Without `parents`,
+        the bones are one chain: each bone's parent is the bone listed before it (ADR 0012)."""
         found: dict[str, Any] = {"armature": "Armature", "bones": FAKE_BONES, "vertices": 100, "size": [1.0, 0.5, 2.0]}
         try:
             found.update(json.loads(path.read_bytes()))
         except ValueError:
             pass
+        bones = list(found["bones"])
+        found.setdefault("parents", {bone: bones[index - 1] if index else None for index, bone in enumerate(bones)})
         return found
 
     @staticmethod

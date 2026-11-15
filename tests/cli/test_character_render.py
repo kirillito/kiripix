@@ -2,6 +2,7 @@
 flat frames of the size it is asked for. The marked tests run the real Blender 5.2 on the fixture Models, at a low
 resolution, and check sizes, passes, counts and the pivot, never pixels (ADR 0010)."""
 
+import io
 import json
 import os
 import re
@@ -55,7 +56,7 @@ def test_run_writes_every_clip_direction_and_frame_and_render_json(project: Kiri
 
     assert [(r["stage"], r["outcome"]) for r in result["data"]["results"]] == [("render", "done")]
     document = render_json(folder)
-    assert document["schema_version"] == 3 and document["camera"] == "top34_8" and document["height"] == 52
+    assert document["schema_version"] == 4 and document["camera"] == "top34_8" and document["height"] == 52
     assert document["frame"] == {"width": 78, "height": 78} and document["directions"] == DIRECTIONS
     assert document["pivot"] == [39.0, 72.0] and document["depth_range"] == [8.0, 12.0]
     assert [c["name"] for c in document["clips"]] == ["hit", "idle"]
@@ -147,7 +148,7 @@ def test_the_stage_takes_the_gpu_lock(project: Kiripix) -> None:
     [stage] = kind["stages"]
 
     assert stage["gpu"] is True
-    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow", "eyes"}
+    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes"}
     by_name = {p["name"]: p for p in stage["params"]}
     assert (by_name["bands"]["minimum"], by_name["bands"]["maximum"], by_name["bands"]["default"]) == (2, 4, 3)
 
@@ -217,7 +218,29 @@ def test_toon_defaults_and_the_light_reach_blender(project: Kiripix) -> None:
     project.json("run", HERO, "render")
 
     [call] = render_calls(project)
-    assert call["args"]["toon"] == {"bands": 3, "shadow": 0.5, "light": {"angle": -45.0, "tilt": 35.0}}
+    assert call["args"]["toon"] == {"bands": 3, "shadow": 0.5, "band_edge": 0.5, "band_smooth": 0.0,
+                                    "light": {"angle": -45.0, "tilt": 35.0}}
+
+
+def test_band_edge_and_band_smooth_reach_the_toon_object_and_render_json(project: Kiripix) -> None:
+    folder = ready(project)
+    project.json("run", HERO, "render")
+
+    project.json("set", HERO, "render", "band_edge=0.62", "band_smooth=1.5")
+    assert stage_status(project, HERO)["render"] == "stale"
+    project.json("run", HERO, "render")
+
+    toon = render_calls(project)[-1]["args"]["toon"]
+    assert (toon["band_edge"], toon["band_smooth"]) == (0.62, 1.5)
+    assert (render_json(folder)["toon"]["band_edge"], render_json(folder)["toon"]["band_smooth"]) == (0.62, 1.5)
+
+
+def test_band_edge_and_band_smooth_out_of_range_are_refused(project: Kiripix) -> None:
+    ready(project)
+
+    for setting in ("band_edge=-0.1", "band_edge=1.1", "band_smooth=-1"):
+        result = project.json("set", HERO, "render", setting, expect=1)
+        assert result["ok"] is False and result["findings"]
 
 
 def test_changing_bands_or_shadow_makes_render_stale_and_reaches_blender(project: Kiripix) -> None:
@@ -439,7 +462,7 @@ def test_a_camera_change_renders_every_clip(project: Kiripix) -> None:
 def test_other_render_settings_render_every_clip(project: Kiripix) -> None:
     ready(project)
     project.json("run", HERO, "render")
-    for setting in ("height=26", "bands=4", "shadow=0.8"):
+    for setting in ("height=26", "bands=4", "shadow=0.8", "band_edge=0.62", "band_smooth=1.5"):
         project.json("set", HERO, "render", setting)
         project.json("run", HERO, "render")
         assert rendered(project) == ["hit", "idle"], setting
@@ -968,3 +991,36 @@ def test_a_render_from_an_older_kiripix_is_stale_and_so_is_everything_after_it(p
     assert status["render"] == "stale" and status["palette"] == "stale"
     project.json("run", HERO, "render")
     assert rendered(project) == ["hit", "idle"]  # the clips' keys hold the format too: nothing is kept
+
+
+@pytest.mark.blender
+def test_band_edge_moves_the_shadow_and_band_smooth_leaves_the_other_passes_alone(project: Kiripix) -> None:
+    folder = real_hero(project, "rigged.fbx")
+    clip(project, {"name": "pose", "source": "walk", "start": 8, "end": 8, "fps": 6, "loop": False}, test_recipes=False)
+    project.json("run", HERO, "clips", test_recipes=False, timeout=900)
+    project.json("set", HERO, "render", "height=26", "bands=2", "shadow=0.6", test_recipes=False)
+    root = folder / "work" / "render"
+
+    def render(*settings: str) -> dict[str, list[bytes]]:
+        project.json("set", HERO, "render", "band_edge=0.5", "band_smooth=0", *settings, test_recipes=False)
+        project.json("run", HERO, "render", "--cpu", test_recipes=False, timeout=1800)
+        return {kind: [(root / kind / "pose" / d / "000.png").read_bytes() for d in DIRECTIONS]
+                for kind in ("color", "normal", "depth", "mask", "material")}
+
+    def shadowed(colour: list[bytes], lit: list[bytes]) -> int:
+        """Opaque pixels darker than the same pixel in the unshadowed render."""
+        total = 0
+        for a, b in zip(colour, lit):
+            first, second = np.array(Image.open(io.BytesIO(a))).astype(int), np.array(Image.open(io.BytesIO(b))).astype(int)
+            total += int(((first[..., :3].sum(axis=-1) < second[..., :3].sum(axis=-1)) & (first[..., 3] == 255)).sum())
+        return total
+
+    base = render()
+    flat = render("shadow=0")
+    wide = render("shadow=0.6", "band_edge=0.62")
+    smooth = render("shadow=0.6", "band_smooth=1.5")
+
+    assert shadowed(wide["color"], flat["color"]) > shadowed(base["color"], flat["color"]) > 0
+    for kind in ("normal", "depth", "mask", "material"):
+        assert smooth[kind] == base[kind] == wide[kind]
+    assert smooth["color"] != base["color"]

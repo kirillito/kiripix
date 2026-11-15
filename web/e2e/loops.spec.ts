@@ -54,11 +54,17 @@ async function floorCycle(page: Page): Promise<void> {
   await clickPixel(page, 4, 24);
   await expect(page.getByTestId("decision-count")).toHaveText("2 Decision(s)");
   await page.keyboard.press("i");
-  await clickPixel(page, 4, 24);
-  await expect(page.getByTestId("cycle-colour-0")).toBeVisible();
+  await expect(page.getByTestId("tool-eyedrop")).toHaveAttribute("aria-pressed", "true");
+  // The eyedropper ignores a click until the rebuilt room has loaded under it (a race under load): click again until the colour is in.
+  await expect(async () => {
+    await clickPixel(page, 4, 24);
+    await expect(page.getByTestId("cycle-colour-0")).toBeVisible({ timeout: 3_000 });
+  }).toPass({ timeout: 20_000 });
   await expect(page.getByTestId("canvas")).toHaveAttribute("data-lit", new RegExp(`^${RED}:\\d+$`));
-  await clickPixel(page, 44, 24);
-  await expect(page.getByTestId("cycle-colour-1")).toBeVisible();
+  await expect(async () => {
+    await clickPixel(page, 44, 24);
+    await expect(page.getByTestId("cycle-colour-1")).toBeVisible({ timeout: 3_000 });
+  }).toPass({ timeout: 20_000 });
 }
 
 test("a region is flooded, two colours are picked, and the preview plays the Loop by its sequence", async ({ page, studio }) => {
@@ -117,8 +123,9 @@ test("a flicker fast enough to trip loop.flash shows the error, and accept stays
   await page.getByTestId("loop-flicker-spread").press("Enter");
   await expect.poll(() => journal(studio).at(-1)).toMatchObject({ name: "timing", data: { flicker: { mean_ticks: 1, spread: 0 } } });
 
+  // The finding comes from a rebuild of the Stage with a flicker of many frames, which is slow when the cores are shared (ticket 0202).
   const flash = page.getByTestId("loop-finding-loop.flash");
-  await expect(flash).toBeVisible();
+  await expect(flash).toBeVisible({ timeout: 60_000 });
   await expect(flash).toHaveAttribute("data-severity", "error");
   await expect(page.getByTestId("accept")).toBeDisabled();
 

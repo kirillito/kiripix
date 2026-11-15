@@ -3,8 +3,9 @@
 A Variant is `src/<hash>.png`, named by the start of its content hash, so importing the same image twice is a no-op
 and a Variant never changes once picked. A character's Variants are Models instead: `src/<hash>.glb`, `.fbx` or
 `.blend`. A character also has clip sources (`src/clips/<name>.<hash>.<ext>`, named by the file stem, which a `clip`
-Decision's `source` names) and one rigged file (`src/rigged/<hash>.<ext>`, the Mixamo round trip's result). The
-caller holds the Asset lock.
+Decision's `source` names) and one rigged file (`src/rigged/<hash>.<ext>`, the Mixamo round trip's result). A generated
+character has, in place of Models, one parameter file (`src/parameters/<name>`, ticket 0224), which the Project's generator
+builds its Model from. The caller holds the Asset lock.
 """
 
 import re
@@ -55,6 +56,48 @@ def clip_sources(asset: Asset) -> dict[str, Path]:
         if path.is_file() and path.suffix in MODEL_SUFFIXES:
             found[Path(path.stem).stem] = path
     return dict(sorted(found.items()))
+
+
+PARAMETERS_DIR = "parameters"  # under `src/`: a generated character's parameter file (ticket 0224), kept under its own name
+PARAMETER_SUFFIXES = (".toml", ".json")
+_PARAMETER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def parameters(asset: Asset) -> Path | None:
+    """A generated character's parameter file, from which the Project's generator builds its Model; None without one."""
+    found = [p for p in sorted((asset.dir / "src" / PARAMETERS_DIR).glob("*")) if p.is_file()]
+    return found[-1] if found else None
+
+
+def check_parameters(file: Path, shown: str, asset_id: str | None = None) -> None:
+    """Refuse a file that can't be a parameter file, by its name alone."""
+    if file.suffix.lower() not in PARAMETER_SUFFIXES or not _PARAMETER_NAME.match(file.name):
+        raise fail("import.not_parameters", f"{shown} is not a parameter file: a .toml or .json file, named in letters, "
+                   "digits, dots, dashes and underscores",
+                   owner_action="Give the generator's parameter file as a .toml or .json file.",
+                   position=Position(asset=asset_id, file=shown))
+
+
+def _import_parameters(asset: Asset, file: Path, shown: str, data: bytes) -> tuple[str, Path, bool]:
+    """Store a parameter file as `src/parameters/<its name>`, in place of any other: it is the character's Source, so it
+    needs no Pick, and it may be edited where it is. Refused for a character that has an imported Model."""
+    position = Position(asset=asset.id, file=shown)
+    check_parameters(file, shown, asset.id)
+    if variants(asset):
+        raise fail("import.model_or_parameters", f"{asset.id} has an imported Model ({', '.join(variants(asset))}), and a "
+                   "character's Model is either imported or built from a parameter file",
+                   owner_action=f"Make another character for the generated Model (kiripix new character <name> "
+                                f"--from-parameters {shown}), or remove the Models from {asset.id}'s src/ folder first.",
+                   position=position)
+    folder = asset.dir / "src" / PARAMETERS_DIR
+    path = folder / file.name
+    created = not path.is_file() or path.read_bytes() != data
+    if created:
+        atomic.write_bytes(path, data)
+    for old in folder.glob("*"):
+        if old != path and old.is_file():
+            old.unlink()
+    return file.name, path, created
 
 
 def rigged(asset: Asset) -> Path | None:
@@ -147,7 +190,7 @@ def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path,
     data = _read_for_import(file, shown)
     position = Position(asset=asset.id, file=shown)
     if takes_sheets(asset):
-        if role in ("clip-source", "rigged"):
+        if role in ("clip-source", "rigged", "parameters"):
             raise fail("import.role_needs_character", f"--role {role} is for a character; {asset.id} is a {asset.kind}",
                        fix=f"kiripix import {asset.id} {shown} --role sheet", position=position)
         if role != "sheet":
@@ -168,6 +211,8 @@ def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path,
                        f"{shown} is a 3D Model, and a {asset.kind} takes an image (a PNG or JPEG)",
                        fix=f"kiripix new character {_slug(asset)}", position=position)
         return import_variant(asset, file, shown)
+    if role == "parameters":
+        return _import_parameters(asset, file, shown, data)
     if _is_image(file, data):
         raise fail("import.image_needs_room_or_prop",
                    f"{shown} is an image, and a character takes a Model (.glb, .fbx or .blend)",
@@ -175,6 +220,12 @@ def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path,
     suffix = _model_suffix(asset, file, shown)
     digest = hash_bytes(data)[:VARIANT_NAME_LENGTH]
     if role == "variant":
+        if (generated_from := parameters(asset)) is not None:
+            raise fail("import.model_or_parameters", f"{asset.id} has a parameter file ({generated_from.name}), and a "
+                       "character's Model is either built from one or imported",
+                       owner_action=f"Make another character for the imported Model (kiripix new character <name>), or "
+                                    f"remove {generated_from.name} from {asset.id}'s src/{PARAMETERS_DIR}/ folder first.",
+                       position=position)
         return _store(asset.dir / "src", digest, suffix, data)
     if role == "rigged":
         name, path, created = _store(asset.dir / "src" / "rigged", digest, suffix, data)
@@ -206,6 +257,22 @@ def _store(folder: Path, digest: str, suffix: str, data: bytes) -> tuple[str, Pa
 def look_variants(asset: Asset, look: str) -> dict[str, Path]:
     """A room's Look's edit Variants by name, sorted: `src/looks/<look>/<hash>.png`."""
     return {path.stem: path for path in sorted((asset.dir / LOOKS_DIR / look).glob("*.png")) if path.is_file()}
+
+
+def looks_with_edits(asset: Asset) -> list[str]:
+    """The Looks that have a stored edit, sorted."""
+    return sorted(path.name for path in (asset.dir / LOOKS_DIR).glob("*") if path.is_dir() and look_variants(asset, path.name))
+
+
+def picked_look_edits(graph: AssetGraph) -> dict[str, str]:
+    """Each Look's picked edit Variant, from the `looks` Stage's current Decisions; the latest Pick of a Look counts."""
+    if all(spec.name != LOOKS_STAGE for spec in graph.kind.stages):
+        return {}
+    found: dict[str, str] = {}
+    for decision in graph.replay(LOOKS_STAGE).current:
+        if decision.name == PICK.name:
+            found[str(decision.data["look"])] = str(decision.data["variant"])
+    return found
 
 
 def _check_look_id(asset: Asset, look: str) -> None:

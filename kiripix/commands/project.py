@@ -9,7 +9,7 @@ from kiripix.checks import Finding, Position
 from kiripix.commands.contract import Context, ExitCode, Outcome
 from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import cancel
+from kiripix.core import cancel, sources
 from kiripix.core.assets import create_asset, is_asset_id, list_assets, load_asset
 from kiripix.core.errors import KiripixError, fail
 from kiripix.core.graph import AssetGraph, StageRunResult, StageState, run_all, run_asset
@@ -61,6 +61,14 @@ class NewInput(_Input):
     kind: str = Field(description="The Asset's Kind: room, prop or character.")
     name: str = Field(description="The Asset's name: lower-case letters, digits and underscores.")
     view: str | None = Field(None, description="top or side. Required for a room; refused for other Kinds.")
+    base: str | None = Field(None, description="For a character: the character it is made from, such as "
+                                               "character.body_m. Its Model carries the base's skeleton, so it needs no "
+                                               "rigged file; it starts with the base's clips; and a Stage parameter it "
+                                               "doesn't set takes the base's value. The base has no base of its own.")
+    from_parameters: Path | None = Field(
+        None, description="For a character: a parameter file (.toml or .json) that the Project's generator builds its Model "
+                          "from ([character.generators] in kiripix.toml). It is stored in the new character's "
+                          "src/parameters/, as `import --role parameters` stores it.")
 
     @property
     def asset_id(self) -> str:
@@ -76,6 +84,20 @@ class NewData(BaseModel):
         return f"Created {self.asset} in {self.path}"
 
 
+def _parameters_to_import(arguments: NewInput, context: Context) -> Path | None:
+    """The parameter file `new --from-parameters` names, checked before the Asset is made, so a refused file leaves none."""
+    if arguments.from_parameters is None:
+        return None
+    shown = str(arguments.from_parameters)
+    if arguments.kind != sources.CHARACTER:
+        raise fail("new.parameters_need_character", f"--from-parameters is for a character; this is a {arguments.kind}",
+                   fix=f"kiripix new character {arguments.name} --from-parameters {shown}")
+    path = context.cwd / arguments.from_parameters
+    if not path.is_file():
+        raise fail("import.not_found", f"no file at {shown}", owner_action=f"Check the path {shown}.")
+    return path
+
+
 @command(
     "new",
     summary="Create a new Asset from its Kind's Recipe.",
@@ -85,11 +107,18 @@ class NewData(BaseModel):
     mcp="hidden",
     cli=CliMeta(positional=("kind", "name")),
     locks=LockNeeds(asset=lambda a: a.asset_id if is_asset_id(a.asset_id) else None),
+    files=("from_parameters",),
 )
 def new(arguments: NewInput, context: Context) -> Outcome[NewData]:
     project = find_project(context.cwd)
-    params = {"view": arguments.view} if arguments.view is not None else {}
+    params = {name: value for name, value in (("view", arguments.view), ("base", arguments.base)) if value is not None}
+    parameters = _parameters_to_import(arguments, context)
+    if parameters is not None:
+        sources.check_parameters(parameters, str(arguments.from_parameters))
     asset, created = create_asset(project, arguments.kind, arguments.name, params)
+    if parameters is not None:
+        _, stored, _ = sources.import_file(asset, parameters, str(arguments.from_parameters), "parameters")
+        created = [*created, project.relative(stored)]
     return Outcome(NewData(asset=asset.id, path=project.relative(asset.dir), created=created))
 
 

@@ -41,7 +41,7 @@ from kiripix.recipes.kit_record import (
     kit_region,
     palette_hash,
 )
-from kiripix.recipes.loops import LOOPS_STAGE, PLATE, declared
+from kiripix.recipes.loops import LOOPS_STAGE, PLATE, declared, frames_source
 from kiripix.recipes.regions import EditRoom
 
 KIT_FILE = "kit.json"
@@ -61,7 +61,7 @@ READS = ("layers", "palette", "source", "fit", "masks")
 
 
 @dataclass
-class _Prepared:
+class Prepared:
     graph: AssetGraph
     run: StageRun
     layer: str
@@ -73,9 +73,10 @@ class _Prepared:
     palette_id: str
 
 
-def _prepare(project: Project, asset: Asset, loop: str, prefix: str) -> _Prepared:
+def prepare(project: Project, asset: Asset, loop: str, prefix: str, need_region: bool = True) -> Prepared:
     """The Loop's region and what a kit is painted on, from the built room. Refused unless the Loop is a declared frame
-    Loop and the room is built. `prefix` is the start of the finding codes (`loop.kit` or `import.loop`)."""
+    Loop and the room is built. `prefix` is the start of the finding codes (`loop.kit` or `import.loop`). Without
+    `need_region` a Loop with no region is let through, with the box (0, 0, 0, 0) (edit frames, ticket 0219)."""
     position = Position(asset=asset.id, stage=LOOPS_STAGE)
     if asset.kind != "room":
         raise fail(f"{prefix}_needs_room", f"a Loop's kit is for a room; {asset.id} is a {asset.kind}",
@@ -100,12 +101,14 @@ def _prepare(project: Project, asset: Asset, loop: str, prefix: str) -> _Prepare
     room = EditRoom(run)
     layer = str(loops[loop].get("layer", PLATE))
     region, box = kit_region(run, room, loop, None if layer == PLATE else layer)
+    if box is None and not need_region:
+        box = (0, 0, 0, 0)
     if box is None:
         raise fail(f"{prefix}_no_region", f"the Loop {loop} has no region, so its kit has no box",
                    owner_action=f"Mark where {loop} plays: a flood, a polygon or a brush "
                                 f"(kiripix decide {asset.id} {LOOPS_STAGE} --help).", position=position)
     rgb = palette_rgb(run)
-    return _Prepared(graph, run, layer, region, box, room, fit_hash(run.upstream["fit"] / "fit.png"), rgb,
+    return Prepared(graph, run, layer, region, box, room, fit_hash(run.upstream["fit"] / "fit.png"), rgb,
                      palette_hash(rgb))
 
 
@@ -139,7 +142,7 @@ def write_kit(project: Project, asset: Asset, loop: str, folder: Path, shown: st
                    owner_action=f"Use another folder, or write over these: kiripix loop kit {asset.id} {loop} {shown} "
                                 f"--frames {frames} --force",
                    position=Position(asset=asset.id, stage=LOOPS_STAGE, file=shown))
-    kit = _prepare(project, asset, loop, "loop.kit")
+    kit = prepare(project, asset, loop, "loop.kit")
     x, y, width, height = kit.box
     crop = (slice(y, y + height), slice(x, x + width))
     area = kit.region[crop]
@@ -178,24 +181,33 @@ class FramesImported:
     findings: list[Finding]
 
 
-def _kit_file(first: Path, asset: Asset, loop: str) -> dict[str, Any] | None:
-    """The `kit.json` beside the frames, when it is this Asset's and Loop's."""
-    path = first.parent / KIT_FILE
+def _kit_file(path: Path, asset: Asset, loop: str) -> dict[str, Any] | None:
+    """The `kit.json` at `path`, when it is this Asset's and Loop's."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if (isinstance(document, dict) and document.get("schema_version") == KIT_SCHEMA_VERSION
-            and document.get("asset") == asset.id and document.get("loop") == loop):
+            and document.get("asset") == asset.id and document.get("loop") == loop
+            and isinstance(document.get("box"), list) and "fit" in document and "palette" in document):
         return document
     return None
 
 
-def import_frames(project: Project, asset: Asset, files: list[Path], shown: list[str], loop: str) -> FramesImported:
+def import_frames(project: Project, asset: Asset, files: list[Path], shown: list[str], loop: str,
+                  kit_file: Path | None = None, kit_shown: str | None = None) -> FramesImported:
     """Store painted frames as frames 1 to N-1 of a frame Loop and record them (a `kit` Decision). Every frame must be
-    the region's box in size; nothing is stored unless all are."""
+    the region's box in size; nothing is stored unless all are.
+
+    The fit and palette the frames were painted on come from `kit_file` (a kit's `kit.json`, as if it sat beside the frames);
+    without it, from a `kit.json` beside the first frame, and without that, from the room as it is (a warning)."""
     position = Position(asset=asset.id, stage=LOOPS_STAGE)
-    kit = _prepare(project, asset, loop, "import.loop")
+    kit = prepare(project, asset, loop, "import.loop")
+    chosen = frames_source(kit.run, loop)
+    if chosen == "edits":
+        raise fail("import.loop_source_mixed", f"the Loop {loop} takes its frames from edits of the Source, and a frame "
+                   "Loop's frames come from one source only",
+                   owner_action=f"Undo what chose its edits (kiripix undo {asset.id} {LOOPS_STAGE}).", position=position)
     x, y, width, height = kit.box
     named = sorted(zip(files, shown, strict=True), key=lambda pair: pair[0].name)
     findings: list[Finding] = []
@@ -223,8 +235,21 @@ def import_frames(project: Project, asset: Asset, files: list[Path], shown: list
                    owner_action=f"Paint frame_001.png and the frames after it, then import them with --loop {loop}.",
                    position=position)
     fit, palette = kit.fit, kit.palette_id
-    made = _kit_file(named[0][0], asset, loop)
-    if made is not None:
+    if kit_file is not None:
+        made = _kit_file(kit_file, asset, loop)
+        if made is None:
+            raise fail("import.kit_invalid", f"{kit_shown or kit_file.name} isn't a kit.json of {loop} on {asset.id}",
+                       owner_action=f"Use the kit.json that `kiripix loop kit {asset.id} {loop} <folder>` wrote.",
+                       position=position)
+    else:
+        made = _kit_file(named[0][0].parent / KIT_FILE, asset, loop)
+    if made is None:
+        findings.append(Finding(
+            code="import.loop_no_kit", severity="warning",
+            message=f"no kit.json came with the frames, so they are taken as painted on the room as it is now "
+                    f"(its fit and palette); a refit since the kit was written isn't noticed",
+            position=position, fix=f"kiripix import {asset.id} <png...> --loop {loop} --kit <folder>/{KIT_FILE}"))
+    else:
         if [int(v) for v in made["box"]] != [x, y, width, height]:
             raise fail("import.loop_region_changed",
                        f"the region of {loop} moved or changed size since the kit was written (its box was "

@@ -179,11 +179,12 @@ def test_a_dense_palette_never_ramps_across_hues() -> None:
 def test_pulse_moves_up_the_ramp_and_back_and_stays_at_the_end(request: pytest.FixtureRequest) -> None:
     image, region = puddle()
 
-    frames = cycle_pulse(image, region, PALETTE, depth=2, steps=4)
+    frames = cycle_pulse(image, region, PALETTE, lift=0.15, steps=4)
 
     assert frames.shape == (4, 6, 12, 4)
     assert (frames[0] == image).all()
-    assert (frames[1, 1, 1, :3] == PALETTE[8]).all() and (frames[2, 1, 1, :3] == PALETTE[9]).all()
+    assert (frames[1, 1, 1, :3] == PALETTE[7]).all(), "half the lift is nearer the dark blue than the blue"
+    assert (frames[2, 1, 1, :3] == PALETTE[8]).all(), "the peak: the ramp colour nearest L + 0.15"
     assert (frames[3] == frames[1]).all(), "back down the way it came"
     assert (frames[2, 3, 5, :3] == PALETTE[10]).all(), "stops at the end of the ramp"
     assert (frames[2, 2, 3, :3] == PALETTE[9]).all(), "the blue's ramp ends at light blue: pale blue is too far in hue"
@@ -194,10 +195,63 @@ def test_pulse_moves_up_the_ramp_and_back_and_stays_at_the_end(request: pytest.F
     assert_golden(request, strip(frames), "cycle_puddle_pulse.png")
 
 
-def test_pulse_with_depth_zero_does_not_move() -> None:
+def test_pulse_with_lift_zero_does_not_move() -> None:
     image, region = puddle()
 
-    assert (cycle_pulse(image, region, PALETTE, depth=0, steps=3) == image[None]).all()
+    assert (cycle_pulse(image, region, PALETTE, lift=0.0, steps=3) == image[None]).all()
+
+
+def denser(palette: np.ndarray) -> np.ndarray:
+    """The palette with a colour added between each pair of neighbours in its ramps (the midpoint, listed after the rest)."""
+    from kiripix.ops import ramps as ramps_of
+
+    extra: list[tuple[int, ...]] = []
+    seen = {tuple(c) for c in palette.tolist()}
+    for ramp in ramps_of(palette):
+        for a, b in zip(ramp, ramp[1:], strict=False):
+            mid = tuple(int(v) for v in (palette[a].astype(int) + palette[b].astype(int)) // 2)
+            if mid not in seen:
+                seen.add(mid)
+                extra.append(mid)
+    return np.concatenate([palette, np.array(extra, dtype=np.uint8)])
+
+
+def mean_lightness(frame: np.ndarray, region: np.ndarray) -> float:
+    from kiripix.ops import srgb_to_oklab
+
+    return float(srgb_to_oklab(frame[region][:, :3])[:, 0].mean())
+
+
+def test_one_lift_gives_the_same_peak_lightness_on_a_sparse_and_a_dense_palette() -> None:
+    image, region = puddle()
+    dense = denser(PALETTE)
+    assert len(dense) > len(PALETTE)
+
+    peaks = []
+    for palette in (PALETTE, dense):
+        frames = cycle_pulse(image, region, palette, lift=0.15, steps=4)
+        peaks.append(mean_lightness(frames[2], region))
+
+    start = mean_lightness(image, region)
+    assert peaks[0] > start + 0.03, "the pulse is visible"
+    assert abs(peaks[0] - peaks[1]) <= 0.03
+
+
+def test_no_pulsed_pixel_ends_darker_than_it_started_or_outside_its_ramp() -> None:
+    from kiripix.ops import srgb_to_oklab
+
+    image, region = puddle()
+    for palette in (PALETTE, denser(PALETTE)):
+        ramp_of = ramps(palette)
+        index = {tuple(c): i for i, c in reversed(list(enumerate(palette.tolist())))}
+        for lift in (0.05, 0.15, 0.4, 2.0):
+            frames = cycle_pulse(image, region, palette, lift=lift, steps=4)
+            before = srgb_to_oklab(image[..., :3].reshape(-1, 3))[:, 0].reshape(image.shape[:2])
+            for k in range(1, 4):
+                after = srgb_to_oklab(frames[k][..., :3].reshape(-1, 3))[:, 0].reshape(image.shape[:2])
+                assert (after >= before - 1e-9).all()
+                for y, x in np.argwhere(region):
+                    assert index[tuple(frames[k, y, x, :3].tolist())] in ramp_of[index[tuple(image[y, x, :3].tolist())]]
 
 
 # sequences

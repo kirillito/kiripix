@@ -6,7 +6,8 @@ args:   {"input": <file>, "output": <model.blend to write>, "height": <the Model
          "upload": <optional: an .fbx to write for Mixamo's auto-rigger when the Model has no armature>,
          "facing": <optional: the way the Model faces in the file, "-y" (default), "+y", "-x" or "+x">,
          "still": <optional: a .png to write, a 256 px preview of the normalised Model from direction `s`>}
-result: {"still": <true when the still was written>, "height", "up", "facing", "bounds": {"min", "max"}, "vertices", "armature", "bones", "fps": <the file's frame rate, which the actions' frames count in>,
+result: {"still": <true when the still was written>, "height", "source_height": <the Model's height before it was scaled, in Blender units as imported, in the rest pose: `render` scales a character made from a base by it (ADR 0012)>,
+         "up", "facing", "bounds": {"min", "max"}, "vertices", "armature", "bones", "fps": <the file's frame rate, which the actions' frames count in>,
          "actions": [{"name", "start", "end"}],
          "upload": <true when the upload file was written>,
          "ignored": [{"name", "vertices"}: a mesh deleted from the Model, because it isn't skinned to the armature]}
@@ -246,6 +247,7 @@ def normalise(args: dict) -> dict:
     height = high.z - low.z
     if height <= 1e-6:
         raise ValueError("the Model has no height")
+    source_height = height  # in the file's own size, as Blender imported it, in the rest pose
     scale = float(args["height"]) / height
     centre = (low + high) / 2
     root.scale = (scale, scale, scale)
@@ -283,6 +285,7 @@ def normalise(args: dict) -> dict:
     progress(3, 3, "done")
     return {
         "height": round(high.z - low.z, 6),
+        "source_height": round(source_height, 6),
         "up": "+Z",
         "facing": facing,
         "bounds": {"min": [round(v, 6) for v in low], "max": [round(v, 6) for v in high]},

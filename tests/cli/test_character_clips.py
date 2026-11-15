@@ -65,7 +65,7 @@ def test_three_clips_build_clips_json_with_the_sampled_frames_and_undo_removes_o
 
     assert [(r["stage"], r["outcome"]) for r in result["data"]["results"]] == [("clips", "done")]
     document = clips_json(folder)
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     by_name = {c["name"]: c for c in document["clips"]}
     assert list(by_name) == ["hit", "idle", "walk"]  # sorted by name
     # idle: 24 source frames at 30 fps, 12 fps samples every 2.5 frames; a loop stops before its end
@@ -218,7 +218,7 @@ def test_describe_shows_the_final_schema(project: Kiripix) -> None:
     [kind] = project.json("describe", "character", "--stage", "clips")["data"]["kinds"]
     [stage] = kind["stages"]
 
-    [decision] = stage["decisions"]
+    decision = next(d for d in stage["decisions"] if d["name"] == "clip")
     properties = decision["entry_schema"]["properties"]
     assert set(properties) == {"name", "source", "start", "end", "fps", "loop", "stationary", "speed", "still", "blink",
                                "wink_left", "wink_right"}
@@ -226,7 +226,8 @@ def test_describe_shows_the_final_schema(project: Kiripix) -> None:
     assert "again under a name" in decision["description"]
     assert decision["entry_schema"]["required"] == ["name", "source", "start", "end", "fps", "loop"]
     assert [c["code"] for c in stage["checks"]] == [
-        "clips.source_missing", "clips.range", "clips.bad_name", "clips.root_motion"]
+        "clips.source_missing", "clips.range", "clips.bad_name", "clips.root_motion", "clips.transition_missing_clip",
+        "clips.transition_frame", "clips.transition_loop", "clips.duplicate_name", "clips.remove_unknown"]
 
 
 # the real Blender

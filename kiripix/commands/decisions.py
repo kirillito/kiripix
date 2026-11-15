@@ -10,7 +10,7 @@ from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import editing, journal
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.assets import is_asset_id, load_asset
-from kiripix.export import frozen_layer_findings
+from kiripix.export import frozen_layer_findings, loop_edit_findings
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import find_project
@@ -35,10 +35,12 @@ class DecisionOut(BaseModel):
     name: str
     data: dict[str, object]
     image_hash: str | None = None
+    from_base: bool = Field(False, description="In `show`: the Decision is the base's, which the Asset was made from; it is "
+                                               "in the base's journal, and `undo` on this Asset never takes it back.")
 
 
-def current_decisions(decisions: tuple[CurrentDecision, ...]) -> list[DecisionOut]:
-    return [DecisionOut(id=d.id, name=d.name, data=d.data, image_hash=d.image_hash) for d in decisions]
+def current_decisions(decisions: tuple[CurrentDecision, ...], from_base: bool = False) -> list[DecisionOut]:
+    return [DecisionOut(id=d.id, name=d.name, data=d.data, image_hash=d.image_hash, from_base=from_base) for d in decisions]
 
 
 # set
@@ -139,6 +141,8 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
                if arguments.stage == "layers" and d.decision == "remove" and isinstance(d.data.get("layer"), str)]
     if removed and (frozen := frozen_layer_findings(project, asset, removed)):
         raise KiripixError(frozen, ExitCode.CHECK_FAILED)  # an exported Layer's ID is frozen (spec §9)
+    if refused := loop_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
+        raise KiripixError(refused)  # a Loop's `remove` or `rename`: unknown, an ID taken, or its ID is frozen (spec §9)
     if is_array:
         entries, after = editing.record_decisions(project, asset, arguments.stage, documents)
     else:
@@ -212,6 +216,9 @@ def redo(arguments: StepInput, context: Context) -> Outcome[StepData]:
         if target.decision == "remove" and isinstance(layer, str) and (
                 frozen := frozen_layer_findings(project, asset, [layer])):
             raise KiripixError(frozen, ExitCode.CHECK_FAILED)  # redoing a remove is a remove: the freeze holds
+    if arguments.stage == "loops" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
+        if refused := loop_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
+            raise KiripixError(refused)  # redoing a remove or a rename is one: the same checks as `decide`
     entry, after = editing.redo(project, asset, arguments.stage)
     return Outcome(_step(entry, after, asset.id, arguments.stage, arguments.brief))
 

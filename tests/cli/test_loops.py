@@ -153,11 +153,11 @@ def test_a_pulse_loop_keeps_to_the_palette_and_reports_a_region_far_from_its_col
     c = colours(folder)
     declare(project)
     decide(project, "polygon", {"loop": LOOP, "points": WHOLE})
-    decide(project, "cycle", {"loop": LOOP, "mode": "pulse", "colours": [c["wall"], c["crate"]], "depth": 2, "steps": 4})
+    decide(project, "cycle", {"loop": LOOP, "mode": "pulse", "colours": [c["wall"], c["crate"]], "lift": 0.5, "steps": 4})
     build(project)
 
     loop = record(folder)
-    assert loop["mode"] == "pulse" and loop["frames"] == 4 and loop["emissive"] is True and loop["depth"] == 2
+    assert loop["mode"] == "pulse" and loop["frames"] == 4 and loop["emissive"] is True and loop["lift"] == 0.5
     assert loop["moving"] > 0 and loop["pulse_spill"] > 0
     [spill] = findings(project, "loop.pulse_spills")
     assert spill["severity"] == "info" and spill["owner_action"]
@@ -322,13 +322,21 @@ def test_a_decision_for_an_undeclared_loop_holds_the_stage(project: Kiripix) -> 
     assert "not declared" in json.dumps(result)
 
 
+def held(project: Kiripix) -> list[dict[str, Any]]:
+    return findings(project, "loop.held")
+
+
 def test_a_frame_loop_with_no_frames_decision_is_held_and_a_kit_loop_asks_for_a_kit(project: Kiripix) -> None:
-    room_with_a_lamp_layer(project)
+    folder = room_with_a_lamp_layer(project)
     declare(project, form="frames")
-    run_loops(project)
-    assert "frames" in json.dumps(project.json("run", ROOM, "loops", expect=3))
+    build(project, expect=2)  # the Stage is done; the held Loop's error is the check's (exit 2)
+    [found] = held(project)
+    assert "frames" in found["message"] and "loop kit" in found["fix"] and not found["owner_action"]
+    assert record(folder)["held"] and record(folder)["frames"] == 0
     decide(project, "frames", {"loop": LOOP, "source": "kit"})
-    assert "loop kit" in json.dumps(project.json("run", ROOM, "loops", expect=3))
+    project.json("run", ROOM, "loops", expect=2)
+    [found] = held(project)
+    assert found["fix"] and "loop kit" in found["fix"]
 
 
 def test_a_loop_with_one_colour_rotating_or_a_timing_of_the_wrong_length_is_held(project: Kiripix) -> None:
@@ -336,11 +344,66 @@ def test_a_loop_with_one_colour_rotating_or_a_timing_of_the_wrong_length_is_held
     c = colours(folder)
     declare(project)
     decide(project, "cycle", {"loop": LOOP, "colours": [c["floor"]]})
-    run_loops(project)
-    assert "at least two" in json.dumps(project.json("run", ROOM, "loops", expect=3))
+    build(project, expect=2)
+    assert "at least two" in held(project)[0]["message"]
     decide(project, "cycle", {"loop": LOOP, "colours": [c["floor"], c["lamp"]]})
     decide(project, "timing", {"loop": LOOP, "ticks": [4, 4, 4]})
-    assert "ticks lists 3" in json.dumps(project.json("run", ROOM, "loops", expect=3))
+    project.json("run", ROOM, "loops", expect=2)
+    assert "ticks lists 3" in held(project)[0]["message"]
+    assert stage_status(project, ROOM)["loops"] == "done"
+
+
+def test_a_pulse_with_a_depth_is_held_and_the_finding_names_the_lift(project: Kiripix) -> None:
+    folder = room_with_a_lamp_layer(project)
+    c = colours(folder)
+    declare(project)
+    decide(project, "polygon", {"loop": LOOP, "points": WHOLE})
+    decide(project, "cycle", {"loop": LOOP, "mode": "pulse", "colours": [c["wall"]], "depth": 2, "steps": 4})
+    build(project, expect=2)
+    [found] = held(project)
+    assert "`lift`" in found["message"] and "0.15" in found["message"] and "depth x 0.075" in found["message"]
+    assert found["owner_action"] and "lift" in found["owner_action"] and found["code"] == "loop.held"
+    assert record(folder)["held"] and record(folder)["frames"] == 0
+    assert stage_status(project, ROOM)["loops"] == "done"
+
+    decide(project, "cycle", {"loop": LOOP, "mode": "pulse", "colours": [c["wall"]], "lift": 0.15, "steps": 4})
+    build(project)
+    assert held(project) == [] and record(folder)["held"] is None and record(folder)["frames"] == 4
+
+
+def test_a_loop_that_cant_build_holds_itself_and_shows_its_region_while_the_other_loop_builds(project: Kiripix) -> None:
+    folder = room_with_a_lamp_layer(project)
+    c = colours(folder)
+    declare(project)
+    decide(project, "polygon", {"loop": LOOP, "points": WHOLE})
+    decide(project, "cycle", {"loop": LOOP, "colours": [c["floor"], c["lamp"], c["wall"]]})
+    decide(project, "loop", {"loop": "crate_glow"})
+    decide(project, "flood", {"loop": "crate_glow", "x": 40, "y": 24})
+    build(project, expect=2)
+
+    assert stage_status(project, ROOM)["loops"] == "done"
+    assert record(folder)["frames"] == 3 and record(folder)["held"] is None
+    assert (out(folder) / record(folder)["plate"]).is_file()
+    crate = record(folder, "crate_glow")
+    assert crate["held"] and "no cycle" in crate["held"] and crate["frames"] == 0 and crate["plate"] is None
+    assert crate["layers"] == [] and crate["sequence"] == [] and crate["box"] is not None
+    from PIL import Image
+    with Image.open(out(folder) / "crate_glow" / "region.png") as image:
+        assert image.mode == "1"
+        region = np.asarray(image)
+    assert region.shape == rgba(folder / "work" / "palette" / "palette.png").shape[:2]
+    assert region[24, 40] and not region[2, 2] and int(region.sum()) == crate["pixels"]
+    x, y, width, height = crate["box"]
+    assert region[y:y + height, x:x + width].any() and int(region.sum()) == int(region[y:y + height, x:x + width].sum())
+    [found] = held(project)
+    assert found["severity"] == "error" and "crate_glow" in found["message"] and found["owner_action"]
+    assert project.json("next", ROOM)["data"]["stage"] == "loops"
+
+    decide(project, "cycle", {"loop": "crate_glow", "colours": [c["crate"], c["floor"]]})
+    project.json("run", ROOM, "loops")
+    assert held(project) == [] and record(folder, "crate_glow")["frames"] == 2
+    with Image.open(out(folder) / "crate_glow" / "plate.png") as image:
+        assert image.size[0] > 0
 
 
 def test_a_loop_with_no_region_builds_nothing_and_warns(project: Kiripix) -> None:
@@ -352,15 +415,18 @@ def test_a_loop_with_no_region_builds_nothing_and_warns(project: Kiripix) -> Non
     assert record(folder)["box"] is None and "loop.no_region" in codes(project)
 
 
-def test_a_loop_with_the_id_of_a_look_holds_the_stage(project: Kiripix) -> None:
+def test_a_loop_with_the_id_of_a_look_is_held_and_the_advice_names_both_ways_out(project: Kiripix) -> None:
     from test_looks_build import LOOK, decide as decide_look, import_and_pick, edited
 
     room_with_a_lamp_layer(project)
     import_and_pick(project, edited())
     decide_look(project, "polygon", {"look": LOOK, "points": LAMP_BOX})
     decide(project, "loop", {"loop": LOOK})
-    run_loops(project)
-    assert "ID of a Look" in json.dumps(project.json("run", ROOM, "loops", expect=3))
+    build(project, expect=2)
+    [found] = held(project)
+    assert "ID of a Look" in found["message"]
+    assert "give the Loop another ID" in found["owner_action"] and "give the Look another ID" in found["owner_action"]
+    assert "`pick`" in found["owner_action"]
 
 
 # staleness
@@ -402,3 +468,35 @@ def test_describe_loops_says_what_a_loop_is(project: Kiripix) -> None:
     text = json.dumps(project.json("describe", "room", "--stage", "loops"))
     for word in ("always plays", "Look is shown by game state", "`loop` flag", "flood", "timing", "cycle"):
         assert word in text.replace("\\n", " ") or word in text, word
+
+
+def test_a_loop_with_rest_plays_frames_one_on_and_frame_zero_is_still_the_room(project: Kiripix) -> None:
+    folder = a_rotating_loop(project, {"ticks": 6, "rest": True})  # 3 colours, so 3 frames
+    c = colours(folder)
+    decide(project, "cycle", {"loop": LOOP, "colours": [c["floor"], c["lamp"], c["wall"], c["crate"]]})
+    build(project)
+    found = record(folder)
+    assert found["frames"] == 4 and found["sequence"] == [[1, 6], [2, 6], [3, 6]] and found["ticks"] == 18
+    assert "loop.frame0" not in codes(project)
+
+    decide(project, "timing", {"loop": LOOP, "ticks": [2, 3, 4], "rest": True, "pingpong": True})
+    build(project)
+    assert record(folder)["sequence"] == [[1, 2], [2, 3], [3, 4], [2, 3]]
+    decide(project, "timing", {"loop": LOOP, "rest": True, "flicker": {"seed": 3, "mean_ticks": 5, "length_ticks": 100}})
+    build(project)
+    assert {f for f, _ in record(folder)["sequence"]} <= {1, 2, 3}
+
+
+def test_rest_on_a_two_frame_loop_or_with_a_ticks_list_of_the_wrong_length_is_held(project: Kiripix) -> None:
+    folder = room_with_a_lamp_layer(project)
+    c = colours(folder)
+    declare(project)
+    decide(project, "polygon", {"loop": LOOP, "points": WHOLE})
+    decide(project, "cycle", {"loop": LOOP, "colours": [c["floor"], c["lamp"]]})
+    decide(project, "timing", {"loop": LOOP, "rest": True})
+    build(project, expect=2)
+    assert "`rest` needs at least 3 frames" in held(project)[0]["message"]
+    decide(project, "cycle", {"loop": LOOP, "colours": [c["floor"], c["lamp"], c["wall"]]})
+    decide(project, "timing", {"loop": LOOP, "rest": True, "ticks": [4, 4, 4]})
+    project.json("run", ROOM, "loops", expect=2)
+    assert "ticks lists 3" in held(project)[0]["message"]

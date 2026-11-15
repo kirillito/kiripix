@@ -10,7 +10,7 @@ depends_on: [0156-m4-edit-a-clip.md]
 # M4: copy a character's clips to another character (stop-gap before 0165)
 
 Spec §6.3 (clips). Added 2026-11-12 for the game's M03. **Chosen by the Owner on 2026-11-12** over pulling part of
-[0165](../m5/0165-m5-characters-share-a-base.md) forward (see the question below).
+[0165](../m4/0165-m4-characters-share-a-base.md) forward (see the question below).
 
 ## The gap
 
@@ -25,7 +25,7 @@ Two other costs are outside this ticket:
 - **Renders** stay per Asset: four bodies are four renders (DEC-052 accepts ~40 min).
 
 Characters made from a **base** (0165, M5) fix all of it, but they need cross-Asset inputs, an ADR, and the base Models trial
-([0164](../m5/0164-m5-claude-built-base-models-trial.md)) first.
+([0164](../m4/0164-m4-claude-built-base-models-trial.md)) first.
 
 ## What to build
 

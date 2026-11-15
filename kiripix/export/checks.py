@@ -6,12 +6,14 @@ is imported with `kiripix.export`, which every Command that checks already impor
 """
 
 import json
+from collections.abc import Callable
+from typing import Any
 
 from kiripix.checks import Finding, Position
 from kiripix.core import cancel
 from kiripix.core.assets import Asset
 from kiripix.core.errors import KiripixError
-from kiripix.core.graph import AssetGraph
+from kiripix.core.graph import AssetGraph, register_adviser
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project
 from kiripix.core.project_checks import register_project_check
@@ -19,9 +21,10 @@ from kiripix.export.godot import EXPORTED_MARKER_TYPES, animation_name, room_ids
 from kiripix.export.manifest import ExportedIds, Manifest, read_manifest
 from kiripix.export.room import EXPORT_STAGE, ROOM_FILE, ROOM_SCHEMA_VERSION
 from kiripix.export.target import resolve_target
-from kiripix.recipes.clips import CLIP, DIRECTIONS
-from kiripix.recipes.looks import LOOKS_STAGE
-from kiripix.recipes.loops import LOOPS_STAGE
+from kiripix.recipes.base import StageSpec
+from kiripix.recipes.clips import CLIP, DIRECTIONS, TRANSITION
+from kiripix.recipes.looks import LOOKS_STAGE, look_ids
+from kiripix.recipes.loops import LOOP_EDITS, LOOPS_STAGE, declared_ids, edit_problems
 from kiripix.recipes.sprite_frames import FRAMES_FILE
 
 EXPORTERS = frozenset({"room", "prop", "character", "sprite"})  # the Kinds that have an exporter
@@ -39,9 +42,10 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
     layers, masks, looks, loops = manifest.ids.layers, manifest.ids.masks, manifest.ids.looks, manifest.ids.loops
     if graph.asset.kind == "room":
         # a Look's ID is its `pick`'s, so one taken away fails before anything is run again
-        looks = sorted({str(d.data["look"]) for d in graph.replay(LOOKS_STAGE).current if d.name == "pick"})
-        # a Loop's ID is its `loop` Decision's, and shares the namespace with the Looks'
-        loops = sorted({str(d.data["loop"]) for d in graph.replay(LOOPS_STAGE).current if d.name == "loop"})
+        looks = sorted(look_ids(graph.replay(LOOKS_STAGE).current))
+        # a Loop's ID is its `loop` Decision's once a `rename` and a `remove` are replayed, and shares the namespace
+        # with the Looks'
+        loops = declared_ids(graph.replay(LOOPS_STAGE).current)
     spec = graph.spec(EXPORT_STAGE)
     if graph.asset.kind == "room" and graph.built_hash(spec) is not None:
         try:
@@ -56,7 +60,7 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
         # a clip's name is its ID, and its animations are the clip in each direction: from the Decisions, so that a clip
         # taken away fails before anything is run again
         clips = sorted(animation_name(str(d.data["name"]), direction)
-                       for d in graph.replay("clips").current if d.name == CLIP.name for direction in DIRECTIONS)
+                       for d in graph.replay("clips").current if d.name in (CLIP.name, TRANSITION.name) for direction in DIRECTIONS)
     if graph.asset.kind == "sprite":
         clips = _sprite_animations(graph, clips)
     return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips, looks=looks, loops=loops)
@@ -80,18 +84,11 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     """An error for every ID the game's Manifest lists that the Asset no longer has. Nothing is frozen with no game
     configured or no Manifest yet. With a game configured but not at its path, the freeze refuses rather than guesses
     (ADR 0003), and that refusal is the finding."""
-    if asset.kind not in EXPORTERS or project.settings.export.godot.project is None:
-        return []
-    try:
-        target = resolve_target(project)
-    except KiripixError as error:
-        return list(error.findings)
-    shown = target.manifest(asset.id)
-    manifest = read_manifest(target.path(shown), shown)
-    if manifest is None or not manifest.exported:
-        return []
+    exported = _exported(project, asset)
+    if exported is None or isinstance(exported, list):
+        return exported or []
+    manifest, shown, where = exported
     now = _current_ids(AssetGraph(project, asset, cache), manifest)
-    where = ", ".join(sorted(res for res in manifest.files if res.endswith(".tscn"))) or shown
     found: list[Finding] = []
     for noun, was, is_now in (("Marker", manifest.ids.markers, now.markers), ("Layer", manifest.ids.layers, now.layers),
                               ("Mask", manifest.ids.masks, now.masks), ("Look", manifest.ids.looks, now.looks), ("Loop", manifest.ids.loops, now.loops),
@@ -109,11 +106,11 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     return found
 
 
-def frozen_layer_findings(project: Project, asset: Asset, layers: list[str]) -> list[Finding]:
-    """An error for each of `layers` that the game's Manifest lists as exported: a `remove` Decision on it is refused
-    before it is recorded, as a rename would fail the freeze (spec §9). Nothing is frozen with no game or no Manifest."""
+def _exported(project: Project, asset: Asset) -> tuple[Manifest, str, str] | list[Finding] | None:
+    """The game's Manifest of an Asset that has been exported, with its path and the scenes it lists; the finding when a
+    game is configured but not at its path (ADR 0003); None with no game, no Manifest or nothing exported yet."""
     if asset.kind not in EXPORTERS or project.settings.export.godot.project is None:
-        return []
+        return None
     try:
         target = resolve_target(project)
     except KiripixError as error:
@@ -121,15 +118,47 @@ def frozen_layer_findings(project: Project, asset: Asset, layers: list[str]) -> 
     shown = target.manifest(asset.id)
     manifest = read_manifest(target.path(shown), shown)
     if manifest is None or not manifest.exported:
-        return []
-    where = ", ".join(sorted(res for res in manifest.files if res.endswith(".tscn"))) or shown
+        return None
+    return manifest, shown, ", ".join(sorted(res for res in manifest.files if res.endswith(".tscn"))) or shown
+
+
+def _frozen_by_decision(project: Project, asset: Asset, noun: str, stage: str, ids: list[str], verb: str,
+                        exported: Callable[[Manifest], list[str]]) -> list[Finding]:
+    """An error for each of `ids` the game's Manifest lists: a Decision that takes it away is refused before it is recorded
+    (spec §9)."""
+    found = _exported(project, asset) if ids else None
+    if found is None or isinstance(found, list):
+        return found or []
+    manifest, shown, where = found
     return [Finding(
         code="export.id_frozen",
-        message=f"{asset.id}: the Layer ID '{layer}' was exported in {where} (Manifest {shown}, export "
-                f"{manifest.counter}), so it can't be removed",
-        position=Position(asset=asset.id, stage="layers", file=shown),
-        owner_action=f"Keep the Layer '{layer}': the game refers to it. Adding new Layers is always fine.")
-        for layer in layers if layer in manifest.ids.layers]
+        message=f"{asset.id}: the {noun} ID '{one}' was exported in {where} (Manifest {shown}, export "
+                f"{manifest.counter}), so it can't be {verb}",
+        position=Position(asset=asset.id, stage=stage, file=shown),
+        owner_action=f"Keep the {noun} '{one}': the game refers to it. Adding new {noun}s is always fine.")
+        for one in ids if one in exported(manifest)]
+
+
+def frozen_layer_findings(project: Project, asset: Asset, layers: list[str]) -> list[Finding]:
+    """An error for each of `layers` the game's Manifest lists: a `remove` of it is refused before it is recorded."""
+    return _frozen_by_decision(project, asset, "Layer", "layers", layers, "removed", lambda m: m.ids.layers)
+
+
+def frozen_loop_findings(project: Project, asset: Asset, loops: list[str]) -> list[Finding]:
+    """An error for each of `loops` the game's Manifest lists: a `remove` or `rename` of it is refused before it is
+    recorded."""
+    return _frozen_by_decision(project, asset, "Loop", LOOPS_STAGE, loops, "renamed or removed", lambda m: m.ids.loops)
+
+
+def loop_edit_findings(project: Project, asset: Asset, stage: str, documents: list[tuple[str, dict[str, Any]]]) -> list[Finding]:
+    """What refuses a `remove` or `rename` of a Loop (on `decide` and on `redo`): the `loops` Stage's own rules
+    (`edit_problems`), and the ID freeze, which only the Manifest knows."""
+    if asset.kind != "room" or stage != LOOPS_STAGE or not any(name in LOOP_EDITS for name, _ in documents):
+        return []
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    found, edited = edit_problems(asset.id, graph.replay(LOOPS_STAGE).current, documents,
+                                  look_ids(graph.replay(LOOKS_STAGE).current))
+    return found + frozen_loop_findings(project, asset, edited)
 
 
 def _exits(project: Project, assets: list[Asset]) -> dict[str, dict[str, dict[str, str]]]:
@@ -192,6 +221,28 @@ def exits_naming(project: Project, assets: list[Asset], gone: set[str]) -> list[
         position=Position(asset=room, stage="place"),
         owner_action=f"Point {room} {exit_id} at another room, or remove it, so the game's door doesn't lead nowhere.")
         for room in sorted(rooms) for exit_id, exit_ in sorted(rooms[room].items()) if exit_["target_room"] in gone]
+
+
+@register_adviser
+def _frozen_loop_advice(graph: AssetGraph, spec: StageSpec, findings: list[Finding]) -> list[Finding]:
+    """A Loop held for sharing its ID with a Look, whose ID the game's Manifest already lists: the Loop can't be renamed (the
+    game refers to it), so the only way out is the Look's other ID. The finding's advice says so."""
+    held = [f for f in findings if f.code == "loop.held" and f.position is not None and (f.position.field or "").startswith("loop.")]
+    exported = _exported(graph.project, graph.asset) if spec.name == LOOPS_STAGE and held else None
+    if exported is None or isinstance(exported, list):
+        return findings
+    manifest = exported[0]
+    looks = look_ids(graph.replay(LOOKS_STAGE).current)
+    advised: list[Finding] = []
+    for finding in findings:
+        name = ((finding.position.field or "")[len("loop."):]) if finding in held and finding.position else ""
+        if name and name in looks and name in manifest.ids.loops:
+            finding = finding.model_copy(update={"fix": None, "owner_action": (
+                f"The Loop {name} was exported, so the game refers to its ID and it can't change. Give the Look {name} "
+                f"another ID: undo its `pick` (kiripix undo {graph.asset.id} {LOOKS_STAGE}, as many times as it takes) and "
+                "pick it again under another ID.")})
+        advised.append(finding)
+    return advised
 
 
 @register_project_check

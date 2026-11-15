@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -106,6 +108,12 @@ LOOK_PICK = DecisionSpec(
         "additionalProperties": False,
     },
 )
+
+def look_ids(decisions: tuple[CurrentDecision, ...]) -> set[str]:
+    """The room's Look IDs: a Look exists once an edit is picked for it, so these are the `pick`s' (what the Manifest
+    freezes, and the set a Loop's ID must stay out of)."""
+    return {str(d.data["look"]) for d in decisions if d.name == LOOK_PICK.name}
+
 
 PARAMS = (
     ParamSpec(
@@ -274,20 +282,48 @@ def looks_needs_input(run: StageRun) -> NeedsInput | None:
 # the build
 
 
-def _build_look(run: StageRun, room: EditRoom, look: str, variant: str, condition: str | None) -> dict[str, Any]:
-    path = run.files[edit_path(look, variant)]
+@dataclass(frozen=True)
+class EditFit:
+    """How an edit is laid on the room: the `looks` Stage's parameters, which a Loop's edit frames share."""
+
+    register: bool
+    regrade: str
+    drift_tolerance: float
+
+    @classmethod
+    def of(cls, params: Mapping[str, Any]) -> EditFit:
+        return cls(bool(params["register"]), str(params["regrade"]), float(params["drift_tolerance"]))
+
+
+def fitted_edit_file(run: StageRun, room: EditRoom, path: Path, label: str, static: Any,
+                     fit: EditFit) -> tuple[Any, dict[str, Any] | None]:
+    """An imported edit as the build measures it: registered (outside `static`, the part the edit may change), fitted and
+    regraded, before the palette; and what the registration found. A Look's edit and a Loop's edit frame both go through
+    here, so they can't differ."""
+    variant = path.stem
     if not hashlib.sha256(path.read_bytes()).hexdigest().startswith(variant):
-        raise StageFailure(f"the edit {path.name} of {look} was changed after it was imported, and edits are "
+        raise StageFailure(f"the edit {path.name} of {label} was changed after it was imported, and edits are "
                            "immutable; import the changed image as a new Variant and pick that")
     source_height, source_width = room.source.shape[:2]
     edit = resize_nearest(read_rgba(path), source_width, source_height)
-    shape = room.fit.shape[:2]
-    static = paint_region(run, "look", look, shape, room.fit, None)
-    edit, registration = registered(run, room.source, edit, static, room.grid)
+    edit, registration = registered(run, room.source, edit, static, room.grid, fit.register)
     run.check_cancel()
     fitted = fitted_edit(room.record, room.grid, edit)
-    if str(run.params["regrade"]) == "outside":
+    if fit.regrade == "outside":
         fitted = regrade(room.fit, fitted, static if static.any() else None)
+    return fitted, registration
+
+
+def fitted_look(run: StageRun, room: EditRoom, look: str, variant: str) -> tuple[Any, dict[str, Any] | None]:
+    """The picked edit as the build measures it: registered, fitted and regraded, before the palette; and what the
+    registration found. The `looks` Stage and the `look-difference` Probe both call this."""
+    static = paint_region(run, "look", look, room.fit.shape[:2], room.fit, None)
+    return fitted_edit_file(run, room, run.files[edit_path(look, variant)], look, static, EditFit.of(run.params))
+
+
+def _build_look(run: StageRun, room: EditRoom, look: str, variant: str, condition: str | None) -> dict[str, Any]:
+    shape = room.fit.shape[:2]
+    fitted, registration = fitted_look(run, room, look, variant)
     region = paint_region(run, "look", look, shape, room.fit, fitted)
     drift = drift_boxes(room.fit, fitted, region, float(run.params["drift_tolerance"]), DRIFT_MIN_PIECE)
     run.check_cancel()

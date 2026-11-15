@@ -59,11 +59,27 @@ _Avoid_: layer, patch, hand edit
 One candidate image or model, generated or imported, offered for a Pick: of an Asset's Source, or of a Look's edit.
 
 **Source**:
-The picked Variant that a Recipe builds from. Immutable once picked.
+The picked Variant that a Recipe builds from. Immutable once picked. A generated character's Source is its parameter
+file, which needs no Pick.
 
 **Model**:
 A 3D model that a character is rendered from.
 _Avoid_: mesh (when meaning the whole character), ML model
+
+**Base character**:
+The character another character is made from, named by `base` in its `asset.toml` (ADR 0012). The character's Model
+carries the base's skeleton, it starts with the base's clips and clip sources, and a Stage parameter it doesn't set
+takes the base's value. A base has no base of its own. Not a room's Base.
+_Avoid_: parent, template, body (the game's word for the two MC bodies)
+
+**Generator**:
+A script of the Project's own that builds a Model from a parameter file, run in the Project's Blender and named under
+`[character.generators]` in `kiripix.toml`. Kiripix runs it and reads what it wrote; it holds no parts of its own. Not
+a Provider.
+
+**Parameter file**:
+The file a generator builds one character's Model from (its base body, shape, parts and colours, in the generator's own
+words), kept in the character's `src/parameters/`. It may be edited in place: a change makes `model` stale.
 
 **Provider**:
 An image or model generator behind one interface, external or local.
@@ -153,6 +169,23 @@ A part of a Room that plays by itself, over and over, cut to a region: a colour 
 through a list) or frames. Its first frame is the room's own pixels, and its timing is in whole game ticks. A character
 clip's `loop` flag (whether a clip repeats) is not a Loop.
 _Avoid_: animation, ambient, effect, look (a Look is shown by game state; a Loop always plays)
+
+**Base**:
+The image a piece joins: a Room's Source, or the canvas so far. Not the Plate. The character a character is made from is
+a Base character.
+
+**Piece**:
+An image an image model painted from a base's edge, to extend the Room past it. It overlaps the base and is joined to it.
+_Avoid_: patch, tile, extension
+
+**Overlap**:
+Where a piece lies on a base: a side (`east`, `west`, `north` or `south`), how many px of the base's edge it covers, and an
+offset along the edge. Written `side:width[:offset]`; a corner piece has two.
+
+**Join**:
+Putting a piece on a base in three Ops: `register-piece` (undo its rescale and shift), `match-tone` (remove a brightness
+step) and `seam-join` (cut along the least difference, blended). A corner piece is seamed once per Overlap.
+_Avoid_: stitch, merge, blend (a blend is only the seam's width)
 
 ## Sprites
 

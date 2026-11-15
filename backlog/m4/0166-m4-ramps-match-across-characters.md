@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 type: spec
 depends_on: [0150-m4-palette-ramps-per-part.md, 0151-m4-export-part-ramps.md]
@@ -69,7 +69,7 @@ length = 3
 The request proposed a `palette` parameter `ramps_from = character.mc02`: reuse that character's part list, lengths and colours.
 It would work, but it makes one Asset's Stage read another Asset's output. The stage graph has no such inputs (ADR 0009 turned
 down the same thing for Looks), so it would need an ADR, a lock across two Assets, and staleness that crosses them: a rebuild of
-mc02's `palette` would make the other three stale, and mc02's rows would follow its own order. [0165](../m5/0165-m5-characters-share-a-base.md)
+mc02's `palette` would make the other three stale, and mc02's rows would follow its own order. [0165](../m4/0165-m4-characters-share-a-base.md)
 needs cross-Asset inputs in M5 anyway, so `ramps_from` could ride on them then. The table needs nothing new: `kiripix.toml` is
 already an input of every Stage that reads it (the palette, the camera presets), and a table change makes every character's
 `palette` stale through the ordinary graph.
@@ -117,6 +117,6 @@ and in Godot swap the skin row on all four with the same ramp (the M4 gate, [014
 ## Out of scope
 
 - The game's swap shader and appearance record.
-- Characters sharing a rig and clips: M5 ([0165](../m5/0165-m5-characters-share-a-base.md)), and the M4 stop-gap
+- Characters sharing a rig and clips: M4 ([0165](0165-m4-characters-share-a-base.md)), and the M4 stop-gap
   [0171](0171-m4-copy-clips-from-a-character.md).
 - Ramps for NPCs the game doesn't recolour: they keep `parts` empty, or their own.

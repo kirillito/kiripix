@@ -239,6 +239,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "op register-piece": lambda a: {"base": a[2], "piece": a[3], "overlap": a[5], "output": a[7]},
     "op match-tone": lambda a: {"base": a[2], "piece": a[3], "output": a[4], "overlap": a[6]},
     "op seam-join": lambda a: {"base": a[2], "piece": a[3], "output": a[4], "overlap": a[6]},
+    "palette": lambda a: {},
     "palette-add": lambda a: {"proposal": a[1]},
     "runners list": lambda a: {},
     "runners pull": lambda a: {"runner": a[2]},
@@ -675,8 +676,8 @@ def test_the_file_route_stays_inside_the_project(project: Kiripix, server: Serve
 
 
 # The Commands with file inputs, and those inputs. Over REST each is a multipart part of the Command's own request.
-FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file"], "mask-import": ["png"],
-                                     "plate-import": ["png"], "extend": ["piece"]}
+FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file", "frames", "kit"], "mask-import": ["png"],
+                                     "plate-import": ["png"], "extend": ["piece"], "new": ["from_parameters"]}
 
 
 def test_every_file_input_has_a_multipart_test(server: Server) -> None:
@@ -687,12 +688,16 @@ def test_every_file_input_has_a_multipart_test(server: Server) -> None:
 
 def _as_parts(project: Kiripix, name: str, body: dict[str, Any]) -> list[tuple[str, str | None, bytes]]:
     """The body with each file input moved out of the JSON into a part of its own, read from the Project."""
-    files = {field: body.pop(field) for field in FILE_INPUTS[name]}
+    files = {field: body.pop(field) for field in FILE_INPUTS[name] if field in body}
     parts: list[tuple[str, str | None, bytes]] = [("input", None, json.dumps(body).encode())]
-    return parts + [(field, Path(path).name, (project.cwd / path).read_bytes()) for field, path in files.items()]
+    for field, paths in files.items():  # a list input is one part for each file
+        parts += [(field, Path(path).name, (project.cwd / path).read_bytes())
+                  for path in (paths if isinstance(paths, list) else [paths])]
+    return parts
 
 
-@pytest.mark.parametrize("name", sorted(set(FILE_INPUTS) - {"extend"}))  # extend's sample writes a canvas; see below
+@pytest.mark.parametrize("name", sorted(set(FILE_INPUTS) - {"extend", "new"}))  # extend's sample writes a canvas; new's
+# sample has no file: both are below
 def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, tmp_path_factory: pytest.TempPathFactory,
                                                               name: str) -> None:
     arguments = SAMPLES[name](project)
@@ -710,6 +715,63 @@ def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, 
     assert _normal(reply.json, roots) == _normal(expected, roots)
     assert left == [], "the file inputs' temporary folder is deleted when the Command ends"
     assert not (twin / ".kiripix" / "uploads").exists()
+
+
+def test_import_loop_frames_as_repeated_parts_equal_the_cli(project: Kiripix,
+                                                            tmp_path_factory: pytest.TempPathFactory) -> None:
+    from test_loop_kit import KIT, a_frame_loop, painted, write_kit
+
+    a_frame_loop(project)
+    write_kit(project, 4)
+    for number in (1, 2, 3):
+        painted(project, number)
+    frames = [f"{KIT}/frame_{n:03d}.png" for n in (1, 2, 3)]
+    twin = tmp_path_factory.mktemp("twin") / "project"
+    shutil.copytree(project.cwd, twin)
+    temp = tmp_path_factory.mktemp("server_temp")
+
+    expected = project.json("import", ROOM, *frames, "--loop", "lamp_glow",
+                            "--kit", f"{KIT}/kit.json")
+    body = {"asset": ROOM, "file": frames[2], "frames": [frames[0], frames[1]], "loop": "lamp_glow",
+            "kit": f"{KIT}/kit.json"}  # sent out of name order: the names decide
+    with serving(twin, temp=temp) as running:
+        reply = running.call("/api/import", parts=_as_parts(project, "import", body))
+        left = list(temp.iterdir())
+
+    roots = [str(project.cwd), str(twin), str(project.cwd.resolve()), str(twin.resolve())]
+    assert reply.status == 200 and reply.headers["x-kiripix-exit-code"] == "0"
+    assert reply.json["findings"] == [] and reply.json["data"]["loop_frames"] == expected["data"]["loop_frames"]
+    assert _normal(reply.json, roots) == _normal(expected, roots)
+    assert left == []
+
+
+def test_new_from_parameters_as_a_multipart_part_equals_the_cli(project: Kiripix,
+                                                                tmp_path_factory: pytest.TempPathFactory) -> None:
+    (project.cwd / "elder.toml").write_text('name = "elder"\nheight = 0.9\n', encoding="utf-8")
+    twin = tmp_path_factory.mktemp("twin") / "project"
+    shutil.copytree(project.cwd, twin)
+    temp = tmp_path_factory.mktemp("server_temp")
+
+    expected = project.json("new", "character", "elder", "--from-parameters", "elder.toml")
+    body = {"kind": "character", "name": "elder", "from_parameters": "elder.toml"}
+    with serving(twin, temp=temp) as running:
+        reply = running.call("/api/new", parts=_as_parts(project, "new", body))
+        left = list(temp.iterdir())
+
+    roots = [str(project.cwd), str(twin), str(project.cwd.resolve()), str(twin.resolve())]
+    assert reply.status == 200 and reply.headers["x-kiripix-exit-code"] == "0"
+    assert _normal(reply.json, roots) == _normal(expected, roots)
+    assert (twin / "assets" / "character" / "elder" / "src" / "parameters" / "elder.toml").read_text("utf-8") \
+        == 'name = "elder"\nheight = 0.9\n'
+    assert left == []
+
+
+def test_a_repeated_file_part_is_still_refused(server: Server) -> None:
+    body = json.dumps({"asset": "room.alley", "loop": "lamp_glow"}).encode()
+
+    reply = server.call("/api/import", parts=[("input", None, body), ("file", "a.png", b"x"), ("file", "b.png", b"y")])
+
+    assert reply.status == 400 and reply.codes == ["input.invalid"]
 
 
 def test_an_extend_piece_as_a_multipart_part_equals_the_cli_json(project: Kiripix,

@@ -130,7 +130,9 @@ def kits_moved(run: StageRun) -> list[tuple[CurrentDecision, dict[str, Any]]]:
         if chosen and chosen[-1].data.get("source") != "kit":
             continue  # the frames come from an Op or edits: the kit isn't built, so nothing was remapped
         if str(decision.data["palette"]) != current:
-            moved.append((decision, {**decision.data, "palette": current, "remap": True}))
+            # re-recorded as it was recorded: under the ID it had then (`was`), which the rename after it renames again
+            recorded = {k: v for k, v in decision.data.items() if k != "was"}
+            moved.append((decision, {**recorded, "loop": decision.data.get("was", loop), "palette": current, "remap": True}))
     return moved
 
 
@@ -159,7 +161,7 @@ def kit_needs_input(run: StageRun, loop: str) -> NeedsInput | None:
         return NeedsInput(f"the Loop {loop} is a frame Loop with no frames", command=kit_command(asset, loop))
     undo = f"kiripix undo {asset} loops"
     for name in kit["frames"]:
-        if frame_path(loop, str(name)) not in run.files:
+        if frame_path(str(kit.get("was", loop)), str(name)) not in run.files:  # `was`: a renamed Loop's folder
             return NeedsInput(f"a frame of the kit of {loop} ({name}.png) is gone from the Asset",
                               owner_action=f"Import the frames again: kiripix import {asset} <png...> --loop {loop}.")
     fit = run.upstream["fit"] / "fit.png"

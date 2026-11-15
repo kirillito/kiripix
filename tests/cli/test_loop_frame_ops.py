@@ -104,7 +104,7 @@ def test_a_timing_of_the_wrong_length_or_a_bad_op_parameter_is_refused(project: 
     decide(project, "frames", {"loop": LOOP, "op": "sway"})
     decide(project, "timing", {"loop": LOOP, "ticks": [4, 4, 4]})
     run_loops(project)
-    assert "timing" in json.dumps(project.json("run", ROOM, "loops", expect=3))
+    assert "timing" in json.dumps(project.json("run", ROOM, "loops", expect=2))
     refused = decide(project, "frames", {"loop": LOOP, "op": "sway", "params": {"dx": 1}}, expect=1)
     assert "sway takes" in json.dumps(refused)
     refused = decide(project, "frames", {"loop": LOOP, "op": "scroll", "params": {}}, expect=1)

@@ -151,7 +151,7 @@ def test_a_png_sheet_needs_a_sheet_decision_and_then_runs_to_the_sheet(project: 
     assert sheet["directions"] == ["s", "w", "n", "e"] and sheet["clips"][0]["name"] == "idle"
     assert errors(project) == []
     render = load(folder / "work" / "fit" / "render.json")
-    assert render["schema_version"] == 3
+    assert render["schema_version"] == 4
     assert sheet["cell"] == {"width": render["frame"]["width"], "height": render["frame"]["height"]}
 
 

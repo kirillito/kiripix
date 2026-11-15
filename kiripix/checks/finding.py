@@ -1,8 +1,8 @@
 """The finding: what a Check, or any failed Command, reports. Part of the JSON contract (spec §10.2)."""
 
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 Severity = Literal["error", "warning", "info"]
 
@@ -37,6 +37,15 @@ class Finding(BaseModel):
     position: Position | None = None
     fix: str | None = None
     owner_action: str | None = None
+    points: list[tuple[int, int]] = Field(default_factory=list)
+    """Further pixels, `[x, y]` in target px, that the finding is about. Left out of the JSON when empty."""
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_points(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not data.get("points"):
+            data.pop("points", None)
+        return data
 
     @model_validator(mode="after")
     def _one_remedy(self) -> Self:

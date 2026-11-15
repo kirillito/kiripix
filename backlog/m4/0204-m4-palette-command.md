@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: core-engineer
 type: ticket
@@ -24,10 +24,21 @@ setting points somewhere else, they show no swatches, and the eyedropper refuses
 
 ## Acceptance criteria
 
-- [ ] CLI seam: in a temporary Project, `palette --json` lists the colours of `style/palette.gpl` in order. After the
+- [x] CLI seam: in a temporary Project, `palette --json` lists the colours of `style/palette.gpl` in order. After the
       `palette` setting is pointed at another file, it lists that file's colours.
-- [ ] CLI seam: a missing palette file exits 1 with a finding that has a `fix` or an `owner_action`.
-- [ ] A sample in `tests/cli/test_contract.py`, an entry in `BODIES` in `tests/cli/test_serve.py`; `lint-imports` and
+- [x] CLI seam: a missing palette file exits 1 with a finding that has a `fix` or an `owner_action`.
+- [x] A sample in `tests/cli/test_contract.py`, an entry in `BODIES` in `tests/cli/test_serve.py`; `lint-imports` and
       `mypy` pass.
 
 Budget: 30–60k tokens.
+
+## Result (2026-11-14)
+
+- `kiripix palette` (kind `probe`, MCP exposed) in `kiripix/commands/palette.py`: `palette` (the setting, relative to the
+  Project) and `colours` with `index`, `hex` (`#rrggbb`, lower case) and `name` (or `null`). The text is one line per colour.
+- It reads through core's `load_palette`, as `op quantize` and the other Commands do, so a missing file is `palette.not_found`
+  (exit 1, with an `owner_action`), and a palette that fails its Checks is refused as those are. The Stages' own reader
+  (`palette_rgb` in `recipes`) can't be imported from `commands`, but both use `parse_gpl`/`parse_hex`.
+- Tests: `tests/cli/test_palette_command.py` (4); sample in `test_contract.py`, body in `test_serve.py`; line in spec §10.5.
+- Follow-up (not done, `web/` untouched): switch the place and loops screens from the file route to this Command, so swatches
+  and the eyedropper follow the `palette` setting.

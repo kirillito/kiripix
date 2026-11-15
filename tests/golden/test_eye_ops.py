@@ -6,7 +6,7 @@ better in the test than in an image.
 
 import numpy as np
 
-from kiripix.ops import EyeAnchor, EyeStamp, fill_from_neighbours, paint_eyes, plan_eyes
+from kiripix.ops import EyeAnchor, EyeStamp, fill_from_neighbours, paint_eyes, plan_eyes, stamped_mask
 
 SKIN, SHADE, DARK, WHITE = (220, 180, 140), (170, 130, 100), (30, 30, 40), (250, 250, 240)
 
@@ -129,3 +129,17 @@ def test_without_a_white_every_column_is_the_pupils_colour() -> None:
     painted = paint_eyes(colour, [EyeStamp(left=2, top=2, columns=2, rows=1, pupil=0)], DARK, None)
 
     assert (painted[2, 2:4, :3] == DARK).all()
+
+
+def test_the_stamped_mask_holds_every_pixel_a_stamp_paints_even_one_that_keeps_its_colour() -> None:
+    colour = np.zeros((4, 6, 4), dtype=np.uint8)
+    colour[..., 3] = 255
+    colour[..., :3] = DARK  # the pupil's colour already: painting it changes nothing
+    stamp = EyeStamp(left=1, top=1, columns=2, rows=2, pupil=0)
+
+    painted = paint_eyes(colour, [stamp], DARK, WHITE)
+    mask = stamped_mask(colour, [stamp])
+
+    assert mask.sum() == 4 and mask[1:3, 1:3].all()
+    assert (painted[mask][:, :3] != colour[mask][:, :3]).any(axis=1).sum() == 2, "the pupil column kept its colour"
+    assert stamped_mask(colour, [stamp], closed=True).sum() == 2, "a closed eye paints its bottom row"

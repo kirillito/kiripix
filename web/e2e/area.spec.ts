@@ -107,3 +107,24 @@ test("an area without a cell is moved by its corner and a click on it selects wi
   await expect(page.getByTestId("decision-count")).toHaveText("3 Decision(s)");
   await expect(canvas).toHaveAttribute("data-markers", "area.1@28,9-42,21");
 });
+
+test("every ambiguous cell is highlighted, not only the eight the message lists, and the finding jumps to the first", async ({ page, studio }) => {
+  test.setTimeout(120_000);
+  walledRoom(studio);
+  // `solid` covers x 0 to 15: with a cell of 3 the cell at x 15 is a third covered in each of 11 rows (y 0, 3 ... 30).
+  const area = { decision: "marker", data: { id: "battle.yard", type: "area", x: 0, y: 0, x2: 47, y2: 31, cell: 3 } };
+  studio.kiripix("decide", ROOM, "place", "--decision", JSON.stringify(area));
+  studio.run(ROOM);
+  await open(page, studio);
+  const canvas = page.getByTestId("canvas");
+
+  await expect(canvas).toHaveAttribute("data-ambiguous", /battle\.yard@15,30$/); // the 11th, which the message leaves out
+  const cells = (await canvas.getAttribute("data-ambiguous"))!.split(" ");
+  expect(cells).toHaveLength(11);
+  expect(cells[8]).toBe("battle.yard@15,24"); // the ninth
+
+  await page.getByTestId("checks-info").click();
+  await page.getByTestId("finding-area.ambiguous_cells").click();
+  await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)"); // the jump records nothing
+  await expect(canvas).toHaveAttribute("data-focus", "15,0");
+});

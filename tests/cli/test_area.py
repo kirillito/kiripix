@@ -173,6 +173,21 @@ def test_cells_a_mask_half_covers_are_listed_with_their_positions_as_info(projec
     assert "1 cells" in finding["message"] and "(12, 0)" in finding["message"]
 
 
+def test_every_ambiguous_cell_is_in_points_not_only_the_eight_the_message_lists(project: Kiripix) -> None:
+    walled_room(project)
+    # `solid` covers x 0 to 15: with a cell of 3 the cell at x 15 is a third covered, in each of the 11 rows (y 0 to 30).
+    area(project, "battle.a", (0, 0, 47, 31), cell=3)
+    result = checked(project)
+
+    [finding] = findings(result.json, "area.ambiguous_cells")
+    assert finding["points"] == [[15, y] for y in range(0, 32, 3)]
+    assert len(finding["points"]) == 11 and "and 3 more" in finding["message"]
+    assert finding["position"]["field"] == "area.battle.a", "the finding names its area, for the place screen"
+    for other in result.json["findings"]:
+        if other["code"] != "area.ambiguous_cells":
+            assert "points" not in other
+
+
 def test_no_ambiguity_is_reported_for_an_area_without_a_cell(project: Kiripix) -> None:
     walled_room(project)
     area(project, "battle.a", (12, 0, 23, 11))

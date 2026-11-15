@@ -213,7 +213,7 @@ export function App() {
   const description = kind ? recipes[kind]?.find((entry) => entry.name === current) : undefined;
   const detail = show?.stages.find((entry) => entry.stage === current);
   // The looks Stage has a `pick` too, of a Look's edit: its own screen takes that.
-  const isSource = current !== LOOKS_STAGE && (description?.decisions.some((decision) => decision.name === PICK) ?? false);
+  const isSource = current !== LOOKS_STAGE && current !== LOOPS_STAGE && (description?.decisions.some((decision) => decision.name === PICK) ?? false);
   const isPlace = description?.decisions.some((decision) => decision.name === PLACE_DECISION) ?? false;
   const isMasks =
     current === MASKS_STAGE && (description?.decisions.some((decision) => decision.name === "brush") ?? false);
@@ -333,6 +333,7 @@ export function App() {
         cycle: "Setting the cycle of",
         timing: "Setting the timing of",
         frames: "Setting the frames of",
+        hold: "Holding a part of",
       };
       const label =
         name === "click" && isLayers
@@ -397,6 +398,19 @@ export function App() {
         const [file, ...frames] = paths;
         return rebuilt(await call("import", { asset, loop, file, frames }));
       }, `Importing the frames of ${loop}`),
+    [asset, perform, rebuilt],
+  );
+  // An edit frame of a Loop (ticket 0221): stored for its frame, then picked at once, as an edit of a Look is. `import.edit_of_an_edit`
+  // comes back from the import, and the screen shows it on that frame.
+  const importLoopEdit = useCallback(
+    (loop: string, frame: number, file: File, noted: (findings: Finding[]) => void) =>
+      void perform(async () => {
+        const stored = await callWithFile<{ variant: string }>("import", { asset, loop, frame }, "file", file);
+        noted(stored.findings);
+        if (!stored.ok || !stored.data) return stored;
+        const picked = await call("pick", { asset, loop, frame, variant: stored.data.variant });
+        return rebuilt({ ...picked, findings: [...stored.findings, ...picked.findings] });
+      }, `Importing an edit for frame ${frame} of ${loop}`),
     [asset, perform, rebuilt],
   );
   const pick = useCallback(
@@ -761,6 +775,7 @@ export function App() {
                 decide={decideMask}
                 writeKit={writeKit}
                 importFrames={importFrames}
+                importEdit={importLoopEdit}
                 onStage={setStage}
               />
             )}

@@ -140,3 +140,51 @@ def test_a_loop_png_the_game_edited_is_refused_by_name(project: Kiripix) -> None
 
     assert any(f["code"] == "export.file_changed" and "plate.png" in f["message"] for f in result["findings"])
     assert path.read_bytes() == b"mine", "the game's file is untouched"
+
+
+def test_a_held_loop_is_not_exported_and_export_refuses_the_room_until_it_builds(project: Kiripix) -> None:
+    folder = looping_room(project)
+    c = colours(folder)
+    decide(project, "loop", {"loop": "crate_glow"})
+    decide(project, "flood", {"loop": "crate_glow", "x": 40, "y": 24})
+
+    refused = project.json("run", ROOM, expect=2)
+    assert any(f["code"] == "export.loop_held" and "crate_glow" in f["message"] and f["owner_action"]
+               for f in refused["findings"])
+    result = project.json("export", ROOM, expect=2)
+    named = [f for f in result["findings"] if f["code"] in ("loop.held", "export.loop_held")]
+    assert named and all("crate_glow" in f["message"] for f in named)
+    assert not (project.cwd / MANIFEST).is_file()
+
+
+    decide(project, "cycle", {"loop": "crate_glow", "colours": [c["crate"], c["floor"]]})
+    project.json("run", ROOM)
+    project.json("export", ROOM)
+    assert [loop["id"] for loop in exported_room(project)["loops"]] == ["crate_glow", LOOP, ON_LAYER]
+
+
+def test_an_exported_loop_whose_id_a_new_look_takes_is_advised_to_change_the_look(project: Kiripix) -> None:
+    from test_looks_build import decide as decide_look, edited, import_and_pick
+
+    looping_room(project)
+    project.json("export", ROOM)
+    import_and_pick(project, edited(), look=LOOP)
+    decide_look(project, "polygon", {"look": LOOP, "points": [[1, 1], [19, 1], [19, 19], [1, 19]]})
+    project.json("run", ROOM, "looks")
+    project.json("run", ROOM, "loops", expect=2)
+
+    [held] = [f for f in project.json("check", ROOM, expect=2)["findings"] if f["code"] == "loop.held"]
+    assert f"Look {LOOP}" in held["owner_action"] and "give the Loop another ID" not in held["owner_action"]
+    assert "can't change" in held["owner_action"]
+    assert project.json("next", ROOM)["data"]["owner_action"] == held["owner_action"]
+
+
+def test_a_loop_with_rest_exports_a_sequence_without_frame_zero_and_rest_true(project: Kiripix) -> None:
+    looping_room(project)
+    decide(project, "timing", {"loop": LOOP, "ticks": 6, "rest": True})
+    project.json("run", ROOM)
+    project.json("export", ROOM)
+    [glow, pulse] = exported_room(project)["loops"]
+    assert glow["rest"] is True and glow["sequence"] == [1, 6, 2, 6] and glow["frames"] == 3
+    assert pulse["rest"] is False
+    assert "frame = 0" in node(scene(project), LOOP, "Loops")

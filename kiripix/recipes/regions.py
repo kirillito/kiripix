@@ -189,9 +189,10 @@ def read_mask(path: Path) -> Any:
         return np.asarray(image.convert("1"), dtype=np.bool_).copy()
 
 
-def registered(run: StageRun, source: Any, edit: Any, static: Any, grid: Any) -> tuple[Any, dict[str, Any] | None]:
-    """The edit laid on the Source, and what the registration found (None when `register` is off)."""
-    if not bool(run.params["register"]):
+def registered(run: StageRun, source: Any, edit: Any, static: Any, grid: Any,
+               on: bool) -> tuple[Any, dict[str, Any] | None]:
+    """The edit laid on the Source, and what the registration found (None when registration is off)."""
+    if not on:
         return edit, None
     height, width = source.shape[:2]
     exclude = dilate(mask_to_source(static, grid, width, height), REGISTER_GROW) if static.any() else None

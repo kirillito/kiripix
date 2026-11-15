@@ -28,8 +28,14 @@ The Model's standing height (its z extent, seen from the camera) is `height` px:
 `height / (Model height * cos(elevation))`.
 
 Toon shading (ticket 0105): the colour pass is the Model's colour lit by one key light fixed in camera space (the preset's
-`light_angle` and `light_tilt`), cut into `bands` steps and darkened by `shadow`. It is done in the script on the normal, not with
+`light_angle` and `light_tilt`), cut into `bands` steps and darkened by `shadow`. `band_edge` moves the cuts (half-Lambert is shifted by `0.5 - band_edge`) and
+`band_smooth` blurs the normals inside the silhouette before they are lit (ticket 0213). It is done in the script on the normal, not with
 a Blender shader, because Shader to RGB is EEVEE-only and render uses Cycles so that `--cpu` works. The other passes don't change.
+
+Transitions (ticket 0218): a `transition` clip of `clips.json` has no action of its own. Blender poses the rig at each end's
+frame and renders the blend of the two, per bone, at each of the clip's `frames` (the blend positions). The key hashes the
+whole entry, which carries both ends' source hashes and frames, so a transition is rendered again when a clip it reads changes
+its end frame or its source, and no other clip is.
 
 Material pass (ticket 0148): `material/<clip>/<dir>/<NNN>.png` holds each pixel's material, numbered from 1 by name, 0 for the
 background. `render.json` lists them (`materials`: `[{"index", "name"}]`) and records the toon `bands` beside `toon`, so
@@ -49,13 +55,14 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from kiripix.recipes.base import StageFailure, StageRun, computed_setting
+from kiripix.recipes.base import Scalar, StageFailure, StageRun, computed_setting, param_or_generated
 from kiripix.recipes.blender_launcher import launch
-from kiripix.recipes.clips import DIRECTIONS, EYELIDS
+from kiripix.recipes.clips import DIRECTIONS, EYELIDS, clip_files
 
 # 2: each clip carries its measured `bounds` (0155), a stationary clip one pivot (0154)
 # 3: a material pass, `materials` and `bands` (0148)
-RENDER_SCHEMA_VERSION = 3
+# 4: the toon object gains `band_edge` and `band_smooth` (0213)
+RENDER_SCHEMA_VERSION = 4
 # A Stage input (ADR 0010), as the Blender version is: a render in an older format is stale, so `render` and every Stage
 # after it are built again. Read at call time, so that a test can change the version.
 FORMAT_SETTING = "render.format"
@@ -125,11 +132,20 @@ def _rig_file(run: StageRun, rig: dict[str, Any]) -> Path:
 
 def _clip_file(run: StageRun, clip: dict[str, Any]) -> str | None:
     """The clip-source file a clip's `source` names (`<stem>` or `<stem>/<action>`), or None: an action of the rig's file."""
-    stem = str(clip["source"]).partition("/")[0]
-    for name, path in sorted(run.files.items()):
-        if name.startswith("src/clips/") and Path(Path(name).stem).stem == stem:
-            return str(path)
-    return None
+    found = clip_files(run).get(str(clip["source"]).partition("/")[0])  # the character's own, or its base's (ADR 0012)
+    return str(found) if found is not None else None
+
+
+def _blender_clip(run: StageRun, clip: dict[str, Any]) -> dict[str, Any]:
+    """A clip as the script gets it. A `transition` (ticket 0218) has no action of its own: it carries its two ends, each an
+    action, its file and a frame, and `frames` are the blend positions between them."""
+    if "transition" not in clip:
+        return {"name": clip["name"], "action": clip["action"], "file": _clip_file(run, clip), "frames": clip["frames"],
+                "root_motion": bool(clip["root_motion"])}
+    ends = {end: {"action": clip["transition"][end]["action"], "file": _clip_file(run, clip["transition"][end]),
+                  "frame": clip["transition"][end]["action_frame"], "root_motion": bool(clip["transition"][end]["root_motion"])}
+            for end in ("from", "to")}
+    return {"name": clip["name"], "frames": clip["frames"], "root_motion": False, "transition": ends}
 
 
 def _stamp_hash(folder: Path) -> str:
@@ -202,6 +218,58 @@ def _copy_clip(run: StageRun, previous: Path, name: str) -> None:
     run.check_cancel()
 
 
+def _generated(model: dict[str, Any]) -> dict[str, Any]:
+    """What a generated Model's generator said of it (ticket 0224): `model.json`'s `generated`; nothing for an imported one."""
+    made = model.get("generated")
+    return made if isinstance(made, dict) else {}
+
+
+def render_generated_params(run: StageRun) -> dict[str, Scalar]:
+    """`StageSpec.generated_params` of `render`: a generated Model's eye materials."""
+    try:
+        made = _generated(_json(run.upstream["model"] / "model.json"))
+    except (OSError, ValueError):
+        return {}  # not built yet
+    return {"eyes": str(made["eyes"])} if "eyes" in made else {}
+
+
+def _rig_height(rig: dict[str, Any], asset_id: str) -> float:
+    value = rig.get("height")
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        raise StageFailure(f"the rig.json of {asset_id} was built before Kiripix recorded its rig's height, which sizes a "
+                           "character made from a base", fix=f"kiripix run {asset_id} rig --force")
+    return float(value)
+
+
+def target_height(run: StageRun, model: dict[str, Any], rig: dict[str, Any]) -> int:
+    """The character's height in px: its own `height`; else the Project's `[character] height`. A character made from a
+    base (ADR 0012) without a `height` of its own is its base's height (the base's `height`, or the Project's) times its
+    rig's height over the base rig's (`rig.json`'s `height`): each the height of the file that carries the armature, as
+    Blender imported it, in the rest pose, so a build, an age or a stoop baked into the rest pose counts. The base's is its
+    rigged file's when it has one, because that is the body a Model on its skeleton is built from, and Mixamo's file is not
+    the size of the Model's. A generated Model's generator gives the ratio itself (ticket 0224), base or not. Rounded half
+    up to whole px."""
+    own = run.params.get("height")
+    if own:
+        return int(own)
+    project = int(run.settings.get("character.height") or 52)
+    made = _generated(model)
+    if run.base is None and "height" not in made:
+        return project
+    standard = project if run.base is None else int(run.base.params.get("height") or project)
+    if "height" in made:
+        ratio = float(made["height"])
+    else:
+        assert run.base is not None
+        try:
+            theirs = _json(run.base.built["rig"] / "rig.json")
+        except (OSError, ValueError):
+            raise StageFailure(f"the base {run.base.asset_id} has no rig.json",
+                               fix=f"kiripix run {run.base.asset_id} rig --force") from None
+        ratio = _rig_height(rig, run.asset_id) / _rig_height(theirs, run.base.asset_id)
+    return max(1, _half_up(standard * ratio))
+
+
 def run_render(run: StageRun) -> None:
     camera_name = str(run.params.get("camera", "top34_8"))
     presets = run.settings.get("character.camera") or {}
@@ -213,11 +281,11 @@ def run_render(run: StageRun) -> None:
                          f"Asset's camera parameter to one of the presets.")
     preset = presets[camera_name]
     elevation, count = float(preset["elevation"]), int(preset["directions"])
-    height = int(run.params.get("height") or run.settings.get("character.height") or 52)
 
     clips_document = _json(run.upstream["clips"] / "clips.json")
     rig = _json(run.upstream["rig"] / "rig.json")
     model = _json(run.upstream["model"] / "model.json")
+    height = target_height(run, model, rig)
     model_height = float(model["height"])
     side, pivot = fit_cell(height, [])  # the default cell: where the measure pass puts the camera
     names = EIGHT if count == 8 else FOUR
@@ -226,19 +294,21 @@ def run_render(run: StageRun) -> None:
         "rig_file": str(_rig_file(run, rig)),
         "root": [*ROOTS, str(rig["mapping"].get("hips", "hips"))],
         "model_height": model_height,
-        "clips": [{"name": c["name"], "action": c["action"], "file": _clip_file(run, c), "frames": c["frames"],
-                   "root_motion": bool(c["root_motion"])} for c in clips],
+        "clips": [_blender_clip(run, c) for c in clips],
         "directions": [{"name": d, "yaw": YAW[d]} for d in names],
         "elevation": elevation,
         "frame": [side, side],
         "px_per_unit": round(height / (model_height * math.cos(math.radians(elevation))), 6),
         "pivot": pivot,
         "toon": {"bands": int(run.params.get("bands", 3)), "shadow": float(run.params.get("shadow", 0.5)),
+                 "band_edge": float(run.params.get("band_edge", 0.5)), "band_smooth": float(run.params.get("band_smooth", 0)),
                  "light": {"angle": float(preset.get("light_angle", -45)), "tilt": float(preset.get("light_tilt", 35))}},
         "device": "cpu" if run.cpu else "gpu",
         "output": str(run.output_dir),
     }
-    eyes = [name.strip() for name in str(run.params.get("eyes", "")).split(",") if name.strip()]
+    made = _generated(model)
+    followed = param_or_generated(run, "eyes", render_generated_params(run))  # the character's own, the generator's, the base's
+    eyes = [name.strip() for name in str(followed or "").split(",") if name.strip()]
     if eyes:
         args["eyes"] = eyes
     posing: dict[str, Any] = {name: args[name] for name in ("root", "model_height", "elevation", "px_per_unit")}
@@ -339,6 +409,7 @@ def run_render(run: StageRun) -> None:
         "bands": args["toon"]["bands"],
         "materials": materials,
         **({"eyes": eyes} if eyes else {}),
+        **({"generated": made} if made else {}),  # for `palette`, which reads its `parts` (ticket 0224)
         "depth_range": result["depth_range"],
         "passes": list(PASSES),
         "directions": list(names),

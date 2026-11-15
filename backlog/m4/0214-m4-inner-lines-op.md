@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: imaging-engineer
 type: ticket
@@ -35,9 +35,20 @@ Painting the mask is the job of the Stage, not of the Op.
 
 ## Acceptance criteria
 
-- [ ] Golden seam: a small fixture with three materials at different depths. The golden shows the line on the farther side of
+- [x] Golden seam: a small fixture with three materials at different depths. The golden shows the line on the farther side of
       each border, none against the background, and none on a skipped pair or a skipped material. Enlarged and captioned for
       the Owner to review, not at 1x.
-- [ ] Unit cases at the same seam: a depth tie puts the line on the lower or right pixel; `line_colours` returns the same
+- [x] Unit cases at the same seam: a depth tie puts the line on the lower or right pixel; `line_colours` returns the same
       colours whatever the order of the frames; every colour it returns is a palette colour.
-- [ ] Both are exported from `kiripix.ops`. `uv run lint-imports` and `uv run mypy` pass.
+- [x] Both are exported from `kiripix.ops`. `uv run lint-imports` and `uv run mypy` pass.
+
+## Result (2026-11-14)
+
+- `inner_lines(material, depth, skip=()) -> bool (H, W)` and `line_colours(frames, materials, palette, darkness) -> {material: palette index}`
+  in `kiripix/ops/character.py`, both exported from `kiripix.ops`.
+- `skip` is a collection of ints (a material) and 2-tuples (a pair, either order). A depth tie gives the line to the lower or right pixel.
+- `line_colours`: `frames` are palette-mapped RGBA frames (every opaque colour must be in `palette`, else ValueError), `materials` the
+  matching material passes. Per material the darkest colour (OKLab lightness, tie to the lower palette index) with at least 5 % of its
+  opaque pixels over all frames; scaled by `darkness` in linear light; nearest palette colour in OKLab. Frame order doesn't matter.
+- Tests: `tests/golden/test_inner_lines.py` (7). Goldens, 12x enlarged and captioned: `tests/golden/expected/inner_lines_all.png`,
+  `tests/golden/expected/inner_lines_skipped.png`.

@@ -11,7 +11,7 @@ from kiripix.core.errors import KiripixError, fail
 from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
 from kiripix.core.settings import AssetSettings, Scalar, load_asset_settings, save_settings
-from kiripix.recipes.base import KindSpec
+from kiripix.recipes.base import BASE_PARAM, KindSpec
 
 ASSET_FILE = "asset.toml"
 HISTORY_FILE = "history.jsonl"
@@ -82,6 +82,40 @@ def list_assets(project: Project) -> tuple[list[Asset], list[Finding]]:
     return assets, findings
 
 
+def _check_base(project: Project, kind: str, asset_id: str, named: object, *, fix: str | None = None,
+                owner_action: str | None = None, file: str | None = None) -> Asset:
+    """The Asset `named` as the base of `asset_id` (ADR 0012). It must be another Asset of the same Kind with no base of
+    its own; otherwise `asset.base_invalid`, with the reason."""
+
+    def refuse(reason: str) -> KiripixError:
+        return fail("asset.base_invalid", f"{asset_id} can't be made from the base {named!r}: {reason}", fix=fix,
+                    owner_action=owner_action, position=Position(asset=asset_id, file=file, field=f"params.{BASE_PARAM}"))
+
+    if not isinstance(named, str) or not is_asset_id(named):
+        raise refuse("it is not an Asset ID (<kind>.<name>)")
+    if named == asset_id:
+        raise refuse("an Asset can't be its own base")
+    base_kind, base_name = parse_asset_id(named)
+    if base_kind != kind:
+        raise refuse(f"it is a {base_kind}, and the base of a {kind} is a {kind}")
+    if not (asset_dir(project, base_kind, base_name) / ASSET_FILE).is_file():
+        raise refuse("there is no such Asset in this Project")
+    base = _load(project, base_kind, base_name)
+    if BASE_PARAM in base.settings.params:
+        raise refuse(f"it is itself made from {base.settings.params[BASE_PARAM]}, and a base has no base of its own")
+    return base
+
+
+def base_of(project: Project, asset: Asset) -> Asset | None:
+    """The Asset's base (ADR 0012): the Asset its `base` parameter names, for a Kind that takes one; None without one."""
+    if not get_kind(asset.kind).takes_base or BASE_PARAM not in asset.settings.params:
+        return None
+    file = project.relative(asset.dir / ASSET_FILE)
+    return _check_base(project, asset.kind, asset.id, asset.settings.params[BASE_PARAM], file=file,
+                       owner_action=f"Set {BASE_PARAM} under [params] in {file} to a {asset.kind} that has no base of "
+                                    "its own, or remove it.")
+
+
 def validate_params(kind: KindSpec, params: Mapping[str, Scalar], asset_id: str) -> list[Finding]:
     findings: list[Finding] = []
     declared = {p.name: p for p in kind.params}
@@ -144,6 +178,8 @@ def create_asset(project: Project, kind_name: str, name: str, params: Mapping[st
     findings = validate_params(kind, params, asset_id)
     if findings:
         raise KiripixError(findings)
+    if kind.takes_base and BASE_PARAM in params:
+        _check_base(project, kind_name, asset_id, params[BASE_PARAM], fix=f"kiripix status --kind {kind_name}")
     settings = AssetSettings(kind=kind_name, params=dict(params))
     save_settings(directory / ASSET_FILE, settings)
     atomic.write_text(directory / HISTORY_FILE, "")

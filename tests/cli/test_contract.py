@@ -138,6 +138,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "loop kit": lambda p: (_loop_kit_ready(p), ["loop", "kit", "room.alley", "lamp_glow", "kit_a", "--frames", "3"])[1],
     "track": lambda p: (_room_image(p), ["track", "room.alley", "source", "--seconds", "30"])[1],
     "stats": lambda p: (_room_image(p), ["stats", "--all"])[1],
+    "palette": lambda p: ["palette"],
     "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
     "ramps-add": lambda p: (_built_hero(p), ["ramps-add", "character.hero", "--parts", "skin"])[1],
     "runners list": lambda p: ["runners", "list"],
@@ -230,6 +231,24 @@ def test_import_of_loop_frames_validates(project: Kiripix, schemas: dict[str, di
     assert "loop" in properties and "frames" in properties
 
 
+def test_import_and_pick_of_an_edit_frame_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The edit-frame shapes of `import --loop --frame` and `pick --loop --frame` (ticket 0219)."""
+    from test_loop_edit_frames import edit_frame, edits_loop, pick_frame
+    from test_looks_build import edited
+
+    edits_loop(project)
+
+    imported = edit_frame(project, "one.png", edited(), 1)
+    picked = pick_frame(project, imported["data"]["variant"], 1)
+
+    jsonschema.validate(imported, schemas["import"]["output"])
+    jsonschema.validate(picked, schemas["pick"]["output"])
+    assert imported["data"]["frame"] == 1 and picked["data"]["loop"] == "lamp_glow" and picked["data"]["frame"] == 1
+    for name in ("import", "pick"):
+        properties = schemas[name]["input"]["properties"]  # type: ignore[index]
+        assert "loop" in properties and "frame" in properties
+
+
 LOOK_DECISIONS = {
     "look": {"look": "door", "condition": "door:shut"},
     "polygon": {"look": "door", "points": [[0, 0], [4, 0], [4, 4]]},
@@ -254,6 +273,27 @@ def test_the_decisions_of_a_look_validate(project: Kiripix, schemas: dict[str, d
     jsonschema.validate(result, schemas["decide"]["output"])
     kind = next(k for k in project.json("describe", "room")["data"]["kinds"] if k["name"] == "room")
     stage = next(s for s in kind["stages"] if s["name"] == "looks")
+    assert decision in [d["name"] for d in stage["decisions"]]
+
+
+LOOP_EDITS = {"rename": {"loop": "glow", "to": "lantern"}, "remove": {"loop": "glow"},
+              "hold": {"loop": "glow", "frame": 1, "points": [[0, 0], [4, 0], [4, 4]]}}  # `hold`: ticket 0220
+
+
+@pytest.mark.parametrize("decision", sorted(LOOP_EDITS))
+def test_the_decisions_that_rename_and_remove_a_loop_validate(project: Kiripix, schemas: dict[str, dict[str, object]],
+                                                              decision: str) -> None:
+    """The `loops` Stage's `rename` and `remove` (ticket 0207) and `hold` (ticket 0220): each is recorded, and `describe room` lists it."""
+    _imported(project)
+    declare = json.dumps({"decision": "loop", "data": {"loop": "glow"}})
+    project.json("decide", "room.alley", "loops", "--decision", declare)
+    entry = json.dumps({"decision": decision, "data": LOOP_EDITS[decision]})
+
+    result = project.json("decide", "room.alley", "loops", "--decision", entry)
+
+    jsonschema.validate(result, schemas["decide"]["output"])
+    kind = next(k for k in project.json("describe", "room")["data"]["kinds"] if k["name"] == "room")
+    stage = next(s for s in kind["stages"] if s["name"] == "loops")
     assert decision in [d["name"] for d in stage["decisions"]]
 
 

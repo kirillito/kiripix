@@ -6,10 +6,13 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "root": [<bone names to try as the root, in order>], "model_height": <the normalised height, Blender units>,
          "clips": [{"name", "action", "file": <a clip-source file, or null for an action of `rig_file`>,
                     "frames": [<source frame numbers, ints or floats>], "root_motion": <bool>}],
+         a transition clip (ticket 0218) has no "action" or "file" but "transition": {"from": <end>, "to": <end>}, an end being
+         {"action", "file", "frame": <the action's frame>, "root_motion": <bool>}, and its "frames" are the blend positions
+         between 0 (the `from` pose) and 1 (the `to` pose);
          "directions": [{"name", "yaw": <degrees the Model turns about its up axis; 0 is facing the camera>}],
          "elevation": <degrees the camera looks down>, "frame": [<width>, <height>] in px, "px_per_unit": <px per Blender unit>,
          "pivot": [<x>, <y>] in px, where the ground point under the root lands, "device": "cpu" | "gpu",
-         "toon": {"bands": 2 to 4, "shadow": 0 to 1, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
+         "toon": {"bands": 2 to 4, "shadow": 0 to 1, "band_edge": 0 to 1, "band_smooth": px, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
                   toward the camera>}}, "eyes": [<names of the materials that are the eyes; optional>],
          "output": <folder to write the frames into>}
 result: {"device": <what rendered>, "depth_range": [<near>, <far>], "materials": [{"index": <from 1>, "name"}],
@@ -54,7 +57,7 @@ from pathlib import Path
 import bpy
 import numpy as np
 from bpy_extras.object_utils import world_to_camera_view
-from mathutils import Vector
+from mathutils import Matrix, Quaternion, Vector
 
 ROOT = "model_root"
 DISTANCE = 10.0  # Blender units from the camera to the ground point under the root
@@ -432,13 +435,44 @@ def light_vector(light: dict) -> np.ndarray:
     return np.array([math.sin(angle) * math.cos(tilt), math.cos(angle) * math.cos(tilt), math.sin(tilt)])
 
 
+def smooth_normal(normal: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndarray:
+    """The normals blurred by a Gaussian of `sigma` px inside the mask only (a normalised convolution, so the background does
+    not leak in), scaled back to unit length. Outside the mask the normals are returned as they are."""
+    radius = max(1, int(math.ceil(3.0 * sigma)))
+    taps = np.exp(-0.5 * (np.arange(-radius, radius + 1) / sigma) ** 2)
+    taps /= taps.sum()
+
+    def blur(values: np.ndarray) -> np.ndarray:
+        for axis in (0, 1):
+            pad = [(0, 0)] * values.ndim
+            pad[axis] = (radius, radius)
+            padded = np.pad(values, pad)
+            size = values.shape[axis]
+            values = sum(w * np.take(padded, np.arange(i, i + size), axis=axis) for i, w in enumerate(taps))
+        return values
+
+    weight = mask.astype(np.float64)
+    total = blur(normal * weight[..., None]) / np.maximum(blur(weight), 1e-9)[..., None]
+    length = np.linalg.norm(total, axis=-1, keepdims=True)
+    total = total / np.where(length < 1e-9, 1.0, length)
+    return np.where(mask[..., None], total, normal)
+
+
 def shade(albedo: np.ndarray, normal: np.ndarray, mask: np.ndarray, toon: dict) -> np.ndarray:
     """The colour pass, (h, w, 3) linear: toon shading (ticket 0105). The key light is fixed in camera space, so it sits in the
-    same place on screen for every direction, frame and character. Half-Lambert (n . l * 0.5 + 0.5) is cut into `bands` steps;
-    the brightest keeps the Model's own colour and each step down darkens it by an equal share of `shadow` (0 to 1). Pure numpy
+    same place on screen for every direction, frame and character. Half-Lambert (n . l * 0.5 + 0.5) is shifted by
+    `0.5 - band_edge`, clipped to 0..1 and cut into `bands` steps, so with 2 bands the cut is at `band_edge` (ticket 0213); the
+    brightest keeps the Model's own colour and each step down darkens it by an equal share of `shadow` (0 to 1). With
+    `band_smooth` above 0 the normals are blurred inside the mask first (only here: the normal pass is not). Pure numpy
     on the primary-ray normal, so it works the same on CPU and GPU and has no noise (a Shader to RGB node is EEVEE-only)."""
     bands = int(toon["bands"])
-    lit = np.clip(normal @ light_vector(toon["light"]) * 0.5 + 0.5, 0.0, 1.0)
+    edge, sigma = float(toon.get("band_edge", 0.5)), float(toon.get("band_smooth", 0.0))
+    if sigma > 0:
+        normal = smooth_normal(normal, mask, sigma)
+    lit = normal @ light_vector(toon["light"]) * 0.5 + 0.5
+    if edge != 0.5:
+        lit = lit + (0.5 - edge)
+    lit = np.clip(lit, 0.0, 1.0)
     step = np.minimum(np.floor(lit * bands), bands - 1) / (bands - 1)  # 0 darkest band .. 1 brightest
     factor = 1.0 - float(toon["shadow"]) * (1.0 - step)
     return albedo * factor[..., None]
@@ -479,6 +513,72 @@ def pose(armature, frame) -> None:
     whole = int(math.floor(frame))
     scene.frame_set(whole, subframe=float(frame) - whole)
     bpy.context.view_layer.update()
+
+
+def reset_pose(armature) -> None:
+    for bone in armature.pose.bones:
+        bone.matrix_basis = Matrix.Identity(4)
+
+
+def in_place(armature, root_bone: str, ground: Vector, basis: dict) -> None:
+    """Take the travel out of a captured pose (`basis`, each bone's matrix_basis): the root bone's translation is moved so that
+    the point under it is the ground point again. What is left is the pose, as a clip with no root motion shows it."""
+    bone = armature.pose.bones[root_bone]
+    head = armature.matrix_world @ bone.head
+    delta = armature.matrix_world.to_3x3().inverted() @ Vector((ground.x - head.x, ground.y - head.y, 0.0))
+    rest = bone.bone.matrix_local.to_3x3()
+    if bone.parent is not None:
+        rest = bone.parent.matrix.to_3x3() @ bone.parent.bone.matrix_local.to_3x3().inverted() @ rest
+    moved = basis[root_bone].copy()
+    moved.translation = moved.translation + rest.inverted() @ delta
+    basis[root_bone] = moved
+
+
+def capture_end(armature, end: dict, root_bone: str, ground: Vector) -> dict:
+    """The local pose of every bone (matrix_basis, as the NLA blends it) at one end of a transition."""
+    reset_pose(armature)
+    assign(armature, action_for(end))
+    pose(armature, end["frame"])
+    basis = {bone.name: bone.matrix_basis.copy() for bone in armature.pose.bones}
+    if end.get("root_motion"):
+        in_place(armature, root_bone, ground, basis)
+    return basis
+
+
+def begin_clip(armature, clip: dict, root_bone: str, ground: Vector):
+    """Ready the rig for a clip: its action assigned, or for a transition both ends' poses captured. The result is what
+    `pose_clip` needs."""
+    if "transition" not in clip:
+        assign(armature, action_for(clip))
+        return None
+    ends = [capture_end(armature, clip["transition"][side], root_bone, ground) for side in ("from", "to")]
+    armature.animation_data.action = None  # the blend is set by hand, which a frame change must not undo
+    return ends
+
+
+def blend_pose(armature, ends: list, weight: float) -> None:
+    """Every bone at `weight` between the two end poses, in its local space as the NLA does: location and scale linear,
+    rotation a quaternion slerp along the short way round."""
+    for bone in armature.pose.bones:
+        loc_a, rot_a, scale_a = ends[0][bone.name].decompose()
+        loc_b, rot_b, scale_b = ends[1][bone.name].decompose()
+        if rot_a.dot(rot_b) < 0.0:
+            rot_b = Quaternion((-rot_b.w, -rot_b.x, -rot_b.y, -rot_b.z))
+        bone.matrix_basis = Matrix.LocRotScale(
+            loc_a.lerp(loc_b, weight), rot_a.slerp(rot_b, weight), scale_a.lerp(scale_b, weight))
+    bpy.context.view_layer.update()
+
+
+def pose_clip(armature, clip: dict, state, frame) -> None:
+    if state is None:
+        pose(armature, frame)
+    else:
+        blend_pose(armature, state, float(frame))
+
+
+def end_clip(armature, state) -> None:
+    if state is not None:
+        reset_pose(armature)  # what the next clip's action doesn't animate is at rest, not left in the blend
 
 
 def open_posable(args: dict):
@@ -610,10 +710,10 @@ def measure_poses(args: dict) -> dict:
     done = 0
     found: dict = {}
     for clip in args["clips"]:
-        assign(armature, action_for(clip))
+        state = begin_clip(armature, clip, root_bone, ground)
         found[clip["name"]] = {d["name"]: [] for d in directions}
         for frame in clip["frames"]:
-            pose(armature, frame)
+            pose_clip(armature, clip, state, frame)
             points = posed_points()
             head = armature.matrix_world @ armature.pose.bones[root_bone].head
             under = Vector((head.x, head.y, 0.0))
@@ -632,6 +732,7 @@ def measure_poses(args: dict) -> dict:
                                round(float(xs.max()), 3), round(float(ys.max()), 3)],
                     "under": [round(float(root @ axes[:, 0] * scale), 3), round(float(-(root @ axes[:, 1]) * scale), 3)]})
                 done += 1
+        end_clip(armature, state)
     progress(total, total, "done")
     return {"frames": found}
 
@@ -658,10 +759,10 @@ def render(args: dict) -> dict:
     pivots: dict = {}
     groups = eye_groups(list(args.get("eyes") or []), ground)
     for clip in args["clips"]:
-        assign(armature, action_for(clip))
+        state = begin_clip(armature, clip, root_bone, ground)
         pivots[clip["name"]] = {d["name"]: [] for d in directions}
         for index, frame in enumerate(clip["frames"]):
-            pose(armature, frame)
+            pose_clip(armature, clip, state, frame)
             eyes = posed_eyes(groups)
             head = armature.matrix_world @ armature.pose.bones[root_bone].head
             under = Vector((head.x, head.y, 0.0))
@@ -679,6 +780,7 @@ def render(args: dict) -> dict:
                 bpy.ops.render.render(write_still=True)
                 write_frame(output, clip["name"], direction["name"], index, exr, camera, depth_range, args["toon"])
                 done += 1
+        end_clip(armature, state)
     shutil.rmtree(scratch, ignore_errors=True)
     progress(total, total, "done")
     return {"device": device, "depth_range": [round(depth_range[0], 4), round(depth_range[1], 4)],

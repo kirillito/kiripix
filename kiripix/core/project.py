@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 5
+PROJECT_TEMPLATE = """schema_version = 6
 
 [project]
 name = "{name}"
@@ -103,6 +103,15 @@ light_tilt = 35                # and toward the camera
 # name = "skin"                # a part name, lower-case snake_case
 # length = 3                   # steps, at least 2
 # rgb = [[171, 82, 54], [255, 163, 0], [255, 241, 232]]   # optional: shared colours, dark to light, of the Project palette
+
+# A Model generator: a Blender script of this Project that builds a character's Model from its parameter file
+# (kiripix import <character> <file.toml> --role parameters). Kiripix runs it as
+#   blender --background --python <script> -- <args.json> <result.json>
+# with args {{"parameters", "library", "model"}}: it writes the Model (.glb) to "model" and, to <result.json>,
+# {{"materials": [...], "parts": "skin,hair", "eyes": "eyes", "height": 0.94}} (the Model's height over its base's).
+# [character.generators.chargen]
+# script = "chargen/generate.py"
+# library = ["chargen/library.toml", "chargen/bases", "chargen/parts"]   # a change to any makes those Models stale
 
 [providers]
 default = "import"             # import | openai | gemini | pixellab | local-sd

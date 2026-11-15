@@ -27,7 +27,7 @@ def test_init_writes_defaults_that_load(kpx: Kiripix) -> None:
     kpx.json("init")
     settings = tomllib.loads((kpx.cwd / "kiripix.toml").read_text(encoding="utf-8"))
 
-    assert settings["schema_version"] == 5
+    assert settings["schema_version"] == 6
     assert settings["character"]["height"] == 52
     assert settings["project"]["tile"] == 16
     assert settings["project"]["palette"] == "style/palette.gpl"

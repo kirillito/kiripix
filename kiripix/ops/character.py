@@ -450,3 +450,102 @@ def encode_normals(normal: U8) -> U8:
     out[..., :3] = np.where(opaque[..., None], _to_bytes(_unit(vectors)), 0)
     out[..., 3] = np.where(opaque, 255, 0)
     return out
+
+
+def inner_lines(
+    material: npt.NDArray[np.integer[Any]],
+    depth: npt.NDArray[np.floating[Any]] | npt.NDArray[np.integer[Any]],
+    skip: Collection[int | tuple[int, int]] = (),
+) -> npt.NDArray[np.bool_]:
+    """The pixels of the lines between a character's parts, as an (H, W) boolean mask.
+
+    `material` is the material pass (0 background, else the material's index), `depth` the depth pass (larger is
+    farther). A border is two 4-neighbours with different materials, neither 0. The line is the pixel of the two that
+    is farther from the camera; on a tie, the lower one (vertical pair) or the right one (horizontal pair), so the
+    nearer part keeps its pixels. `skip` holds what gets no line: a pair of indexes (no line between those two
+    materials, in either order) or one index (no line on any border of that material). A border against the background
+    has no line; that is the outline's.
+    """
+    if material.ndim != 2 or depth.shape != material.shape:
+        raise ValueError("material and depth must be (H, W) arrays of the same shape")
+    pairs = {tuple(sorted((int(s[0]), int(s[1])))) for s in skip if isinstance(s, tuple)}
+    singles = {int(s) for s in skip if not isinstance(s, tuple)}
+    out = np.zeros(material.shape, dtype=bool)
+
+    def border(a_m: Any, b_m: Any, a_d: Any, b_d: Any, tie_to_b: bool) -> tuple[Any, Any]:
+        """The masks of the first and second pixel of each pair that gets the line."""
+        live = (a_m != b_m) & (a_m != 0) & (b_m != 0)
+        if singles:
+            blocked = np.array(sorted(singles), dtype=np.int64)
+            live &= ~(np.isin(a_m, blocked) | np.isin(b_m, blocked))
+        for lo, hi in pairs:
+            live &= ~(((a_m == lo) & (b_m == hi)) | ((a_m == hi) & (b_m == lo)))
+        b_wins = a_d < b_d if not tie_to_b else a_d <= b_d
+        return live & ~b_wins, live & b_wins
+
+    # Vertical neighbours: (y, x) above (y + 1, x); a tie gives the lower one.
+    upper, lower = border(material[:-1], material[1:], depth[:-1], depth[1:], True)
+    out[:-1] |= upper
+    out[1:] |= lower
+    # Horizontal neighbours: (y, x) left of (y, x + 1); a tie gives the right one.
+    left, right = border(material[:, :-1], material[:, 1:], depth[:, :-1], depth[:, 1:], True)
+    out[:, :-1] |= left
+    out[:, 1:] |= right
+    return out
+
+
+def line_colours(
+    frames: Sequence[U8],
+    materials: Sequence[npt.NDArray[np.integer[Any]]],
+    palette: U8,
+    darkness: float,
+) -> dict[int, int]:
+    """For each material, the palette index its inner lines are drawn in, the same for every frame.
+
+    `frames[i]` is the (H, W, 4) palette-mapped frame, `materials[i]` its (H, W) material pass. For a material: of the
+    colours that make up at least 5 % of its opaque pixels over all the frames, the darkest (lowest OKLab lightness; a
+    tie goes to the lower palette index), scaled by `darkness` in linear light, then mapped to the nearest palette
+    colour in OKLab (a tie to the lower index). A material with no pixels has no entry. The result doesn't depend on
+    the order of the frames.
+    """
+    if palette.ndim != 2 or palette.shape[1] != 3 or len(palette) == 0:
+        raise ValueError("expected a non-empty (N, 3) palette")
+    if len(frames) != len(materials):
+        raise ValueError("every frame needs a material pass")
+    if darkness < 0:
+        raise ValueError("darkness can't be negative")
+    palette_lab = srgb_to_oklab(palette)
+    counts: dict[int, Counter[int]] = {}
+    for rgba, labels in zip(frames, materials, strict=True):
+        if labels.shape != rgba.shape[:2]:
+            raise ValueError("a frame and its material pass differ in size")
+        opaque = rgba[..., 3] == 255
+        # The palette index of each pixel's exact colour; a frame colour outside the palette is refused.
+        match = (rgba[..., None, :3] == palette[None, None, :, :]).all(axis=3)
+        if not match[opaque].any(axis=1).all():
+            raise ValueError("a frame has a colour that is not in the palette")
+        index = match.argmax(axis=2)
+        for m in np.unique(labels[opaque & (labels != 0)]):
+            picked = opaque & (labels == m)
+            counts.setdefault(int(m), Counter()).update(index[picked].tolist())
+    out: dict[int, int] = {}
+    for m in sorted(counts):
+        total = sum(counts[m].values())
+        common = sorted(c for c, n in counts[m].items() if n * 20 >= total)
+        darkest = min(common, key=lambda c: (round(float(palette_lab[c, 0]), _DECIMALS), c))
+        linear = _to_linear(palette[darkest].astype(np.float64) / 255.0) * darkness
+        target = _from_linear(np.clip(linear, 0.0, 1.0))
+        lab = srgb_to_oklab(np.round(target * 255.0).clip(0, 255).astype(np.uint8)[None, :])
+        d2 = np.round(((lab - palette_lab) ** 2).sum(axis=1), _DECIMALS)
+        out[m] = int(d2.argmin())
+    return out
+
+
+def _to_linear(c: F64) -> F64:
+    out: F64 = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    return out
+
+
+def _from_linear(c: F64) -> F64:
+    out: F64 = np.where(c <= 0.0031308, c * 12.92, 1.055 * np.maximum(c, 0.0) ** (1 / 2.4) - 0.055)
+    return out

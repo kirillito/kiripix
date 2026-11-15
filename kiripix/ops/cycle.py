@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 else:
     BoolMask = Any
 
-PULSE_DEPTH = 2  # places along the ramp (confirmed by 0184: 4 reached a ramp's end on a 283-colour palette)
+PULSE_LIFT = 0.15  # OKLab L at a pulse's peak (0184: depth 2 on a 283-colour palette raised a screen's L by 0.14; 0223)
 PULSE_STEPS = 4  # frames in a pulse (confirmed by 0184)
 FLICKER_MEAN_TICKS = 6  # (confirmed by 0184)
 FLICKER_SPREAD = 0.6  # a hold is the mean plus or minus this share of it (confirmed by 0184)
@@ -130,23 +130,27 @@ def cycle_pulse(
     image: U8,
     region: BoolMask,
     palette: U8,
-    depth: int = PULSE_DEPTH,
+    lift: float = PULSE_LIFT,
     steps: int = PULSE_STEPS,
 ) -> U8:
-    """(steps, H, W, 4) frames: each opaque region pixel moves up to `depth` places lighter along its own ramp and back.
+    """(steps, H, W, 4) frames: each opaque region pixel gets lighter by about `lift` (OKLab L) along its own ramp and back.
 
-    The offset follows a triangle over the frames (0 at frame 0, `depth` at the middle, whole places, halves rounded up).
-    A pixel at its ramp's end stays, one near it stops at the end. Pixels whose colour isn't in the palette stay.
+    The lift follows a triangle over the frames (0 at frame 0, `lift` at the middle). In a frame with lift `l`, a pixel
+    takes the colour of its ramp whose L is closest to its own plus `l`: never darker than itself (never a place below
+    its own), never past the ramp's end; a tie takes the darker colour. So a pixel reaches whole ramp places, and the
+    same `lift` gives the same peak lightness on a sparse and on a dense palette. Pixels whose colour isn't in the
+    palette stay.
     """
     _check_image(image, region)
     _check_colours(palette)
-    if steps < 1 or depth < 0:
-        raise ValueError("a pulse needs at least one frame and a depth of 0 or more")
+    if steps < 1 or lift < 0:
+        raise ValueError("a pulse needs at least one frame and a lift of 0 or more")
     packed_palette = _pack(palette)
     packed = _pack(image)
     # the first palette entry of a colour is its identity, so a palette listing a colour twice stays deterministic
     first = {int(v): i for i, v in reversed(list(enumerate(packed_palette)))}
     ramp_of = ramps(palette)
+    lightness = np.round(srgb_to_oklab(palette)[:, 0], _DECIMALS)
     pixel_index = np.full(image.shape[:2], -1, dtype=np.int64)
     candidates = region & (image[..., 3] == 255)
     for value, i in first.items():
@@ -154,15 +158,19 @@ def cycle_pulse(
     frames = np.repeat(image[None], steps, axis=0)
     ys, xs = np.nonzero(pixel_index >= 0)
     for k in range(1, steps):
-        a = steps - abs(2 * k - steps)
-        offset = (depth * a + steps // 2) // steps
-        if offset == 0:
+        share = (steps - abs(2 * k - steps)) / steps
+        wanted = lift * share
+        if wanted <= 0:
             continue
-        for y, x in zip(ys.tolist(), xs.tolist(), strict=True):
-            i = int(pixel_index[y, x])
+        target: dict[int, int] = {}
+        for i in sorted({int(v) for v in pixel_index[ys, xs].tolist()}):
             ramp = ramp_of[i]
             place = ramp.index(i)
-            frames[k, y, x, :3] = palette[ramp[min(place + offset, len(ramp) - 1)]]
+            goal = float(lightness[i]) + wanted
+            best = min(range(place, len(ramp)), key=lambda p: (abs(float(lightness[ramp[p]]) - goal), p))
+            target[i] = ramp[best]
+        for y, x in zip(ys.tolist(), xs.tolist(), strict=True):
+            frames[k, y, x, :3] = palette[target[int(pixel_index[y, x])]]
     return frames
 
 
