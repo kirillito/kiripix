@@ -39,6 +39,7 @@ export class LookTool implements CanvasTool {
   staged: Box | null = null; // dragged, not yet recorded
   // The pixels the staged box would pick out, as an image the size of the room (a rough preview, see lookScreen).
   preview: HTMLCanvasElement | null = null;
+  previewPixels = 0; // how many pixels the Probe said it holds
   private dragging: CanvasPixel | null = null;
 
   constructor(
@@ -110,6 +111,7 @@ export class LookTool implements CanvasTool {
     data.lookView = this.view;
     data.lookPieces = String(this.pieces.length);
     data.drift = this.drift.map((box) => `${box.x},${box.y},${box.width},${box.height}`).join(" ");
+    data.lookPreview = this.preview ? String(this.previewPixels) : "";
     data.staged = this.staged ? `${this.staged.x0},${this.staged.y0},${this.staged.x1},${this.staged.y1}` : "";
   }
 }

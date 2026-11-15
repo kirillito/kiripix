@@ -401,7 +401,7 @@ hash, so a change on the base makes them stale. Nothing is copied, and nothing o
 | **rig** | No rigged file and no Mixamo trip. The Model's armature must have every bone of the base's `rig.json`, by its exact name and under the same parent; more bones are fine, and rest proportions aren't compared, since a build, an age or a posture changes them on purpose. Otherwise `rig.base_mismatch`, naming the bones. The base's roles hold for the character. |
 | **clips** | The base's current Decisions come first, then the character's own, which add a clip, replace one of the same name, or `remove` one (with every transition from or to it). `undo` never reaches the base. The base's clip sources are read in the base's folder; a file of the character's own with the same name wins. A base clip that plays an action of the base's own Model file doesn't cross: give the base that animation as a clip source. |
 | **render** | Without a `height` of its own, the character is the base's height (its `height`, or the Project's) times its rig's height over the base's: the height of the file that carries each armature, in the rest pose, as imported (the base's rigged file, when it has one). |
-| every Stage | A parameter the character doesn't set takes the base's value, then the default; but never `render` `height` or `model`'s `facing` and `generator`. `show` says where each value comes from (`param_sources`) and marks the base's Decisions (`from_base`). |
+| every Stage | A parameter the character doesn't set takes the base's value, then the default; but never `render` `height` or `model`'s `facing` and `generator`. `show` says where each value comes from (`param_sources`) and marks the base's Decisions and clip sources (`from_base`). It gives each Stage's Decisions as recorded (`decisions`, what `undo` steps through) and as the Stage reads them (`decisions_as_read`: one clip per name, without the removed ones). |
 
 A Stage that reads a built Stage of the base (`rig` and `render` read its `rig`) is needs-input until that is done, with
 `kiripix run <base> <stage>` as its command; `run --all` builds a base before the characters made from it. `clips copy` stays,
@@ -669,6 +669,9 @@ kiripix preview <id> [--stage s] [--overlay masks|walkable|reachable] [--region 
 kiripix probe <name> <id> <args...>         run a Probe, such as segment-preview or flood-preview x,y,tolerance ...
                                             (several flood tries in one call, nothing recorded); every Mask answer
                                             has `pixels` and a bounding box `box`, and `--summary` leaves out `runs`
+kiripix cast-sheet <id,id,...> [--clips idle,walk] [--directions s,sw] [--frames N] [--scale 3]   a Probe: several
+                                            characters or sprites side by side, each at its pivot on one ground line,
+                                            from their built sheets, to .kiripix/previews/ (M4)
 kiripix export [<id>|--all] [--dry-run] [--force] [--adopt] [--prune]   write to the Godot project
 kiripix manifest [merge|install|repair]     the git merge driver, installing it, and the manual fallback
 kiripix op <op> <args...>                   one op directly (quantize, snap-mask, reach, ...)

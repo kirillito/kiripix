@@ -33,6 +33,10 @@ class VariantOut(BaseModel):
     size: int = Field(description="The stored file's size in bytes.")
 
 
+class ClipSourceOut(VariantOut):
+    from_base: bool = Field(description="The file is the base's, in the base's folder: the Asset has none of that name.")
+
+
 class SheetOut(VariantOut):
     png_count: int | None = Field(description="A ZIP sheet's PNG count; null for a PNG sheet.")
 
@@ -47,14 +51,24 @@ class StageDetail(BaseModel):
     stage: str
     status: Status
     reason: str | None
+    failure_code: str | None = Field(
+        None, description="While the Stage is failed: the code of the finding its last run gave, such as rig.base_mismatch; "
+                          "stage.failed unless the Stage gave its own. `reason` is that finding's message.")
     params: dict[str, Scalar] = Field(description="The Stage's current parameters: its defaults and what `set` set; for "
                                                   "an Asset made from a base, also what its base set.")
     param_sources: dict[str, ParamOrigin] = Field(
         default_factory=dict,
         description="Where each of `params` comes from. asset: the Asset's own asset.toml (`set`). generated: its Model's "
                     "generator gave it, as far as the Model is built. base: its base's asset.toml. default: nobody set it.")
-    decisions: list[DecisionOut] = Field(description="The Stage's current Decisions; for an Asset made from a base, the "
-                                                     "base's come first, each marked `from_base`.")
+    decisions: list[DecisionOut] = Field(description="The Stage's current Decisions as recorded, the journal replayed: "
+                                                     "what `undo` and `redo` step through. For an Asset made from a base, "
+                                                     "the base's come first, each marked `from_base`.")
+    decisions_as_read: list[DecisionOut] = Field(
+        description="The Stage's current Decisions as the Stage reads them: `decisions` through the Stage's own reading, "
+                    "where it has one. A Loop's `remove` drops the Loop's Decisions and a `rename` gives them the new ID; "
+                    "on `clips`, one `clip` and one `transition` per name, the latest winning, without the ones a "
+                    "`remove` took away, and each `remove` that found nothing first. Each keeps `from_base`: a clip "
+                    "the Asset decided again over the base's is its own.")
     image: str | None = Field(description="The Stage's built image, relative to the Project.")
     input_image: str | None = Field(description="The built image this Stage is made from, relative to the Project.")
     outputs: list[str] = Field(description="The files of the Stage's built output, relative to the Project.")
@@ -80,7 +94,7 @@ class ShowData(BaseModel):
     picked: str | None
     looks: list[LookOut] = Field(description="A room's Looks that have a stored edit (`import --look`): their edits and "
                                              "the picked one, or null.")
-    clip_sources: list[VariantOut] = Field(description="A character's animation files, named by file stem; for one made "
+    clip_sources: list[ClipSourceOut] = Field(description="A character's animation files, named by file stem; for one made "
                                                        "from a base, also the base's, which stay in the base's folder.")
     rigged: VariantOut | None = Field(description="A character's rigged file.")
     parameters: VariantOut | None = Field(None, description="A generated character's parameter file, which the Project's "
@@ -112,14 +126,16 @@ def _variant(project: Project, asset: Asset, names: dict[str, str], name: str, p
                       imported_as=names.get(path.relative_to(asset.dir).as_posix()), size=path.stat().st_size)
 
 
-def _clip_sources(project: Project, graph: AssetGraph, names: dict[str, str]) -> list[VariantOut]:
+def _clip_sources(project: Project, graph: AssetGraph, names: dict[str, str]) -> list[ClipSourceOut]:
     """The character's clip sources, and its base's that it has no file of the same name for (ADR 0012), by name."""
-    found = {name: _variant(project, graph.asset, names, name, path)
+    found = {name: ClipSourceOut(**_variant(project, graph.asset, names, name, path).model_dump(), from_base=False)
              for name, path in sources.clip_sources(graph.asset).items()}
     if graph.base is not None:
         theirs = sources.imported_names(graph.base.asset)
         for name, path in sources.clip_sources(graph.base.asset).items():
-            found.setdefault(name, _variant(project, graph.base.asset, theirs, name, path))
+            if name not in found:
+                found[name] = ClipSourceOut(**_variant(project, graph.base.asset, theirs, name, path).model_dump(),
+                                            from_base=True)
     return [found[name] for name in sorted(found)]
 
 
@@ -162,14 +178,19 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         image = graph.output_dir(spec) / spec.image if spec.image is not None else None
         source = graph.input_image(spec)
         params, origins = _params(graph, spec)
+        theirs = graph.base_decisions(spec)
+        base_ids = {d.id for d in theirs}  # Decision IDs are ULIDs: unique across Assets
         stages.append(StageDetail(
             stage=state.stage,
             status=state.status,
             reason=state.reason,
+            failure_code=graph.failures.code(state.stage, graph.input_hash(state.stage))
+            if state.status == "failed" else None,
             params=params,
             param_sources=origins,
-            decisions=[*current_decisions(graph.base_decisions(spec), from_base=True),
-                       *current_decisions(graph.replay(state.stage).current)],
+            decisions=[*current_decisions(theirs, from_base=True), *current_decisions(graph.replay(state.stage).current)],
+            decisions_as_read=[DecisionOut(id=d.id, name=d.name, data=d.data, image_hash=d.image_hash,
+                                           from_base=d.id in base_ids) for d in graph.decisions(spec)],
             image=project.relative(image) if image is not None and image.is_file() else None,
             input_image=project.relative(source[1]) if source is not None and source[1].is_file() else None,
             outputs=_outputs(project, graph.output_dir(spec)),

@@ -20,7 +20,6 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -126,13 +125,18 @@ REMOVE = DecisionSpec(
 _NAME = re.compile(NAME_PATTERN)
 
 
-def _replayed(decisions: Iterable[CurrentDecision]) -> tuple[dict[str, CurrentDecision], dict[str, CurrentDecision], list[str]]:
-    """The clips and the transitions, one Decision per name, and the names a `remove` found nothing under. The Decisions
-    are taken in order (a base's first, ADR 0012): a `clip` or `transition` under a name an earlier one has replaces it
-    and keeps its place; a `remove` takes away the clip or transition of that name and every transition from or to it."""
+def apply_clip_edits(decisions: tuple[CurrentDecision, ...]) -> tuple[CurrentDecision, ...]:
+    """The clips Stage's Decisions as it reads them (`StageSpec.decisions_view`, ticket 0228): one `clip` and one
+    `transition` per name, and the `remove` Decisions that found nothing to take away. The Decisions are taken in order (a
+    base's first, ADR 0012): a `clip` or `transition` under a name an earlier one has replaces it and keeps its place (ticket
+    0156), so the latest wins; the earlier one stays current in the journal, which is why `undo` of the new one brings it
+    back. A `remove` takes away the clip or transition of that name and every transition from or to it.
+
+    The result is the `remove` Decisions that found nothing, then the clips, then the transitions, so replaying it again
+    gives it back unchanged."""
     clips: dict[str, CurrentDecision] = {}
     transitions: dict[str, CurrentDecision] = {}
-    unknown: list[str] = []
+    unknown: list[CurrentDecision] = []
     for decision in decisions:
         name = str(decision.data.get("name", ""))
         if decision.name == CLIP.name:
@@ -141,31 +145,19 @@ def _replayed(decisions: Iterable[CurrentDecision]) -> tuple[dict[str, CurrentDe
             transitions[name] = decision
         elif decision.name == REMOVE.name:
             if name not in clips and name not in transitions:
-                unknown.append(name)
+                unknown.append(decision)
                 continue
             clips.pop(name, None)
             transitions.pop(name, None)
             for other in [n for n, t in transitions.items() if name in (str(t.data["from"]["clip"]), str(t.data["to"]["clip"]))]:
                 del transitions[other]
-    return clips, transitions, unknown
-
-
-def latest_clips(decisions: Iterable[CurrentDecision]) -> list[CurrentDecision]:
-    """The clips, one Decision per name: a `clip` Decision under a name an earlier one has replaces it (ticket 0156), so
-    the latest wins and the clip keeps the earlier one's place. The earlier one stays current in the journal, which is
-    why `undo` of the new one brings it back. A clip a later `remove` names is gone."""
-    return list(_replayed(decisions)[0].values())
-
-
-def latest_transitions(decisions: Iterable[CurrentDecision]) -> list[CurrentDecision]:
-    """The transitions, one Decision per name, the latest winning as for the clips (ticket 0218); without the ones a
-    `remove` took away, by their own name or with a clip they start or end on."""
-    return list(_replayed(decisions)[1].values())
+    return (*unknown, *clips.values(), *transitions.values())
 
 
 def clip_decisions(run: StageRun) -> list[CurrentDecision]:
-    """The clips of a run. Every reader of the clips in a Stage goes through here."""
-    return latest_clips(run.decisions)
+    """The clips of a run, one per name, as `apply_clip_edits` left them. Every reader of the clips in a Stage goes through
+    here."""
+    return [d for d in run.decisions if d.name == CLIP.name]
 
 
 def clips_needs_input(run: StageRun) -> NeedsInput | None:
@@ -403,7 +395,7 @@ def _resolve_transitions(run: StageRun, clips: list[dict[str, Any]], clip_names:
     """The entries of the `transition` Decisions: the blend positions as `frames`, and each end with the source's hash, the
     action and the action's frame, taken from the named clip's own `frames` (ticket 0218). A transition's failures name the
     clip, the frame or the pair at fault and are taken back with `undo`."""
-    transitions = latest_transitions(run.decisions)
+    transitions = [d for d in run.decisions if d.name == TRANSITION.name]  # one per name: `apply_clip_edits`
     by_name = {str(c["name"]): c for c in clips}
     undo = f"kiripix undo {run.asset_id} clips"
     shared = sorted(n for n in (str(t.data["name"]) for t in transitions) if n in clip_names)
@@ -474,7 +466,7 @@ def check_clips(run: StageRun) -> list[Finding]:
             position=Position(asset=run.asset_id, stage="clips"),
             owner_action=f"Nothing is needed if {name} is meant to be gone. If the name is a typo, undo the `remove` "
                          f"(kiripix undo {run.asset_id} clips, while it is the latest Decision) and decide it again.")
-        for name in dict.fromkeys(_replayed(run.decisions)[2])
+        for name in dict.fromkeys(str(d.data["name"]) for d in run.decisions if d.name == REMOVE.name)
     ]
     return unknown + [
         Finding(

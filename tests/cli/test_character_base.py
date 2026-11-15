@@ -147,6 +147,34 @@ def test_remove_takes_a_base_clip_and_its_transitions_away_from_the_character_on
     assert finding["code"] == "clips.remove_unknown" and finding["severity"] == "warning" and "jump" in finding["message"]
 
 
+def test_show_lists_the_clips_as_the_stage_reads_them_with_a_changed_clip_as_the_characters_own(project: Kiripix) -> None:
+    body(project)
+    guard(project)
+
+    decide(project, GUARD, "remove", {"name": "walk"})
+    decide(project, GUARD, "clip", {**IDLE, "end": 12})
+    decide(project, GUARD, "remove", {"name": "jump"})  # finds nothing: the Stage reads it, for clips.remove_unknown
+    clips = stage(project, GUARD, "clips")
+
+    read = [(d["name"], d["data"]["name"], d["from_base"]) for d in clips["decisions_as_read"]]
+    assert read == [("remove", "jump", False), ("clip", "idle", False), ("clip", "wave", True)]
+    assert next(d for d in clips["decisions_as_read"] if d["data"]["name"] == "idle")["data"]["end"] == 12
+    recorded = [(d["name"], d["data"]["name"], d["from_base"]) for d in clips["decisions"]]
+    assert recorded == [("clip", "idle", True), ("clip", "walk", True), ("clip", "wave", True),
+                        ("remove", "walk", False), ("clip", "idle", False), ("remove", "jump", False)]
+
+
+def test_show_marks_the_bases_clip_sources(project: Kiripix) -> None:
+    body(project, build=False)
+    guard(project)
+    clip_source(project, GUARD, "jump", actions=ACTIONS)
+
+    shown = project.json("show", GUARD)["data"]["clip_sources"]
+
+    assert [(c["name"], c["from_base"]) for c in shown] == [("jump", False), ("wave", True)]
+    assert [(c["name"], c["from_base"]) for c in project.json("show", BODY)["data"]["clip_sources"]] == [("wave", False)]
+
+
 def test_unset_parameters_take_the_bases_and_one_set_on_the_character_wins(project: Kiripix) -> None:
     body(project)
     guard(project)
@@ -271,6 +299,9 @@ def test_a_model_whose_skeleton_is_not_the_bases_fails_rig_with_the_bones_named(
     assert "mixamorig:Head (under mixamorig:Spine1, the base has it under mixamorig:Neck)" in finding["message"]
     assert "skeleton" in finding["owner_action"] and "mixamo.com" not in finding["owner_action"].lower()
     assert not (folder / "work" / "rig").exists() and stage_status(project, GUARD)["rig"] == "failed"
+    rig = stage(project, GUARD, "rig")
+    assert rig["failure_code"] == "rig.base_mismatch" and "lacks mixamorig:Neck" in rig["reason"]
+    assert stage(project, GUARD, "model")["failure_code"] is None
 
 
 def test_more_bones_than_the_base_has_are_allowed_and_rest_proportions_are_not_compared(project: Kiripix) -> None:

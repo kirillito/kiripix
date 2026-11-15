@@ -43,7 +43,8 @@ def test_the_stage_declares_its_parameters_and_checks(project: Kiripix) -> None:
                             "eyes", "eye_colour", "eye_white", "eye_gap", "inner_lines", "line_skip", "line_darkness"}
     assert by_name["eyes"]["default"] == "render"
     assert by_name["outline"]["default"] is True and by_name["placement"]["default"] == "outside"
-    assert [c["code"] for c in stage["checks"]] == ["normal.size_mismatch", "palette.off_palette", "sheet.part_vanishes"]
+    assert [c["code"] for c in stage["checks"]] == ["normal.size_mismatch", "palette.off_palette", "sheet.part_vanishes",
+                                                         "sheet.eyes_covered"]
 
 
 def test_run_writes_both_images_per_frame_in_renders_layout(project: Kiripix) -> None:

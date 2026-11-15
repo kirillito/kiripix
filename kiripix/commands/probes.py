@@ -20,8 +20,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, command
+from kiripix.checks import Finding
 from kiripix.core.assets import Asset, load_asset
-from kiripix.core.errors import fail
+from kiripix.core.cast import NothingToDraw, cast_sheet
+from kiripix.core.errors import ExitCode, fail
 from kiripix.core.file_inspect import inspect_file
 from kiripix.core.layer_stats import layer_stats, piece_numbers
 from kiripix.core.look_probe import look_difference
@@ -247,3 +249,77 @@ def run_probe(arguments: ProbeInput, context: Context) -> Outcome[ProbeData]:
                    fix="kiripix probe echo <asset>")
     asset = load_asset(find_project(context.cwd), arguments.asset)
     return Outcome(ProbeData(probe=chosen.name, asset=asset.id, result=chosen.run(asset, arguments, context)))
+
+
+class CastSheetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assets: str = Field(description="The Assets, comma-separated, left to right: characters or sprites, each with a "
+                                    "built `sheet` Stage, such as character.hero,character.elder.")
+    clips: str | None = Field(None, description="The clips to draw, comma-separated; each Asset's first clip when left "
+                                                "out.")
+    directions: str = Field("s", description="The directions to draw, comma-separated, such as s,sw.")
+    frames: int = Field(1, ge=1, le=64, description="Frames per clip and direction, spread evenly from the first.")
+    scale: int = Field(1, ge=1, le=8, description="Whole-number zoom, nearest neighbour; 1 is the game's size. The "
+                                                  "labels aren't scaled.")
+
+
+class CastCellData(BaseModel):
+    asset: str
+    clip: str
+    direction: str
+    index: int = Field(description="The frame's index in its clip.")
+    x: int = Field(description="The cell's left edge in the PNG.")
+    y: int = Field(description="The cell's top edge in the PNG.")
+    width: int
+    height: int
+    pivot: dict[str, int] = Field(description="The pivot (the feet) in the cell, from its top left, in PNG pixels.")
+
+
+class CastSheetData(BaseModel):
+    path: str = Field(description="The PNG, relative to the Project.")
+    width: int
+    height: int
+    scale: int
+    ground: int = Field(description="The y of the ground line in the PNG: every cell's pivot is on it.")
+    cells: list[CastCellData]
+
+    def text(self) -> str:
+        return self.path
+
+
+def _listed(text: str) -> list[str]:
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
+@command(
+    "cast-sheet",
+    summary="Draw several characters side by side, each at its pivot on one ground line, from their built sheets, to "
+            ".kiripix/previews/. A Probe: records nothing.",
+    input=CastSheetInput,
+    output=CastSheetData,
+    kind="probe",
+    mcp="exposed",
+    cli=CliMeta(positional=("assets",)),
+)
+def run_cast_sheet(arguments: CastSheetInput, context: Context) -> Outcome[CastSheetData]:
+    project = find_project(context.cwd)
+    ids = _listed(arguments.assets)
+    if not ids:
+        raise fail("input.invalid", "name at least one Asset", fix="kiripix cast-sheet character.a,character.b")
+    assets = [load_asset(project, asset_id) for asset_id in dict.fromkeys(ids)]
+    clips = _listed(arguments.clips) if arguments.clips is not None else None
+    directions = _listed(arguments.directions)
+    if clips == [] or not directions:
+        raise fail("input.invalid", "--clips and --directions each name at least one",
+                   fix=f"kiripix cast-sheet {arguments.assets} --clips idle --directions s")
+    try:
+        made = cast_sheet(project, assets, clips, directions, arguments.frames, arguments.scale)
+    except NothingToDraw as empty:
+        finding = Finding(code="cast.empty", message="no Asset has a cell to draw; the findings before this say why",
+                          fix="kiripix status")
+        return Outcome(None, [*empty.findings, finding], ExitCode.ERROR)
+    cells = [CastCellData(asset=c.asset, clip=c.clip, direction=c.direction, index=c.index, x=c.x, y=c.y,
+                          width=c.width, height=c.height, pivot={"x": c.pivot[0], "y": c.pivot[1]}) for c in made.cells]
+    return Outcome(CastSheetData(path=project.relative(made.path), width=made.width, height=made.height,
+                                 scale=made.scale, ground=made.ground, cells=cells), list(made.findings))

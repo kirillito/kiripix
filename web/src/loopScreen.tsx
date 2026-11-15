@@ -6,18 +6,16 @@
 // The region tools are `MaskTool` (ADR 0008) with one Mask name, "region", that the screen fills from the built strips' alpha.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { fileUrl, type Finding, type ShowData, type StageDescription, type StageDetail } from "./api";
+import { fileUrl, projectPalette, type Finding, type ShowData, type StageDescription, type StageDetail } from "./api";
 import { LoopTool, type PlayingLoop } from "./loopTool";
 import { MAX_RADIUS, MaskTool, MIN_RADIUS, tintOf } from "./maskTool";
 import { isTyping, type CanvasPixel, type PixelCanvas } from "./pixelCanvas";
-import { paletteColours } from "./roomScreens";
 import { layerFiles } from "./sortView";
 
 export const LOOPS_STAGE = "loops";
 export const LOOPS_DECISION = "cycle"; // what tells the loops Stage's screen from another's
 const REGION = "region";
 const HOLD = "hold";
-const PALETTE_FILE = "style/palette.gpl";
 const PLATE = "plate";
 const DEFAULT_TOLERANCE = 0.03; // the Stage's own default (a `flood` Decision without one; trial 0184)
 const DEFAULT_EVEN_TICKS = 8;
@@ -61,6 +59,8 @@ export interface BuiltLoop {
   flicker?: { from: number; to: number; share: number }[] | null;
   holds?: { pixels: number; outside: number; file: string } | null;
   past_layer?: number;
+  held?: string | null; // why the Loop can't be built yet (0206): it has a region (`region`) and plays nothing
+  region?: string | null; // a held Loop's region, `<loop>/region.png`, room size
 }
 
 export interface FramesData {
@@ -119,7 +119,8 @@ function latest(decisions: Journal[], name: string, id: string): Record<string, 
   return found ? found.data : null;
 }
 
-// A Loop exists once a `loop` Decision declares it; the latest `loop`, `cycle` and `timing` of each count.
+// A Loop exists once a `loop` Decision declares it; the latest `loop`, `cycle` and `timing` of each count. `decisions` are
+// `show`'s `decisions_as_read`: a `remove` and a `rename` are already applied there (ticket 0228).
 export function loopsOf(decisions: Journal[], built: BuiltLoop[]): LoopEntry[] {
   const ids = [...new Set(decisions.filter((decision) => decision.name === "loop").map((decision) => String(decision.data.loop)))].sort();
   return ids.map((id) => {
@@ -307,6 +308,8 @@ export function LoopsPanel(props: {
   decide: (decision: string, data: Record<string, unknown>, settled?: () => void) => void;
   writeKit: (loop: string, folder: string, frames: number, force: boolean, written: (folder: string | null) => void) => void;
   importFrames: (loop: string, paths: string[]) => void;
+  importFrameFiles: (loop: string, frames: File[], kit: File | null) => void;
+  notice: Finding[];
   importEdit: (loop: string, frame: number, file: File, noted: (findings: Finding[]) => void) => void;
   onStage: (stage: string) => void;
 }) {
@@ -338,8 +341,12 @@ export function LoopsPanel(props: {
   const [importNotes, setImportNotes] = useState<Record<string, Record<number, Finding[]>>>({});
   const editInput = useRef<HTMLInputElement>(null);
   const [flicker, setFlicker] = useState<{ mean: string; spread: string; length: string }>({ mean: "", spread: "", length: "" });
+  const [renameTo, setRenameTo] = useState("");
+  const [over, setOver] = useState(false);
+  const [dropHint, setDropHint] = useState("");
+  const frameInput = useRef<HTMLInputElement>(null);
 
-  const entries = loopsOf(detail.decisions, built);
+  const entries = loopsOf(detail.decisions_as_read, built);
   const current = entries.find((entry) => entry.id === selected) ?? entries[0] ?? null;
   const latestProps = useRef({ ...props, current, entries, palette, room, region, tolerance, tool, holdFrame });
   latestProps.current = { ...props, current, entries, palette, room, region, tolerance, tool, holdFrame };
@@ -439,9 +446,8 @@ export function LoopsPanel(props: {
         .then((pixels) => live && setRoom(pixels))
         .catch(() => undefined);
     }
-    void fetch(fileUrl(PALETTE_FILE, imageVersion))
-      .then((response) => (response.ok ? response.text() : ""))
-      .then((text) => live && setPalette(paletteColours(text).map((colour) => colour.toLowerCase())))
+    void projectPalette()
+      .then((colours) => live && setPalette(colours))
       .catch(() => undefined);
     return () => {
       live = false;
@@ -498,11 +504,35 @@ export function LoopsPanel(props: {
     };
   }, [heldFile, stageFolder, refreshes]);
 
+  // A held Loop has no strips, only its region (`<loop>/region.png`, white where it is), drawn as soon as the Stage has built it.
+  const [heldRegion, setHeldRegion] = useState<Uint8Array | null>(null);
+  const regionFile = built.find((loop) => loop.id === current?.id)?.region ?? null;
+  const isHeld = Boolean(built.find((loop) => loop.id === current?.id)?.held);
+  useEffect(() => {
+    let live = true;
+    if (!regionFile || !isHeld) {
+      setHeldRegion(null);
+      return;
+    }
+    void readPixels(fileUrl(`${stageFolder}/${regionFile}`, refreshes))
+      .then((pixels) => {
+        if (!live) return;
+        const set = new Uint8Array(pixels.width * pixels.height);
+        for (let at = 0; at < set.length; at++) set[at] = pixels.data[at * 4] > 0 ? 1 : 0;
+        setHeldRegion(set);
+      })
+      .catch(() => undefined); // Rebuilt while it was read; the next refresh reads it again.
+    return () => {
+      live = false;
+    };
+  }, [regionFile, isHeld, stageFolder, refreshes]);
+
   useEffect(() => {
     if (!room) return;
     const { width, height } = room;
     const set = new Uint8Array(width * height);
     const here = playing.find((loop) => loop.id === current?.id);
+    if (!here && heldRegion && heldRegion.length === set.length) set.set(heldRegion);
     if (here) {
       const [x, y, w, h] = here.box;
       for (const piece of here.pieces) {
@@ -516,7 +546,7 @@ export function LoopsPanel(props: {
     ]);
     setRegion(set);
     canvas.current?.redraw();
-  }, [canvas, room, playing, current?.id, held]);
+  }, [canvas, room, playing, current?.id, held, heldRegion]);
 
   // The pixels of the lit colour, in the region when there is one and in the whole room when the Loop isn't built yet.
   useEffect(() => {
@@ -669,6 +699,35 @@ export function LoopsPanel(props: {
     if (current) props.decide("timing", { loop: current.id, ...(current.timing?.rest === true ? { rest: true } : {}), ...timing });
   }
 
+  // Rename and remove are one Decision each (0207), so `undo` takes either back. A frozen ID is refused with `export.id_frozen`.
+  function renameLoop() {
+    const to = renameTo.trim();
+    if (!current || !/^[a-z0-9_]+(\.[a-z0-9_]+)*$/.test(to) || to === current.id) return;
+    props.decide("rename", { loop: current.id, to });
+    setSelected(to);
+    setRenameTo("");
+  }
+
+  function removeLoop() {
+    if (!current) return;
+    props.decide("remove", { loop: current.id });
+    setSelected(null);
+  }
+
+  // Frames dropped or picked: the PNGs, and a `kit.json` among them, go in one `import --loop`.
+  function uploadFrames(files: File[]) {
+    if (!current) return;
+    const kit = files.find((file) => /\.json$/i.test(file.name)) ?? null;
+    const frames = files.filter((file) => /\.png$/i.test(file.name));
+    if (frames.length === 0) {
+      setDropHint("Drop PNG frames (frame_001.png and on), with the kit's kit.json beside them.");
+      return;
+    }
+    setDropHint("");
+    props.importFrameFiles(current.id, frames, kit);
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); // the tool keys work again
+  }
+
   function setLoop(patch: Record<string, unknown>) {
     if (!current) return;
     const data: Record<string, unknown> = { loop: current.id, form: current.form, layer: current.layer, phase: current.phase };
@@ -697,6 +756,9 @@ export function LoopsPanel(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // What the last action was refused for, beside the list it concerns.
+  const REFUSALS = ["export.id_frozen", "loop.unknown", "loop.id_taken", "loop.rename_same"];
+  const refusals = props.notice.filter((finding) => REFUSALS.includes(finding.code));
   const id = newLoop.trim();
   const valid = /^[a-z0-9_]+(\.[a-z0-9_]+)*$/.test(id);
   const active = TOOLS.find((entry) => entry.name === tool)!;
@@ -716,6 +778,7 @@ export function LoopsPanel(props: {
   const kitImported = (current?.built?.kit?.frames.length ?? 0) > 0;
   const source: "op" | "kit" | "edits" | null =
     current?.frames?.source ?? (current?.frames?.op ? "op" : kitImported ? "kit" : (current?.picks.length ?? 0) > 0 ? "edits" : null);
+  const canUpload = isFrames && source !== "op" && source !== "edits" && Boolean(current?.built?.box);
   const nextFrame = (current?.picks.at(-1) ?? 0) + 1;
   useEffect(() => setEditFrame(String(nextFrame)), [current?.id, nextFrame]);
   const opName = source === "op" ? (current?.frames?.op ?? null) : null;
@@ -781,9 +844,14 @@ export function LoopsPanel(props: {
                 </button>
                 <small>
                   {entry.form}, on {entry.layer}
-                  {entry.built === null ? ", not built yet" : entry.built.box === null ? ", no region" : `, ${entry.built.pixels} px, ${entry.built.frames} frames, ${entry.built.ticks} ticks${entry.built.holds ? `, ${entry.built.holds.pixels} px held` : ""}`}
+                  {entry.built === null ? ", not built yet" : entry.built.held ? `, held, ${entry.built.pixels} px` : entry.built.box === null ? ", no region" : `, ${entry.built.pixels} px, ${entry.built.frames} frames, ${entry.built.ticks} ticks${entry.built.holds ? `, ${entry.built.holds.pixels} px held` : ""}`}
                   {own.length > 0 && <span data-testid={`loop-findings-${entry.id}`}>{`, ${own.map((finding) => finding.code).join(" ")}`}</span>}
                 </small>
+                {entry.built?.held && (
+                  <p className="reason" data-testid={`loop-held-${entry.id}`}>
+                    {entry.built.held} {findings.find((finding) => finding.code === "loop.held" && findingLoop(finding, ids) === entry.id)?.owner_action ?? ""}
+                  </p>
+                )}
               </li>
             );
           })}
@@ -812,10 +880,38 @@ export function LoopsPanel(props: {
       >
         Add the Loop {id}
       </button>
-      <p className="hint">A Loop and a Look can't share an ID. Renaming or deleting a Loop has no Command yet, so a wrong one waits for undo.</p>
+      <p className="hint">A Loop and a Look can't share an ID. Rename or remove a Loop below; Ctrl+Z takes either back.</p>
+      {refusals.length > 0 && (
+        <ul className="findings" data-testid="loop-refusals">
+          {refusals.map((finding, index) => (
+            <li key={`${finding.code}-${index}`} data-severity={finding.severity} data-testid={`loop-refusal-${finding.code}`}>
+              <p>{finding.message}</p>
+              {finding.owner_action && <p className="remedy">{finding.owner_action}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
       {current && (
         <>
           <h2>{current.id}</h2>
+          <div className="param">
+            <label htmlFor="loop-rename">Rename to</label>
+            <input
+              id="loop-rename"
+              data-testid="loop-rename"
+              type="text"
+              placeholder="another_id"
+              value={renameTo}
+              onChange={(event) => setRenameTo(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && renameLoop()}
+            />
+            <button data-testid="loop-rename-go" disabled={!/^[a-z0-9_]+(\.[a-z0-9_]+)*$/.test(renameTo.trim()) || renameTo.trim() === current.id} onClick={renameLoop}>
+              Rename
+            </button>
+            <button data-testid="loop-remove" onClick={removeLoop}>
+              Remove {current.id}
+            </button>
+          </div>
           <div className="param">
             <label htmlFor="loop-form">Form</label>
             <select id="loop-form" data-testid="loop-form" value={current.form} onChange={(event) => setLoop({ form: event.target.value })}>
@@ -1142,9 +1238,50 @@ export function LoopsPanel(props: {
               ))}
             </>
           )}
-          {current.built?.box && playingHere && (
-            <>
+          {(canUpload || (current.built?.box && playingHere)) && (
+            <div
+              data-testid="frame-drop"
+              data-over={over}
+              onDragOver={(event) => {
+                if (!canUpload || !event.dataTransfer.types.includes("Files")) return;
+                event.preventDefault();
+                setOver(true);
+              }}
+              onDragLeave={() => setOver(false)}
+              onDrop={(event) => {
+                if (!canUpload) return;
+                event.preventDefault();
+                setOver(false);
+                if (!disabled) uploadFrames([...event.dataTransfer.files]);
+              }}
+            >
               <h2>Frames of {current.id}</h2>
+              {canUpload && (
+                <>
+                  <p className="hint">
+                    Drop the painted frames (PNG) and the kit's kit.json here, or{" "}
+                    <button data-testid="frames-upload" onClick={() => frameInput.current?.click()}>
+                      pick files
+                    </button>
+                    . They go in as one import.
+                  </p>
+                  <input
+                    ref={frameInput}
+                    type="file"
+                    multiple
+                    accept="image/png,application/json,.json"
+                    hidden
+                    data-testid="frames-upload-input"
+                    onChange={(event) => {
+                      uploadFrames([...(event.target.files ?? [])]);
+                      event.target.value = "";
+                    }}
+                  />
+                  {dropHint && <p className="reason" data-testid="frames-drop-hint">{dropHint}</p>}
+                </>
+              )}
+              {current.built?.box && playingHere && (
+            <>
               <p className="hint">Frame 0 is the room's. Click a frame to see it alone, with the one before it faint; click it again to put the room back.</p>
               <div className="frame-strip" data-testid="frame-strip">
                 {Array.from({ length: current.built.frames }, (_, n) => {
@@ -1191,6 +1328,8 @@ export function LoopsPanel(props: {
                 })}
               </div>
             </>
+              )}
+            </div>
           )}
         </>
       )}

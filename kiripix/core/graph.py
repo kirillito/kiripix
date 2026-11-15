@@ -132,8 +132,15 @@ class Failures:
         entry = self._entries.get(stage)
         return entry["message"] if entry and entry["input_hash"] == input_hash else None
 
-    def record(self, stage: str, input_hash: str, message: str) -> None:
-        self._entries[stage] = {"input_hash": input_hash, "message": message, "time": _now()}
+    def code(self, stage: str, input_hash: str) -> str | None:
+        """The failure's finding code, such as rig.base_mismatch: `stage.failed` unless the Stage gave its own; None while
+        the Stage isn't failed on these inputs."""
+        entry = self._entries.get(stage)
+        return entry.get("code", "stage.failed") if entry and entry["input_hash"] == input_hash else None
+
+    def record(self, stage: str, input_hash: str, message: str, code: str | None = None) -> None:
+        self._entries[stage] = {"input_hash": input_hash, "message": message, "code": code or "stage.failed",
+                                "time": _now()}
         atomic.write_json(self._path, self._entries)
 
     def clear(self, stage: str) -> None:
@@ -956,7 +963,8 @@ class _Runner:
             shutil.rmtree(building, ignore_errors=True)
             self.runner_seconds.pop(spec.name, None)
         if outcome.outcome == "failed":
-            graph.failures.record(spec.name, input_hash, outcome.message or "failed")
+            code = self.failure_findings.get(spec.name, (None, None, None))[0]
+            graph.failures.record(spec.name, input_hash, outcome.message or "failed", code)
         self._history(spec, params, outcome)
         return outcome, checked
 

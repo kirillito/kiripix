@@ -172,6 +172,47 @@ def test_an_eye_that_faces_away_is_not_painted(project: Kiripix) -> None:
                 == read(folder / "work" / "palette" / "color" / "idle" / "n" / name)).all()
 
 
+def test_an_eye_behind_another_material_is_not_stamped_and_one_that_shows_is(project: Kiripix) -> None:
+    folder = ready(project, STILL)
+    project.json("set", HERO, "render", "eyes=skin")  # the fake's material pass is cloth everywhere: cloth covers the eyes
+    project.json("set", HERO, "finish", "eyes=stamp", "outline=false")
+    for stage in ("render", "palette", "finish"):
+        project.json("run", HERO, stage)
+
+    for name in ("000.png", "004.png"):
+        assert (read(folder / "work" / "finish" / "color" / "idle" / "s" / name)
+                == read(folder / "work" / "palette" / "color" / "idle" / "s" / name)).all()
+    assert not [f for f in project.json("check", HERO)["findings"] if f["code"] == "palette.off_palette"]
+
+
+def test_an_eye_that_shows_is_stamped_as_before(project: Kiripix) -> None:
+    folder = stamped(project)  # the eyes are on the material the pass holds there
+    x, y = (int(v) for v in render_json(folder)["pivot"])
+    assert (read(folder / "work" / "finish" / "color" / "idle" / "s" / "000.png")[y - 41, x - 2]
+            != read(folder / "work" / "palette" / "color" / "idle" / "s" / "000.png")[y - 41, x - 2]).any()
+
+
+def test_eyes_covered_names_the_clip_the_direction_and_the_material(project: Kiripix) -> None:
+    ready(project, STILL)
+    project.json("set", HERO, "render", "eyes=skin")
+    for stage in ("render", "palette", "finish"):
+        project.json("run", HERO, stage)
+
+    found = [f for f in project.json("check", HERO)["findings"] if f["code"] == "sheet.eyes_covered"]
+
+    assert [f["position"]["field"] for f in found] == ["idle/s", "idle/se", "idle/sw"]
+    assert all(f["severity"] == "warning" and "cloth" in f["message"] and "clip idle" in f["message"] and f["owner_action"]
+               for f in found)
+
+
+def test_eyes_that_show_give_no_eyes_covered_warning(project: Kiripix) -> None:
+    stamped(project)
+
+    findings = project.json("check", HERO)["findings"]
+
+    assert [f for f in findings if f["code"] == "sheet.eyes_covered"] == []
+
+
 def test_pupils_leaves_the_whites_out_and_the_colours_can_be_chosen(project: Kiripix) -> None:
     folder = stamped(project, "eyes=pupils", "eye_colour=1")
 

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: ui-engineer
 type: ticket
@@ -36,6 +36,21 @@ looks typed, and a generated character's Model screen shows no Source.
 
 ## Acceptance criteria
 
-- [ ] Playwright, on the fake Blender: a character made from a base shows its base, the base's clips as the base's, and a
+- [x] Playwright, on the fake Blender: a character made from a base shows its base, the base's clips as the base's, and a
       parameter from the base with its mark; removing a base clip records a `remove` Decision.
-- [ ] A generated character's Model screen shows its parameter file and offers no Pick.
+- [x] A generated character's Model screen shows its parameter file and offers no Pick.
+
+## Result (2026-11-15)
+
+Built in `web/` on the existing Commands only (`show`, `new`, `import --role parameters`, `decide`, `set`, `undo`); no Command was missing.
+
+- **Model:** a link to the base; for a generated character, its parameter file (name, size, drop to replace with `import --role parameters`) in place of
+  the Variant list and its drop, so no Pick. A character with no Model yet also gets a parameter-file drop.
+- **Rig:** for a character with a base, no Mixamo steps, upload or rigged-file drop; a note on the skeleton rule; a failed `rig` shows its reason, which
+  names the base and the missing or re-parented bones.
+- **Clips:** the base's clips marked "the base's", with "Change here" (the existing form, a `clip` Decision of the same name) and "Remove here" (a `remove`
+  Decision). A `remove` hides the clip; a changed one becomes the character's own. The base's clip sources are marked the same way (their `file` is in the base's folder).
+- **Parameters:** every Stage panel marks a value from the base ("from the base") or the generator ("generated"), with "set here", one `set` of the shown value.
+- **New:** the Status board has a "New character" form (name, base, optional parameter file; one `new`), which opens the new character.
+- **Tests:** `web/e2e/character-base.spec.ts` (4 flows, fake Blender, the fake generator for the generated one). `character.spec.ts` and `shell.spec.ts` still pass.
+  Screenshots in `web/test-results/`.

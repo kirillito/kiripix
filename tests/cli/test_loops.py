@@ -460,7 +460,7 @@ def test_a_room_with_no_loops_has_a_loops_stage_that_is_done(project: Kiripix) -
     folder = room_with_a_lamp_layer(project)
     build(project)
     assert stage_status(project, ROOM)["loops"] == "done"
-    assert json.loads((out(folder) / "loops.json").read_text("utf-8")) == {"schema_version": 1, "loops": []}
+    assert json.loads((out(folder) / "loops.json").read_text("utf-8")) == {"schema_version": 2, "loops": []}
     assert codes(project) == []
 
 

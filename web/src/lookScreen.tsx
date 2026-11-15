@@ -7,7 +7,7 @@
 // previewed, and the Decision is recorded by the button.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { fileUrl, type StageDescription, type ShowData, type StageDetail } from "./api";
+import { call, fileUrl, type StageDescription, type ShowData, type StageDetail } from "./api";
 import { LookTool, type Box, type DriftBox, type LookView, type Piece } from "./lookTool";
 import { MAX_RADIUS, MaskTool, MIN_RADIUS, tintOf } from "./maskTool";
 import { isTyping, type PixelCanvas } from "./pixelCanvas";
@@ -98,69 +98,19 @@ async function pieceOf(url: string, x: number, y: number): Promise<{ piece: Piec
   return { piece: { image: canvas, x, y }, alpha: context.getImageData(0, 0, canvas.width, canvas.height).data };
 }
 
-function oklab(r: number, g: number, b: number): [number, number, number] {
-  const lin = (value: number) => {
-    const c = value / 255;
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  const [lr, lg, lb] = [lin(r), lin(g), lin(b)];
-  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
-  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
-  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
-  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
-}
-
-// A rough preview of a `difference`: the edit scaled to the room's size against the mapped room, on the 3x3 mean, in ΔE. The
-// Stage measures the fitted images before the palette and drops specks, so its region differs; this only shows where to look.
-function previewOf(room: ImageData, edit: HTMLImageElement, box: Box, tolerance: number): HTMLCanvasElement {
-  const { width, height } = room;
-  const scaled = document.createElement("canvas");
-  scaled.width = width;
-  scaled.height = height;
-  const own = scaled.getContext("2d", { willReadFrequently: true })!;
-  own.imageSmoothingQuality = "high";
-  own.drawImage(edit, 0, 0, width, height);
-  const other = own.getImageData(0, 0, width, height).data;
-  const mean = (data: Uint8ClampedArray | Uint8Array, x: number, y: number): [number, number, number] => {
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    let n = 0;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const px = x + dx;
-        const py = y + dy;
-        if (px < 0 || py < 0 || px >= width || py >= height) continue;
-        const at = (py * width + px) * 4;
-        r += data[at];
-        g += data[at + 1];
-        b += data[at + 2];
-        n++;
-      }
-    }
-    return [r / n, g / n, b / n];
-  };
+// The previewed region as a canvas: the `look-difference` Probe's runs of [y, x, length], in a tint.
+function previewOf(answer: { width: number; height: number; runs: [number, number, number][] }): HTMLCanvasElement {
   const out = document.createElement("canvas");
-  out.width = width;
-  out.height = height;
+  out.width = answer.width;
+  out.height = answer.height;
   const paint = out.getContext("2d")!;
   paint.fillStyle = "#ffe14d";
-  for (let y = Math.max(0, box.y0); y <= Math.min(height - 1, box.y1); y++) {
-    for (let x = Math.max(0, box.x0); x <= Math.min(width - 1, box.x1); x++) {
-      const a = oklab(...mean(room.data, x, y));
-      const b = oklab(...mean(other, x, y));
-      if (100 * Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) >= tolerance) paint.fillRect(x, y, 1, 1);
-    }
-  }
+  for (const [y, x, length] of answer.runs) paint.fillRect(x, y, length, 1);
   return out;
 }
 
-async function loadImage(url: string): Promise<HTMLImageElement> {
-  const image = new Image();
-  image.src = url;
-  await image.decode();
-  return image;
-}
+const PREVIEW_PROBE = "look-difference";
+const PREVIEW_DELAY_MS = 150; // a slider drag settles before the Probe is asked
 
 export function LooksPanel(props: {
   canvas: RefObject<PixelCanvas | null>;
@@ -175,6 +125,7 @@ export function LooksPanel(props: {
   onRebuild: (rebuild: boolean) => void;
   decide: (decision: string, data: Record<string, unknown>, settled?: () => void) => void;
   importEdit: (file: File, look: string) => void;
+  pickEdit: (look: string, variant: string) => void;
 }) {
   const { canvas, show, detail, imageVersion, refreshes, disabled, rebuild, onRebuild } = props;
   const [built, setBuilt] = useState<BuiltLook[]>([]);
@@ -322,27 +273,37 @@ export function LooksPanel(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, room, imageVersion, built, stageFolder]);
 
-  // The staged box's rough preview.
+  // The staged box's preview: the region the Decision would add, from the `look-difference` Probe, debounced.
   useEffect(() => {
     const looking = looker.current;
     if (!looking) return;
-    if (!staged || !room || !current?.edit) {
+    if (!staged || !current?.edit) {
       looking.preview = null;
       canvas.current?.redraw();
       return;
     }
     let live = true;
-    void loadImage(fileUrl(`${folder}/src/looks/${current.id}/${current.edit}.png`, 0))
-      .then((edit) => {
-        if (!live) return;
-        looking.preview = previewOf(room, edit, staged, tolerance);
-        canvas.current?.redraw();
+    const here = current.id;
+    const timer = window.setTimeout(() => {
+      const box = `${staged.x0},${staged.y0},${staged.x1},${staged.y1}`;
+      void call<{ result: { width: number; height: number; pixels: number; runs: [number, number, number][] } }>("probe", {
+        name: PREVIEW_PROBE,
+        asset: props.asset,
+        args: [here, box, String(tolerance)],
       })
-      .catch(() => undefined);
+        .then((result) => {
+          if (!live) return;
+          looking.preview = result.ok && result.data ? previewOf(result.data.result) : null;
+          looking.previewPixels = result.ok && result.data ? result.data.result.pixels : 0;
+          canvas.current?.redraw();
+        })
+        .catch(() => undefined);
+    }, PREVIEW_DELAY_MS);
     return () => {
       live = false;
+      window.clearTimeout(timer);
     };
-  }, [canvas, staged, tolerance, room, current?.id, current?.edit, folder]);
+  }, [canvas, staged, tolerance, props.asset, current?.id, current?.edit, imageVersion, refreshes]);
 
   useEffect(() => setCondition(current?.condition ?? ""), [current?.id, current?.condition]);
 
@@ -467,6 +428,21 @@ export function LooksPanel(props: {
           event.target.value = "";
         }}
       />
+      {current && (show.looks?.find((entry) => entry.look === current.id)?.variants.length ?? 0) > 0 && (
+        <ul className="looks" data-testid="look-variants" aria-label={`Edits of ${current.id}`}>
+          {show.looks!.find((entry) => entry.look === current.id)!.variants.map((variant) => {
+            const picked = show.looks!.find((entry) => entry.look === current.id)!.picked === variant.name;
+            return (
+              <li key={variant.name}>
+                <button data-testid={`look-variant-${variant.name}`} aria-pressed={picked} onClick={() => !picked && props.pickEdit(current.id, variant.name)}>
+                  {variant.name}
+                  {picked && <span className="condition"> picked</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <p className="hint">Or drop a PNG on the canvas. The edit is made from the room's Source, and is picked as the Look's edit at once.</p>
       {current && (
         <>
@@ -524,7 +500,7 @@ export function LooksPanel(props: {
             <label htmlFor="look-tolerance">Tolerance</label>
             <input id="look-tolerance" data-testid="look-tolerance" type="range" min={0} max={20} step={0.5} value={tolerance} onChange={(event) => setTolerance(Number(event.target.value))} />
             <output data-testid="look-tolerance-value">{tolerance.toFixed(1)}</output>
-            <small>ΔE: how much a pixel must differ from the room. The yellow preview is rough; the Stage measures before the palette.</small>
+            <small>ΔE: how much a pixel must differ from the room. The yellow preview is what the Stage will take.</small>
           </div>
           <button data-testid="difference-record" disabled={!staged || !current || current.edit === null} onClick={record}>
             Record the difference

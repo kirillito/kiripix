@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   call,
   callWithFile,
+  callWithFiles,
   cancelJob,
   events,
   fileUrl,
@@ -325,6 +326,7 @@ export function App() {
         click: "Clicking into",
         border: "Bordering",
         remove: "Removing",
+        rename: "Renaming",
         polygon: "Filling",
         solid: "Painting the solid of",
         difference: "Measuring the difference of",
@@ -381,6 +383,13 @@ export function App() {
       }, `Importing an edit of ${look}`),
     [asset, perform, rebuilt],
   );
+  // An older edit of a Look, picked from the list (ticket 0209): one `pick --look`.
+  const pickEdit = useCallback(
+    (look: string, variant: string) => {
+      if (!busy) void perform(async () => rebuilt(await call("pick", { asset, look, variant })), `Picking an edit of ${look}`);
+    },
+    [asset, busy, perform, rebuilt],
+  );
   // A frame Loop's kit (ticket 0196): written to a folder on the server's machine; the painted frames come back from there.
   // `import --loop` takes a JSON list of paths over REST (multipart takes one file), so the folder is named, not uploaded.
   const writeKit = useCallback(
@@ -397,6 +406,17 @@ export function App() {
       void perform(async () => {
         const [file, ...frames] = paths;
         return rebuilt(await call("import", { asset, loop, file, frames }));
+      }, `Importing the frames of ${loop}`),
+    [asset, perform, rebuilt],
+  );
+  // Frames dropped or picked (ticket 0210): one multipart `import --loop`, the first PNG as `file`, the others as `frames` parts, and
+  // the kit's `kit.json` as `kit`. The Command sorts them by the names they were sent with.
+  const importFrameFiles = useCallback(
+    (loop: string, frames: File[], kit: File | null) =>
+      void perform(async () => {
+        const [first, ...rest] = frames;
+        const parts = [{ field: "file", file: first }, ...rest.map((file) => ({ field: "frames", file })), ...(kit ? [{ field: "kit", file: kit }] : [])];
+        return rebuilt(await callWithFiles("import", { asset, loop }, parts));
       }, `Importing the frames of ${loop}`),
     [asset, perform, rebuilt],
   );
@@ -424,6 +444,16 @@ export function App() {
       await perform(() => callWithFile("import", { asset, role }, "file", file), `Importing ${file.name}`);
     }
   };
+  // `new` for a character: one Command, and the new Asset opens when it was made. A parameter file goes with it.
+  const createCharacter = (name: string, base: string, parameters: File | null) =>
+    void perform(async () => {
+      const input = { kind: CHARACTER_KIND, name, ...(base ? { base } : {}) };
+      const result = parameters
+        ? await callWithFile<{ asset: string }>("new", input, "from_parameters", parameters)
+        : await call<{ asset: string }>("new", input);
+      if (result.ok && result.data) open(result.data.asset, null);
+      return result;
+    }, `Creating ${name}`);
   // A character's Decisions (a `bone`, a `clip`): one `decide` each, nothing run after it.
   const decideCharacter = useCallback(
     (name: string, data: Record<string, unknown>, label: string) => {
@@ -617,7 +647,7 @@ export function App() {
       <AssetList status={data.status} selected={asset} filter={filter} onSelect={(id) => open(id, null)} />
       <main>
         {!asset || !show ? (
-          <StatusBoard status={data.status} filter={filter} onOpen={open} />
+          <StatusBoard status={data.status} filter={filter} onOpen={open} onCreateCharacter={createCharacter} />
         ) : isCharacterScreen && detail && description ? (
           <CharacterScreen
             key={`${asset}/${current}`}
@@ -631,6 +661,7 @@ export function App() {
             onPick={pick}
             onImport={(files, role) => void importFiles(files, role)}
             decide={decideCharacter}
+            onOpen={(id) => open(id, null)}
           />
         ) : isSpriteFrames && detail && description ? (
           <SpriteFramesScreen
@@ -756,6 +787,7 @@ export function App() {
                 onRebuild={setLooksRebuild}
                 decide={decideMask}
                 importEdit={importEdit}
+                pickEdit={pickEdit}
               />
             )}
             {isLoops && (
@@ -775,6 +807,8 @@ export function App() {
                 decide={decideMask}
                 writeKit={writeKit}
                 importFrames={importFrames}
+                importFrameFiles={importFrameFiles}
+                notice={noticeShown}
                 importEdit={importLoopEdit}
                 onStage={setStage}
               />
@@ -795,6 +829,7 @@ export function App() {
                   key={`${detail.stage}.${param.name}.${refusals}`}
                   spec={param}
                   value={detail.params[param.name]}
+                  origin={detail.param_sources?.[param.name]}
                   onCommit={(value) => setParam(param.name, value)}
                 />
               ))}

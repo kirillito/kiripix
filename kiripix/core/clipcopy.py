@@ -14,7 +14,7 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project
 from kiripix.recipes.base import CurrentDecision
-from kiripix.recipes.clips import CLIP, latest_clips
+from kiripix.recipes.clips import CLIP
 
 CLIPS_STAGE = "clips"
 
@@ -34,7 +34,7 @@ class ClipCopy:
 def _clips(project: Project, asset: Asset) -> list[CurrentDecision]:
     """The character's clips as its `clips` Stage reads them: for one made from a base, the base's too (ADR 0012)."""
     graph = AssetGraph(project, asset, HashCache(project.state_dir))
-    return latest_clips(graph.decisions(graph.spec(CLIPS_STAGE)))
+    return [d for d in graph.decisions(graph.spec(CLIPS_STAGE)) if d.name == CLIP.name]  # one per name: the view
 
 
 def _need_character(asset: Asset) -> None:

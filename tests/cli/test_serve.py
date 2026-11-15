@@ -228,6 +228,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "preview": lambda a: {"asset": a[1], "stage": a[3], "region": a[5], "grid": int(a[7])},
     "export": lambda a: {"asset": a[1]},
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
+    "cast-sheet": lambda a: {"assets": a[1], "scale": int(a[3])},
     "loop kit": lambda a: {"asset": a[2], "loop": a[3], "folder": a[4], "frames": int(a[6])},
     "track": lambda a: {"asset": a[1], "stage": a[2], "seconds": int(a[4])},
     "stats": lambda a: {"all": True},

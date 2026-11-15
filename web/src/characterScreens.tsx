@@ -14,8 +14,11 @@ export const CHARACTER_SCREENS = [MODEL_STAGE, RIG_STAGE, CLIPS_STAGE];
 export const BONE_DECISION = "bone";
 export const CLIP_DECISION = "clip";
 
-export type ImportRole = "variant" | "clip-source" | "rigged" | "sheet";
+export type ImportRole = "variant" | "clip-source" | "rigged" | "sheet" | "parameters";
 export const MODEL_FILES = ".glb,.fbx,.blend";
+export const PARAMETER_FILES = ".toml,.json";
+export const REMOVE_DECISION = "remove";
+const BASE_MISMATCH = "rig.base_mismatch"; // the rig's finding when the Model's skeleton isn't its base's
 
 interface ModelDocument {
   source: string;
@@ -221,6 +224,19 @@ export function FileDrop(props: { testid: string; accept: string; multiple?: boo
   );
 }
 
+// A link to the character this one is made from (ADR 0012).
+function BaseLink(props: { base: string; onOpen: (asset: string) => void }) {
+  return (
+    <p data-testid="base-note">
+      Made from{" "}
+      <button className="link" data-testid="base-link" onClick={() => props.onOpen(props.base)}>
+        {props.base}
+      </button>
+      : it takes the base's skeleton, clips and Stage parameters unless it sets its own.
+    </p>
+  );
+}
+
 // The Model: its Variants as a list, each with its file's name and size and, for the one `model` built, its bounds.
 function ModelScreen(props: {
   show: ShowData;
@@ -228,17 +244,30 @@ function ModelScreen(props: {
   refreshes: number;
   onPick: (variant: string) => void;
   onImport: (files: File[], role: ImportRole) => void;
+  onOpen: (asset: string) => void;
 }) {
   const { show, detail, refreshes } = props;
   const model = useDocument<ModelDocument>(outputOf(detail, "model.json"), refreshes);
   const still = outputOf(detail, "still.png");
   return (
     <div className="character-screen" data-testid="model-screen">
-      <h2>Models</h2>
+      <h2>{show.parameters ? "Model" : "Models"}</h2>
+      {show.base && <BaseLink base={show.base} onOpen={props.onOpen} />}
       {still && model && (
         <img className="model-still" data-testid="model-still" alt={`The picked Model, ${model.source}`} src={fileUrl(still, refreshes)} />
       )}
-      {show.variants.length === 0 ? (
+      {show.parameters ? (
+        <div data-testid="parameters">
+          <p>
+            Built from the parameter file <code data-testid="parameters-name">{show.parameters.imported_as ?? basename(show.parameters.file)}</code>{" "}
+            {show.parameters.size !== undefined && <small>{readableSize(show.parameters.size)}</small>} by the Project's generator. There is
+            nothing to pick.
+          </p>
+          <FileDrop testid="parameters-drop" accept={PARAMETER_FILES} onFiles={(files) => props.onImport(files.slice(0, 1), "parameters")}>
+            Drop another .toml or .json parameter file here to replace it. Or
+          </FileDrop>
+        </div>
+      ) : show.variants.length === 0 ? (
         <p className="hint">No Model yet.</p>
       ) : (
         <ul className="model-list" data-testid="model-list">
@@ -254,9 +283,16 @@ function ModelScreen(props: {
           ))}
         </ul>
       )}
-      <FileDrop testid="model-drop" accept={MODEL_FILES} multiple onFiles={(files) => props.onImport(files, "variant")}>
-        Drop a .glb, .fbx or .blend Model here to add it, then pick it with its number key. Or
-      </FileDrop>
+      {!show.parameters && (
+        <FileDrop testid="model-drop" accept={MODEL_FILES} multiple onFiles={(files) => props.onImport(files, "variant")}>
+          Drop a .glb, .fbx or .blend Model here to add it, then pick it with its number key. Or
+        </FileDrop>
+      )}
+      {!show.parameters && show.variants.length === 0 && (
+        <FileDrop testid="parameters-start-drop" accept={PARAMETER_FILES} onFiles={(files) => props.onImport(files.slice(0, 1), "parameters")}>
+          Or drop a .toml or .json parameter file here, for a Model the Project's generator builds. Or
+        </FileDrop>
+      )}
       <p className="hint">There is no 3D view: the render Stage shows the character.</p>
     </div>
   );
@@ -316,6 +352,7 @@ function RigScreen(props: {
   disabled: boolean;
   onImport: (files: File[], role: ImportRole) => void;
   decide: (name: string, data: Record<string, unknown>, label: string) => void;
+  onOpen: (asset: string) => void;
 }) {
   const { show, detail, description, ownerAction, refreshes } = props;
   const rig = useDocument<RigDocument>(outputOf(detail, "rig.json"), refreshes);
@@ -325,7 +362,8 @@ function RigScreen(props: {
   const [role, setRole] = useState("");
   const [bone, setBone] = useState("");
   const chosenRole = role || roles[0] || "";
-  const steps = ownerAction ? numberedSteps(ownerAction) : null;
+  // A character made from a base needs no Mixamo trip: its Model carries the base's skeleton.
+  const steps = ownerAction && !show.base ? numberedSteps(ownerAction) : null;
   // The bones to choose from are the rig's: the rigged file's if there is one, else the picked Model's.
   const rigFile = show.rigged ?? show.variants.find((variant) => variant.name === show.picked) ?? null;
   const formShown = (detail.status === "failed" || mapped.length > 0) && roles.length > 0;
@@ -334,6 +372,18 @@ function RigScreen(props: {
   return (
     <div className="character-screen" data-testid="rig-screen">
       <h2>Rig</h2>
+      {show.base && <BaseLink base={show.base} onOpen={props.onOpen} />}
+      {show.base && (
+        <p className="hint" data-testid="base-rig-note">
+          The Model's own armature must have the base's bones, by name and under the same parents. Extra bones are fine, and rest
+          proportions may differ. No rigged file is needed.
+        </p>
+      )}
+      {detail.failure_code === BASE_MISMATCH && (
+        <p className="reason" data-testid="base-mismatch" data-code={detail.failure_code}>
+          {detail.failure_code}: {detail.reason}
+        </p>
+      )}
       {rig && (
         <div data-testid="rig-summary">
           <p>
@@ -369,7 +419,8 @@ function RigScreen(props: {
         </div>
       )}
       {steps && steps.steps.length === 0 && <p data-testid="rig-owner-action">{ownerAction}</p>}
-      {upload && (
+      {show.base && ownerAction && <p data-testid="rig-owner-action">{ownerAction}</p>}
+      {upload && !show.base && (
         <p>
           The file to upload to Mixamo: <code data-testid="upload-path">{upload}</code>{" "}
           <a href={fileUrl(upload, 0)} download data-testid="upload-link">
@@ -382,9 +433,11 @@ function RigScreen(props: {
           Rigged file: <code>{basename(show.rigged.file)}</code>
         </p>
       )}
-      <FileDrop testid="rigged-drop" accept={MODEL_FILES} onFiles={(files) => props.onImport(files.slice(0, 1), "rigged")}>
-        Drop the rigged file that came back from Mixamo here. Or
-      </FileDrop>
+      {!show.base && (
+        <FileDrop testid="rigged-drop" accept={MODEL_FILES} onFiles={(files) => props.onImport(files.slice(0, 1), "rigged")}>
+          Drop the rigged file that came back from Mixamo here. Or
+        </FileDrop>
+      )}
       {formShown && <ReadingNote reads={reads} />}
       {formShown && (
         <fieldset disabled={props.disabled} className="bone-form">
@@ -475,6 +528,7 @@ function ClipsScreen(props: {
   disabled: boolean;
   onImport: (files: File[], role: ImportRole) => void;
   decide: (name: string, data: Record<string, unknown>, label: string) => void;
+  onOpen: (asset: string) => void;
 }) {
   const { show, detail, description, refreshes } = props;
   const built = useDocument<ClipsDocument>(outputOf(detail, "clips.json"), refreshes);
@@ -524,15 +578,11 @@ function ClipsScreen(props: {
   for (const action of actions) {
     known.push({ value: action.name, label: `the Model, ${action.name} (${action.start}–${action.end})`, start: action.start, end: action.end, fps: model?.fps ?? null });
   }
-  // One clip per name: a `clip` Decision under a name an earlier one has replaces it, keeping the earlier one's place (0156).
-  const latest = new Map<string, ClipData>();
-  for (const decision of detail.decisions) {
-    if (decision.name === CLIP_DECISION) {
-      const data = decision.data as unknown as ClipData;
-      latest.set(data.name, data);
-    }
-  }
-  const clips = [...latest.values()];
+  // The clips as the Stage reads them (`show`'s `decisions_as_read`, ticket 0228): one per name, without the removed ones.
+  // The base's are marked; a clip decided again here over the base's is the character's own.
+  const clips = detail.decisions_as_read
+    .filter((decision) => decision.name === CLIP_DECISION)
+    .map((decision) => ({ ...(decision.data as unknown as ClipData), fromBase: decision.from_base === true }));
   const pattern = description.decisions.find((entry) => entry.name === CLIP_DECISION)?.entry_schema?.properties?.name?.pattern;
   const namePattern = pattern ? new RegExp(pattern) : null;
 
@@ -591,6 +641,7 @@ function ClipsScreen(props: {
   return (
     <div className="character-screen" data-testid="clips-screen">
       <h2>Clips</h2>
+      {show.base && <BaseLink base={show.base} onOpen={props.onOpen} />}
       {clips.length === 0 ? (
         <p className="hint" data-testid="clips-empty">No clips yet.</p>
       ) : (
@@ -611,8 +662,18 @@ function ClipsScreen(props: {
             {clips.map((clip, index) => {
               const made = built?.clips.find((entry) => entry.name === clip.name);
               return (
-                <tr key={`${clip.name}-${index}`} data-testid={`clip-row-${clip.name}`}>
-                  <td>{clip.name}</td>
+                <tr key={`${clip.name}-${index}`} data-testid={`clip-row-${clip.name}`} data-from-base={clip.fromBase}>
+                  <td>
+                    {clip.name}
+                    {clip.fromBase && (
+                      <>
+                        {" "}
+                        <small className="from-base" data-testid={`clip-base-${clip.name}`} title="Read-only: the base's clip">
+                          the base's
+                        </small>
+                      </>
+                    )}
+                  </td>
                   <td>{clip.source}</td>
                   <td>
                     {clip.start}–{clip.end}
@@ -623,8 +684,17 @@ function ClipsScreen(props: {
                   <td>{made ? `${made.frames.length}${made.root_motion ? " (root moves)" : ""}` : ""}</td>
                   <td>
                     <button data-testid={`clip-edit-${clip.name}`} disabled={props.disabled} onClick={() => edit(clip)}>
-                      Edit
+                      {clip.fromBase ? "Change here" : "Edit"}
                     </button>
+                    {clip.fromBase && (
+                      <button
+                        data-testid={`clip-remove-${clip.name}`}
+                        disabled={props.disabled}
+                        onClick={() => props.decide(REMOVE_DECISION, { name: clip.name }, `Removing the clip ${clip.name} here`)}
+                      >
+                        Remove here
+                      </button>
+                    )}
                   </td>
                 </tr>
               );
@@ -715,6 +785,14 @@ function ClipsScreen(props: {
           {show.clip_sources.map((entry) => (
             <li key={entry.name} data-testid={`clip-source-${entry.name}`}>
               {entry.name} <small>{entry.imported_as ?? basename(entry.file)}</small>
+              {entry.from_base && (
+                <>
+                  {" "}
+                  <small className="from-base" data-testid={`clip-source-base-${entry.name}`} title="Read-only: in the base's folder">
+                    the base's
+                  </small>
+                </>
+              )}
             </li>
           ))}
         </ul>
@@ -747,6 +825,7 @@ export function CharacterScreen(props: {
   onPick: (variant: string) => void;
   onImport: (files: File[], role: ImportRole) => void;
   decide: (name: string, data: Record<string, unknown>, label: string) => void;
+  onOpen: (asset: string) => void;
 }) {
   if (props.stage === MODEL_STAGE) return <ModelScreen {...props} />;
   if (props.stage === RIG_STAGE) return <RigScreen {...props} />;

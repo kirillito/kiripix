@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -27,6 +27,16 @@ look-down a brim wider than about 5 cm covers the eyes, and so can a fringe, a h
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on the fake: an eye behind another material gets no stamp in that frame; an eye that shows is stamped as
+- [x] CLI seam, on the fake: an eye behind another material gets no stamp in that frame; an eye that shows is stamped as
       today.
-- [ ] The warning names the clip, the direction and the covering material.
+- [x] The warning names the clip, the direction and the covering material.
+
+## Done
+
+`finish` reads the material pass `render` already wrote, in a box the size of each eye's extent (at least its centre pixel):
+an eye whose box holds no eye material, but another one, counts as not seen and gets no stamp (`_covered_by`, `_Eyes._anchor`
+in `character_finish.py`). Nothing new is stored in `render.json`, so no Stage goes stale; `finish` needs `finish --force` to
+drop stamps already painted. `sheet.eyes_covered` (warning, a `finish` Check, `check_eyes_covered` in `kiripix/checks/parts.py`)
+looks at `s`, `sw` and `se`, frames where an eye faces the camera, and warns when all of those eyes are covered in more than half
+of a clip direction's frames; it names the clip, the direction and the commonest covering material. Not on the sprite recipe.
+Tests in `tests/cli/test_character_eyes.py`. Not run on real Blender or on `npc_elder_coat`.

@@ -32,7 +32,7 @@ from kiripix.recipes.render import FORMAT_SETTING as RENDER_FORMAT_SETTING, rend
 from kiripix.recipes.blender_launcher import launch
 from kiripix.recipes.common import picked, source_needs_input, variants
 from kiripix.recipes.character_export import check_character_export, export_needs_input, run_character_export
-from kiripix.recipes.clips import CLIP, REMOVE, TRANSITION, check_clips, clips_needs_input, run_clips
+from kiripix.recipes.clips import CLIP, REMOVE, TRANSITION, apply_clip_edits, check_clips, clips_needs_input, run_clips
 from kiripix.recipes.rig import BASE_STAGE as RIG_STAGE, BONE, UPLOAD, rig_needs_input, run_rig
 
 MODEL_HEIGHT = 2.0  # the normalised Model's height in Blender units: `render` frames it, so this is only a known size
@@ -305,6 +305,7 @@ CHARACTER = KindSpec(
             inputs=StageInputs(files=["src/clips/*"], upstream=["model", "rig"], settings=[BLENDER_VERSION_SETTING],
                                given=[BLENDER_SETTING], base=BaseInputs(files=["src/clips/*"], decisions=["clips"])),
             decisions=(CLIP, TRANSITION, REMOVE),
+            decisions_view=apply_clip_edits,
             checks=(
                 CheckSpec(code="clips.source_missing", description="Each clip's source is an action or a clip-source file."),
                 CheckSpec(code="clips.range", description="Each clip's frames are inside its action's."),
@@ -483,6 +484,8 @@ CHARACTER = KindSpec(
                 CheckSpec(code="palette.off_palette", description="Every colour pixel, outline included, is a Project palette colour."),
                 CheckSpec(code="sheet.part_vanishes", description="A material seen in most frames of a clip and direction "
                                                                   "isn't missing from some (a warning)."),
+                CheckSpec(code="sheet.eyes_covered", description="Both eyes of a front view are hidden behind another "
+                                                                 "material in most frames, such as a hat brim (a warning)."),
             ),
             run=run_character_finish,
             check=check_character_finish,

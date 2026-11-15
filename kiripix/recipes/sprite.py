@@ -84,7 +84,7 @@ def _stages() -> tuple[StageSpec, ...]:
                 run=palette_run, check=palette_check, available_from="M4"),
         replace(finish, inputs=StageInputs(upstream=["palette", "fit"], settings=["palette"]),
                 params=finish_params + normals_params("height"),
-                checks=tuple(c for c in finish.checks if c.code != "sheet.part_vanishes"),
+                checks=tuple(c for c in finish.checks if c.code not in ("sheet.part_vanishes", "sheet.eyes_covered")),
                 run=finish_run, check=finish_check, available_from="M4"),
         replace(_CHARACTER["sheet"], inputs=StageInputs(upstream=["finish"]), run=sheet_run, check=sheet_check,
                 available_from="M4"),

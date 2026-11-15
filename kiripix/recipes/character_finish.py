@@ -38,7 +38,15 @@ if TYPE_CHECKING:
 else:
     np = lazy_module("numpy")
 
-from kiripix.checks import Finding, PartCounts, Position, check_conformance, check_part_vanishes
+from kiripix.checks import (
+    EyeCover,
+    Finding,
+    PartCounts,
+    Position,
+    check_conformance,
+    check_eyes_covered,
+    check_part_vanishes,
+)
 from kiripix.checks.sheet import SheetFrame, check_normal_size
 from kiripix.ops import (
     EyeAnchor,
@@ -180,6 +188,26 @@ def _normal_frame(normal: np.ndarray, colour: np.ndarray, levels: int) -> np.nda
 SEEN_MARGIN = 0.067
 
 
+def _covered_by(labels: np.ndarray, found: dict[str, Any], eye_labels: list[int]) -> int | None:
+    """The material pass at an eye's place (ticket 0225): None when an eye material is there, or when the place is off the
+    frame or empty; else the index of the other material that most pixels of the eye's box hold (the box is the eye's extent,
+    at least its centre pixel)."""
+    x, y = float(found["x"]), float(found["y"])
+    half_w, half_h = float(found.get("width", 0.0)) / 2, float(found.get("height", 0.0)) / 2
+    left, right = int(np.floor(x - half_w + 0.5)), int(np.floor(x + half_w - 0.5))
+    top, bottom = int(np.floor(y - half_h + 0.5)), int(np.floor(y + half_h - 0.5))
+    left, right = min(left, int(np.floor(x))), max(right, int(np.floor(x)))
+    top, bottom = min(top, int(np.floor(y))), max(bottom, int(np.floor(y)))
+    if right < 0 or bottom < 0:  # wholly off the frame's left or top: a negative slice end would wrap around
+        return None
+    left, top = max(left, 0), max(top, 0)
+    box = labels[top:bottom + 1, left:right + 1]
+    if box.size == 0 or np.isin(box, eye_labels).any():
+        return None
+    values, counts = np.unique(box[box > 0], return_counts=True)
+    return int(values[int(np.argmax(counts))]) if len(values) else None
+
+
 def _eyes_mode(run: StageRun) -> str:
     return str(run.params.get("eyes", "render"))
 
@@ -230,7 +258,7 @@ class _Eyes:
                             found_rgb = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
                             seen_colours[found_rgb] = seen_colours.get(found_rgb, 0) + int(count)
                     depth = near + _read_depth(run.upstream[source] / str(frame["files"]["depth"])) / 65535.0 * (far - near)
-                    anchors.append([self._anchor(found, depth, margin) for found in frame.get("eyes", [])])
+                    anchors.append([self._anchor(found, depth, margin, labels) for found in frame.get("eyes", [])])
                 for frame, stamps in zip(listed, plan_eyes(anchors, self.whites, gap), strict=True):
                     self.stamps[(str(entry["name"]), direction, int(frame["index"]))] = stamps
         wanted = int(run.params.get("eye_colour", -1))
@@ -246,12 +274,13 @@ class _Eyes:
             white = int(np.argmax(_lightness(palette[None, :, :])[0]))
         self.white = _palette_colour(run, palette, "eye_white", white)
 
-    @staticmethod
-    def _anchor(found: dict[str, Any], depth: np.ndarray, margin: float) -> EyeAnchor:
+    def _anchor(self, found: dict[str, Any], depth: np.ndarray, margin: float, labels: np.ndarray) -> EyeAnchor:
         x, y = float(found["x"]), float(found["y"])
         column, row = int(np.floor(x)), int(np.floor(y))
         inside = 0 <= row < depth.shape[0] and 0 <= column < depth.shape[1]
         seen = inside and float(depth[row, column]) >= float(found["depth"]) - margin
+        if seen and _covered_by(labels, found, self.labels) is not None:  # another material is on the eye (ticket 0225)
+            seen = False
         normal = found["normal"]
         return EyeAnchor(x, y, float(found["width"]), float(found["height"]), float(normal[0]), float(normal[2]), seen)
 
@@ -475,6 +504,39 @@ def _vanishing_parts(run: StageRun, source: str, document: dict[str, Any], frame
     return findings
 
 
+FRONT_VIEWS = ("s", "sw", "se")
+FACING_CAMERA = 0.0  # an eye whose normal's z (toward the camera) is above this faces it; the stamp's own limit (`ops.eyes`)
+
+
+def _covered_eyes(run: StageRun, source: str, document: dict[str, Any]) -> list[Finding]:
+    """`sheet.eyes_covered` (ticket 0225): per frame of the front views, whether the eyes that face the camera are all behind
+    another material in the render's material pass. Nothing when render followed no eyes."""
+    render = run.upstream.get(source)
+    names = [str(n) for n in document.get("eyes", [])]
+    by_index = {int(m["index"]): str(m["name"]) for m in document.get("materials", [])}
+    eye_labels = [i for i, n in by_index.items() if n in names]
+    if render is None or not eye_labels:
+        return []
+    frames: list[EyeCover] = []
+    for entry in document["clips"]:
+        for direction in FRONT_VIEWS:
+            for frame in entry["directions"].get(direction, []):
+                path = render / str(frame["files"].get("material", ""))
+                facing = [e for e in frame.get("eyes", []) if float(e["normal"][2]) > FACING_CAMERA]
+                if not facing or not path.is_file():
+                    continue
+                labels = _read_labels(path)
+                covers = [_covered_by(labels, e, eye_labels) for e in facing]
+                hidden = all(c is not None for c in covers)
+                found = [by_index.get(c, "") for c in covers if c is not None]
+                by = max(sorted(set(found)), key=found.count) if hidden and found else None
+                frames.append(EyeCover(str(entry["name"]), direction, int(frame["index"]), hidden, by))
+    findings = check_eyes_covered(frames)
+    for finding in findings:
+        finding.position = Position(asset=run.asset_id, stage="finish", field=finding.position.field if finding.position else None)
+    return findings
+
+
 def _check_finish(run: StageRun, source: str) -> list[Finding]:
     """`normal.size_mismatch` on every frame, and `palette.off_palette` on the colour frames against the Project palette."""
     out = run.output_dir
@@ -498,6 +560,7 @@ def _check_finish(run: StageRun, source: str) -> list[Finding]:
         findings += check_conformance(conformance(colour, palette), name, fix=fix)
     findings += check_normal_size(frames, fix)
     findings += _vanishing_parts(run, source, document, frames)
+    findings += _covered_eyes(run, source, document)
     for finding in findings:
         if finding.position is None:
             finding.position = Position()

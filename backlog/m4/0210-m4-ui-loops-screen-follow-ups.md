@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: ui-engineer
 type: ticket
@@ -22,9 +22,23 @@ Follows [0191](0191-m4-ui-loops-screen.md) and [0196](0196-m4-ui-frame-loops.md)
 
 ## Acceptance criteria
 
-- [ ] Playwright against `kiripix serve`: flood a region on a new Loop before picking any colour. The region shows, and a
+- [x] Playwright against `kiripix serve`: flood a region on a new Loop before picking any colour. The region shows, and a
       second, complete Loop plays in the preview.
-- [ ] Playwright: rename a Loop, then remove another; `loops.json` matches; `undo` restores the removed one.
-- [ ] Playwright: drop two fixture frames and `kit.json` on the strip; both show as thumbnails.
+- [x] Playwright: rename a Loop, then remove another; `loops.json` matches; `undo` restores the removed one.
+- [x] Playwright: drop two fixture frames and `kit.json` on the strip; both show as thumbnails.
 
 Budget: 100–180k tokens.
+
+## Result (2026-11-15)
+
+- **Rename and remove:** the selected Loop has a rename field and a Remove button, each one `decide` (`rename`, `remove`); Ctrl+Z is
+  `undo`. A refusal (`export.id_frozen`, `loop.id_taken`, `loop.unknown`, `loop.rename_same`) shows beside the list with its message.
+  `loopsOf` replays `remove` and `rename` over the journal as `show` gives it (`withEdits`, a display-only mirror of `apply_edits`).
+- **Held Loops:** a held Loop's `region.png` is read into the region Mask as soon as it is built; its reason and `loop.held` show
+  inline. The preview plays the other Loops. Accept was already disabled by any error finding.
+- **Import frames:** a drop on the frame strip, or a file picker, sends one multipart `import --loop` (`callWithFiles` in `api.ts`: the
+  first PNG as `file`, the others as `frames` parts, `kit.json` as `kit`). The kit-folder route stays.
+- Tests: `web/e2e/loops-follow-ups.spec.ts` (4); `loops` and `loopedits` specs still pass. Screenshots:
+  `web/shots/loops-held.png`, `loops-held-rename.png`, `loops-held-drop.png`.
+- Gap for a backend ticket: `show` gives the Loops Decisions as recorded; the screen replays `remove` and `rename` itself. A
+  `decisions` view as the Stage reads them would remove that client logic. The `export.id_frozen` inline display has no Playwright test.

@@ -157,3 +157,18 @@ def test_redoing_a_rename_to_an_id_taken_since_is_refused(project: Kiripix) -> N
     result = project.json("redo", ROOM, "loops", expect=1)
 
     assert [f["code"] for f in result["findings"]] == ["loop.id_taken"] and journal(project) == kept
+
+
+def test_show_gives_the_loops_decisions_as_the_stage_reads_them_and_the_recorded_list_unchanged(project: Kiripix) -> None:
+    a_cycle_loop(project)
+    decide(project, "rename", {"loop": LOOP, "to": NEW})
+    decide(project, "remove", {"loop": "crate_glow"})
+
+    [loops] = [s for s in project.json("show", ROOM)["data"]["stages"] if s["stage"] == "loops"]
+
+    read = [(d["name"], d["data"]["loop"]) for d in loops["decisions_as_read"]]
+    assert read == [("loop", NEW), ("polygon", NEW), ("cycle", NEW), ("timing", NEW)]
+    assert not any(d["from_base"] for d in loops["decisions_as_read"])
+    recorded = [(d["name"], d["data"]["loop"]) for d in loops["decisions"]]
+    assert recorded == [("loop", LOOP), ("polygon", LOOP), ("cycle", LOOP), ("timing", LOOP), ("loop", "crate_glow"),
+                        ("flood", "crate_glow"), ("cycle", "crate_glow"), ("rename", LOOP), ("remove", "crate_glow")]

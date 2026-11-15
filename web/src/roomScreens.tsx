@@ -1,7 +1,7 @@
 // The room's hand-written screens (spec §11): place, with its Marker form, and reach, with the walk test.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { call, fileUrl, type Finding, type ShowData, type SortPosition, type StageDetail, type StatusData } from "./api";
+import { call, fileUrl, projectPalette, type Finding, type ShowData, type SortPosition, type StageDetail, type StatusData } from "./api";
 import {
   ambiguousCells,
   arrowLength,
@@ -80,7 +80,6 @@ function freeId(type: string, markers: Marker[]): string {
 }
 
 const MOST_COLOURS = 16; // an emitter's colours, as the Decision allows
-const PALETTE_FILE = "style/palette.gpl";
 
 // A Decision leaves out an emitter's unset fields; `show` writes them as null.
 function forDecision(marker: Marker): Record<string, unknown> {
@@ -88,18 +87,6 @@ function forDecision(marker: Marker): Record<string, unknown> {
   const kept: Marker = { ...marker };
   for (const key of ["shape", "direction", "colours"]) if (kept[key] === null) delete kept[key];
   return kept;
-}
-
-// The colours of a .gpl palette as #RRGGBB, in file order.
-export function paletteColours(text: string): string[] {
-  const found: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const parts = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line);
-    if (!parts) continue;
-    const hex = "#" + [1, 2, 3].map((index) => Number(parts[index]).toString(16).padStart(2, "0")).join("").toUpperCase();
-    if (!found.includes(hex)) found.push(hex);
-  }
-  return found;
 }
 
 function ownFields(type: string, fields: Fields, layer: string): Record<string, unknown> {
@@ -349,9 +336,8 @@ export function PlacePanel(props: {
         })
         .catch(() => undefined);
     }
-    fetch(fileUrl(PALETTE_FILE, imageVersion))
-      .then((response) => (response.ok ? response.text() : ""))
-      .then((text) => current && setPalette(paletteColours(text)))
+    projectPalette()
+      .then((colours) => current && setPalette(colours.map((colour) => colour.toUpperCase())))
       .catch(() => undefined);
     return () => {
       current = false;

@@ -915,3 +915,19 @@ kbd {
 .badge[data-severity="error"] {
   background: #8a1c1c;
 }
+
+.from-base {
+  color: var(--accent, #8ab4f8);
+  font-weight: 600;
+}
+
+.param-origin {
+  display: inline-flex;
+  gap: 0.4em;
+  align-items: baseline;
+}
+
+.new-character {
+  margin-top: 1.5em;
+  max-width: 28em;
+}

@@ -86,6 +86,13 @@ def _character_files(project: Kiripix) -> None:
     project.json("import", "character.hero", "rigged.fbx", "--role", "rigged")
 
 
+def _cast_ready(project: Kiripix) -> None:
+    """sprite.npc, built to its `sheet`."""
+    from test_cast_sheet import built_sprite  # here, not at the top: its imports lead back to this module
+
+    built_sprite(project)
+
+
 def _clips_to_copy(project: Kiripix) -> None:
     """character.hero with a clip, and character.twin without."""
     _character_files(project)
@@ -128,6 +135,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw", "--region", "0,0,4,4", "--grid", "2"])[1],
     "export": lambda p: (exportable_room(p), ["export", "room.alley"])[1],
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
+    "cast-sheet": lambda p: (_cast_ready(p), ["cast-sheet", "sprite.npc", "--scale", "2"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
     "op palette-suggest": lambda p: (_image(p), ["op", "palette-suggest", "in.png", "--add", "2", "--scale", "1"])[1],

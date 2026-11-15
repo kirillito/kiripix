@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type R
 import {
   fileUrl,
   type Finding,
+  type ParamOrigin,
   type ParamSpec,
   type Scalar,
   type ShowData,
@@ -104,10 +105,68 @@ function Summary({ stages }: { stages: StageState[] }) {
   ) : null;
 }
 
+// `new` for a character: its name and, if it is made from one, its base; or a parameter file for a generated one.
+function NewCharacter(props: { characters: string[]; onCreate: (name: string, base: string, parameters: File | null) => void }) {
+  const [name, setName] = useState("");
+  const [base, setBase] = useState("");
+  const [parameters, setParameters] = useState<File | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const valid = /^[a-z0-9_]+$/.test(name);
+  return (
+    <section className="new-character" data-testid="new-character">
+      <h2>New character</h2>
+      <div className="param">
+        <label htmlFor="new-character-name">Name</label>
+        <input id="new-character-name" data-testid="new-character-name" value={name} onChange={(event) => setName(event.target.value)} />
+      </div>
+      <div className="param">
+        <label htmlFor="new-character-base">Made from</label>
+        <select id="new-character-base" data-testid="new-character-base" value={base} onChange={(event) => setBase(event.target.value)}>
+          <option value="">no base</option>
+          {props.characters.map((id) => (
+            <option key={id} value={id}>
+              {id}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="param">
+        <label>Parameter file</label>
+        <button className="link" data-testid="new-character-parameters" onClick={() => input.current?.click()}>
+          {parameters ? parameters.name : "choose a file (a generated character)"}
+        </button>
+        <input
+          ref={input}
+          data-testid="new-character-parameters-input"
+          type="file"
+          accept=".toml,.json"
+          hidden
+          onChange={(event) => {
+            setParameters(event.target.files?.[0] ?? null);
+            event.target.value = "";
+          }}
+        />
+      </div>
+      <button
+        data-testid="new-character-create"
+        disabled={!valid}
+        onClick={() => {
+          props.onCreate(name, base, parameters);
+          setName("");
+          setParameters(null);
+        }}
+      >
+        Create character
+      </button>
+    </section>
+  );
+}
+
 export function StatusBoard(props: {
   status: StatusData | null;
   filter: Filter;
   onOpen: (asset: string, stage: string) => void;
+  onCreateCharacter?: (name: string, base: string, parameters: File | null) => void;
 }) {
   const assets = (props.status?.assets ?? []).filter((asset) => matches(asset.stages, props.filter));
   return (
@@ -136,6 +195,12 @@ export function StatusBoard(props: {
         </section>
       ))}
       {props.status && assets.length === 0 && <p className="hint">No Asset matches this filter.</p>}
+      {props.onCreateCharacter && props.status && (
+        <NewCharacter
+          characters={props.status.assets.filter((asset) => asset.kind === "character").map((asset) => asset.asset)}
+          onCreate={props.onCreateCharacter}
+        />
+      )}
     </div>
   );
 }
@@ -266,8 +331,14 @@ export function VariantGrid(props: {
 }
 
 // A draft while the Owner types; committed as one `set` on change, blur or Enter. An outside change replaces the draft.
-export function ParamControl(props: { spec: ParamSpec; value: Scalar | undefined; onCommit: (value: Scalar) => void }) {
-  const { spec, value, onCommit } = props;
+// `origin` marks a value the Asset doesn't hold itself (its base's, or its Model's generator's); "set here" writes it to the Asset.
+export function ParamControl(props: {
+  spec: ParamSpec;
+  value: Scalar | undefined;
+  origin?: ParamOrigin;
+  onCommit: (value: Scalar) => void;
+}) {
+  const { spec, value, onCommit, origin } = props;
   const [draft, setDraft] = useState(String(value ?? ""));
   useEffect(() => setDraft(String(value ?? "")), [value]);
   const id = `param-${spec.name}`;
@@ -349,6 +420,14 @@ export function ParamControl(props: { spec: ParamSpec; value: Scalar | undefined
         {spec.name}
       </label>
       {control}
+      {(origin === "base" || origin === "generated") && value !== undefined && (
+        <span className="param-origin" data-testid={`param-origin-${spec.name}`} data-origin={origin}>
+          <small title={origin === "base" ? "The base's value" : "The generator's value"}>{origin === "base" ? "from the base" : "generated"}</small>{" "}
+          <button className="link" data-testid={`param-set-${spec.name}`} onClick={() => onCommit(value)}>
+            set here
+          </button>
+        </span>
+      )}
       <small>{spec.description}</small>
     </div>
   );

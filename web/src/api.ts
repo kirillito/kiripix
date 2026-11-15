@@ -52,10 +52,24 @@ export interface SortPosition {
   slope: number;
 }
 
+// Who gave a Stage parameter its value: the Asset's own asset.toml, its Model's generator, its base, or nobody (the default).
+export type ParamOrigin = "asset" | "generated" | "base" | "default";
+
+// A current Decision in `show`; `from_base`: the base's, never undone here.
+export interface ShownDecision {
+  id: string;
+  name: string;
+  data: Record<string, unknown>;
+  from_base?: boolean;
+}
+
 export interface StageDetail extends StageState {
+  failure_code?: string | null; // while failed: the code of the finding its last run gave, such as rig.base_mismatch
   sort?: SortPosition[]; // `place` only
   params: Record<string, Scalar>;
-  decisions: { id: string; name: string; data: Record<string, unknown> }[];
+  param_sources?: Record<string, ParamOrigin>;
+  decisions: ShownDecision[]; // as recorded: what undo and redo step through
+  decisions_as_read: ShownDecision[]; // as the Stage reads them: a Loop's `remove` and `rename`, `clips`' `remove`, applied
   image: string | null;
   input_image: string | null;
   outputs: string[];
@@ -79,12 +93,15 @@ export interface ShowData {
   asset: string;
   kind: string;
   params: Record<string, Scalar>;
+  base?: string | null; // the character this one is made from
   resolution: [number, number];
   body: Body;
   variants: FileEntry[];
   picked: string | null;
-  clip_sources: FileEntry[]; // a character's animation files, by file stem
+  clip_sources: (FileEntry & { from_base: boolean })[]; // a character's animation files, by file stem; from_base: in the base's folder
   rigged: FileEntry | null; // a character's rigged file
+  parameters?: FileEntry | null; // a generated character's parameter file, in place of Variants
+  looks?: { look: string; variants: FileEntry[]; picked: string | null }[]; // a room's Looks that have a stored edit
   sheets?: (FileEntry & { png_count: number | null })[]; // a sprite's imported sheets, named by hash
   stages: StageDetail[];
 }
@@ -175,6 +192,21 @@ export async function callWithFile<T>(command: string, input: object, field: str
   form.append(field, file, file.name);
   const response = await fetch(url(command), { method: "POST", headers: headers(), body: form });
   return (await response.json()) as Envelope<T>;
+}
+
+// Several file inputs, a part each: a repeated field is a list input (`frames`), each part keeping the name it was sent with.
+export async function callWithFiles<T>(command: string, input: object, parts: { field: string; file: File }[]): Promise<Envelope<T>> {
+  const form = new FormData();
+  form.append("input", JSON.stringify(input));
+  for (const { field, file } of parts) form.append(field, file, file.name);
+  const response = await fetch(url(command), { method: "POST", headers: headers(), body: form });
+  return (await response.json()) as Envelope<T>;
+}
+
+// The Project palette, from the `palette` Command (ticket 0204): #rrggbb, lower case, in file order. Empty when it can't be read.
+export async function projectPalette(): Promise<string[]> {
+  const result = await call<{ colours: { hex: string }[] }>("palette", {});
+  return result.ok && result.data ? result.data.colours.map((colour) => colour.hex.toLowerCase()) : [];
 }
 
 export async function cancelJob(job: string): Promise<void> {
