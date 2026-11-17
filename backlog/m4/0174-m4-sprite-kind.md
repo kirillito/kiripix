@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 type: spec
 ---
@@ -66,7 +66,8 @@ in their outputs changes for a character, so no character rebuilds.
 
 **Import.** A sheet is a Source file, immutable once imported, like a Variant: `kiripix import <id> <file.png|file.zip>
 --role sheet`, stored in `src/sheets/` by hash. Nothing is unpacked into `src/`; the `frames` Stage reads the file. A ZIP holds
-only PNGs, and a path that leaves the archive, or a non-PNG, is refused at import.
+only PNGs and, at most, PixelLab's `metadata.json` at its top (read by nothing; added at the M4 gate, 0175's
+proposal 1), and a path that leaves the archive, or another non-PNG, is refused at import.
 - **A PNG sheet** needs a `sheet` Decision: the file, the clip, `layout` (`rows` or `columns`: one direction per row, or per
   column), the directions in that order, and the frame count; the cell is the sheet's size divided by those. A PixelLab
   rotation sheet is a one-frame clip.

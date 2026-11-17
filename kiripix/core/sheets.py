@@ -1,4 +1,4 @@
-"""A sprite Asset's sheets: PNGs and ZIPs of PNGs, stored whole in `src/sheets/` by their hash (ticket 0178).
+"""A sprite Asset's sheets: PNGs and ZIPs of PNGs (with, at most, PixelLab's `metadata.json` at the top), stored whole in `src/sheets/` by their hash (ticket 0178).
 
 A sheet is a Source file, immutable once imported. Nothing is unpacked into `src/`; the `frames` Stage reads the file.
 A ZIP is checked here, before anything is written, and refused whole when it could do harm or isn't what it says.
@@ -13,6 +13,7 @@ from kiripix.checks import Position
 from kiripix.core.assets import Asset
 from kiripix.core.errors import KiripixError, fail
 from kiripix.recipes.base import KindSpec
+from kiripix.recipes.sprite_names import MAX_METADATA, METADATA
 
 SHEETS_DIR = "sheets"
 MAX_ENTRIES = 4096
@@ -39,7 +40,7 @@ def png_count(path: Path) -> int | None:
     import zipfile
 
     with zipfile.ZipFile(path) as archive:
-        return sum(1 for info in archive.infolist() if not info.is_dir())
+        return sum(1 for info in archive.infolist() if not info.is_dir() and info.filename != METADATA)
 
 
 def _unsafe_path(name: str) -> str | None:
@@ -59,7 +60,8 @@ def check(data: bytes, shown: str, position: Position) -> str:
     def refuse(why: str, entry: str | None = None) -> KiripixError:
         subject = f"{shown}'s entry {entry}" if entry is not None else shown
         return fail("import.sheet_invalid", f"{subject} can't be a sheet: {why}", position=position,
-                    owner_action=f"Export {shown} again as a PNG, or as a ZIP of PNGs with plain relative paths, "
+                    owner_action=f"Export {shown} again as a PNG, or as a ZIP of PNGs with plain relative paths (and, at most, "
+                                 f"a {METADATA} at its top), "
                                  f"at most {MAX_ENTRIES} entries and {MAX_UNPACKED // (1024 * 1024)} MB unpacked.")
 
     if data.startswith(PNG_SIGNATURE):
@@ -92,6 +94,10 @@ def check(data: bytes, shown: str, position: Position) -> str:
             total += info.file_size
             if total > MAX_UNPACKED:
                 raise refuse(f"the archive unpacks to more than {MAX_UNPACKED // (1024 * 1024)} MB", info.filename)
+            if info.filename == METADATA:  # PixelLab's; never read as a frame. A ZIP's names are unique.
+                if info.file_size > MAX_METADATA:
+                    raise refuse(f"it is larger than {MAX_METADATA // 1024} KB", info.filename)
+                continue
             try:
                 with archive.open(info) as entry:  # reading to the end checks the CRC and the real size
                     head = entry.read(len(PNG_SIGNATURE))

@@ -29,8 +29,10 @@ class ExtendInput(BaseModel):
     side: str | None = Field(
         None, description="With canvas: the side to extend, east, south, west or north, or a corner of two such as "
                           "east,south. With add: the same, if given it must be the canvas' side.")
-    keep: int | None = Field(None, ge=1, description="With canvas: px of the image kept in the canvas along the join "
-                                                     "(a third of the canvas by default).")
+    keep: str | None = Field(
+        None, description="With canvas: px of the image kept in the canvas along the join, one number for both axes or "
+                          "two, across,down (such as 344,192); a one-sided canvas uses the axis across its join. A "
+                          "third of the canvas by default.")
     offset: int = Field(0, description="With canvas: where along the edge the canvas starts, px from the image's top "
                                        "(east, west) or left (north, south).")
 
@@ -42,6 +44,8 @@ class ExtendData(BaseModel):
     canvas_size: tuple[int, int] | None = None
     sides: list[str] = []
     keep: tuple[int, int] | None = None
+    fill: str | None = Field(None, description="With canvas: the flat fill the image model paints over, #RRGGBB: the "
+                                               "first of red, magenta, green, blue, cyan and yellow far from the kept strip's colours.")
     piece: str | None = Field(None, description="With add or undo: the piece's name, the start of its hash.")
     width: int | None = Field(None, description="With add or done: the joined image's size.")
     height: int | None = None
@@ -54,12 +58,16 @@ class ExtendData(BaseModel):
     variant: str | None = Field(None, description="With done: the Variant the joined image became.")
     created: bool | None = None
     transparent_pixels: int | None = Field(None, description="With done: pixels still without picture (an unfilled corner).")
+    cropped: dict[str, int] | None = Field(
+        None, description="With done: px cut from each side with an open margin, the transparent row or column a piece "
+                          "registered a px inside the image's edge leaves.")
 
     def text(self) -> str:
         if self.action == "canvas":
             w, h = self.canvas_size or (0, 0)
             return (f"{self.asset}: wrote {self.canvas} ({w}x{h}, strip kept {self.keep[0] if self.keep else 0} x "
-                    f"{self.keep[1] if self.keep else 0} px, {'+'.join(self.sides)}); paste it into the image model, then "
+                    f"{self.keep[1] if self.keep else 0} px, {'+'.join(self.sides)}, fill {self.fill}); paste it into the "
+                    "image model, then "
                     f"kiripix extend {self.asset} add <png>")
         if self.action == "add":
             return (f"{self.asset}: joined {self.piece} ({'+'.join(self.sides)}): {self.width}x{self.height}, residual "
@@ -68,8 +76,10 @@ class ExtendData(BaseModel):
         if self.action == "undo":
             return f"{self.asset}: dropped the piece {self.piece}; {self.pieces} pieces"
         added = "added" if self.created else "already had"
-        return (f"{self.asset}: {added} the Variant {self.variant} ({self.width}x{self.height}); pick it with "
-                f"kiripix pick {self.asset} {self.variant}")
+        cut = ", ".join(f"{px} px {side}" for side, px in (self.cropped or {}).items())
+        return (f"{self.asset}: {added} the Variant {self.variant} ({self.width}x{self.height}"
+                f"{f', cropped {cut} of open margin' if cut else ''}); pick it with kiripix pick {self.asset} "
+                f"{self.variant}")
 
 
 def _asset_lock(arguments: ExtendInput) -> str | None:
@@ -98,9 +108,10 @@ def extend_command(arguments: ExtendInput, context: Context) -> Outcome[ExtendDa
     if arguments.action == "canvas":
         if sides is None:
             raise fail("extend.side_needed", "canvas needs the side to extend", fix=f"{example} --side east")
-        path, size, keep, _ = extend.write_canvas(project, asset, sides, project.settings.extend.canvas,
+        path, size, keep, _, fill = extend.write_canvas(project, asset, sides, project.settings.extend.canvas,
                                                   arguments.keep, arguments.offset, example)
         data.canvas, data.canvas_size, data.keep, data.sides = project.relative(path), size, keep, sides
+        data.fill = "#{:02X}{:02X}{:02X}".format(*fill)
         data.pieces = len(extend.live_pieces(extend.read_journal(asset)))
         return Outcome(data)
     if arguments.action == "add":
@@ -115,7 +126,7 @@ def extend_command(arguments: ExtendInput, context: Context) -> Outcome[ExtendDa
     if arguments.action == "undo":
         data.piece, data.pieces = extend.undo(project, asset)
         return Outcome(data)
-    variant, created, size, holes, live = extend.done(project, asset)
-    data.variant, data.created, data.pieces = variant, created, len(live)
-    data.width, data.height, data.transparent_pixels = size[0], size[1], holes
-    return Outcome(data, extend.hole_findings(asset, holes))
+    done = extend.done(project, asset)
+    data.variant, data.created, data.pieces, data.cropped = done.variant, done.created, done.pieces, done.cropped
+    data.width, data.height, data.transparent_pixels = done.width, done.height, done.holes
+    return Outcome(data, extend.hole_findings(asset, done.holes))

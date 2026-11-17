@@ -188,3 +188,15 @@ def test_a_loop_with_rest_exports_a_sequence_without_frame_zero_and_rest_true(pr
     assert glow["rest"] is True and glow["sequence"] == [1, 6, 2, 6] and glow["frames"] == 3
     assert pulse["rest"] is False
     assert "frame = 0" in node(scene(project), LOOP, "Loops")
+
+
+def test_check_on_an_export_built_before_its_loops_does_not_crash(project: Kiripix) -> None:
+    folder = looping_room(project, plain=True)
+    loops = folder / "work" / "loops"
+    for file in sorted(loops.rglob("*"), reverse=True):  # a room built before the `loops` Stage existed (M4 gate)
+        file.unlink() if file.is_file() else file.rmdir()
+    loops.rmdir()
+
+    result = project.json("check", ROOM)
+
+    assert result["ok"] is True and "internal.error" not in [f["code"] for f in result["findings"]]

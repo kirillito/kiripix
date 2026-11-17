@@ -58,7 +58,7 @@ def init(arguments: InitInput, context: Context) -> Outcome[InitData]:
 
 
 class NewInput(_Input):
-    kind: str = Field(description="The Asset's Kind: room, prop or character.")
+    kind: str = Field(description="The Asset's Kind: room, prop, character or sprite.")
     name: str = Field(description="The Asset's name: lower-case letters, digits and underscores.")
     view: str | None = Field(None, description="top or side. Required for a room; refused for other Kinds.")
     base: str | None = Field(None, description="For a character: the character it is made from, such as "

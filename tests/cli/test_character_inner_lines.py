@@ -106,7 +106,7 @@ def test_an_unknown_material_fails_with_a_finding_that_lists_the_materials(proje
     assert finding["fix"] == f"kiripix set {HERO} finish line_skip="
 
 
-def test_dark_with_parts_is_refused_with_the_fix(project: Kiripix) -> None:
+def test_dark_with_parts_asks_for_the_line_step_and_the_fix_builds(project: Kiripix) -> None:
     frames_with(project, {"*": [1, 2]})
     built(project, "parts=skin,cloth")
     project.json("set", HERO, "finish", "inner_lines=dark", "outline=false", "outline_colour=2")  # 2 is in no ramp
@@ -114,10 +114,35 @@ def test_dark_with_parts_is_refused_with_the_fix(project: Kiripix) -> None:
     result = project.json("run", HERO, "finish", expect=1)
 
     [finding] = [f for f in result["findings"] if f["code"] == "finish.inner_lines_with_parts"]
-    assert finding["fix"] == f"kiripix set {HERO} finish inner_lines=outline"
+    assert finding["fix"] == f"kiripix set {HERO} palette part_lines=true"
 
-    project.json("set", HERO, "finish", "inner_lines=outline")
+    project.json("set", HERO, "palette", "part_lines=true")
+    project.json("run", HERO, "palette")
     project.json("run", HERO, "finish")
+
+
+def test_dark_with_parts_draws_the_first_colour_of_the_ramp_of_the_part(project: Kiripix) -> None:
+    frames_with(project, {"*": [1, 2]})
+    folder = built(project, "parts=skin,cloth", "part_lines=true")
+    project.json("set", HERO, "finish", "inner_lines=dark", "outline=false", "outline_colour=2")
+    project.json("run", HERO, "finish")
+
+    frame = read(folder / "work" / "finish" / "color" / "idle" / "s" / "000.png")
+    mapped = read(folder / "work" / "palette" / "color" / "idle" / "s" / "000.png")
+    document: dict[str, Any] = json.loads((folder / "work" / "palette" / "palette.json").read_text("utf-8"))
+    ramps = {p["name"]: p for p in document["parts"]}
+    assert document["part_lines"] is True and all(len(p["rgb"]) == 4 for p in ramps.values())  # bands 3, plus the line step
+    skin = ramps["skin"]
+    assert (frame[:, COLUMN, :3] == np.array(skin["rgb"][0])).all()  # the right-hand pixel is skin
+    assert (frame[:, :COLUMN] == mapped[:, :COLUMN]).all() and (frame[:, COLUMN + 1:] == mapped[:, COLUMN + 1:]).all()
+    lines = drawn(folder)["inner_lines"]["colours"]
+    assert lines["skin"]["colour"] == skin["indexes"][0] and lines["cloth"]["colour"] == ramps["cloth"]["indexes"][0]
+    used = {tuple(c) for p in ramps.values() for c in p["rgb"][1:]} | {tuple(c["rgb"]) for c in document["colors"]}
+    for part in ramps.values():  # no frame but the line uses the first colour, and no line is in another part's ramp
+        first = tuple(part["rgb"][0])
+        assert first not in used and (mapped[..., :3] != np.array(first)).any(axis=-1).all()
+        assert all(first not in {tuple(c) for c in other["rgb"]} for other in ramps.values() if other is not part)
+    assert [f for f in project.json("check", HERO)["findings"] if f["code"].startswith("palette.")] == []
 
 
 def test_the_eye_materials_get_no_line_and_a_stamped_eye_is_not_painted_over(project: Kiripix) -> None:

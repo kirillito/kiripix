@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 agent: character-pipeline
 type: ticket
@@ -58,7 +58,7 @@ imported 2D frames, exported as a character is. _Avoid_: sprite for one frame (s
 
 ## Acceptance criteria
 
-- [ ] CLI seam, on synthetic fixtures (all met except that `export` itself refuses: it is not in the Exporter until 0180, see Notes) (0174's Testing Decisions): a 4-direction PNG sheet and a ZIP in PixelLab's layout run to
+- [x] CLI seam, on synthetic fixtures (`export` itself was not in the Exporter until 0180, now done; `tests/cli/test_sprite.py` and `tests/cli/test_export_sprite.py` pass, 2026-11-15) (0174's Testing Decisions): a 4-direction PNG sheet and a ZIP in PixelLab's layout run to
       `sheet` with no Decision but the PNG's `sheet`; a ×4 upscaled sheet fits to the same frames as its ×1 original; a sheet
       missing `w` reports `frames.direction_missing` and `export` stays blocked; a stationary idle with a 1 px hop reports
       `sheet.pivot_drift` and is quiet after `set … fit align_feet=true`; a `pivot` Decision moves the pivot, and `undo` restores it.

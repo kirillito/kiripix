@@ -39,7 +39,7 @@ from kiripix.ops import slice_grid
 from kiripix.recipes.base import CurrentDecision, DecisionSpec, NeedsInput, ParamSpec, StageFailure, StageRun
 from kiripix.recipes.clips import DIRECTIONS, NAME_PATTERN
 from kiripix.recipes.common import read_rgba, write_rgba
-from kiripix.recipes.sprite_names import ROTATION_CLIP, place, snake_case
+from kiripix.recipes.sprite_names import METADATA, ROTATION_CLIP, place, snake_case
 
 SCHEMA_VERSION = 1
 FRAMES_FILE = "frames.json"
@@ -213,7 +213,7 @@ def _read_zip(run: StageRun, found: _Frames, unplaced: list[dict[str, str]], nam
     with zipfile.ZipFile(path) as archive:
         for info in sorted(archive.infolist(), key=lambda i: i.filename):
             run.check_cancel()
-            if info.is_dir():
+            if info.is_dir() or info.filename == METADATA:
                 continue
             where = place(info.filename)
             if where is None:

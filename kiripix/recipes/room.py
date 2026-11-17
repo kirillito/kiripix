@@ -111,6 +111,7 @@ from kiripix.recipes.looks import (
 from kiripix.recipes.loops import (
     CHECKS as LOOP_CHECKS,
     DECISIONS as LOOP_DECISIONS,
+    LOOPS_FILE,
     LOOPS_STAGE,
     STAGE_TEXT as LOOP_TEXT,
     apply_edits as apply_loop_edits,
@@ -1505,7 +1506,9 @@ def _check_loops_held(run: StageRun) -> list[Finding]:
 
 
 def _check_export(run: StageRun) -> list[Finding]:
-    findings = [*_check_loops_held(run), *_check_loop_lights(run), *_check_loop_sizes(run)]
+    # An `export` built before the room had a `loops` Stage has no Loops to check; its status already says to rebuild.
+    loops_built = (run.upstream[LOOPS_STAGE] / LOOPS_FILE).is_file()
+    findings = [*_check_loops_held(run), *_check_loop_lights(run), *_check_loop_sizes(run)] if loops_built else []
     if run.settings["export.godot"].get("project"):
         return findings
     return [*findings, Finding(code="export.no_target", message="no Godot project to export into",

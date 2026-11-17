@@ -17,7 +17,7 @@ class ExportInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asset: str | None = Field(None, description="The Asset ID, such as room.queen_west_alley. Omit with --all.")
-    all: bool = Field(False, description="Export every room and prop, or none: Exit pairing must hold and no file may be refused.")
+    all: bool = Field(False, description="Export every room, prop, character and sprite, or none: Exit pairing must hold and no file may be refused.")
     force: bool = Field(False, description="Back up and overwrite files the Manifest lists that the game changed.")
     adopt: bool = Field(False, description="Back up and take over files at the target paths that the Manifest doesn't list.")
     prune: bool = Field(False, description="Remove the files of Assets deleted from the Project, under the same hash rule. "

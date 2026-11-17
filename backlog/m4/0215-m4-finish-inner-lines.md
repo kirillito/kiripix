@@ -32,7 +32,8 @@ the look is [0213](0213-m4-render-cel-band-edge.md).
 - The normal pass does not change: a line pixel keeps its normal.
 - **With palette `parts`, `inner_lines=dark` is refused** for now: a line colour is outside the ramp of its part, so the
   colour swap in the game would not recolour it. The finding (`finish.inner_lines_with_parts`) has the fix
-  `kiripix set <character> finish inner_lines=outline`. [0216](0216-m4-inner-lines-with-part-ramps.md) lifts this.
+  `kiripix set <character> finish inner_lines=outline`. [0216](0216-m4-inner-lines-with-part-ramps.md) narrows this: the
+  refusal stays only when the palette has no line step (`palette part_lines=true`), and its fix is then that setting.
 - `palette.off_palette` on `finish` still passes: every line colour is a Project palette colour.
 - With `inner_lines=off` the frames are byte-equal to what `finish` writes now. The Owner accepts that declaring the
   parameters makes every existing character stale once (2026-11-13).

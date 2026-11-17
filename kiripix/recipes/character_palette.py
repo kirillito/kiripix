@@ -46,7 +46,8 @@ from kiripix.recipes.common import BAYER, palette_rgb, read_rgba, write_rgba
 
 # 2: `parts` (each part's name, materials, indexes and RGB, dark to light); empty with no `parts`
 # 3: each part's `row` and `shared`, and `table`, the Project's ramp table the Stage read (ticket 0168)
-PALETTE_SCHEMA_VERSION = 3
+# 4: `part_lines`, true when each part's ramp has a first colour for its inner lines only (ticket 0216)
+PALETTE_SCHEMA_VERSION = 4
 TABLE_SETTING = "character.ramps"
 RENDER_FILE = "render.json"
 PALETTE_FILE = "palette.json"
@@ -225,6 +226,17 @@ def _run_palette(run: StageRun, source: str) -> None:
     table = _table(run)
     written = str(param_or_generated(run, "parts", _generated(document)) or "")
     specs = parse_parts(written, list(materials), int(document.get("bands", 3)), run.asset_id, table)
+    lines = bool(run.params.get("part_lines", False)) and bool(specs)
+    line = 1 if lines else 0  # the line step: each ramp's first colour, for the inner lines only
+    # A part of the Project's ramp table counts the line step in the table's length (with or without `rgb`); a ramp the
+    # character fits for itself is one colour longer than its `steps`.
+    extra = 0 if table else line
+    if lines:
+        short = [s.name for s in specs if table and s.steps < 2]
+        if short:
+            raise StageFailure(f"part_lines needs a ramp of at least 2 colours (one for the lines), and the Project's ramp "
+                               f"table has {short[0]!r} with fewer", code="palette.parts_invalid",
+                               fix=f"kiripix set {run.asset_id} palette part_lines=false")
     parts = {s.name: [materials[m] for m in s.materials] for s in specs}
     fitted = [s for s in specs if s.rgb is None]
     shared = [s for s in specs if s.rgb is not None]
@@ -252,9 +264,9 @@ def _run_palette(run: StageRun, source: str) -> None:
             has_fixed = any(bool((c[..., 3] == 255).any()) for c in counted)
             # `colors` is a ceiling: the ramps take their colours out of the same palette, so the fixed ones leave them room
             available = palette[free]
-            room = len(available) - sum(s.steps for s in fitted)
+            room = len(available) - sum(s.steps + extra for s in fitted)
             if has_fixed and room < 1:
-                raise StageFailure(f"the parts' ramps ask for {sum(s.steps for s in specs)} colours, and the palette has "
+                raise StageFailure(f"the parts' ramps ask for {sum(s.steps + (extra if s.rgb is None else 0) for s in specs)} colours, and the palette has "
                                    f"{len(palette)}, so none is left for the materials in no part", code="palette.ramp_unavailable",
                                    owner_action="Add colours to the Project palette, shorten the ramps (parts such as skin:2, "
                                                 "or the lengths of the Project's ramp table), or name more materials as parts.")
@@ -268,20 +280,22 @@ def _run_palette(run: StageRun, source: str) -> None:
     if fitted:
         try:
             ramps.update(part_ramps(frames, labels, {s.name: parts[s.name] for s in fitted}, palette,
-                                    {s.name: s.steps for s in fitted}, np.concatenate([subset, reserved])))
+                                    {s.name: s.steps + extra for s in fitted}, np.concatenate([subset, reserved])))
         except ValueError as error:
             raise StageFailure(f"can't choose the part ramps: {error}; fewer fixed colours leave more for the ramps",
                                code="palette.ramp_unavailable",
                                fix=f"kiripix set {run.asset_id} palette colors={max(1, count - 1)}") from None
     ramps = {s.name: ramps[s.name] for s in specs}  # in the order of `parts`
-    breaks = {s.name: lightness_breaks(frames, labels, parts[s.name], s.steps) for s in shared}
+    # the frames are mapped onto each ramp without its first colour, which only the inner lines use
+    used = {name: ramp[line:] for name, ramp in ramps.items()}
+    breaks = {s.name: lightness_breaks(frames, labels, parts[s.name], s.steps - line) for s in shared}
     dither, strength, orphans = BAYER[str(run.params["dither"])], float(run.params["strength"]), int(run.params["orphan_size"])
     for number, ((clip, direction, index, name), frame) in enumerate(zip(files, frames, strict=True)):
         run.check_cancel()
         run.progress(len(files) + number, len(files) * 2, f"mapping {clip}/{direction}/{index:03d}")
         try:
             if specs:
-                mapped = quantize_by_part(frame, labels[number], parts, ramps, subset, dither, strength, breaks=breaks)
+                mapped = quantize_by_part(frame, labels[number], parts, used, subset, dither, strength, breaks=breaks)
                 cleaned = remove_orphans_by_part(mapped, labels[number], parts, orphans)
             else:
                 cleaned = remove_orphans(quantize(frame, subset, dither, strength), orphans)
@@ -299,7 +313,8 @@ def _run_palette(run: StageRun, source: str) -> None:
                   "rgb": [[int(c) for c in rgb] for rgb in ramps[s.name]], "hex": [_hex(rgb) for rgb in ramps[s.name]]}
                  for place, s in enumerate(specs)]
     (run.output_dir / PALETTE_FILE).write_text(
-        json.dumps({"schema_version": PALETTE_SCHEMA_VERSION, "colors": colours, "parts": described, "table": table},
+        json.dumps({"schema_version": PALETTE_SCHEMA_VERSION, "colors": colours, "parts": described, "part_lines": lines,
+                    "table": table},
                    indent=2) + "\n", encoding="utf-8")
 
 

@@ -42,7 +42,7 @@ def test_two_characters_with_other_material_names_get_the_tables_rows_lengths_an
     twin_dir = twin_named_otherwise(project, "top=face,skin=jacket")
 
     first, second = parts_of(palette_of(hero_dir)), parts_of(palette_of(twin_dir))
-    assert palette_of(hero_dir)["schema_version"] == 3
+    assert palette_of(hero_dir)["schema_version"] == 4
     for parts, skin, top in ((first, ["skin"], ["cloth"]), (second, ["jacket"], ["face"])):
         assert parts["skin"]["row"] == 0 and parts["skin"]["shared"] is True and parts["skin"]["materials"] == skin
         assert parts["top"]["row"] == 1 and parts["top"]["shared"] is False and parts["top"]["materials"] == top
@@ -127,3 +127,16 @@ def test_with_an_empty_table_a_part_may_still_join_materials_under_a_name_of_its
     assert part["name"] == "body" and part["materials"] == ["cloth", "skin"] and part["row"] == 0
     assert part["shared"] is False and len(part["rgb"]) == 3
 
+
+
+def test_with_part_lines_a_rows_length_counts_the_line_step_whether_or_not_it_has_colours(project: Kiripix) -> None:
+    table(project, row("skin", 3), row("top", 2))  # as `ramps-add` writes them without --colours: no `rgb`
+    folder = hero(project, "skin,top=cloth")
+    project.json("set", HERO, "palette", "part_lines=true")
+    project.json("run", HERO, "palette")
+
+    parts = parts_of(palette_of(folder))
+
+    assert palette_of(folder)["part_lines"] is True
+    assert len(parts["skin"]["rgb"]) == 3 and len(parts["top"]["rgb"]) == 2  # the table's lengths, the line step among them
+    assert "palette.parts_differ" not in codes(project.json("check", "--all"))

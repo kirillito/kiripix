@@ -424,6 +424,14 @@ CHARACTER = KindSpec(
                                 "a generated Model: the parts its generator names.",
                     default="",
                 ),
+                ParamSpec(
+                    name="part_lines",
+                    type="bool",
+                    description="With `parts`, each part's ramp has one more colour, its first, kept for the inner lines "
+                                "(finish's inner_lines=dark) and never used in the frames, so the game's swap recolours the "
+                                "lines with the part. With the Project's ramp table, the table's length counts that colour.",
+                    default=False,
+                ),
                 *PALETTE_PARAMS,
             ),
             generated_params=palette_generated_params("render"),

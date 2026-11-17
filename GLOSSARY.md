@@ -187,6 +187,23 @@ Putting a piece on a base in three Ops: `register-piece` (undo its rescale and s
 step) and `seam-join` (cut along the least difference, blended). A corner piece is seamed once per Overlap.
 _Avoid_: stitch, merge, blend (a blend is only the seam's width)
 
+## Characters
+
+**Part**:
+A swappable piece of a character's look, such as skin or hair: one or more of its Model's materials, which the `palette`
+Stage gives a Ramp of its own so the game can recolour it.
+_Avoid_: material (a Part may have several), layer (M5's character layers)
+
+**Ramp**:
+A Part's palette colours, dark to light, that nothing else on the character uses (not another Part, a fixed colour or the
+outline). It is one row of the character's `ramps.png`.
+_Avoid_: palette (the Project's), swatch
+
+**Ramp table**:
+The Project's ordered list of Parts (`[[character.ramps]]` in `kiripix.toml`, filled by `ramps-add`). It fixes each Part's
+name, Ramp length and `ramps.png` row on every character, and optionally its colours, so one swap means the same on every
+body.
+
 ## Sprites
 
 **Sprite**:

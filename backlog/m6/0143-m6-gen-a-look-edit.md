@@ -3,7 +3,6 @@ status: todo
 milestone: M6
 agent: ml-engineer
 type: ticket
-parent: ../m4/0127-m4-room-looks.md
 ---
 
 # M6: `gen --look`: make a Look's edit through a Provider

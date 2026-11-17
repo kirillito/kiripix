@@ -17,7 +17,7 @@ class), and a choice of hair styles and outfits. Until this milestone, an outfit
 combination of hair and outfit rendered in full would multiply: a full body with about 15 clips is about 10 minutes of rendering
 (mc02: about 70 ms a frame at 52 px, plus `palette` and `finish`).
 
-The game's M10 needs hair styles and outfits as **layers**: each rendered once, stacked on the body in the game, so the cost
+The game's M11 needs hair styles and outfits as **layers**: each rendered once, stacked on the body in the game, so the cost
 adds per layer and no combination is ever rendered.
 
 ## Solution (the direction; the trial settles the rest)
@@ -38,14 +38,37 @@ Open, for the trial [0153](0153-m5-character-layer-trial.md) to settle before th
 3. **How Kiripix holds a layer:** a Variant of the character, its own Asset that names its body, or something else, and how its
    render stays in step with the body's when the body changes.
 
+## What the game needs from layers (2026-11-16)
+
+Inputs for the trial, from the game's list at the M4 gate ([0236](0236-m5-the-games-next-needs.md), item 12):
+
+- **Accessories are layers too.** The game dropped them at 52 px until layers exist: a backpack, an instrument case, a sports
+  bag, a watch or bracelet, a walking stick, weapons, and a one-piece scarf (baked in, it came out as floating pieces). A
+  backpack is **behind** the body facing south and **in front** facing north, so question 1's per-frame or per-direction
+  order is real (the game's `docs/backlog/m3/0070-m03-the-mc-from-3d.md`, Later, and 0088).
+- **The Parts are fixed:** `skin`, `hair`, `top`, `under`, `bottom` and `shoes` (the game's 0088, decided 2026-11-16).
+  Hair styles reuse the `hair` Ramp, and outfits use `top`, `under`, `bottom` and `shoes`. One swap shader and one
+  appearance record must work on any stack.
+- **Battle clips are per class** (3 sets per body), and the MC's weapon loot is "tier N, resolved per class" (DEC-059). Expect
+  several weapon Models per class as layers on the same attack clips. A held thing's first answer comes from
+  [0238](0238-m5-held-things-trial.md).
+- **NPCs share the parts:** the art repo's `chargen` builds the cast from one library on mc03's skeletons, so a layer must
+  render for a Model from a generator ([0224](../m4/0224-m4-a-model-built-from-a-parameter-file.md)), not only the MC.
+- **What the game stacks:** its `CharacterSprite` has a layer interface (the game's 0074). Export each layer as a character
+  is exported (the same animation names, cell and pivot) plus a stacking order, so the game stacks them by name.
+- **Cost:** report the render minutes and the atlas size per layer, so the game can budget each new hair style or outfit.
+
 ## Order
+
+M5's order puts layers in its last wave, after the game's nearer needs ([0236](0236-m5-the-games-next-needs.md)). The trial
+can run earlier: it's mostly the Owner's eye on sheets.
 
 | Wave | Tickets |
 |---|---|
 | 1 | [0153](0153-m5-character-layer-trial.md), the trial, and [0164](../m4/0164-m4-claude-built-base-models-trial.md), the two base Models (male and female) built by Claude in Blender |
 | 2 | The work tickets the trials file. [0165](../m4/0165-m4-characters-share-a-base.md) (characters made from a base share its rig and clips) no longer waits for 0153 and is built in M4 |
 
-Needs M4 done: the game's M04 and M05 need M4 first. The game needs layers by its M10.
+Needs M4 done: the game's M04 and M05 need M4 first. The game needs layers by its M11 (its roadmap, 2026-11-16).
 
 ## Out of scope
 

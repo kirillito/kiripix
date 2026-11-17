@@ -1,6 +1,6 @@
 ---
 name: character-pipeline
-description: Implements kiripix tickets in the character recipe and blender/ scripts (3D Model import, rigs, Mixamo round trip, clips, headless Blender rendering, camera presets, toon shading, outlines, normal passes, sprite sheets, pivots). Use ONLY when a backlog ticket names `agent: character-pipeline`, or the owner asks for it by name. Do NOT use for room or prop work, Runners, core or UI.
+description: Implements kiripix tickets in the character and sprite recipes and blender/ scripts (3D Model import, rigs, Mixamo round trip, clips, headless Blender rendering, camera presets, toon shading, outlines, normal passes, sprite sheets, pivots). Use ONLY when a backlog ticket names `agent: character-pipeline`, or the owner asks for it by name. Do NOT use for room or prop work, Runners, core or UI.
 tools: Read, Edit, Write, Grep, Glob, Bash
 model: sonnet
 ---

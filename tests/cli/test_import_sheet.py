@@ -202,6 +202,25 @@ def test_a_zip_with_a_text_entry_is_refused(project: Kiripix) -> None:
     refused(project, folder, "evil.zip", "notes.txt")
 
 
+def test_pixellabs_metadata_json_at_the_top_is_allowed_and_not_counted(project: Kiripix) -> None:
+    sprite(project)
+    make_zip(project, "pixellab.zip", {"Idle/rotations/south.png": png_bytes(), "metadata.json": b'{"frames": {}}'})
+
+    archive = project.json("import", SPRITE, "pixellab.zip", "--role", "sheet")["data"]
+
+    [shown] = project.json("show", SPRITE)["data"]["sheets"]
+    assert shown["name"] == archive["sheet"] and shown["png_count"] == 1
+
+
+def test_a_metadata_json_below_the_top_or_too_large_is_refused(project: Kiripix) -> None:
+    folder = sprite(project)
+    make_zip(project, "deep.zip", {"Idle/rotations/south.png": png_bytes(), "Idle/metadata.json": b"{}"})
+    make_zip(project, "large.zip", {"Idle/rotations/south.png": png_bytes(), "metadata.json": b" " * (1024 * 1024 + 1)})
+
+    refused(project, folder, "deep.zip", "Idle/metadata.json")
+    refused(project, folder, "large.zip", "metadata.json")
+
+
 def test_a_zip_with_more_than_4096_entries_is_refused(project: Kiripix) -> None:
     folder = sprite(project)
     one = png_bytes()

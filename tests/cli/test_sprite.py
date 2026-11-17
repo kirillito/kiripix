@@ -181,6 +181,20 @@ def test_a_zip_in_pixellabs_layout_runs_to_the_sheet_with_no_decision(project: K
     assert errors(project) == []
 
 
+def test_a_pixellab_zip_with_its_metadata_json_runs_with_no_warning(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    path = make_zip(project, "npc.zip", {f"Idle/rotations/{word}.png": figure() for word in WORDS})
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.writestr("metadata.json", json.dumps({"frames": {"rotations": {}, "animations": {}}}))
+    import_sheet(project, path)
+
+    result = project.json("run", SPRITE, "frames")
+
+    [clip] = load(folder / "work" / "frames" / "frames.json")["clips"]
+    assert clip["name"] == "idle" and sorted(clip["directions"]) == ["e", "n", "s", "w"]
+    assert [f["code"] for f in result["findings"] if f["code"].startswith("frames.")] == []
+
+
 def test_a_decision_renames_a_zips_clip_and_the_rotations_give_way_to_the_animation(project: Kiripix) -> None:
     folder = new_sprite(project)
     name = import_sheet(project, make_zip(project, "npc.zip", pixellab_zip(WORDS)))

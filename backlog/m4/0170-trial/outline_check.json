@@ -1,0 +1,17 @@
+{
+ "frames": 200,
+ "stick_px": 9853,
+ "stick_px_in_mask": 9853,
+ "frames_without_stick": 0,
+ "edge_neighbours": 5289,
+ "edge_outlined": 5289,
+ "stick_colour_px_after_palette": 0,
+ "idle_walk_weapon_px": 0,
+ "outline_colours_next_to_stick": [
+  [
+   1,
+   1,
+   3
+  ]
+ ]
+}

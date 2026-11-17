@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M4
 type: spec
 parent: 0133-m4-rooms-for-grid-battles.md

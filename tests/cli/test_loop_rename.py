@@ -151,7 +151,8 @@ def test_redoing_a_rename_to_an_id_taken_since_is_refused(project: Kiripix) -> N
     a_cycle_loop(project)
     decide(project, "rename", {"loop": LOOP, "to": NEW})
     project.json("undo", ROOM, "loops")  # the rename waits to be redone
-    decide(project, "loop", {"loop": NEW})  # and its new ID is taken meanwhile
+    # Its new ID is taken meanwhile, by a Look: another Stage's journal. (A `loop` Decision here would empty the redo stack.)
+    import_and_pick(project, edited(), look=NEW)
     kept = journal(project)
 
     result = project.json("redo", ROOM, "loops", expect=1)

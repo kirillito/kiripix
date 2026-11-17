@@ -314,11 +314,12 @@ class _InnerLines:
         self.run, self.source, self.mode = run, source, _lines_mode(run)
         if source not in run.upstream:
             raise StageFailure(f"finish can't draw inner lines: it has no material pass from {source}; run {source} again")
-        if self.mode == "dark" and _has_parts(run):
-            raise StageFailure("inner_lines=dark can't be used with palette parts: a line colour is outside the ramp of its "
-                               "part, so swapping the part would not recolour it; inner_lines=outline can",
-                               code="finish.inner_lines_with_parts",
-                               fix=f"kiripix set {run.asset_id} finish inner_lines=outline")
+        self.described = _palette_document(run)
+        if self.mode == "dark" and self.described.get("parts") and not self.described.get("part_lines"):
+            raise StageFailure("inner_lines=dark with palette parts needs a line step in each part's ramp, so that swapping the "
+                               "part recolours its lines too; palette part_lines=true adds it (inner_lines=outline needs "
+                               "none)", code="finish.inner_lines_with_parts",
+                               fix=f"kiripix set {run.asset_id} palette part_lines=true")
         by_name = {str(m["name"]): int(m["index"]) for m in document.get("materials", [])}
         self.skip_text: list[str] = []
         self.skip: list[int | tuple[int, int]] = []
@@ -347,17 +348,42 @@ class _InnerLines:
             self._choose(files, palette)
 
     def _choose(self, files: list[tuple[str, str, int, str]], palette: np.ndarray) -> None:
+        # With `part_lines` (ticket 0216) a part's line is the first colour of its ramp, the step the frames never use; the
+        # materials of no part get a darker colour that is in no ramp, so no swap touches it.
+        by_name = {v: k for k, v in self.names.items()}
+        ramp_colours: set[tuple[int, ...]] = set()
+        claimed: list[int] = []
+        parts = self.described.get("parts", [])
+        if parts:
+            ramp_colours = {tuple(int(v) for v in rgb) for p in parts for rgb in p["rgb"]}
+            ramp_colours |= {tuple(int(v) for v in rgb) for r in self.described.get("table", [])
+                             if r.get("rgb") is not None for rgb in r["rgb"]}
+            for part in parts:
+                for material in part["materials"]:
+                    if material in by_name:
+                        claimed.append(by_name[material])
+                        r, g, b = (int(v) for v in part["rgb"][0])
+                        self.colours[by_name[material]] = (int(part["indexes"][0]), (r, g, b))
         mapped: list[np.ndarray] = []
         labels: list[np.ndarray] = []
         for clip, direction, index, name in files:
             self.run.check_cancel()
-            mapped.append(read_rgba(self.run.upstream["palette"] / name))
-            labels.append(_read_labels(self._path(clip, direction, index, "material")))
+            frame = read_rgba(self.run.upstream["palette"] / name)
+            label = _read_labels(self._path(clip, direction, index, "material"))
+            if claimed:
+                frame[np.isin(label, np.array(claimed, dtype=np.int64)), 3] = 0
+            mapped.append(frame)
+            labels.append(label)
+        if claimed and not any(bool((f[..., 3] == 255).any()) for f in mapped):
+            return
+        keep = [i for i, colour in enumerate(palette) if tuple(int(v) for v in colour) not in ramp_colours]
         try:
-            chosen = line_colours(mapped, labels, palette, float(self.run.params.get("line_darkness", 0.55)))
+            chosen = line_colours(mapped, labels, palette[keep], float(self.run.params.get("line_darkness", 0.55)))
         except ValueError as error:
             raise StageFailure(f"can't choose the colours of the inner lines: {error}") from None
-        self.colours = {m: (c, (int(palette[c][0]), int(palette[c][1]), int(palette[c][2]))) for m, c in chosen.items()}
+        for m, c in chosen.items():
+            index = keep[c]
+            self.colours[m] = (index, (int(palette[index][0]), int(palette[index][1]), int(palette[index][2])))
 
     def _path(self, clip: str, direction: str, index: int, kind: str) -> Path:
         return self.run.upstream[self.source] / self.frames[(clip, direction, index)][kind]
@@ -395,12 +421,12 @@ class _InnerLines:
         return out
 
 
-def _has_parts(run: StageRun) -> bool:
+def _palette_document(run: StageRun) -> dict[str, Any]:
     try:
-        document = json.loads((run.upstream["palette"] / "palette.json").read_text(encoding="utf-8"))
+        document: dict[str, Any] = json.loads((run.upstream["palette"] / "palette.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    return bool(document.get("parts"))
+        return {}
+    return document
 
 
 def _materials_by_frame(document: dict[str, Any]) -> dict[tuple[str, str, int], str]:

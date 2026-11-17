@@ -1,0 +1,47 @@
+{
+ "hidden_by_direction": {
+  "s": {
+   "stick_px_if_unhidden": 1494,
+   "stick_px_visible": 1078,
+   "hidden_pct": 27.8
+  },
+  "sw": {
+   "stick_px_if_unhidden": 1580,
+   "stick_px_visible": 890,
+   "hidden_pct": 43.7
+  },
+  "w": {
+   "stick_px_if_unhidden": 1760,
+   "stick_px_visible": 859,
+   "hidden_pct": 51.2
+  },
+  "nw": {
+   "stick_px_if_unhidden": 1531,
+   "stick_px_visible": 836,
+   "hidden_pct": 45.4
+  },
+  "n": {
+   "stick_px_if_unhidden": 1408,
+   "stick_px_visible": 1123,
+   "hidden_pct": 20.2
+  },
+  "ne": {
+   "stick_px_if_unhidden": 1805,
+   "stick_px_visible": 1607,
+   "hidden_pct": 11.0
+  },
+  "e": {
+   "stick_px_if_unhidden": 2015,
+   "stick_px_visible": 1816,
+   "hidden_pct": 9.9
+  },
+  "se": {
+   "stick_px_if_unhidden": 1821,
+   "stick_px_visible": 1644,
+   "hidden_pct": 9.7
+  }
+ },
+ "materials_rake": "1:backpack 2:boots 3:eyes 4:hair 5:hood 6:jacket 7:jeans 8:rake 9:skin 10:straps",
+ "materials_weapon_last": "1:backpack 2:boots 3:eyes 4:hair 5:hood 6:jacket 7:jeans 8:skin 9:straps 10:weapon",
+ "materials_aardvark": "1:aardvark 2:backpack 3:boots 4:eyes 5:hair 6:hood 7:jacket 8:jeans 9:skin 10:straps"
+}

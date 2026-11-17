@@ -22,6 +22,10 @@ PIXELLAB_WORDS = {"south": "s", "south-west": "sw", "west": "w", "north-west": "
 WORDS = {**PIXELLAB_WORDS, **{d: d for d in DIRECTIONS}}
 CONTAINERS = frozenset({"animations", "animation", "rotations", "rotation", "frames", "images", "sprites", "sprite"})
 ROTATION_CLIP = "idle"  # the clip a direction with no animation joins
+# PixelLab's ZIP export carries this file beside the PNGs (ticket 0175). One is allowed, at the ZIP's top, and no frame is
+# read from it: the naming rule places the PNGs.
+METADATA = "metadata.json"
+MAX_METADATA = 1024 * 1024  # bytes
 
 _SEPARATORS = re.compile(r"[\s_\-]+")
 _WORD_THEN_NUMBER = re.compile(r"^(?P<word>[a-z]+(?:[-_ ][a-z]+)?)(?:[-_ ]?(?P<number>\d+))?$")
