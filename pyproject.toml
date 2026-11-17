@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.9",
     "python-multipart>=0.0.33",
     "tomli-w>=1.1",
+    "tomlkit>=0.15.2",
     "typer>=0.15",
     "uvicorn>=0.54.0",
 ]

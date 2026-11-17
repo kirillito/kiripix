@@ -159,6 +159,12 @@ Another appearance of part of a Room, such as a door shut, a lamp unlit or a sta
 of the room's Source, cut to a region, and shown by the game, which finds it by its ID.
 _Avoid_: state (that is the game's, and Stage status is "status"), variant, overlay, patch
 
+**State**:
+Another form of a Prop, such as a bin toppled or a crate cracked. The picked Source is the default state; every other
+state has its own declared ID and size, its own image, cutout, footprint and origin, and shares the Prop's scale, palette
+and finish. The game shows one state at a time. Not a Stage's status, and not a Look.
+_Avoid_: Look (that is a room's), variant (an image to pick from), frame, pose
+
 **Condition**:
 An optional label naming the game state that shows a Look, such as `circuit.hall:off`, for people and other Exporters.
 Kiripix stores and exports it, and never interprets it; the game binds a Look by its ID, not by its Condition.
@@ -204,6 +210,11 @@ The Project's ordered list of Parts (`[[character.ramps]]` in `kiripix.toml`, fi
 name, Ramp length and `ramps.png` row on every character, and optionally its colours, so one swap means the same on every
 body.
 
+**Clip table**:
+The Project's list of clips (`[[character.clips]]` in `kiripix.toml`, filled by `clips-add`). Each row fixes a clip's rendered
+frame count, fps and loop, and optionally that it has foot frames, so every body plays the same timing. A character or sprite
+with a clip of that name must match (`clips.timing_differs`; a sprite only gets a warning); one without the clip is not asked.
+
 ## Sprites
 
 **Sprite**:
@@ -227,6 +238,11 @@ _Avoid_: endpoint, tool, action (for the operation itself)
 **Probe**:
 A read-only Command whose result is never recorded or pinned, such as a segmentation preview on hover.
 _Avoid_: preview (that is a Command that writes a preview image)
+
+**Snapshot**:
+A copy of a character's or sprite's built sheet under a label (`kiripix snapshot`), with the parameters it was taken with, kept
+in `.kiripix/snapshots/` so `cast-sheet --snapshots` can lay settings side by side. It records nothing in the Project.
+_Avoid_: version, backup, pin (a pinned result is a Runner's, and it is an input)
 
 **Op**:
 A pure image function, such as quantise or flood fill.

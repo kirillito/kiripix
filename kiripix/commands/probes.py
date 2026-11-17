@@ -22,6 +22,7 @@ from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, command
 from kiripix.checks import Finding
 from kiripix.core.assets import Asset, load_asset
+from kiripix.core import snapshots
 from kiripix.core.cast import NothingToDraw, cast_sheet
 from kiripix.core.errors import ExitCode, fail
 from kiripix.core.file_inspect import inspect_file
@@ -32,7 +33,7 @@ from kiripix.core.reach_probe import reach_report
 from kiripix.core.graph import ProgressEvent
 from kiripix.core.segmenting import click_preview, flood_preview, segment_preview
 from kiripix.ops import mask_runs
-from kiripix.recipes.base import BoxCorners, ClickPoint
+from kiripix.recipes.base import BoxCorners, ClickPoint, Scalar
 
 class ProbeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -262,6 +263,10 @@ class CastSheetInput(BaseModel):
     frames: int = Field(1, ge=1, le=64, description="Frames per clip and direction, spread evenly from the first.")
     scale: int = Field(1, ge=1, le=8, description="Whole-number zoom, nearest neighbour; 1 is the game's size. The "
                                                   "labels aren't scaled.")
+    snapshots: str | None = Field(None, description="Snapshot labels, comma-separated (`kiripix snapshot`): one row per "
+                                                    "label, the same Assets in the same order, each row titled with its "
+                                                    "label and the parameters that differ between rows. The Assets' "
+                                                    "sheets as built now are not read.")
 
 
 class CastCellData(BaseModel):
@@ -274,6 +279,22 @@ class CastCellData(BaseModel):
     width: int
     height: int
     pivot: dict[str, int] = Field(description="The pivot (the feet) in the cell, from its top left, in PNG pixels.")
+    row: str | None = Field(None, description="With --snapshots: the label of the cell's row.")
+
+
+class CastRowData(BaseModel):
+    label: str
+    title: str = Field(description="What the row is titled with: its label and the differing parameters' values in it.")
+    y: int = Field(description="The row's top edge in the PNG.")
+    height: int
+    ground: int = Field(description="The y of this row's ground line in the PNG.")
+
+
+class DifferingParamData(BaseModel):
+    stage: str
+    param: str
+    values: dict[str, dict[str, Scalar]] = Field(description="By label, then by Asset: the parameter's value in the "
+                                                             "snapshot.")
 
 
 class CastSheetData(BaseModel):
@@ -281,8 +302,12 @@ class CastSheetData(BaseModel):
     width: int
     height: int
     scale: int
-    ground: int = Field(description="The y of the ground line in the PNG: every cell's pivot is on it.")
+    ground: int = Field(description="The y of the ground line in the PNG: every cell's pivot is on it. With "
+                                    "--snapshots, the first row's; see `rows`.")
     cells: list[CastCellData]
+    rows: list[CastRowData] = Field(default_factory=list, description="With --snapshots: one per label that has cells.")
+    differing: list[DifferingParamData] = Field(default_factory=list, description="With --snapshots: the parameters "
+                                                "that differ between the labels (or are in only some of them).")
 
     def text(self) -> str:
         return self.path
@@ -310,16 +335,98 @@ def run_cast_sheet(arguments: CastSheetInput, context: Context) -> Outcome[CastS
     assets = [load_asset(project, asset_id) for asset_id in dict.fromkeys(ids)]
     clips = _listed(arguments.clips) if arguments.clips is not None else None
     directions = _listed(arguments.directions)
+    if arguments.snapshots is not None and not _listed(arguments.snapshots):
+        raise fail("input.invalid", "--snapshots names at least one label", fix="kiripix snapshot --list")
     if clips == [] or not directions:
         raise fail("input.invalid", "--clips and --directions each name at least one",
                    fix=f"kiripix cast-sheet {arguments.assets} --clips idle --directions s")
     try:
-        made = cast_sheet(project, assets, clips, directions, arguments.frames, arguments.scale)
+        made = cast_sheet(project, assets, clips, directions, arguments.frames, arguments.scale,
+                          _listed(arguments.snapshots) if arguments.snapshots is not None else None)
     except NothingToDraw as empty:
         finding = Finding(code="cast.empty", message="no Asset has a cell to draw; the findings before this say why",
                           fix="kiripix status")
         return Outcome(None, [*empty.findings, finding], ExitCode.ERROR)
     cells = [CastCellData(asset=c.asset, clip=c.clip, direction=c.direction, index=c.index, x=c.x, y=c.y,
-                          width=c.width, height=c.height, pivot={"x": c.pivot[0], "y": c.pivot[1]}) for c in made.cells]
+                          width=c.width, height=c.height, pivot={"x": c.pivot[0], "y": c.pivot[1]}, row=c.row)
+             for c in made.cells]
+    rows = [CastRowData(label=r.label, title=r.title, y=r.y, height=r.height, ground=r.ground) for r in made.rows]
+    differing = [DifferingParamData(stage=d.stage, param=d.param, values=d.values) for d in made.differing]
     return Outcome(CastSheetData(path=project.relative(made.path), width=made.width, height=made.height,
-                                 scale=made.scale, ground=made.ground, cells=cells), list(made.findings))
+                                 scale=made.scale, ground=made.ground, cells=cells, rows=rows,
+                                 differing=differing), list(made.findings))
+
+
+class SnapshotInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assets: str | None = Field(None, description="The Assets to snapshot, comma-separated: characters or sprites with "
+                                                 "a built `sheet` Stage, such as character.hero,character.elder.")
+    label: str | None = Field(None, description="The snapshot's name, snake_case, such as outline.")
+    replace: bool = Field(False, description="Replace the Assets' snapshots under a label that already exists; the "
+                                             "label's other Assets are kept.")
+    list_: bool = Field(False, description="List the labels and the Assets under each.")
+    drop: str | None = Field(None, description="Delete this label and every snapshot under it.")
+
+
+class SnapshotAssetData(BaseModel):
+    asset: str
+    path: str = Field(description="The folder holding the copy, relative to the Project.")
+    params: dict[str, dict[str, Scalar]] = Field(description="The parameters of every Stage the sheet was built from, "
+                                                             "by Stage.")
+    stale: list[str] = Field(description="The Stages among those that were not current when it was taken.")
+
+
+class SnapshotLabelData(BaseModel):
+    label: str
+    assets: list[str]
+
+
+class SnapshotData(BaseModel):
+    label: str | None = None
+    snapshots: list[SnapshotAssetData] = Field(default_factory=list, description="What this call kept.")
+    labels: list[SnapshotLabelData] | None = Field(None, description="With --list: every label.")
+    dropped: SnapshotLabelData | None = Field(None, description="With --drop: the label that was deleted.")
+
+    def text(self) -> str:
+        if self.labels is not None:
+            return "\n".join(f"{entry.label}: {', '.join(entry.assets)}" for entry in self.labels) or "no snapshots"
+        if self.dropped is not None:
+            return f"dropped {self.dropped.label}"
+        return "\n".join(f"{s.asset}: {s.path}" for s in self.snapshots)
+
+
+@command(
+    "snapshot",
+    summary="Keep the built `sheet` of characters or sprites under a label, in .kiripix/snapshots/, with the parameters "
+            "of the Stages it was built from, so `cast-sheet --snapshots` can compare settings across a cast. Also "
+            "--list and --drop. A Probe: records nothing in the Project.",
+    input=SnapshotInput,
+    output=SnapshotData,
+    kind="probe",
+    mcp="exposed",
+    cli=CliMeta(positional=("assets",), options={"list_": ("--list",)}),
+)
+def run_snapshot(arguments: SnapshotInput, context: Context) -> Outcome[SnapshotData]:
+    project = find_project(context.cwd)
+    modes = [arguments.assets is not None, arguments.list_, arguments.drop is not None]
+    if sum(modes) != 1:
+        raise fail("input.invalid", "give the Assets to snapshot (with --label), or --list, or --drop <label>: one of them",
+                   fix="kiripix snapshot --help")
+    if arguments.list_:
+        return Outcome(SnapshotData(labels=[SnapshotLabelData(label=e.label, assets=e.assets)
+                                            for e in snapshots.labels(project)]))
+    if arguments.drop is not None:
+        held = snapshots.drop(project, arguments.drop)
+        return Outcome(SnapshotData(dropped=SnapshotLabelData(label=arguments.drop, assets=held)))
+    assert arguments.assets is not None
+    if arguments.label is None:
+        raise fail("input.invalid", "--label names the snapshot, in snake_case", fix="kiripix snapshot --help")
+    ids = _listed(arguments.assets)
+    if not ids:
+        raise fail("input.invalid", "name at least one Asset", fix="kiripix snapshot character.a,character.b --label x")
+    assets = [load_asset(project, asset_id) for asset_id in dict.fromkeys(ids)]
+    notes, findings = snapshots.take(project, assets, arguments.label, arguments.replace)
+    kept = [SnapshotAssetData(asset=n.asset, path=project.relative(snapshots.snapshots_dir(project) / n.label / n.asset),
+                              params=n.params, stale=n.stale) for n in notes]
+    return Outcome(SnapshotData(label=arguments.label, snapshots=kept), findings)

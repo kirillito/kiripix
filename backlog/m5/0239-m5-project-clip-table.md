@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: core-engineer
 type: ticket
@@ -41,9 +41,27 @@ character must match, and a Project check.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: two characters, one matching the table and one with `idle` at another fps, give one
+- [x] CLI seam: two characters, one matching the table and one with `idle` at another fps, give one
       `clips.timing_differs` naming the second. A character lacking a table clip raises nothing.
-- [ ] The fill Command writes rows from a character, and refuses a clip the character hasn't decided.
-- [ ] A commented `kiripix.toml` keeps its comments through the migration (once 0235 has landed).
-- [ ] Contract samples for the new Command. Spec §4 and §6.3 describe the table. The glossary gets **Clip table** next to
+- [x] The fill Command writes rows from a character, and refuses a clip the character hasn't decided.
+- [x] A commented `kiripix.toml` keeps its comments through the migration (once 0235 has landed).
+- [x] Contract samples for the new Command. Spec §4 and §6.3 describe the table. The glossary gets **Clip table** next to
       **Ramp table**.
+
+## Result
+
+- `[[character.clips]]` (`ClipSpec`: `name`, `frames`, `fps`, `loop`, `foot`) in `kiripix.toml`; Project `schema_version` 7, with the
+  pure migration `_add_clip_table` (an empty list); the template carries a commented example. A name twice fails to load
+  (`clips.name_twice`).
+- `clips-add <character> --clips a,b [--foot a] [--dry-run]`, agent-runnable (the Owner's choice, 2026-11-17: the table makes nothing stale, and a differing row is refused, never changed), `kiripix/commands/clips_add.py`. It takes frames, fps and
+  loop from the character's built `clips.json`; refuses a clip the character hasn't decided (`clips.not_decided`), one not built
+  (`clips.not_built`), `--foot` on a clip without foot frames (`clips.no_foot_frames`) and a row that differs
+  (`clips.row_differs`). Written with `save_settings`, so comments stay.
+- Project check `clips.timing_differs` in `kiripix/core/cliptable.py`, run by `check --all` and, with errors refusing and warnings
+  passing, by `export --all` (it checks the table before anything is planned). A character's finding is an error; its `fix` is
+  the `clip` Decision with the table's fps and loop, and it is an `owner_action` when only a range, `speed` or `still` can fix the
+  frame count, or the clip has no foot frames. A sprite's finding is a warning that says so, read from `fit`'s `render.json`, with
+  a `decide <sprite> frames` fix for fps and loop. A foot row is not asked of a sprite (it has no foot events).
+- `describe project` shows the table (`clips`, `clips_example`). Spec §4, §6.3, the CLI list and the glossary (**Clip table**).
+- Tests: `tests/cli/test_clip_table.py`; contract sample for `clips-add`.
+

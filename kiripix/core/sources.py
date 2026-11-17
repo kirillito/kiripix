@@ -22,7 +22,9 @@ from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.images import read_as_png
 from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
+from kiripix.recipes import prop_states
 from kiripix.recipes.base import PICK, StageSpec
+from kiripix.recipes.prop_states import DeclaredState
 from kiripix.recipes.looks import LOOK_ID, LOOKS_DIR, LOOKS_STAGE
 
 VARIANT_NAME_LENGTH = 16  # hex digits of the SHA-256: 64 bits, plenty for one Asset's Variants
@@ -307,6 +309,92 @@ def import_look(project: Project, asset: Asset, file: Path, shown: str, role: st
         atomic.append_jsonl_many(asset.dir / IMPORTED_FILE, [
             {"schema_version": IMPORTED_SCHEMA_VERSION, "file": _relative(asset, path), "imported_as": file.name}])
     return name, path, created
+
+
+PROP = "prop"
+
+
+def declared_states(graph: AssetGraph) -> dict[str, DeclaredState]:
+    """A Prop's declared states (the `state` Decisions of `source`, edits replayed); none for another Kind."""
+    if graph.asset.kind != PROP:
+        return {}
+    return prop_states.declared_states(graph.decisions(graph.spec(prop_states.SOURCE_STAGE)))
+
+
+def default_state(graph: AssetGraph) -> str:
+    """The ID of a Prop's default state: the brief's `state`."""
+    return str(graph.params(graph.spec(prop_states.BRIEF_STAGE))["state"])
+
+
+def state_variants(asset: Asset, state: DeclaredState) -> dict[str, Path]:
+    """A state's Variants by name, sorted: `src/states/<folder>/<hash>.png`."""
+    return {path.stem: path for path in sorted((asset.dir / prop_states.STATES_DIR / state.folder).glob("*.png"))
+            if path.is_file()}
+
+
+def picked_states(graph: AssetGraph) -> dict[str, str]:
+    """Each declared state's picked Variant; the latest Pick of a state counts."""
+    return prop_states.state_picks(graph.decisions(graph.spec(prop_states.SOURCE_STAGE))) if graph.asset.kind == PROP else {}
+
+
+def _declared_state(graph: AssetGraph, state: str, command: str, position: Position) -> DeclaredState:
+    """The declared state, or the refusal: the default's ID is no other state, and an undeclared one has a fix that
+    declares it (at the brief's size)."""
+    asset = graph.asset
+    if graph.asset.kind != PROP:
+        raise fail(f"{command}.state_needs_prop", f"--state is for a Prop; {asset.id} is a {asset.kind}",
+                   owner_action="Use --state on a Prop's states.", position=position)
+    if state == default_state(graph):
+        raise fail("prop.state_duplicate", f"{state} is the default state's ID (the brief's `state`), so it isn't another "
+                   f"state: the default state's image is the Source", fix=f"kiripix {command} {asset.id} <file>"
+                   if command == "import" else f"kiripix pick {asset.id} <variant>", position=position)
+    declared = declared_states(graph)
+    if state not in declared:
+        brief = graph.params(graph.spec(prop_states.BRIEF_STAGE))
+        if re.fullmatch(prop_states.STATE_ID, state) is None:
+            raise fail("prop.state_unknown", f"'{state}' is not a state ID: lower-case snake_case, such as toppled",
+                       owner_action="Choose an ID such as toppled or cracked_2.", position=position)
+        raise fail("prop.state_unknown", f"{asset.id} has no state {state}"
+                   + (f"; its states are {', '.join(declared)}" if declared else ""), position=position,
+                   fix=prop_states.declare_command(asset.id, state, int(str(brief["width"])), int(str(brief["height"]))))
+    return declared[state]
+
+
+def import_state(project: Project, asset: Asset, file: Path, shown: str, role: str, state: str) -> tuple[
+        DeclaredState, str, Path, bool]:
+    """Add an image as a Variant of a Prop's declared state, in `src/states/<state>/` (a JPEG is stored as a PNG); the
+    default state's Source is untouched. Returns the state, the Variant's name and path, and whether it is new. Records
+    the name the file was imported with."""
+    position = Position(asset=asset.id, file=shown)
+    if role != "variant":
+        raise fail("import.state_takes_images", f"--role {role} doesn't apply to a state's image",
+                   fix=f"kiripix import {asset.id} {shown} --state {state}", position=position)
+    declared = _declared_state(AssetGraph(project, asset, HashCache(project.state_dir)), state, "import", position)
+    name, path, created = _store_image(asset.dir / prop_states.STATES_DIR / declared.folder, file, shown)
+    if imported_as(asset, path) != file.name:
+        atomic.append_jsonl_many(asset.dir / IMPORTED_FILE, [
+            {"schema_version": IMPORTED_SCHEMA_VERSION, "file": _relative(asset, path), "imported_as": file.name}])
+    return declared, name, path, created
+
+
+def pick_state(project: Project, asset: Asset, state: str, variant: str) -> tuple[StageSpec, journal.JournalEntry]:
+    """Record a `state_pick` Decision on the `source` Stage: the Variant of a Prop's declared state. The same entry
+    `decide` would write."""
+    position = Position(asset=asset.id, stage=prop_states.SOURCE_STAGE)
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    declared = _declared_state(graph, state, "pick", position)
+    known = state_variants(asset, declared)
+    if variant not in known:
+        if not known:
+            raise fail("pick.unknown_variant", f"the state {state} of {asset.id} has no Variants yet", position=position,
+                       fix=f"kiripix import {asset.id} <file> --state {state}")
+        raise fail("pick.unknown_variant", f"the state {state} of {asset.id} has no Variant '{variant}'; its Variants are "
+                   f"{', '.join(known)}", position=position,
+                   owner_action=f"Pick one of them: kiripix pick {asset.id} <variant> --state {state}")
+    spec = graph.spec(prop_states.SOURCE_STAGE)
+    document = editing.DecisionDocument(decision=prop_states.STATE_PICK.name, data={"state": state, "variant": variant})
+    entry, _ = editing.record_decision(project, asset, spec.name, document)
+    return spec, entry
 
 
 def import_variant(asset: Asset, file: Path, shown: str) -> tuple[str, Path, bool]:

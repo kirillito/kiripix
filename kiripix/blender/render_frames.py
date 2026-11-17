@@ -14,6 +14,7 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "pivot": [<x>, <y>] in px, where the ground point under the root lands, "device": "cpu" | "gpu",
          "toon": {"bands": 2 to 4, "shadow": 0 to 1, "band_edge": 0 to 1, "band_smooth": px, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
                   toward the camera>}}, "eyes": [<names of the materials that are the eyes; optional>],
+         "points": [{"name": <the point's name>, "target": <a bone of the armature or an Empty, by name>}; optional],
          "output": <folder to write the frames into>}
 result: {"device": <what rendered>, "depth_range": [<near>, <far>], "materials": [{"index": <from 1>, "name"}],
          "frames": {<clip>: {<direction>: [{"pivot": [x, y]}]}}}
@@ -23,6 +24,12 @@ not from the pixels: `{"x", "y"}`, the eye's centre in px (x right, y down), `"w
 px, `"depth"`, its centre's distance along the view axis in Blender units (as the depth pass counts it), and `"normal"`, its
 mean normal in camera space (X right, Y up, Z toward the camera). An eye is the faces of those materials on one side of the
 Model's middle in the rest pose.
+
+With `points` (ticket 0237), each frame also has `"points"`: `{<name>: {"x", "y", "depth", "hidden"}}`, the target's place in px
+(x right, y down, sub-pixel), its depth as the eyes' (Blender units along the view axis) and `hidden`, true when the depth pass
+has the body in front of it by more than `HIDDEN_MARGIN` of the Model's height. A bone's place is its head in the pose; an Empty's
+is its own (a socket parented to a bone follows it). A target that is neither a bone nor an Empty ends the run before any frame, with
+the result `{"points_unknown": [<targets>], "bones": [<the armature's bones>], "empties": [<the Empties>]}`.
 
 With `"measure": true` in args nothing is rendered or written (ticket 0155): the result is where each frame lands, for sizing
 the cell, `{"frames": {<clip>: {<direction>: [{"bounds": [left, top, right, bottom], "under": [x, y]}]}}}` in px from the
@@ -478,7 +485,8 @@ def shade(albedo: np.ndarray, normal: np.ndarray, mask: np.ndarray, toon: dict) 
     return albedo * factor[..., None]
 
 
-def write_frame(output: Path, clip: str, direction: str, index: int, exr: Path, camera, depth_range: tuple, toon: dict) -> None:
+def write_frame(output: Path, clip: str, direction: str, index: int, exr: Path, camera, depth_range: tuple, toon: dict):
+    """Writes the passes of one frame; returns its depth (Blender units, as rendered) and mask, for `mark_hidden`."""
     channels = read_exr(exr)
     mask = channel(channels, "Object Index.X", "IndexOB.X") > 0.5
     albedo = np.stack([channel(channels, f"Diffuse Color.{c}", f"DiffCol.{c}") for c in "RGB"], axis=-1)
@@ -506,6 +514,7 @@ def write_frame(output: Path, clip: str, direction: str, index: int, exr: Path, 
     png(output / "mask" / clip / direction / name, alpha, "l8")
     numbered = np.rint(channel(channels, "Material Index.X", "IndexMA.X")).astype(np.int64)
     png(output / "material" / clip / direction / name, np.where(mask, np.clip(numbered, 0, 255), 0), "l8")
+    return depth, mask
 
 
 def pose(armature, frame) -> None:
@@ -696,12 +705,65 @@ def seen_eyes(eyes: list, camera, args: dict) -> list:
     return found
 
 
+HIDDEN_MARGIN = 0.08  # of the Model's height: a bone lies inside the body, so only a body this much nearer hides a point
+
+
+def points_unknown(args: dict, armature) -> dict | None:
+    """The result that reports the targets of `points` that are neither a bone of the armature nor an Empty, or None."""
+    specs = list(args.get("points") or [])
+    bones = [b.name for b in armature.pose.bones]
+    empties = sorted(o.name for o in bpy.data.objects if o.type == "EMPTY")
+    missing = [s["target"] for s in specs if s["target"] not in bones and s["target"] not in empties]
+    if not missing:
+        return None
+    return {"points_unknown": missing, "bones": bones, "empties": empties}
+
+
+def posed_places(args: dict, armature) -> list:
+    """Each point's place in the current pose, in world space: [(name, Vector)]. A bone gives its head; an Empty its own place."""
+    graph = bpy.context.evaluated_depsgraph_get()
+    found = []
+    for spec in args.get("points") or []:
+        bone = armature.pose.bones.get(spec["target"])
+        if bone is not None:
+            found.append((spec["name"], armature.matrix_world @ bone.head))
+        else:
+            found.append((spec["name"], bpy.data.objects[spec["target"]].evaluated_get(graph).matrix_world.translation.copy()))
+    return found
+
+
+def seen_points(places: list, camera, args: dict) -> dict:
+    """Where each posed point lands in the frame: `{name: {"x", "y", "depth"}}` in px and Blender units."""
+    scene = bpy.context.scene
+    width, height = args["frame"]
+    axes = np.array(camera.matrix_world.to_3x3(), dtype=np.float64)
+    eye_point = np.array(camera.matrix_world.translation, dtype=np.float64)
+    found = {}
+    for name, place in places:
+        seen = world_to_camera_view(scene, camera, place)
+        found[name] = {"x": round(seen.x * width, 3), "y": round((1.0 - seen.y) * height, 3),
+                       "depth": round(float((eye_point - np.array(place)) @ axes[:, 2]), 4)}
+    return found
+
+
+def mark_hidden(found: dict, depth, mask, margin: float) -> None:
+    """Adds `hidden` to each point: the pixel it falls on is the body, nearer than the point by more than `margin`."""
+    rows, columns = mask.shape
+    for point in found.values():
+        column, row = math.floor(point["x"]), math.floor(point["y"])
+        inside = 0 <= column < columns and 0 <= row < rows and bool(mask[row, column])
+        point["hidden"] = bool(inside and float(depth[row, column]) < point["depth"] - margin)
+
+
 def measure_poses(args: dict) -> dict:
     """Where every frame of every clip lands on screen, without rendering (ticket 0155), so that `render` can size one cell
     that holds every pose. Per clip, direction and frame: `bounds`, the mesh's extent [left, top, right, bottom] in px from
     the point the camera orbits (x right, y down), and `under`, the point under the root from that point, in px: the pivot
     `render` reports is the cell's pivot plus `under`. The camera is the render's own, so these are the frames' pixels."""
     armature, root_bone = open_posable(args)
+    unknown = points_unknown(args, armature)
+    if unknown:
+        return unknown
     setup = set_up_scene(args, armature, root_bone)
     ground, turntable, camera = setup["ground"], setup["turntable"], setup["camera"]
     scale = float(args["px_per_unit"])
@@ -741,6 +803,9 @@ def render(args: dict) -> dict:
     if args.get("measure"):
         return measure_poses(args)
     armature, root_bone = open_posable(args)
+    unknown = points_unknown(args, armature)
+    if unknown:
+        return unknown
 
     output = Path(args["output"])
     scratch = output / ".scratch"
@@ -764,6 +829,7 @@ def render(args: dict) -> dict:
         for index, frame in enumerate(clip["frames"]):
             pose_clip(armature, clip, state, frame)
             eyes = posed_eyes(groups)
+            places = posed_places(args, armature)
             head = armature.matrix_world @ armature.pose.bones[root_bone].head
             under = Vector((head.x, head.y, 0.0))
             follow = clip.get("root_motion", False)
@@ -773,12 +839,16 @@ def render(args: dict) -> dict:
                 turntable.rotation_euler.z = -math.radians(float(direction["yaw"]))
                 bpy.context.view_layer.update()
                 seen = world_to_camera_view(scene, camera, under)
-                placed = {"pivot": [round(seen.x * args["frame"][0], 3), round((1.0 - seen.y) * args["frame"][1], 3)]}
+                placed: dict = {"pivot": [round(seen.x * args["frame"][0], 3), round((1.0 - seen.y) * args["frame"][1], 3)]}
                 if groups:
                     placed["eyes"] = seen_eyes(eyes, camera, args)
+                if places:
+                    placed["points"] = seen_points(places, camera, args)
                 pivots[clip["name"]][direction["name"]].append(placed)
                 bpy.ops.render.render(write_still=True)
-                write_frame(output, clip["name"], direction["name"], index, exr, camera, depth_range, args["toon"])
+                depth, mask = write_frame(output, clip["name"], direction["name"], index, exr, camera, depth_range, args["toon"])
+                if places:
+                    mark_hidden(placed["points"], depth, mask, HIDDEN_MARGIN * float(args["model_height"]))
                 done += 1
         end_clip(armature, state)
     shutil.rmtree(scratch, ignore_errors=True)

@@ -47,6 +47,14 @@ class LookOut(BaseModel):
     picked: str | None = Field(description="The edit the `looks` Stage cuts the Look from; null without a Pick.")
 
 
+class StateOut(BaseModel):
+    state: str = Field(description="The state's ID.")
+    width: int = Field(description="The size declared for the state, in px.")
+    height: int
+    variants: list[VariantOut] = Field(description="The state's imported images, named by hash.")
+    picked: str | None = Field(description="The Variant the state is cut from; null without a Pick.")
+
+
 class StageDetail(BaseModel):
     stage: str
     status: Status
@@ -94,6 +102,10 @@ class ShowData(BaseModel):
     picked: str | None
     looks: list[LookOut] = Field(description="A room's Looks that have a stored edit (`import --look`): their edits and "
                                              "the picked one, or null.")
+    default_state: str | None = Field(None, description="A Prop's default state: its picked Source's ID (the brief's "
+                                                        "`state`). Null for another Kind.")
+    states: list[StateOut] = Field([], description="A Prop's other states, as declared (`state` Decision on `source`): "
+                                                   "each with its Variants and Pick. Empty for a Prop with none.")
     clip_sources: list[ClipSourceOut] = Field(description="A character's animation files, named by file stem; for one made "
                                                        "from a base, also the base's, which stay in the base's folder.")
     rigged: VariantOut | None = Field(description="A character's rigged file.")
@@ -107,6 +119,10 @@ class ShowData(BaseModel):
     def text(self) -> str:
         lines = [f"{self.asset} ({self.kind})" + (f", made from {self.base}" if self.base else "")]
         lines += [f"  variant {v.name}{' (picked)' if v.name == self.picked else ''}" for v in self.variants]
+        for state in self.states:
+            lines.append(f"  state {state.state} ({state.width}x{state.height})"
+                         + (f", picked {state.picked}" if state.picked else ", no Source picked"))
+            lines += [f"    variant {v.name}{' (picked)' if v.name == state.picked else ''}" for v in state.variants]
         lines += [f"  parameters {self.parameters.file}"] if self.parameters is not None else []
         lines += [f"  clip source {c.name}" for c in self.clip_sources]
         lines += [f"  rigged {self.rigged.file}"] if self.rigged is not None else []
@@ -201,6 +217,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
     variants = sources.variants(asset) if takes_variants else {}
     names = sources.imported_names(asset)
     look_picks = sources.picked_look_edits(graph)
+    state_picks = sources.picked_states(graph)
     data = ShowData(
         asset=asset.id,
         kind=asset.kind,
@@ -214,6 +231,11 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
                        variants=[_variant(project, asset, names, name, path)
                                  for name, path in sources.look_variants(asset, look).items()])
                for look in sources.looks_with_edits(asset)],
+        default_state=sources.default_state(graph) if asset.kind == "prop" else None,
+        states=[StateOut(state=state.id, width=state.width, height=state.height, picked=state_picks.get(state.id),
+                         variants=[_variant(project, asset, names, name, path)
+                                   for name, path in sources.state_variants(asset, state).items()])
+                for state in sources.declared_states(graph).values()],
         clip_sources=_clip_sources(project, graph, names),
         rigged=_variant(project, asset, names, rigged_path.stem, rigged_path)
         if (rigged_path := sources.rigged(asset)) is not None else None,

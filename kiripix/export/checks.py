@@ -25,7 +25,16 @@ from kiripix.recipes.base import StageSpec
 from kiripix.recipes.clips import CLIP, DIRECTIONS, TRANSITION
 from kiripix.recipes.looks import LOOKS_STAGE, look_ids
 from kiripix.recipes.loops import LOOP_EDITS, LOOPS_STAGE, declared_ids, edit_problems
+from kiripix.recipes.prop_states import (
+    BRIEF_STAGE,
+    DECISIONS as _STATE_DECISIONS,
+    SOURCE_STAGE,
+    declared_states,
+    edit_problems as state_edit_problems,
+)
 from kiripix.recipes.sprite_frames import FRAMES_FILE
+
+STATE_NAMES = frozenset(d.name for d in _STATE_DECISIONS)
 
 EXPORTERS = frozenset({"room", "prop", "character", "sprite"})  # the Kinds that have an exporter
 
@@ -63,7 +72,11 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
                        for d in graph.replay("clips").current if d.name in (CLIP.name, TRANSITION.name) for direction in DIRECTIONS)
     if graph.asset.kind == "sprite":
         clips = _sprite_animations(graph, clips)
-    return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips, looks=looks, loops=loops)
+    states = manifest.ids.states
+    if graph.asset.kind == "prop":  # a state's ID is its `state` Decision's: one taken away fails before anything is run
+        states = sorted(declared_states(graph.decisions(graph.spec(SOURCE_STAGE))))
+    return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips, looks=looks, loops=loops,
+                       states=states)
 
 
 def _sprite_animations(graph: AssetGraph, unchanged: list[str]) -> list[str]:
@@ -92,7 +105,7 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     found: list[Finding] = []
     for noun, was, is_now in (("Marker", manifest.ids.markers, now.markers), ("Layer", manifest.ids.layers, now.layers),
                               ("Mask", manifest.ids.masks, now.masks), ("Look", manifest.ids.looks, now.looks), ("Loop", manifest.ids.loops, now.loops),
-                              ("clip animation", manifest.ids.clips, now.clips)):
+                              ("state", manifest.ids.states, now.states), ("clip animation", manifest.ids.clips, now.clips)):
         for gone in sorted(set(was) - set(is_now)):
             found.append(Finding(
                 code="export.id_frozen",
@@ -161,6 +174,22 @@ def loop_edit_findings(project: Project, asset: Asset, stage: str, documents: li
     return found + frozen_loop_findings(project, asset, edited)
 
 
+def state_edit_findings(project: Project, asset: Asset, stage: str, documents: list[tuple[str, dict[str, Any]]]) -> list[Finding]:
+    """What refuses a Prop's state Decision (on `decide` and on `redo`): an ID that is the default's or is taken, a size over
+    the project's resolution, a state that isn't declared, and, only the Manifest knowing it, a `state_remove` or
+    `state_rename` of a state already exported (its ID is frozen)."""
+    if asset.kind != "prop" or stage != SOURCE_STAGE or not any(name in STATE_NAMES for name, _ in documents):
+        return []
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    brief = graph.params(graph.spec(BRIEF_STAGE))
+    found, edited = state_edit_problems(
+        asset.id, graph.decisions(graph.spec(SOURCE_STAGE)), str(brief["state"]),
+        (project.settings.project.resolution[0], project.settings.project.resolution[1]), documents,
+        (int(str(brief["width"])), int(str(brief["height"]))))
+    return found + _frozen_by_decision(project, asset, "state", SOURCE_STAGE, edited, "renamed or removed",
+                                       lambda m: m.ids.states)
+
+
 def _exits(project: Project, assets: list[Asset]) -> dict[str, dict[str, dict[str, str]]]:
     """Each Asset that places Markers, with its Exits by ID: `{target_room, target_exit}`."""
     cache = HashCache(project.state_dir)
@@ -205,7 +234,9 @@ def pairing_findings(project: Project, assets: list[Asset], *, only: str | None 
             if code:
                 found.append(Finding(
                     code=code, severity=severity,
-                    message=f"{room} {exit_id} leads to {there} {back}, but {why}",
+                    message=f"{room} {exit_id} leads to {there} {back}, but {why}"
+                            + (" (only a warning for one room; `check --all` and `export --all` fail on it)"
+                               if severity == "warning" else ""),
                     position=Position(asset=room, stage="place"),
                     owner_action=f"Place the Exit '{back}' in {there} with target_room = {room} and target_exit = "
                                  f"{exit_id}, or point {room} {exit_id} at an Exit that points back."))

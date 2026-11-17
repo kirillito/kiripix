@@ -19,6 +19,7 @@ from kiripix.checks import Finding, Position
 from kiripix.core import atomic, cancel
 from kiripix.core.assets import Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
+from kiripix.core.cliptable import clip_timing_findings
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.project import Project
@@ -30,6 +31,7 @@ from kiripix.export.checks import (
     frozen_layer_findings,
     frozen_loop_findings,
     loop_edit_findings,
+    state_edit_findings,
     pairing_findings,
 )
 from kiripix.export.character import COLOR_FILE, NORMAL_FILE, RAMPS_FILE, ramp_rows, ramps_png, read_character
@@ -331,6 +333,9 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
     if assets is None:
         assets = [asset for asset in every if asset.kind in EXPORTERS]
         errors = pairing_findings(project, every)
+        timing = clip_timing_findings(project, every, cache)  # the Project's clip table (ticket 0239)
+        errors += [f for f in timing if f.severity == "error"]
+        warnings += [f for f in timing if f.severity != "error"]
         if errors:
             raise KiripixError(errors, ExitCode.CHECK_FAILED)
     else:
@@ -382,5 +387,5 @@ def export_command(project: Project, asset: Asset, cache: HashCache, states: lis
 
 
 __all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "ExportRun", "PruneResult", "export_assets",
-           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "frozen_loop_findings", "loop_edit_findings", "install_driver", "merge_files", "pairing_findings",
+           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "frozen_loop_findings", "loop_edit_findings", "state_edit_findings", "install_driver", "merge_files", "pairing_findings",
            "apply_repairs", "plan_repairs", "prune_assets", "resolve_target"]

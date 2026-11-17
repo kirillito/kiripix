@@ -24,6 +24,12 @@ Part of [0257](0257-m5-prop-states.md); its table is the design.
   all of them.
 - Per-state loops check the cancel token between states.
 
+## From 0258 (2026-11-17)
+
+0258 made `src/states/**` and the `state_pick` Decisions inputs of `source`, so today a state's `import` or `pick` makes the
+default state's `cutout` and every Stage after it stale (they rebuild to identical output). When the Stages run per state, a
+state's files and picks should be inputs of that state's Stages only.
+
 ## Acceptance criteria
 
 - [ ] CLI seam: a Prop with a default and a `toppled` state of another size builds both through `footprint`, at one scale,

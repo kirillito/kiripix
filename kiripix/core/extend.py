@@ -152,7 +152,7 @@ def _name(data: bytes) -> str:
     return hash_bytes(data)[:HASH_LENGTH]
 
 
-def _source(project: Project, asset: Asset) -> tuple[str, U8]:
+def picked_source(project: Project, asset: Asset) -> tuple[str, U8]:
     """The room's picked Source, the first piece's base."""
     graph = AssetGraph(project, asset, HashCache(project.state_dir))
     if not sources.takes_pick(graph):
@@ -174,7 +174,7 @@ def current_image(project: Project, asset: Asset) -> tuple[str, U8, list[ExtendE
     """The image the next piece joins: its name, its pixels, and the live pieces."""
     live = live_pieces(read_journal(asset))
     if not live:
-        name, rgba = _source(project, asset)
+        name, rgba = picked_source(project, asset)
         return name, rgba, live
     name = str(live[-1].joined)
     path = folder(asset) / "joined" / f"{name}.png"

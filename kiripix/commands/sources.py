@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import loopedits, loopkit, sheets, sources
+from kiripix.core import editof, loopedits, loopkit, sheets, sources
 from kiripix.core.errors import fail
 from kiripix.core.assets import is_asset_id, load_asset
 from kiripix.core.graph import AssetGraph, StageState
@@ -61,6 +61,18 @@ class ImportInput(_AssetInput):
                                                       "another edit (`import.edit_of_an_edit`). Pick it with `kiripix "
                                                       "pick <asset> <variant> --loop <loop> --frame <n>`. One image; "
                                                       "not with --kit or more frames.")
+    state: str | None = Field(None, description="A Prop's other state: store the image as a Variant of that state "
+                                                "(src/states/<state>/), declared first by a `state` Decision on `source` "
+                                                "(`prop.state_unknown` gives the command). Not the default state's ID: that "
+                                                "is the Source. Pick it with `kiripix pick <asset> <variant> --state <state>`.")
+    of: str | None = Field(None, description="With --look, or --loop with --frame: the edit was made on a piece or a crop "
+                                             "of the room, not on its whole Source. `crop`: the crop `kiripix extend "
+                                             "<room> crop --box ...` wrote; or a piece's name (the start of its hash in "
+                                             "`extend/pieces/`) or a Variant's. Kiripix finds where it lies in the "
+                                             "Source, registers the edit there, and stores an edit of the whole "
+                                             "Source: the Source's own pixels outside the edit. Without it, the edit is "
+                                             "of the whole Source (an image model resizes a big Source to its own "
+                                             "size, which blurs the edit).")
 
 
 class ImportData(BaseModel):
@@ -78,12 +90,20 @@ class ImportData(BaseModel):
     loop_frames: list[str] = Field([], description="With --loop: the stored frames' names, for frames 1 to N-1, in order.")
     frame: int | None = Field(None, description="With --loop --frame: the frame the edit is a Variant of.")
     skipped: list[str] = Field([], description="With --loop: the files left out because they are frame 0.")
+    state: str | None = Field(None, description="With --state: the Prop's state the Variant belongs to.")
+    of: str | None = Field(None, description="With --of: what the edit was made on.")
+    placed_scale: tuple[float, float] | None = Field(None, description="With --of: the edit's px per Source px.")
+    placed_at: tuple[int, int] | None = Field(None, description="With --of: where the edit's top-left lies in the Source.")
+    registration_residual: float | None = Field(None, description="With --of: the median miss of the registration, in Source px.")
     variants: list[str] = Field(description="The Asset's Variants; with --look, that Look's edits.")
     clip_sources: list[str]
     sheets: list[str]
 
     def text(self) -> str:
         added = "added" if self.created else "already had"
+        if self.state is not None:
+            return (f"{self.asset}: {added} the Variant {self.variant} of state {self.state} ({self.file}); pick it with "
+                    f"kiripix pick {self.asset} {self.variant} --state {self.state}")
         if self.loop is not None and self.frame is not None:
             return (f"{self.asset}: {added} the edit {self.variant} of frame {self.frame} of Loop {self.loop} ({self.file}); "
                     f"pick it with kiripix pick {self.asset} {self.variant} --loop {self.loop} --frame {self.frame}")
@@ -91,7 +111,8 @@ class ImportData(BaseModel):
             skipped = f" (left out {', '.join(self.skipped)}: frame 0 is the room's)" if self.skipped else ""
             return (f"{self.asset}: imported {len(self.loop_frames)} frames of Loop {self.loop} ({self.file} ...){skipped}")
         if self.look is not None:
-            return (f"{self.asset}: {added} the edit {self.variant} of Look {self.look} ({self.file}); pick it with "
+            on = f", made on {self.of} and placed on the Source" if self.of else ""
+            return (f"{self.asset}: {added} the edit {self.variant} of Look {self.look} ({self.file}{on}); pick it with "
                     f"kiripix pick {self.asset} {self.variant} --look {self.look}")
         if self.role == "sheet":
             return f"{self.asset}: {added} the sheet {self.sheet} ({self.file})"
@@ -121,23 +142,48 @@ class ImportData(BaseModel):
 def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if arguments.state is not None:
+        if (arguments.look is not None or arguments.loop is not None or arguments.frames or arguments.kit is not None
+                or arguments.frame is not None or arguments.of is not None):
+            raise fail("import.state_takes_one_image", "--state is one image for a Prop's state: not with --look, --loop, "
+                       "--frame, --kit or more files",
+                       fix=f"kiripix import {asset.id} {arguments.file} --state {arguments.state}")
+        declared, name, path, created = sources.import_state(project, asset, context.cwd / arguments.file,
+                                                             str(arguments.file), arguments.role or "variant",
+                                                             arguments.state)
+        return Outcome(ImportData(
+            asset=asset.id, look=None, role="variant", variant=name, sheet=None, clip_source=None, rigged=None,
+            file=project.relative(path), created=created, state=declared.id,
+            variants=list(sources.state_variants(asset, declared)), clip_sources=[], sheets=[]))
     if arguments.kit is not None and arguments.loop is None:
         raise fail("import.kit_needs_loop", "--kit is for the frames of a Loop",
                    fix=f"kiripix import {asset.id} {arguments.file} --loop <loop> --kit {arguments.kit}")
     if arguments.frame is not None and arguments.loop is None:
         raise fail("import.frame_needs_loop", "--frame is for an edit frame of a Loop",
                    fix=f"kiripix import {asset.id} {arguments.file} --loop <loop> --frame {arguments.frame}")
+    if arguments.of is not None and not (arguments.look is not None or arguments.frame is not None):
+        raise fail("import.of_needs_look", "--of is for a Look's edit (--look) or a Loop's edit frame (--loop --frame)",
+                   fix=f"kiripix import {asset.id} {arguments.file} --look <look> --of {arguments.of}")
     if arguments.loop is not None and arguments.frame is not None:
         if arguments.frames or arguments.kit is not None or arguments.look is not None                 or (arguments.role or "variant") != "variant":
             raise fail("import.edit_takes_one_image", "an edit frame is one image: not with more frames, --kit, --look or "
                        "another --role",
                        fix=f"kiripix import {asset.id} {arguments.file} --loop {arguments.loop} --frame {arguments.frame}")
-        edit = loopedits.import_edit(project, asset, context.cwd / arguments.file, str(arguments.file), arguments.loop,
-                                     arguments.frame)
+        placed = None
+        if arguments.of is None:
+            edit = loopedits.import_edit(project, asset, context.cwd / arguments.file, str(arguments.file), arguments.loop,
+                                         arguments.frame)
+        else:
+            with editof.placed_file(project, asset, context.cwd / arguments.file, str(arguments.file), arguments.of) as (
+                    path, placed):
+                edit = loopedits.import_edit(project, asset, path, str(arguments.file), arguments.loop, arguments.frame)
         return Outcome(ImportData(
             asset=asset.id, look=None, role="variant", variant=edit.name, sheet=None, clip_source=None, rigged=None,
             file=project.relative(edit.path), created=edit.created, variants=edit.variants, clip_sources=[], sheets=[],
-            loop=arguments.loop, frame=arguments.frame), edit.findings)
+            loop=arguments.loop, frame=arguments.frame, of=arguments.of,
+            placed_scale=placed.scale if placed else None, placed_at=placed.origin if placed else None,
+            registration_residual=placed.residual if placed else None),
+            edit.findings + (placed.findings if placed else []))
     if arguments.loop is not None:
         shown = [arguments.file, *arguments.frames]
         if arguments.look is not None or (arguments.role or "variant") != "variant":
@@ -156,12 +202,23 @@ def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportDa
                    fix=f"kiripix import {asset.id} {arguments.file} --loop <loop>")
     if arguments.look is not None:
         role = arguments.role or "variant"
-        name, path, created = sources.import_look(project, asset, context.cwd / arguments.file, str(arguments.file),
-                                                  role, arguments.look)
+        look_placed = None
+        if arguments.of is None:
+            name, path, created = sources.import_look(project, asset, context.cwd / arguments.file, str(arguments.file),
+                                                      role, arguments.look)
+        else:
+            with editof.placed_file(project, asset, context.cwd / arguments.file, str(arguments.file), arguments.of) as (
+                    temporary, look_placed):
+                name, path, created = sources.import_look(project, asset, temporary, str(arguments.file), role,
+                                                          arguments.look)
         return Outcome(ImportData(
             asset=asset.id, look=arguments.look, role=role, variant=name, sheet=None, clip_source=None, rigged=None,
             file=project.relative(path), created=created,
-            variants=list(sources.look_variants(asset, arguments.look)), clip_sources=[], sheets=[]))
+            variants=list(sources.look_variants(asset, arguments.look)), clip_sources=[], sheets=[],
+            of=arguments.of, placed_scale=look_placed.scale if look_placed else None,
+            placed_at=look_placed.origin if look_placed else None,
+            registration_residual=look_placed.residual if look_placed else None),
+            look_placed.findings if look_placed else [])
     role = arguments.role or ("sheet" if sources.takes_sheets(asset) else "variant")
     name, path, created = sources.import_file(asset, context.cwd / arguments.file, str(arguments.file), role)
     return Outcome(ImportData(
@@ -187,10 +244,13 @@ class PickInput(_AssetInput):
     loop: str | None = Field(None, description="A room's frame Loop, with --frame: pick that frame's edit Variant (made "
                                                "on the room's current Source) as the frame.")
     frame: int | None = Field(None, ge=0, description="With --loop: the frame, from 1 (frame 0 is the room's and is refused).")
+    state: str | None = Field(None, description="A Prop's other state: pick that state's Variant (`import --state`) "
+                                                "as the state's Source, instead of the default Source.")
 
 
 class PickData(BaseModel):
     asset: str
+    state: str | None = Field(None, description="With --state: the state whose Variant was picked.")
     look: str | None = Field(description="With --look: the Look whose edit was picked.")
     loop: str | None = Field(None, description="With --loop: the Loop whose frame was picked.")
     frame: int | None = Field(None, description="With --loop: the frame the edit was picked for.")
@@ -200,6 +260,8 @@ class PickData(BaseModel):
     stages: list[StageState]
 
     def text(self) -> str:
+        if self.state is not None:
+            return f"{self.asset}: picked {self.variant} as the Source of state {self.state} ({self.stage} Decision {self.id})"
         if self.loop is not None:
             return (f"{self.asset}: picked {self.variant} as frame {self.frame} of Loop {self.loop} "
                     f"({self.stage} Decision {self.id})")
@@ -221,6 +283,14 @@ class PickData(BaseModel):
 def pick(arguments: PickInput, context: Context) -> Outcome[PickData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if arguments.state is not None:
+        if arguments.look is not None or arguments.loop is not None or arguments.frame is not None:
+            raise fail("pick.state_alone", "--state is a Prop's state: not with --look, --loop or --frame",
+                       fix=f"kiripix pick {asset.id} {arguments.variant} --state {arguments.state}")
+        spec, entry = sources.pick_state(project, asset, arguments.state, arguments.variant)
+        states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
+        return Outcome(PickData(asset=asset.id, state=arguments.state, look=None, stage=spec.name,
+                                variant=arguments.variant, id=entry.id, stages=states))
     if (arguments.loop is None) != (arguments.frame is None):
         raise fail("pick.loop_needs_frame", "--loop and --frame go together: a Loop's edit is picked for a frame",
                    fix=f"kiripix pick {asset.id} {arguments.variant} --loop {arguments.loop or '<loop>'} "

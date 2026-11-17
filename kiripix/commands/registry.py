@@ -30,6 +30,7 @@ class LockNeeds:
 
     project: bool = False
     asset: Callable[[Any], str | None] | None = None
+    assets: Callable[[Any], list[str]] | None = None  # for a Command on several Assets; core takes them in a fixed order
     gpu: bool = False
 
 

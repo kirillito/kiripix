@@ -60,8 +60,8 @@ def codes(result: dict[str, object]) -> list[str]:
 def test_a_version_3_project_migrates_in_memory_to_an_empty_table(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
-    assert "schema_version = 6" in text
-    old = text.replace("schema_version = 6", "schema_version = 3")
+    assert "schema_version = 7" in text
+    old = text.replace("schema_version = 7", "schema_version = 3")
     path.write_text(old, encoding="utf-8")
 
     described = project.json("describe", "project")
@@ -135,7 +135,9 @@ def test_ramps_add_writes_the_table_from_palette_json_and_a_repeat_writes_nothin
     done = project.json("ramps-add", HERO, "--parts", "cloth,skin", "--colours", owner=True)
     assert done["data"]["wrote"] is True and done["data"]["added"] == ["cloth", "skin"]
     text = path.read_text(encoding="utf-8")
-    assert text.startswith(before) and "# The ramp table" in text  # the Owner's comments stay
+    kept = iter(text.splitlines())
+    assert all(line in kept for line in before.splitlines())  # every line of the Owner's file stays, in order
+    assert "# The ramp table" in text  # the Owner's file stays
     shown = project.json("describe", "project")["data"]["ramps"]
     assert shown == [{"name": n, "length": len(parts[n]["rgb"]), "rgb": parts[n]["rgb"]} for n in ("cloth", "skin")]
 

@@ -988,8 +988,12 @@ def run_asset(
     rerun: bool = False,
     cpu: bool = False,
     keep_warm: bool = False,
+    from_stage: str | None = None,
 ) -> AssetRun:
     """Run the Asset's stale and todo Stages in order, or one Stage; stop at the first that can't finish.
+
+    With `from_stage` (and `force`), that Stage and every Stage after it in the recipe run, whatever their status: status
+    hashes inputs, not outputs, so a forced Stage alone leaves the Stages after it on its old output.
 
     With `rerun`, a Stage's Runner calls with no pinned result are made first, so it lands in needs-review. With `cpu`,
     Runners run on the CPU and no GPU lock is taken. With `keep_warm`, in `serve`, those calls use its warm Runner.
@@ -998,18 +1002,21 @@ def run_asset(
     """
     graph = AssetGraph(project, asset, cache)
     _remove_leftovers(asset)
-    if stage is not None:
-        spec = graph.spec(stage)
+    if stage is not None or from_stage is not None:
+        spec = graph.spec(stage or from_stage or "")
         for name in spec.inputs.upstream:
             upstream = graph.state(name)
             if upstream.status != "done":
                 raise fail(
                     "stage.upstream_not_done",
-                    f"'{stage}' needs '{name}', which is {upstream.status}",
+                    f"'{spec.name}' needs '{name}', which is {upstream.status}",
                     fix=f"kiripix run {asset.id}",
-                    position=Position(asset=asset.id, stage=stage),
+                    position=Position(asset=asset.id, stage=spec.name),
                 )
         specs = [spec]
+        if stage is None:
+            every = list(graph.kind.stages)
+            specs = every[every.index(spec):]
     else:
         specs = list(graph.kind.stages)
     runner = _Runner(graph, progress, wait, command_line, cpu, keep_warm, force)
@@ -1052,7 +1059,7 @@ def run_asset(
                     f"{asset.id} waits on the Owner: {state.reason}."
             findings.append(
                 Finding(
-                    code="stage.needs_input",
+                    code=waiting.code if waiting is not None and waiting.code else "stage.needs_input",
                     message=f"{asset.id} {spec.name}: needs-input: {state.reason}",
                     position=Position(asset=asset.id, stage=spec.name),
                     fix=fix,

@@ -43,6 +43,8 @@ def _locks(command: Command[Any, Any], arguments: BaseModel) -> list[str]:
     asset = needs.asset(arguments) if needs.asset else None
     if asset:
         names.append(asset_lock(asset))
+    if needs.assets:
+        names += [asset_lock(a) for a in needs.assets(arguments)]
     if needs.gpu:
         names.append(GPU_LOCK)
     return names

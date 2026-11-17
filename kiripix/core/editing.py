@@ -65,6 +65,33 @@ def _parse(param: ParamSpec, text: str) -> Scalar | None:
 
 def set_params(project: Project, asset: Asset, stage: str, assignments: Sequence[str]) -> dict[str, Scalar]:
     """Write `[stages.<stage>]` in `asset.toml` and return the Stage's parameters as set."""
+    return set_params_many(project, [asset], stage, assignments)[asset.id]
+
+
+def set_params_many(project: Project, assets: Sequence[Asset], stage: str,
+                    assignments: Sequence[str]) -> dict[str, dict[str, Scalar]]:
+    """`set_params` on several Assets, all or none: every Asset's assignments are checked before any file is written, and
+    the findings of every Asset that refuses are given together. Returns each Asset's parameters as set, by ID."""
+    findings: list[Finding] = []
+    checked: list[tuple[Asset, dict[str, Scalar]]] = []
+    for asset in assets:
+        try:
+            checked.append((asset, _checked(project, asset, stage, assignments)))
+        except KiripixError as error:
+            findings += [f for f in error.findings if f not in findings]
+    if findings:
+        raise KiripixError(findings)
+    result: dict[str, dict[str, Scalar]] = {}
+    for asset, values in checked:
+        stages = {name: dict(table) for name, table in asset.settings.stages.items()}
+        stages.setdefault(stage, {}).update(values)
+        save_settings(asset.dir / ASSET_FILE, asset.settings.model_copy(update={"stages": stages}))
+        result[asset.id] = stages[stage]
+    return result
+
+
+def _checked(project: Project, asset: Asset, stage: str, assignments: Sequence[str]) -> dict[str, Scalar]:
+    """The assignments as values, or a refusal naming every one that is wrong."""
     graph = _graph(project, asset)
     spec = graph.spec(stage)
     declared = {p.name: p for p in spec.params}
@@ -111,10 +138,7 @@ def set_params(project: Project, asset: Asset, stage: str, assignments: Sequence
         values[name] = value
     if findings:
         raise KiripixError(findings)
-    stages = {name: dict(table) for name, table in asset.settings.stages.items()}
-    stages.setdefault(stage, {}).update(values)
-    save_settings(asset.dir / ASSET_FILE, asset.settings.model_copy(update={"stages": stages}))
-    return stages[stage]
+    return values
 
 
 # the journal

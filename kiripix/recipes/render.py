@@ -46,11 +46,20 @@ in every frame, from the posed mesh and not from the pixels: `render.json` then 
 `eyes` list (`x`, `y`, `width`, `height` in px, `depth` as the depth pass counts it, and the camera-space `normal`), for
 `finish` to stamp the eyes from. A clip's
 `blink`, `wink_left` and `wink_right` frames are copied to its entry. None of these keys is written when it isn't set.
+
+Points (ticket 0237): with the `points` parameter, `<name>@<target>` entries, comma-separated (`hand_r@mixamorig:RightHand`), a
+`name` (`[a-z][a-z0-9_]*`) is a point for the game and a `target` a bone of the Model's armature (its head) or an Empty of the
+Model (its own place; a socket parented to a bone follows the bone), by name. Blender reports each point in every frame as the
+eyes are, from the posed Model: `render.json` then has `points` (the entries, as `{"name", "target"}`) and each frame a `points`
+map, `{name: {"x", "y", "depth", "hidden"}}` in render px (sub-pixel, y down), the depth the eyes have, and `hidden` when the
+depth pass has the body in front of it. A target that isn't there is `render.point_unknown`, which lists the armature's bones
+and the Model's Empties. Without the parameter nothing is written, and the keys of the clips don't change.
 """
 
 import hashlib
 import json
 import math
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -77,6 +86,36 @@ YAW = {"s": 0, "sw": -45, "w": -90, "nw": -135, "n": 180, "ne": 135, "e": 90, "s
 CELL_RATIO = 1.5
 BOTTOM_RATIO = 0.1  # of the height, the pivot's distance above the cell's bottom
 ROOTS = ("root",)
+
+
+POINT_NAME = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def parse_points(text: str, asset_id: str) -> list[dict[str, str]]:
+    """`points` as `[{"name", "target"}]`. A malformed entry, a bad name or a name given twice fails with a fix."""
+    found: list[dict[str, str]] = []
+    fix = f"kiripix set {asset_id} render points="
+    for entry in (e.strip() for e in text.split(",")):
+        if not entry:
+            continue
+        name, at, target = (part.strip() for part in entry.partition("@"))
+        if not at or not target or not POINT_NAME.fullmatch(name):
+            raise StageFailure(f"the point {entry!r} should be <name>@<bone or empty>, with a name of lower case letters, digits "
+                               f"and underscores that starts with a letter, such as hand_r@mixamorig:RightHand",
+                               code="render.point_invalid", fix=fix)
+        if any(p["name"] == name for p in found):
+            raise StageFailure(f"the point {name} is given twice", code="render.point_invalid", fix=fix)
+        found.append({"name": name, "target": target})
+    return found
+
+
+def _check_points(run: StageRun, result: dict[str, Any]) -> None:
+    """Fails with `render.point_unknown` when Blender reports points whose target is neither a bone nor an Empty."""
+    if "points_unknown" in result:
+        raise StageFailure(
+            f"the Model has no bone or empty named {', '.join(result['points_unknown'])}; its bones are "
+            f"{', '.join(result['bones']) or 'none'}" + (f", its empties {', '.join(result['empties'])}" if result["empties"] else ""),
+            code="render.point_unknown", fix=f"kiripix set {run.asset_id} render points=")
 
 
 def cell_size(height: int) -> int:
@@ -311,6 +350,9 @@ def run_render(run: StageRun) -> None:
     eyes = [name.strip() for name in str(followed or "").split(",") if name.strip()]
     if eyes:
         args["eyes"] = eyes
+    points = parse_points(str(run.params.get("points") or ""), run.asset_id)
+    if points:
+        args["points"] = points
     posing: dict[str, Any] = {name: args[name] for name in ("root", "model_height", "elevation", "px_per_unit")}
     posing.update(directions=list(names), rig=_stamp_hash(run.upstream["rig"]), model=_stamp_hash(run.upstream["model"]),
                   blender=str(run.settings.get("blender.version", "")), script=_script_hash(), schema=RENDER_SCHEMA_VERSION)
@@ -321,7 +363,9 @@ def run_render(run: StageRun) -> None:
     unmeasured = [c for c in args["clips"] if c["name"] not in bounds]
     if unmeasured:
         run.progress(0, 1, f"measuring {len(unmeasured)} of {len(clips)} clips")
-        measured = launch(run, "render_frames", {**args, "clips": unmeasured, "measure": True})["frames"]
+        found_bounds = launch(run, "render_frames", {**args, "clips": unmeasured, "measure": True})
+        _check_points(run, found_bounds)
+        measured = found_bounds["frames"]
         for clip in clips:
             if clip["name"] in measured:
                 follows_root = not clip["stationary"] and not clip["root_motion"]
@@ -332,6 +376,8 @@ def run_render(run: StageRun) -> None:
     shared.update(posing)
     if eyes:
         shared["eyes"] = eyes
+    if points:
+        shared["points"] = points
 
     def key(clip: dict[str, Any], device: str) -> str:
         return hashlib.sha256(json.dumps({"clip": clip, **shared, "device": device}, sort_keys=True)
@@ -349,10 +395,12 @@ def run_render(run: StageRun) -> None:
         run.progress(0, 1, "starting Blender" if not kept else
                      f"reused {reused} clip and direction pairs; starting Blender for {len(args['clips'])} of {len(every)} clips")
         result = launch(run, "render_frames", args)
+        _check_points(run, result)
         if kept and result["depth_range"] != next(iter(kept.values()))["depth_range"]:
             # the depth scale moved, so the kept frames don't match the new ones. The key should prevent it; render all.
             kept, reused, args["clips"] = {}, 0, every
             result = launch(run, "render_frames", args)
+            _check_points(run, result)
         if args["device"] == "gpu" and str(result.get("device", "")).startswith("cpu"):
             # No GPU was found, so Blender rendered on the CPU: the new frames are keyed as CPU frames, as they are.
             keys.update({c["name"]: key(c, "cpu") for c in clips if c["name"] not in kept})
@@ -392,7 +440,8 @@ def run_render(run: StageRun) -> None:
                         code="render.eyes_unknown", fix=f"kiripix set {run.asset_id} render eyes=")
                 frames.append({"index": index, "source_frame": clip["frames"][index], "files": files,
                                "pivot": list(pivot) if clip["stationary"] else found["pivot"],
-                               **({"eyes": found["eyes"]} if eyes else {})})
+                               **({"eyes": found["eyes"]} if eyes else {}),
+                               **({"points": found["points"]} if points else {})})
             directions[direction] = frames
         entries.append({"name": clip["name"], "key": keys[clip["name"]], "fps": clip["fps"], "loop": clip["loop"],
                         "stationary": clip["stationary"], "root_motion": clip["root_motion"], "directions": directions,
@@ -409,6 +458,7 @@ def run_render(run: StageRun) -> None:
         "bands": args["toon"]["bands"],
         "materials": materials,
         **({"eyes": eyes} if eyes else {}),
+        **({"points": points} if points else {}),
         **({"generated": made} if made else {}),  # for `palette`, which reads its `parts` (ticket 0224)
         "depth_range": result["depth_range"],
         "passes": list(PASSES),

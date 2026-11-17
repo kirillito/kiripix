@@ -17,6 +17,10 @@ Output in `work/sheet/`: `color.png`, `normal.png` and `sheet.json`:
      "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
                 "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78, "height": 78}}, ...]}}]}
 
+With named points (ticket 0237, `render`'s `points`), each frame also has `"points": {"hand_r": {"x": 12, "y": -20, "hidden":
+false}}`: the point's pixel relative to the pivot, whole px, y down, as Godot draws: the pixel of the frame that holds it, counted
+from the pivot's pixel edge (`floor(render x - the frame's rounded pivot)`). A character without points has no such key.
+
 The Checks read `finish`'s frames again (the atlas has cut off what overflows the cell) and `clips`' frame counts. A finding
 about a frame has `position.field` = `clip/direction/index` and `position.file` = the frame's colour file in `finish`.
 """
@@ -68,6 +72,16 @@ def _json(path: Any, what: str, stage: str) -> dict[str, Any]:
 def _cell(document: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
     frame, pivot = document["frame"], document["pivot"]
     return (int(frame["width"]), int(frame["height"])), (_round(pivot[0]), _round(pivot[1]))
+
+
+def _points(frame: dict[str, Any]) -> dict[str, Any]:
+    """A frame's `points` for the sheet, relative to the frame's pivot in whole px; nothing when render followed none."""
+    found = frame.get("points")
+    if not found:
+        return {}
+    pivot = (_round(frame["pivot"][0]), _round(frame["pivot"][1]))
+    return {"points": {name: {"x": math.floor(float(p["x"]) - pivot[0]), "y": math.floor(float(p["y"]) - pivot[1]),
+                              "hidden": bool(p["hidden"])} for name, p in found.items()}}
 
 
 def _frames(run: StageRun, source: str, document: dict[str, Any], *, normals: bool) -> tuple[list[SheetFrame], dict[tuple[str, str, int], str]]:
@@ -128,7 +142,8 @@ def _run_sheet(run: StageRun, source: str) -> None:
             directions[direction] = [
                 {"index": int(frame["index"]),
                  "rect": dict(zip(("x", "y", "width", "height"), found[(entry["name"], direction, int(frame["index"]))],
-                                  strict=True))}
+                                  strict=True)),
+                 **_points(frame)}
                 for frame in listed if (entry["name"], direction, int(frame["index"])) in found]
         clips.append({"name": entry["name"], "fps": int(entry["fps"]), "loop": bool(entry["loop"]),
                       "stationary": bool(entry["stationary"]), "directions": directions})

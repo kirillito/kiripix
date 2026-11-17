@@ -6,12 +6,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.commands.contract import Context, ExitCode, Outcome
 from kiripix.commands.registry import CliMeta, command
-from kiripix.core.assets import load_asset
+from kiripix.core.assets import list_assets, load_asset
 from kiripix.core.hashing import HashCache
 from kiripix.core.previews import write_preview
 from kiripix.core.project import find_project
 from kiripix.core.project_checks import check_all, check_asset
-from kiripix.export import frozen_findings
+from kiripix.export import frozen_findings, pairing_findings
 
 
 class CheckInput(BaseModel):
@@ -75,6 +75,9 @@ def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
         done, findings, old = check_asset(project, asset, cache)
         late = [(asset.id, state) for state in old]
         findings += frozen_findings(project, asset, cache)  # the Exporter's: it reads the game's Manifest
+        # Exit pairing is a Project check (spec §6.1): for one room it only warns, as `export <id>` does; `check --all` fails.
+        every, _ = list_assets(project)
+        findings += pairing_findings(project, every, only=asset.id, severity="warning")
         assets, stages = [asset.id], [f"{asset.id} {s}" for s in done]
     cache.save()
     if broken:

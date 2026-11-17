@@ -4,16 +4,12 @@
 from __future__ import annotations
 
 import re
-import tomllib
-from pathlib import Path
 
-import tomli_w
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import atomic
 from kiripix.core import ramps as core_ramps  # noqa: F401 - registers the Project check `palette.parts_differ`
 from kiripix.core.assets import load_asset
 from kiripix.core.errors import KiripixError, fail
@@ -21,11 +17,11 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import PROJECT_FILE, find_project
 from kiripix.core.settings import (
-    PROJECT_SCHEMA_VERSION,
     ProjectSettings,
     RampSpec,
     ramp_table_findings,
     read_project_palette,
+    layout_lost,
     save_settings,
 )
 
@@ -61,28 +57,6 @@ class RampsAddData(BaseModel):
 
 def _row(ramp: RampSpec) -> RampRow:
     return RampRow(name=ramp.name, length=ramp.length, rgb=[list(c) for c in ramp.rgb] if ramp.rgb is not None else None)
-
-
-def _block(ramp: RampSpec) -> str:
-    lines = ["[[character.ramps]]", f"name = {tomli_w.dumps({'v': ramp.name})[4:].strip()}", f"length = {ramp.length}"]
-    if ramp.rgb is not None:
-        lines.append("rgb = [" + ", ".join(f"[{r}, {g}, {b}]" for r, g, b in ramp.rgb) + "]")
-    return "\n".join(lines) + "\n"
-
-
-def _write(path: Path, text: str, updated: ProjectSettings, added: list[RampSpec]) -> None:
-    """Append the new rows to the file as text, so the Owner's comments stay; when the file isn't at the current schema version
-    or the text doesn't read back as the new settings, write the whole file."""
-    try:
-        document = tomllib.loads(text)
-        if document.get("schema_version") == PROJECT_SCHEMA_VERSION:
-            new_text = text + ("" if text.endswith("\n") else "\n") + "\n" + "\n".join(_block(r) for r in added)
-            if ProjectSettings.model_validate(tomllib.loads(new_text)) == updated:
-                atomic.write_text(path, new_text)
-                return
-    except (tomllib.TOMLDecodeError, ValidationError):
-        pass
-    save_settings(path, updated)
 
 
 @command(
@@ -151,8 +125,9 @@ def ramps_add(arguments: RampsAddInput, context: Context) -> Outcome[RampsAddDat
     if problems:
         raise KiripixError(problems)
     wrote = bool(added) and not arguments.dry_run
+    kept = True
     if wrote:
-        path = project.root / PROJECT_FILE
-        _write(path, path.read_text(encoding="utf-8"), updated, added)
+        kept = save_settings(project.root / PROJECT_FILE, updated)
     return Outcome(RampsAddData(character=asset.id, dry_run=arguments.dry_run, wrote=wrote,
-                                added=[r.name for r in added], unchanged=unchanged, table=[_row(r) for r in table]))
+                                added=[r.name for r in added], unchanged=unchanged, table=[_row(r) for r in table]),
+                   findings=[] if kept else [layout_lost(PROJECT_FILE)])

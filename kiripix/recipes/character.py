@@ -390,6 +390,16 @@ CHARACTER = KindSpec(
                                 "generator names.",
                     default="",
                 ),
+                ParamSpec(
+                    name="points",
+                    type="str",
+                    description="Named points for the game, comma-separated <name>@<target>, such as "
+                                "hand_r@mixamorig:RightHand,head@mixamorig:Head: a name of lower case letters, digits and "
+                                "underscores, and a bone of the Model's armature (its head) or an Empty of the Model (a socket "
+                                "parented to a bone, such as a grip). render records each point's place in every frame, and "
+                                "character.json exports them relative to the pivot. Empty: none are recorded.",
+                    default="",
+                ),
             ),
             gpu=True,
             run=run_render,

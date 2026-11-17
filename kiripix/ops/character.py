@@ -456,8 +456,13 @@ def inner_lines(
     material: npt.NDArray[np.integer[Any]],
     depth: npt.NDArray[np.floating[Any]] | npt.NDArray[np.integer[Any]],
     skip: Collection[int | tuple[int, int]] = (),
+    depth_step: float | None = None,
 ) -> npt.NDArray[np.bool_]:
     """The pixels of the lines between a character's parts, as an (H, W) boolean mask.
+
+    With `depth_step` set (ticket 0246; in the depth pass's unit), two 4-neighbours of the same material (not 0) whose
+    depths differ by more than `depth_step` also make a border, and the line is the farther pixel with the same tie
+    rule. A single-index `skip` drops that material's depth borders too. Without it the output is as before.
 
     `material` is the material pass (0 background, else the material's index), `depth` the depth pass (larger is
     farther). A border is two 4-neighbours with different materials, neither 0. The line is the pixel of the two that
@@ -475,6 +480,8 @@ def inner_lines(
     def border(a_m: Any, b_m: Any, a_d: Any, b_d: Any, tie_to_b: bool) -> tuple[Any, Any]:
         """The masks of the first and second pixel of each pair that gets the line."""
         live = (a_m != b_m) & (a_m != 0) & (b_m != 0)
+        if depth_step is not None:
+            live |= (a_m == b_m) & (a_m != 0) & (np.abs(a_d.astype(np.float64) - b_d.astype(np.float64)) > depth_step)
         if singles:
             blocked = np.array(sorted(singles), dtype=np.int64)
             live &= ~(np.isin(a_m, blocked) | np.isin(b_m, blocked))

@@ -184,14 +184,14 @@ def test_a_listed_file_already_gone_is_fine_and_a_stopped_prune_can_run_again(pr
     assert project.json("export", "--prune")["data"]["removed"] == []
 
 
-def test_godot_sidecars_are_ignored(project: Kiripix) -> None:
+def test_a_pruned_files_godot_sidecar_goes_with_it(project: Kiripix) -> None:  # ticket 0250
     exported_pair(project)
     sidecar = project.cwd / (STREET_PLATE + ".import")
     sidecar.write_text("[remap]\n", "utf-8")
 
     project.json("export", "--prune")
 
-    assert sidecar.read_text("utf-8") == "[remap]\n" and not (project.cwd / STREET_SCENE).exists()
+    assert not sidecar.exists() and not (project.cwd / STREET_FOLDER).exists()
 
 
 def test_another_rooms_exit_still_naming_the_pruned_asset_is_a_warning(project: Kiripix) -> None:

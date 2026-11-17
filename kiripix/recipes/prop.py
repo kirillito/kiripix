@@ -48,6 +48,16 @@ from kiripix.recipes.common import (
     source_needs_input,
     write_rgba,
 )
+from kiripix.recipes.prop_states import (
+    CHECKS as STATE_CHECKS,
+    DECISIONS as STATE_DECISIONS,
+    DEFAULT_STATE,
+    STATE_ID,
+    STATES_DIR,
+    apply_edits as apply_state_edits,
+    state_needs_input,
+    top_files,
+)
 from kiripix.runners import MATTER
 
 _RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
@@ -61,6 +71,8 @@ _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot proj
 
 def _brief(run: StageRun) -> None:
     brief = {"width": run.params["width"], "height": run.params["height"], "angle": run.params["angle"]}
+    if run.params["state"] != DEFAULT_STATE:  # a Prop that names no state has the brief it always had
+        brief["state"] = run.params["state"]
     (run.output_dir / "brief.json").write_text(json.dumps(brief, indent=2) + "\n", encoding="utf-8")
 
 
@@ -69,9 +81,20 @@ def _check_brief(run: StageRun) -> list[Finding]:
     brief = json.loads((run.output_dir / "brief.json").read_text(encoding="utf-8"))
     width, height = int(brief["width"]), int(brief["height"])
     limit_width, limit_height = (int(v) for v in run.settings["project.resolution"])
+    findings: list[Finding] = []
+    state = str(run.params["state"])
+    if not re.fullmatch(STATE_ID, state):  # the default state's ID is a name in the game, as every other state's
+        snake = re.sub(r"[^a-z0-9]+", "_", state.lower()).strip("_")
+        snake = snake if re.fullmatch(STATE_ID, snake) else DEFAULT_STATE
+        findings.append(Finding(
+            code="brief.state_invalid",
+            message=f"the default state's ID {state!r} isn't lower-case snake_case",
+            position=Position(asset=run.asset_id, stage="brief", field="stages.brief.state"),
+            fix=f"kiripix set {run.asset_id} brief state={snake}",
+        ))
     if width <= limit_width and height <= limit_height:
-        return []
-    return [
+        return findings
+    return findings + [
         Finding(
             code="brief.larger_than_resolution",
             message=f"the brief's size {width}x{height} is larger than the project's resolution "
@@ -81,6 +104,17 @@ def _check_brief(run: StageRun) -> list[Finding]:
             fix=f"kiripix set {run.asset_id} brief width={min(width, limit_width)} height={min(height, limit_height)}",
         )
     ]
+
+
+# source: the default state's Source, from `src/<hash>.png`; a state's Variants (`src/states/`) are read by `state_needs_input`.
+
+
+def _source(run: StageRun) -> None:
+    run_source(top_files(run))
+
+
+def _source_needs_input(run: StageRun) -> NeedsInput | None:
+    return source_needs_input(top_files(run)) or state_needs_input(run)
 
 
 # cutout: the background out of the full-size Source. Chroma key is an Op and calls no Runner. Matting is one pinned call
@@ -312,10 +346,19 @@ PROP = KindSpec(
                     default="top34",
                     choices=["top34", "side"],
                 ),
+                ParamSpec(
+                    name="state",
+                    type="str",
+                    description="The default state's ID (the picked Source): lower-case snake_case. Another state of "
+                                "the Prop (`state` Decision on `source`) can't have it.",
+                    default=DEFAULT_STATE,
+                ),
             ),
             inputs=StageInputs(settings=["project.resolution"]),
             checks=(CheckSpec(code="brief.larger_than_resolution",
-                              description="The size is no larger than the project's resolution."),),
+                              description="The size is no larger than the project's resolution."),
+                    CheckSpec(code="brief.state_invalid",
+                              description="The default state's ID is lower-case snake_case.")),
             owner_input="Writes the brief.",
             available_from="M2",
             run=_brief,
@@ -324,14 +367,15 @@ PROP = KindSpec(
         StageSpec(
             name="source",
             description="Generated on a flat chroma background, or imported.",
-            inputs=StageInputs(files=["src/*.png"]),
-            decisions=(PICK,),
-            checks=(CheckSpec(code="source.not_picked", description="A Source has been picked."),),
-            owner_input="Picks one Variant.",
+            inputs=StageInputs(files=["src/*.png", f"{STATES_DIR}/**/*.png"]),
+            decisions=(PICK, *STATE_DECISIONS),
+            checks=(CheckSpec(code="source.not_picked", description="A Source has been picked."), *STATE_CHECKS),
+            owner_input="Picks one Variant, and one for each state it declares.",
             available_from="M2",
             image="source.png",
-            run=run_source,
-            needs_input=source_needs_input,
+            run=_source,
+            needs_input=_source_needs_input,
+            decisions_view=apply_state_edits,
         ),
         StageSpec(
             name="cutout",

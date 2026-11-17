@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +29,9 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache
 from kiripix.core.images import load_rgba, save_png
 from kiripix.core.project import Project
+from kiripix.core import snapshots
 from kiripix.ops.resample import upscale
+from kiripix.recipes.base import Scalar
 from kiripix.recipes.character_sheet import SHEET_FILE, SHEET_SCHEMA_VERSION
 
 SHEET_STAGE = "sheet"
@@ -51,6 +53,27 @@ class CastCell:
     width: int
     height: int
     pivot: tuple[int, int]  # in the cell, from its top left, in PNG px
+    row: str | None = None  # with `--snapshots`: the label of the cell's row
+
+
+@dataclass(frozen=True)
+class CastRow:
+    """One snapshot's row of a sheet with `--snapshots`: its label and title, and its band of the PNG."""
+
+    label: str
+    title: str
+    y: int
+    height: int
+    ground: int
+
+
+@dataclass(frozen=True)
+class DifferingParam:
+    """A parameter whose value is not the same in every snapshot: its value in each label, for each Asset."""
+
+    stage: str
+    param: str
+    values: dict[str, dict[str, Scalar]]
 
 
 @dataclass(frozen=True)
@@ -62,6 +85,8 @@ class CastSheet:
     ground: int  # the y of the ground line in the PNG
     cells: tuple[CastCell, ...]
     findings: tuple[Finding, ...]
+    rows: tuple[CastRow, ...] = ()
+    differing: tuple[DifferingParam, ...] = ()
 
 
 class NothingToDraw(Exception):
@@ -147,24 +172,10 @@ def _label_font() -> Any:
     return ImageFont.load_default()
 
 
-def cast_sheet(project: Project, assets: list[Asset], clips: list[str] | None, directions: list[str], frames: int,
-               scale: int) -> CastSheet:
-    """Draw the cast sheet. Refuses an Asset with no `sheet` Stage; raises NothingToDraw, with the findings that say
-    why, when no Asset has a cell to draw."""
-    cache = HashCache(project.state_dir)
-    findings: list[Finding] = []
-    drawn: list[_Frame] = []
-    for asset in assets:
-        graph = AssetGraph(project, asset, cache)
-        if graph.kind.stage(SHEET_STAGE) is None:
-            raise fail("cast.not_a_figure", f"{asset.id} is a {asset.kind}, which has no {SHEET_STAGE} Stage to draw",
-                       fix="kiripix cast-sheet character.a,character.b", position=Position(asset=asset.id))
-        built = _sheet(graph, asset, findings)
-        if built is not None:
-            drawn += _frames(asset, *built, clips, directions, frames, findings)
-    if not drawn:
-        raise NothingToDraw(findings)
-
+def _compose(drawn: list[_Frame], scale: int, title: str | None) -> tuple[np.ndarray, int, list[CastCell]]:
+    """One row: the Assets' cells with their pivots on one ground line, a strip of Asset labels above them and, when
+    there is a `title`, a strip with it above that. Returns the picture, the ground line's y in it and the cells, whose
+    positions are in the picture."""
     # Lay out in target px: the ground line is the lowest pivot's y, so the tallest figure above its feet fits.
     above = max(f.pivot[1] for f in drawn)
     below = max(f.image.shape[0] - f.pivot[1] for f in drawn)
@@ -181,32 +192,132 @@ def cast_sheet(project: Project, assets: list[Asset], clips: list[str] | None, d
         height, width = frame.image.shape[:2]
         canvas[top: top + height, left: left + width] = frame.image
 
+    strip = LABEL_HEIGHT * (2 if title is not None else 1)
     figures = upscale(canvas, scale)
-    image = np.empty((LABEL_HEIGHT + figures.shape[0], figures.shape[1], 4), np.uint8)
+    image = np.empty((strip + figures.shape[0], figures.shape[1], 4), np.uint8)
     image[:] = BACKGROUND
     alpha = figures[..., 3:4].astype(np.float32) / 255
-    under = image[LABEL_HEIGHT:].astype(np.float32)
-    image[LABEL_HEIGHT:] = np.rint(figures.astype(np.float32) * alpha + under * (1 - alpha)).astype(np.uint8)
-    image[LABEL_HEIGHT:, :, 3] = 255
-    image = _labelled(image, [(left * scale, frame.asset) for frame, left in zip(drawn, places) if frame.first])
+    under = image[strip:].astype(np.float32)
+    image[strip:] = np.rint(figures.astype(np.float32) * alpha + under * (1 - alpha)).astype(np.uint8)
+    image[strip:, :, 3] = 255
+    texts = [(left * scale, strip - LABEL_HEIGHT, frame.asset) for frame, left in zip(drawn, places) if frame.first]
+    if title is not None:
+        texts.append((0, 0, title))
+    image = _labelled(image, texts)
+    cells = [CastCell(f.asset, f.clip, f.direction, f.index, left * scale, strip + (above - f.pivot[1]) * scale,
+                      f.image.shape[1] * scale, f.image.shape[0] * scale, (f.pivot[0] * scale, f.pivot[1] * scale))
+             for f, left in zip(drawn, places)]
+    return image, strip + above * scale, cells
 
-    cells = tuple(CastCell(f.asset, f.clip, f.direction, f.index, left * scale,
-                           LABEL_HEIGHT + (above - f.pivot[1]) * scale, f.image.shape[1] * scale,
-                           f.image.shape[0] * scale, (f.pivot[0] * scale, f.pivot[1] * scale))
-                  for f, left in zip(drawn, places))
-    key = json.dumps([[a.id for a in assets], clips, directions, frames])
+
+def cast_sheet(project: Project, assets: list[Asset], clips: list[str] | None, directions: list[str], frames: int,
+               scale: int, labels: list[str] | None = None) -> CastSheet:
+    """Draw the cast sheet. Refuses an Asset with no `sheet` Stage; raises NothingToDraw, with the findings that say
+    why, when no Asset has a cell to draw. With `labels`, one row per snapshot label (ticket 0248) instead of the Assets'
+    sheets as built now."""
+    cache = HashCache(project.state_dir)
+    findings: list[Finding] = []
+    for asset in assets:
+        if AssetGraph(project, asset, cache).kind.stage(SHEET_STAGE) is None:
+            raise fail("cast.not_a_figure", f"{asset.id} is a {asset.kind}, which has no {SHEET_STAGE} Stage to draw",
+                       fix="kiripix cast-sheet character.a,character.b", position=Position(asset=asset.id))
+    key = json.dumps([[a.id for a in assets], clips, directions, frames, labels])
     name = f"cast.{hashlib.sha1(key.encode()).hexdigest()[:10]}.x{scale}.png"
     path = project.state_dir / "previews" / name
+
+    if labels is None:
+        drawn: list[_Frame] = []
+        for asset in assets:
+            built = _sheet(AssetGraph(project, asset, cache), asset, findings)
+            if built is not None:
+                drawn += _frames(asset, *built, clips, directions, frames, findings)
+        if not drawn:
+            raise NothingToDraw(findings)
+        image, ground, cells = _compose(drawn, scale, None)
+        save_png(path, image)
+        return CastSheet(path, image.shape[1], image.shape[0], scale, ground, tuple(cells), tuple(findings))
+    return _snapshot_rows(project, assets, clips, directions, frames, scale, labels, path, findings)
+
+
+def _differing(notes: dict[str, dict[str, snapshots.SnapshotNote]]) -> list[DifferingParam]:
+    """The parameters (of any Stage) whose value isn't the same in every label, for any Asset that is in them."""
+    found: dict[tuple[str, str], dict[str, dict[str, Scalar]]] = {}
+    for label, by_asset in notes.items():
+        for asset, note in by_asset.items():
+            for stage, params in note.params.items():
+                for param, value in params.items():
+                    found.setdefault((stage, param), {}).setdefault(label, {})[asset] = value
+    differing = []
+    for (stage, param), values in found.items():
+        seen = {json.dumps(sorted(v.items())) for v in values.values()}
+        if len(seen) > 1 or len(values) < len(notes):
+            differing.append(DifferingParam(stage, param, values))
+    return sorted(differing, key=lambda d: (d.stage, d.param))
+
+
+def _title(label: str, differing: list[DifferingParam]) -> str:
+    parts = []
+    for d in differing:
+        values = d.values.get(label)
+        if values is None:
+            continue
+        shown = {str(v) for v in values.values()}
+        parts.append(f"{d.stage}.{d.param}={shown.pop() if len(shown) == 1 else 'mixed'}")
+    return label + (": " + " ".join(parts) if parts else "")
+
+
+def _snapshot_rows(project: Project, assets: list[Asset], clips: list[str] | None, directions: list[str], frames: int,
+                   scale: int, labels: list[str], path: Path, findings: list[Finding]) -> CastSheet:
+    notes: dict[str, dict[str, snapshots.SnapshotNote]] = {}
+    rows: dict[str, list[_Frame]] = {}
+    for label in dict.fromkeys(labels):
+        snapshots.require(project, label)
+        notes[label], rows[label] = {}, []
+        for asset in assets:
+            held = snapshots.read(project, label, asset.id)
+            position = Position(asset=asset.id, stage=SHEET_STAGE)
+            if held is None:
+                findings.append(Finding(code="cast.not_snapshotted", severity="warning", position=position,
+                                        message=f"the label '{label}' has no snapshot of {asset.id}, so it is left out "
+                                                "of that row", fix=f"kiripix snapshot {asset.id} --label {label} --replace"))
+                continue
+            notes[label][asset.id] = held.note
+            if held.note.stale:
+                findings.append(Finding(code="cast.snapshot_stale", severity="warning", position=position,
+                                        message=f"{asset.id}'s snapshot '{label}' was taken with "
+                                                f"{', '.join(held.note.stale)} not current",
+                                        fix=f"kiripix snapshot {asset.id} --label {label} --replace"))
+            rows[label] += _frames(asset, held.document, held.atlas, clips, directions, frames, findings)
+    differing = _differing({label: by_asset for label, by_asset in notes.items() if by_asset})
+    pictures = []
+    for label, drawn in rows.items():
+        if drawn:
+            pictures.append((label, *_compose(drawn, scale, _title(label, differing))))
+    if not pictures:
+        raise NothingToDraw(findings)
+    width = max(picture.shape[1] for _, picture, _, _ in pictures)
+    height = sum(picture.shape[0] for _, picture, _, _ in pictures)
+    image = np.empty((height, width, 4), np.uint8)
+    image[:] = BACKGROUND
+    placed: list[CastRow] = []
+    cells: list[CastCell] = []
+    top = 0
+    for label, picture, ground, row_cells in pictures:
+        image[top: top + picture.shape[0], : picture.shape[1]] = picture
+        placed.append(CastRow(label, _title(label, differing), top, picture.shape[0], top + ground))
+        cells += [replace(c, y=c.y + top, row=label) for c in row_cells]
+        top += picture.shape[0]
     save_png(path, image)
-    return CastSheet(path, image.shape[1], image.shape[0], scale, LABEL_HEIGHT + above * scale, cells, tuple(findings))
+    return CastSheet(path, width, height, scale, placed[0].ground, tuple(cells), tuple(findings), tuple(placed),
+                     tuple(differing))
 
 
-def _labelled(image: np.ndarray, labels: list[tuple[int, str]]) -> np.ndarray:
+def _labelled(image: np.ndarray, labels: list[tuple[int, int, str]]) -> np.ndarray:
     from PIL import Image, ImageDraw
 
     picture = Image.fromarray(image, "RGBA")
     draw = ImageDraw.Draw(picture)
     font = _label_font()
-    for left, text in labels:
-        draw.text((left + 1, 1), text, fill=LABEL_COLOUR, font=font)
+    for left, top, text in labels:
+        draw.text((left + 1, top + 1), text, fill=LABEL_COLOUR, font=font)
     return np.asarray(picture, dtype=np.uint8).copy()

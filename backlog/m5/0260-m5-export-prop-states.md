@@ -23,6 +23,12 @@ Spec §9 (Prop). Part of [0257](0257-m5-prop-states.md).
 - **The Manifest:** the state IDs in their own list, frozen once exported.
 - A Prop with no states exports exactly as today, apart from `prop.json`'s `schema_version`.
 
+## From 0258 (2026-11-17)
+
+0258 already added the Manifest's `ids.states` (omitted when empty), its union in `manifest merge` and its comparison in
+`check`, with no Manifest `schema_version` bump, as `looks` and `loops` were added before it. Nothing writes it yet: this
+ticket does.
+
 ## Acceptance criteria
 
 - [ ] CLI seam: a Prop with two states exports one scene with two state nodes, the second hidden with disabled polygons, and

@@ -2,8 +2,8 @@
 
 A Manifest whose Asset isn't in the Project is a deleted Asset's. Each file it lists is removed only if its current hash is
 the listed one (or the one a stopped export was replacing); a changed file refuses, and `--force` backs it up first. The
-Manifest goes last, so a stopped prune can run again. Files the Manifest doesn't list, and Godot's `.import` sidecars, are
-never looked at.
+Manifest goes last, so a stopped prune can run again. Files the Manifest doesn't list are never looked at. A removed
+file's Godot `.import` sidecar goes with it (ticket 0250), and the folders left empty after.
 """
 
 from dataclasses import dataclass, field
@@ -17,6 +17,8 @@ from kiripix.core.hashing import hash_bytes
 from kiripix.core.project import Project
 from kiripix.export.manifest import MANIFEST_DIR, Manifest, read_manifest
 from kiripix.export.target import GodotTarget
+
+SIDECAR = ".import"  # Godot's import settings, beside a file it imported
 
 
 @dataclass
@@ -144,13 +146,24 @@ def _drop_empty_folders(plan: PrunePlan, target: GodotTarget) -> None:
 
 def apply_prune(plan: PrunePlan, target: GodotTarget, backup: Path) -> None:
     """Back up what the game changed, remove the files, then the Manifest, then the folders left empty."""
+    backed_up = backup / (target.folder.resolve().name or "godot")
+
+    def back_up(res: str) -> None:
+        atomic.write_bytes(backed_up / res.removeprefix("res://"), target.path(res).read_bytes())
+
     for res in plan.backups:
         cancel.check()
-        atomic.write_bytes(backup / (target.folder.resolve().name or "godot") / res.removeprefix("res://"),
-                           target.path(res).read_bytes())
+        back_up(res)
     for res in plan.present:
         cancel.check()
         target.path(res).unlink(missing_ok=True)
+        # Godot's `.import` sidecar of a pruned file goes with it (and is backed up with it); Godot makes it again, so the
+        # Manifest never owned it, and only a pruned file's sidecar is touched.
+        sidecar = target.path(res + SIDECAR)
+        if sidecar.is_file():
+            if res in plan.backups:
+                back_up(res + SIDECAR)
+            sidecar.unlink(missing_ok=True)
     target.path(plan.manifest_res).unlink(missing_ok=True)
     _drop_empty_folders(plan, target)
     plan.result.removed = [*plan.present, plan.manifest_res]

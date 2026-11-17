@@ -780,6 +780,10 @@ class FakeBlender:
         40.4 px above it, facing the camera, or away from it in the direction `n`."""
         from PIL import Image
 
+        bones = json.loads(Path("blender-bones").read_text("utf-8")) if Path("blender-bones").exists() else ["hips", "hand_r", "head"]
+        missing = [p["target"] for p in args.get("points") or [] if p["target"] not in bones]
+        if missing:  # as the real script reports targets that are no bone and no Empty (ticket 0237)
+            return {"points_unknown": missing, "bones": bones, "empties": []}
         if args.get("measure"):
             return FakeBlender._measure(args)
         width, height = args["frame"]
@@ -813,6 +817,11 @@ class FakeBlender:
                         facing = -1.0 if direction["name"] == "n" else 1.0
                         placed["eyes"] = [{"x": placed["pivot"][0] + dx, "y": placed["pivot"][1] - 40.4, "width": 2.2,
                                            "height": 2.0, "depth": 8.0, "normal": [0.0, 0.0, facing]} for dx in (-1.5, 1.8)]
+                    if args.get("points"):  # each point 10 px right of the pivot per its place in the list, 30 px above it
+                        placed["points"] = {p["name"]: {"x": placed["pivot"][0] + 10.0 * (n + 1) + 0.4,
+                                                        "y": placed["pivot"][1] - 30.0 + 0.7, "depth": 9.0,
+                                                        "hidden": direction["name"] == "n"}
+                                            for n, p in enumerate(args["points"])}
                     frames[clip["name"]][direction["name"]].append(placed)
         device = "cpu" if Path("blender-no-gpu").exists() else args["device"]  # as Blender falls back with no GPU
         materials = [{"index": i, "name": n} for i, n in enumerate(sorted(names), start=1)]  # by name, from 1 (ticket 0148)

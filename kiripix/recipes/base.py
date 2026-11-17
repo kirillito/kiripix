@@ -303,6 +303,7 @@ class NeedsInput:
     reason: str
     command: str | None = None
     owner_action: str | None = None
+    code: str | None = None  # the finding code `run` gives it, instead of `stage.needs_input` (`prop.state_unpicked`)
 
 
 NeedsInputFunction = Callable[[StageRun], NeedsInput | None]

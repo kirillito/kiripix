@@ -10,7 +10,7 @@ from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import editing, journal
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.assets import is_asset_id, load_asset
-from kiripix.export import frozen_layer_findings, loop_edit_findings
+from kiripix.export import frozen_layer_findings, loop_edit_findings, state_edit_findings
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import find_project
@@ -47,38 +47,66 @@ def current_decisions(decisions: tuple[CurrentDecision, ...], from_base: bool = 
 
 
 class SetInput(_StageInput):
+    asset: str = Field(description="The Asset ID, such as room.queen_west_alley; or several, comma-separated "
+                                   "(character.a,character.b): all are set, or none is.")
     assignments: list[str] = Field(description="key=value pairs: the Stage's parameters and their new values.")
 
 
-class SetData(BaseModel):
+class SetAssetData(BaseModel):
     asset: str
-    stage: str
     params: dict[str, Scalar]
     stages: list[StageState]
 
+
+class SetData(BaseModel):
+    asset: str = Field(description="The Asset ID as given; with several Assets, the IDs joined by commas.")
+    stage: str
+    params: dict[str, Scalar] = Field(description="The Stage's parameters as set; empty with several Assets: see `assets`.")
+    stages: list[StageState] = Field(description="The Asset's Stage states; empty with several Assets: see `assets`.")
+    assets: list[SetAssetData] = Field(default_factory=list, description="With several Assets: each one's new "
+                                                                          "parameters and Stage states, in order.")
+
     def text(self) -> str:
+        if self.assets:
+            lines = []
+            for each in self.assets:
+                lines.append(f"{each.asset} {self.stage}: " + ", ".join(f"{k}={v}" for k, v in each.params.items()))
+                lines += [f"  {s.stage:<10} {s.status}" for s in each.stages]
+            return "\n".join(lines)
         lines = [f"{self.asset} {self.stage}: " + ", ".join(f"{k}={v}" for k, v in self.params.items())]
         lines += [f"  {s.stage:<10} {s.status}" for s in self.stages]
         return "\n".join(lines)
 
 
+def _listed_assets(arguments: SetInput) -> list[str]:
+    return [a for a in dict.fromkeys(part.strip() for part in arguments.asset.split(",")) if is_asset_id(a)]
+
+
 @command(
     "set",
-    summary="Set a Stage's parameters (key=value ...), checked against the Stage's declared parameters.",
+    summary="Set a Stage's parameters (key=value ...), checked against the Stage's declared parameters. Several "
+            "Assets, comma-separated, are set all or none.",
     input=SetInput,
     output=SetData,
     kind="writing",
     mcp="exposed",
     cli=CliMeta(positional=("asset", "stage", "assignments")),
-    locks=LockNeeds(asset=_asset_lock),
+    locks=LockNeeds(assets=_listed_assets),
 )
 def set_params(arguments: SetInput, context: Context) -> Outcome[SetData]:
     project = find_project(context.cwd)
-    asset = load_asset(project, arguments.asset)
-    params = editing.set_params(project, asset, arguments.stage, arguments.assignments)
-    asset = load_asset(project, arguments.asset)
-    states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
-    return Outcome(SetData(asset=asset.id, stage=arguments.stage, params=params, stages=states))
+    ids = list(dict.fromkeys(part.strip() for part in arguments.asset.split(",")))
+    if not all(ids):
+        raise fail("input.invalid", "asset: name each Asset; there is an empty one in the list",
+                   fix="kiripix set character.a,character.b <stage> key=value")
+    assets = [load_asset(project, asset_id) for asset_id in ids]
+    done = editing.set_params_many(project, assets, arguments.stage, arguments.assignments)
+    cache = HashCache(project.state_dir)
+    each = [SetAssetData(asset=a.id, params=done[a.id],
+                         stages=AssetGraph(project, load_asset(project, a.id), cache).states()) for a in assets]
+    if len(each) == 1:
+        return Outcome(SetData(asset=each[0].asset, stage=arguments.stage, params=each[0].params, stages=each[0].stages))
+    return Outcome(SetData(asset=",".join(ids), stage=arguments.stage, params={}, stages=[], assets=each))
 
 
 # decide
@@ -143,6 +171,8 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
         raise KiripixError(frozen, ExitCode.CHECK_FAILED)  # an exported Layer's ID is frozen (spec §9)
     if refused := loop_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
         raise KiripixError(refused)  # a Loop's `remove` or `rename`: unknown, an ID taken, or its ID is frozen (spec §9)
+    if refused := state_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
+        raise KiripixError(refused)  # a Prop's state: a duplicate ID, an unknown state, or an exported ID (spec §9)
     if is_array:
         entries, after = editing.record_decisions(project, asset, arguments.stage, documents)
     else:
@@ -219,6 +249,9 @@ def redo(arguments: StepInput, context: Context) -> Outcome[StepData]:
     if arguments.stage == "loops" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
         if refused := loop_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
             raise KiripixError(refused)  # redoing a remove or a rename is one: the same checks as `decide`
+    if arguments.stage == "source" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
+        if refused := state_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
+            raise KiripixError(refused)  # redoing a state Decision is recording it: the same checks as `decide`
     entry, after = editing.redo(project, asset, arguments.stage)
     return Outcome(_step(entry, after, asset.id, arguments.stage, arguments.brief))
 

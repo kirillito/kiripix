@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.checks import Finding, Position
 from kiripix.commands.contract import Context, ExitCode, Outcome
+from kiripix.commands.clip_table import CLIPS_EXAMPLE, ClipRow
 from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow
 from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import cancel, sources
@@ -58,7 +59,7 @@ def init(arguments: InitInput, context: Context) -> Outcome[InitData]:
 
 
 class NewInput(_Input):
-    kind: str = Field(description="The Asset's Kind: room, prop, character or sprite.")
+    kind: str = Field(description=f"The Asset's Kind: {', '.join(sorted(all_kinds()))}.")
     name: str = Field(description="The Asset's name: lower-case letters, digits and underscores.")
     view: str | None = Field(None, description="top or side. Required for a room; refused for other Kinds.")
     base: str | None = Field(None, description="For a character: the character it is made from, such as "
@@ -156,9 +157,17 @@ class DescribeData(BaseModel):
     ramps: list[RampRow] | None = Field(
         None, description="With `describe project`: the Project's ramp table, in row order (null for a Kind).")
     ramps_example: str | None = Field(None, description="With `describe project`: how to fill the ramp table.")
+    clips: list[ClipRow] | None = Field(
+        None, description="With `describe project`: the Project's clip table (null for a Kind).")
+    clips_example: str | None = Field(None, description="With `describe project`: how to fill the clip table.")
 
     def text(self) -> str:
         lines = []
+        if self.clips is not None:
+            lines.append(f"clip table ({len(self.clips)} rows; e.g. {self.clips_example}):")
+            for clip in self.clips:
+                lines.append(f"  {clip.name}: {clip.frames} frames at {clip.fps} fps, {'loops' if clip.loop else 'plays once'}"
+                             f"{', with foot frames' if clip.foot else ''}")
         if self.ramps is not None:
             lines.append(f"ramp table ({len(self.ramps)} rows; e.g. {self.ramps_example}):")
             for row, ramp in enumerate(self.ramps):
@@ -222,12 +231,15 @@ def describe(arguments: DescribeInput, context: Context) -> Outcome[DescribeData
                        fix="kiripix describe project")
         kinds = [_describe(k, detail=False) for _, k in sorted(all_kinds().items())]
         try:  # `describe project` also works outside a Project, with no table
-            ramps = find_project(context.cwd).settings.character.ramps
+            character = find_project(context.cwd).settings.character
+            ramps = character.ramps
         except KiripixError:
-            return Outcome(DescribeData(kinds=kinds, ramps_example=RAMPS_EXAMPLE))
+            return Outcome(DescribeData(kinds=kinds, ramps_example=RAMPS_EXAMPLE, clips_example=CLIPS_EXAMPLE))
         table = [RampRow(name=r.name, length=r.length, rgb=[list(c) for c in r.rgb] if r.rgb is not None else None)
                  for r in ramps]
-        return Outcome(DescribeData(kinds=kinds, ramps=table, ramps_example=RAMPS_EXAMPLE))
+        clip_table = [ClipRow.from_spec(c) for c in character.clips]
+        return Outcome(DescribeData(kinds=kinds, ramps=table, ramps_example=RAMPS_EXAMPLE, clips=clip_table,
+                                    clips_example=CLIPS_EXAMPLE))
     else:
         kind = _describe(get_kind(arguments.target), detail=True)
         if arguments.stage is not None:
@@ -387,6 +399,8 @@ class RunInput(_Input):
     all: bool = Field(False, description="Run every Asset, locking one at a time.")
     kind: str | None = Field(None, description="With --all: only the Assets of this Kind.")
     force: bool = Field(False, description="Re-run even Stages that are done.")
+    from_stage: str | None = Field(None, description="With --force: re-run this Stage and every Stage after it "
+                                   "in the recipe. Plain --force alone leaves the Stages after a forced one on its old output.")
     rerun: bool = Field(False, description="Also make the Runner calls with no pinned result; they land in needs-review.")
     cpu: bool = Field(False, description="Run Runners on the CPU, without the GPU lock.")
 
@@ -396,6 +410,8 @@ class RunInput(_Input):
             raise ValueError("give an Asset ID or --all, not both")
         if self.all and self.stage is not None:
             raise ValueError("a Stage can't be given with --all")
+        if self.from_stage is not None and (self.all or self.stage is not None or not self.force):
+            raise ValueError("--from works with --force and an Asset ID, without a Stage")
         if self.kind is not None and not self.all:
             raise ValueError("--kind works only with --all")
         return self
@@ -420,7 +436,7 @@ class RunData(BaseModel):
     output=RunData,
     kind="writing",
     mcp="exposed",
-    cli=CliMeta(positional=("asset", "stage")),
+    cli=CliMeta(positional=("asset", "stage"), options={"from_stage": ("--from",)}),
     locks=LockNeeds(asset=lambda a: a.asset if is_asset_id(a.asset) else None),
 )
 def run(arguments: RunInput, context: Context) -> Outcome[RunData]:
@@ -437,7 +453,8 @@ def run(arguments: RunInput, context: Context) -> Outcome[RunData]:
         asset = load_asset(project, arguments.asset)
         result = run_asset(project, asset, cache, stage=arguments.stage, force=arguments.force,
                            progress=context.progress, wait=context.wait, command_line=context.command_line,
-                           rerun=arguments.rerun, cpu=arguments.cpu, keep_warm=context.via == "rest")
+                           rerun=arguments.rerun, cpu=arguments.cpu, keep_warm=context.via == "rest",
+                           from_stage=arguments.from_stage)
     findings: list[Finding] = result.findings
     if result.exit_code == ExitCode.OK:
         for asset_id in sorted({r.asset for r in result.results}):

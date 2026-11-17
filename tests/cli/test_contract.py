@@ -118,7 +118,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "schema": lambda p: ["schema", "run"],
     "status": lambda p: (make_demo(p), ["status"])[1],
     "next": lambda p: (make_demo(p), ["next", "demo.a"])[1],
-    "run": lambda p: (make_demo(p), ["run", "demo.a"])[1],
+    "run": lambda p: (make_demo(p), ["run", "demo.a", "--force", "--from", "copy"])[1],
     "set": lambda p: (make_demo(p), ["set", "demo.a", "concat", "sep=-"])[1],
     "decide": lambda p: (make_demo(p), ["decide", "demo.a", "choose", "--decision", MARK])[1],
     "undo": lambda p: (_decided(p), ["undo", "demo.a", "choose"])[1],
@@ -136,6 +136,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "export": lambda p: (exportable_room(p), ["export", "room.alley"])[1],
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
     "cast-sheet": lambda p: (_cast_ready(p), ["cast-sheet", "sprite.npc", "--scale", "2"])[1],
+    "snapshot": lambda p: (_cast_ready(p), ["snapshot", "sprite.npc", "--label", "first"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
     "op palette-suggest": lambda p: (_image(p), ["op", "palette-suggest", "in.png", "--add", "2", "--scale", "1"])[1],
@@ -149,6 +150,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "palette": lambda p: ["palette"],
     "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
     "ramps-add": lambda p: (_built_hero(p), ["ramps-add", "character.hero", "--parts", "skin"])[1],
+    "clips-add": lambda p: (_built_hero(p), ["clips-add", "character.hero", "--clips", "idle"])[1],
     "runners list": lambda p: ["runners", "list"],
     "runners pull": lambda p: ["runners", "pull", "sam2.1-small"],
     "runners rm": lambda p: ["runners", "rm", "sam2.1-small"],
@@ -222,6 +224,31 @@ def test_import_and_pick_of_a_look_validate(project: Kiripix, schemas: dict[str,
     assert imported["data"]["look"] == "door" and picked["data"]["look"] == "door" and picked["data"]["stage"] == "looks"
     for name in ("import", "pick"):
         assert "look" in schemas[name]["input"]["properties"]  # type: ignore[index]
+
+
+def test_a_props_states_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The state shapes of the `state` Decision, `import --state`, `pick --state` and `show` (ticket 0258)."""
+    from test_prop_states import PROP, an_image, declare
+    from test_prop import built_prop
+
+    built_prop(project)
+    declared = declare(project, "toppled")
+    imported = project.json("import", PROP, an_image(project, "t.png", (255, 0, 77, 255)), "--state", "toppled")
+    picked = project.json("pick", PROP, imported["data"]["variant"], "--state", "toppled")
+    shown = project.json("show", PROP)
+
+    jsonschema.validate(declared, schemas["decide"]["output"])
+    jsonschema.validate(imported, schemas["import"]["output"])
+    jsonschema.validate(picked, schemas["pick"]["output"])
+    jsonschema.validate(shown, schemas["show"]["output"])
+    for name in ("import", "pick"):
+        assert "state" in schemas[name]["input"]["properties"]  # type: ignore[index]
+    kind = next(k for k in project.json("describe", "prop")["data"]["kinds"] if k["name"] == "prop")
+    source = next(s for s in kind["stages"] if s["name"] == "source")
+    assert {"state", "state_remove", "state_rename", "state_pick"} <= {d["name"] for d in source["decisions"]}
+    brief = next(s for s in kind["stages"] if s["name"] == "brief")
+    assert "state" in [p["name"] for p in brief["params"]]
+    assert {"prop.state_unknown", "prop.state_unpicked", "prop.state_duplicate"} <= {c["code"] for c in source["checks"]}
 
 
 def test_import_of_loop_frames_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:

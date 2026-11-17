@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import extend
+from kiripix.core import editof, extend
 from kiripix.core.assets import is_asset_id, load_asset
 from kiripix.core.errors import fail
 from kiripix.core.project import find_project
@@ -22,9 +22,11 @@ class ExtendInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
-    action: Literal["canvas", "add", "undo", "done"] = Field(
+    action: Literal["canvas", "add", "undo", "done", "crop"] = Field(
         description="canvas: write the canvas for the next piece. add: join a piece onto the image. undo: drop the "
-                    "last piece. done: import the joined image as a Variant.")
+                    "last piece. done: import the joined image as a Variant. crop: write a crop of the picked Source "
+                    "at the image model's size, for a Look's or a Loop's edit that no single piece holds whole "
+                    "(`import --look <look> --of crop`).")
     piece: Path | None = Field(None, description="With add: the piece's PNG, made from the canvas.")
     side: str | None = Field(
         None, description="With canvas: the side to extend, east, south, west or north, or a corner of two such as "
@@ -33,6 +35,10 @@ class ExtendInput(BaseModel):
         None, description="With canvas: px of the image kept in the canvas along the join, one number for both axes or "
                           "two, across,down (such as 344,192); a one-sided canvas uses the axis across its join. A "
                           "third of the canvas by default.")
+    box: str | None = Field(None, description="With crop: the area the crop must hold, x0,y0,x1,y1 in the picked "
+                                              "Source's px; the crop is centred on it, moved in if it would leave the Source.")
+    size: str | None = Field(None, description="With crop: the crop's size, WIDTHxHEIGHT; the image model's size "
+                                               "([extend] canvas, 1376x768) by default.")
     offset: int = Field(0, description="With canvas: where along the edge the canvas starts, px from the image's top "
                                        "(east, west) or left (north, south).")
 
@@ -42,6 +48,8 @@ class ExtendData(BaseModel):
     action: str
     canvas: str | None = Field(None, description="With canvas: the path of the canvas PNG to paste into the image model.")
     canvas_size: tuple[int, int] | None = None
+    crop: str | None = Field(None, description="With crop: the path of the crop PNG to paste into the image model.")
+    origin: tuple[int, int] | None = Field(None, description="With crop: where the crop starts in the Source.")
     sides: list[str] = []
     keep: tuple[int, int] | None = None
     fill: str | None = Field(None, description="With canvas: the flat fill the image model paints over, #RRGGBB: the "
@@ -69,6 +77,11 @@ class ExtendData(BaseModel):
                     f"{self.keep[1] if self.keep else 0} px, {'+'.join(self.sides)}, fill {self.fill}); paste it into the "
                     "image model, then "
                     f"kiripix extend {self.asset} add <png>")
+        if self.action == "crop":
+            w, h = self.canvas_size or (0, 0)
+            return (f"{self.asset}: wrote {self.crop} ({w}x{h}, from {self.origin[0] if self.origin else 0},"
+                    f"{self.origin[1] if self.origin else 0} of the Source); edit it in the image model, then "
+                    f"kiripix import {self.asset} <png> --look <look> --of crop")
         if self.action == "add":
             return (f"{self.asset}: joined {self.piece} ({'+'.join(self.sides)}): {self.width}x{self.height}, residual "
                     f"{self.residual:.2f} px, gain {self.gain[0]:.3f} to {self.gain[1]:.3f}, seam "  # type: ignore[index]
@@ -90,7 +103,7 @@ def _asset_lock(arguments: ExtendInput) -> str | None:
     "extend",
     summary="Grow a room's Source past its edge, one piece at a time: canvas (write the canvas for the next piece), "
             "add <png> (join a piece onto the image), undo (drop the last piece), done (import the joined image as "
-            "a Variant).",
+            "a Variant), crop (write a crop of the Source at the image model's size, for a Look's edit).",
     input=ExtendInput,
     output=ExtendData,
     kind="writing",
@@ -105,6 +118,13 @@ def extend_command(arguments: ExtendInput, context: Context) -> Outcome[ExtendDa
     example = f"kiripix extend {asset.id} {arguments.action}"
     sides = extend.parse_sides(asset, arguments.side, example) if arguments.side else None
     data = ExtendData(asset=asset.id, action=arguments.action)
+    if arguments.action == "crop":
+        if arguments.box is None:
+            raise fail("extend.box_needed", "crop needs the area it must hold", fix=f"{example} --box 100,100,500,400")
+        size = editof.parse_size(arguments.size, project.settings.extend.canvas, example)
+        path, data.origin = editof.write_crop(project, asset, editof.parse_box(arguments.box, example), size, example)
+        data.crop, data.canvas_size = project.relative(path), size
+        return Outcome(data)
     if arguments.action == "canvas":
         if sides is None:
             raise fail("extend.side_needed", "canvas needs the side to extend", fix=f"{example} --side east")

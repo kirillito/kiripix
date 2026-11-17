@@ -4,6 +4,7 @@ Migrations are pure functions from version N to N + 1. They run in memory on eve
 only when a writing Command saves it. Unknown keys are an error, so typos surface.
 """
 
+import copy
 import re
 import tomllib
 from collections.abc import Callable
@@ -11,12 +12,14 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 import tomli_w
+import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from kiripix.checks import Finding, Position
 from kiripix.core import atomic
 from kiripix.core.errors import KiripixError
 
+PROJECT_FILE_NAME = "kiripix.toml"
 Scalar = str | int | float | bool
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -130,6 +133,17 @@ class RampSpec(_Strict):
         None, description="The ramp's colours dark to light, `length` of them; unset when each character fits its own.")
 
 
+class ClipSpec(_Strict):
+    """One row of the Project's clip table, `[[character.clips]]` (ticket 0239): a clip's name, the frame count it renders to, its
+    frame rate and whether it loops, the same on every body; `foot` also asks for foot frames (ticket 0172)."""
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$", description="The clip's name: lower-case snake_case.")
+    frames: int = Field(ge=1, description="The rendered frame count of the clip in one direction.")
+    fps: int = Field(ge=1, description="The clip's frame rate in the game.")
+    loop: bool = Field(description="Whether the clip loops.")
+    foot: bool = Field(False, description="The clip must have foot frames (`events.foot` in character.json).")
+
+
 def _in_project(path: str) -> str:
     """A path inside the Project, relative to its root, with forward slashes."""
     parts = Path(path.replace("\\", "/")).parts
@@ -177,6 +191,10 @@ class CharacterSettings(_Strict):
         default_factory=list,
         description="The Project's ramp table: its order is the row order of every character's ramps. Empty: each character "
                     "chooses its own parts.")
+    clips: list[ClipSpec] = Field(
+        default_factory=list,
+        description="The Project's clip table: a clip named here must have these frames, fps and loop on every character and "
+                    "sprite that has it (`clips.timing_differs`). Empty: no clip is held to a timing.")
 
 
 def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
@@ -200,14 +218,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 6
+PROJECT_SCHEMA_VERSION = 7
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -264,9 +282,16 @@ def _add_generators(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "character": character, "schema_version": 6}
 
 
+def _add_clip_table(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 6 had no clip table; version 7 adds `character.clips` (ticket 0239), empty."""
+    character = {**document.get("character", {})}
+    character.setdefault("clips", [])
+    return {**document, "character": character, "schema_version": 7}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
-    4: _add_extend_section, 5: _add_generators}
+    4: _add_extend_section, 5: _add_generators, 6: _add_clip_table}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 
@@ -385,6 +410,20 @@ def ramp_table_findings(ramps: list[RampSpec], palette: list[tuple[int, int, int
     return found
 
 
+def clip_table_findings(clips: list[ClipSpec], file: str = "kiripix.toml") -> list[Finding]:
+    """What is wrong with the clip table: a name twice (`clips.name_twice`)."""
+    found: list[Finding] = []
+    names: dict[str, int] = {}
+    for row, clip in enumerate(clips):
+        if clip.name in names:
+            found.append(Finding(
+                code="clips.name_twice", message=f"{file}: [[character.clips]] row {row}: the clip '{clip.name}' is also row "
+                f"{names[clip.name]}", position=Position(file=file, field=f"character.clips.{row}.name"),
+                owner_action=f"Keep one [[character.clips]] row named '{clip.name}' in {file}."))
+        names.setdefault(clip.name, row)
+    return found
+
+
 def read_project_palette(root: Path, relative: str) -> list[tuple[int, int, int]] | None:
     """The Project palette's colours, or None when it can't be read (its own Check says so)."""
     from kiripix.ops import parse_gpl, parse_hex
@@ -408,6 +447,8 @@ def load_project_settings(path: Path, file: str = "kiripix.toml") -> ProjectSett
         findings = ramp_table_findings(settings.character.ramps, read_project_palette(path.parent, settings.project.palette), file)
         if findings:
             raise KiripixError(findings)
+    if settings.character.clips and (findings := clip_table_findings(settings.character.clips, file)):
+        raise KiripixError(findings)
     return settings
 
 
@@ -425,6 +466,133 @@ def settings_document(settings: BaseModel) -> dict[str, Any]:
     return document
 
 
-def save_settings(path: Path, settings: ProjectSettings | AssetSettings) -> None:
-    """Write a data file at the current schema version, atomically."""
-    atomic.write_text(path, tomli_w.dumps(settings_document(settings)))
+def _same(old: Any, new: Any) -> bool:
+    """Equal in value; a bool is not a number."""
+    if isinstance(old, dict) or isinstance(new, dict):
+        return (isinstance(old, dict) and isinstance(new, dict) and old.keys() == new.keys()
+                and all(_same(old[k], new[k]) for k in old))
+    if isinstance(old, list) or isinstance(new, list):
+        return (isinstance(old, list) and isinstance(new, list) and len(old) == len(new)
+                and all(_same(a, b) for a, b in zip(old, new, strict=True)))
+    numbers = (int, float)
+    if isinstance(old, numbers) and isinstance(new, numbers) and not isinstance(old, bool) and not isinstance(new, bool):
+        return bool(old == new)  # the Owner's `20` stays `20` where the settings class holds 20.0
+    return type(old) is type(new) and bool(old == new)
+
+
+def _add(target: Any, key: str, value: Any) -> None:
+    """Add a new key. A new `[[array.of.tables]]` gets a blank line after its last row, so the next table doesn't touch it."""
+    target[key] = value
+    added = target[key]
+    if isinstance(added, tomlkit.items.AoT) and len(added):
+        added[len(added) - 1].add(tomlkit.nl())
+
+
+def _merge(target: Any, new: dict[str, Any]) -> None:
+    """Edit the format-preserving `target` table in place until it holds `new`: keys that are gone are removed, new keys are
+    added, a changed value is replaced, and everything else (comments, order, spacing, inline tables) is left as it is.
+    A migration or a new `[[array.of.tables]]` needs nothing more: the document it returns is merged here."""
+    for key in [k for k in target if k not in new]:
+        del target[key]
+    for key, value in new.items():
+        if key not in target:
+            _add(target, key, value)
+            continue
+        current = target[key]
+        if isinstance(value, dict) and isinstance(current, dict):
+            _merge(current, value)
+        elif isinstance(current, tomlkit.items.AoT) and isinstance(value, list) and all(isinstance(v, dict) for v in value):
+            for index, row in enumerate(value):
+                if index < len(current):
+                    _merge(current[index], row)
+                else:
+                    current.append(row)
+            while len(current) > len(value):
+                del current[len(current) - 1]
+        elif (isinstance(current, list) and not current and isinstance(value, list) and value
+              and all(isinstance(v, dict) for v in value)):
+            del target[key]  # `rows = []` becomes the first `[[rows]]`
+            _add(target, key, value)
+        elif not _same(current.unwrap() if hasattr(current, "unwrap") else current, value):
+            target[key] = value
+
+
+def _apply_changes(target: Any, base: dict[str, Any], new: dict[str, Any]) -> None:
+    """Edit `target` (what the file holds) by only what changed from `base` (what the file's settings dump to) to `new`: a value
+    the Owner left alone, or a default the file never wrote, is not touched, and no default is added to the file."""
+    for key in [k for k in base if k not in new]:
+        if key in target:
+            del target[key]
+    for key, value in new.items():
+        before = base.get(key)
+        if key in base and _same(before, value):
+            continue
+        if key not in target:
+            _add(target, key, value)
+            continue
+        current = target[key]
+        if isinstance(before, dict) and isinstance(value, dict) and isinstance(current, dict):
+            _apply_changes(current, before, value)
+        elif (isinstance(before, list) and isinstance(value, list) and isinstance(current, tomlkit.items.AoT)
+              and all(isinstance(v, dict) for v in before + value)):
+            for index, row in enumerate(value):
+                if index < len(current):
+                    _apply_changes(current[index], before[index] if index < len(before) else {}, row)
+                else:
+                    current.append(row)
+            while len(current) > len(value):
+                del current[len(current) - 1]
+        elif isinstance(current, list) and not current and value and all(isinstance(v, dict) for v in value):
+            del target[key]  # `rows = []` becomes the first `[[rows]]`
+            _add(target, key, value)
+        else:
+            target[key] = value
+
+
+def _edited_in_place(path: Path, settings: ProjectSettings | AssetSettings, plain: str) -> str | None:
+    """The file at `path` edited in place (tomlkit) to hold `settings`, or None when there is no file or the edit doesn't
+    read back as the settings."""
+    document = settings_document(settings)
+    try:
+        raw = tomllib.loads(path.read_bytes().decode("utf-8"))
+        if isinstance(settings, ProjectSettings):
+            migrated = _migrate(copy.deepcopy(raw), PROJECT_FILE_NAME, PROJECT_SCHEMA_VERSION, PROJECT_MIGRATIONS)
+        else:
+            migrated = _migrate(copy.deepcopy(raw), path.name, ASSET_SCHEMA_VERSION, ASSET_MIGRATIONS)
+        base = settings_document(type(settings).model_validate(migrated))
+        edited = tomlkit.parse(path.read_bytes().decode("utf-8"))
+        _merge(edited, migrated)  # the migration, as edits
+        _apply_changes(edited, base, document)  # then the change
+        text = tomlkit.dumps(edited)
+        if tomllib.loads(text) == tomllib.loads(plain) or type(settings).model_validate(tomllib.loads(text)) == settings:
+            return text
+    except (OSError, UnicodeDecodeError, ValueError, KiripixError, tomlkit.exceptions.TOMLKitError):
+        pass
+    return None
+
+
+def render_settings(path: Path, settings: ProjectSettings | AssetSettings) -> str:
+    """The text of the data file holding `settings`. When `path` exists it is edited in place (tomlkit): its comments, key
+    order and layout stay, a migration changes only what it must, and only what differs from what the file already says is
+    written. If the edit doesn't read back as the settings, the file is dumped whole."""
+    plain = tomli_w.dumps(settings_document(settings))
+    return _edited_in_place(path, settings, plain) or plain
+
+
+def save_settings(path: Path, settings: ProjectSettings | AssetSettings) -> bool:
+    """Write a data file at the current schema version, atomically, keeping the comments and layout of the file it replaces
+    (the old file may be at an older schema version: a migration changes only what it must). Returns False when an existing
+    file couldn't be edited in place and was written whole, losing its comments: the caller reports `settings.layout_lost`."""
+    plain = tomli_w.dumps(settings_document(settings))
+    existed = path.is_file()
+    edited = _edited_in_place(path, settings, plain) if existed else None
+    atomic.write_text(path, edited or plain)
+    return edited is not None or not existed
+
+
+def layout_lost(file: str) -> Finding:
+    """The warning when `save_settings` had to write `file` whole."""
+    return Finding(code="settings.layout_lost", severity="warning",
+                   message=f"{file} couldn't be edited in place, so it was written whole: its comments and layout are gone",
+                   position=Position(file=file),
+                   owner_action=f"Restore the comments in {file} from its last commit (git diff {file}); the settings are right.")

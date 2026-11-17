@@ -28,6 +28,16 @@ Asset looks `done` until someone forces it, Stage by Stage.
   as version 1. Bumping a version is then a deliberate change in a ticket, named in its "Result".
 - CLAUDE.md's conventions get one line: a change to what a Stage writes bumps its `version`.
 
+## Also: a new parameter at its default (added 2026-11-17)
+
+A Stage's input hash holds every declared parameter with its default (`AssetGraph.params`), so adding a parameter makes the
+Stage stale on every built Asset of the Kind. M5's first wave did this twice: 0237's `render.points` (every character
+re-renders in Blender) and 0258's `brief.state` (every Prop rebuilds, with identical output). Leave a parameter out of the hash
+while it holds its default, so adding one is never a rebuild, and a deliberate rebuild is a `version` bump. That changes every
+hash once, so land it with the rule above that reads a hash recorded without a version as version 1, and check it against a
+copy of the art Project (`status --all` the same before and after). Until this lands, don't rebuild the art Project's
+characters for 0237 alone.
+
 ## Acceptance criteria
 
 - [ ] CLI seam: a built Asset stays `done` after this lands. Bumping a Stage's version (in a test Recipe, `demo`) makes it and

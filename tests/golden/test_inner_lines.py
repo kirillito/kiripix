@@ -90,6 +90,45 @@ def test_the_nearer_part_keeps_its_pixels() -> None:
     assert inner_lines(material, np.array([[1.0, 9.0]]), []).tolist() == [[False, True]]
 
 
+def fold_fixture() -> tuple[np.ndarray, np.ndarray]:
+    # One material. Left panel: a near strip (depth 5, rows 3-4) across a far one (depth 8), a step of 3.
+    # Right panel (after a background column): depth grows by 1 per row, a smooth slope.
+    material = np.zeros((8, 12), dtype=np.uint8)
+    material[:, :7] = 1
+    material[:, 8:] = 1
+    depth = np.full(material.shape, 8.0, dtype=np.float32)
+    depth[3:5, 1:6] = 5
+    depth[:, 8:] = np.arange(8, dtype=np.float32)[:, None]
+    return material, depth
+
+
+def test_depth_step_draws_a_line_on_the_far_side_of_a_fold(request: pytest.FixtureRequest) -> None:
+    material, depth = fold_fixture()
+    low = inner_lines(material, depth, [], depth_step=2)
+    # The far pixels around the strip, none on the strip itself, none on the smooth slope.
+    expected = np.zeros(material.shape, dtype=bool)
+    expected[2, 1:6] = expected[5, 1:6] = True
+    expected[3:5, 0] = expected[3:5, 6] = True
+    assert (low == expected).all()
+    assert not inner_lines(material, depth, [], depth_step=4).any()
+    assert not inner_lines(material, depth, []).any()
+    assert inner_lines(material, depth, [], depth_step=0.5)[:, 8:].any()  # a slope of 1 is over 0.5
+    assert not low[:, 8:].any()
+    assert_golden(request, drawn(material, low, "depth_step 2: fold, no slope"), "inner_lines_depth_step_2.png")
+    assert_golden(request, drawn(material, inner_lines(material, depth, [], depth_step=4), "depth_step 4: none"),
+                  "inner_lines_depth_step_4.png")
+
+
+def test_depth_step_ignores_the_background_and_honours_skip() -> None:
+    material = np.array([[1, 0, 1], [1, 1, 1]], dtype=np.uint8)
+    depth = np.array([[0.0, 99.0, 9.0], [0.0, 0.0, 0.0]])
+    assert inner_lines(material, depth, [], depth_step=2).tolist() == [[False, False, True], [False, False, False]]
+    assert not inner_lines(material, depth, [1], depth_step=2).any()
+    # Different materials still get their line as before, whatever depth_step is.
+    two = np.array([[1, 2]], dtype=np.uint8)
+    assert inner_lines(two, np.array([[0.0, 0.0]]), [], depth_step=2).tolist() == [[False, True]]
+
+
 def mapped(material: np.ndarray, palette: np.ndarray, picks: np.ndarray) -> np.ndarray:
     out = np.zeros((*material.shape, 4), dtype=np.uint8)
     out[..., :3] = palette[picks]

@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 6
+PROJECT_TEMPLATE = """schema_version = 7
 
 [project]
 name = "{name}"
@@ -103,6 +103,14 @@ light_tilt = 35                # and toward the camera
 # name = "skin"                # a part name, lower-case snake_case
 # length = 3                   # steps, at least 2
 # rgb = [[171, 82, 54], [255, 163, 0], [255, 241, 232]]   # optional: shared colours, dark to light, of the Project palette
+
+# The clip table: a clip named here plays the same frames, fps and loop on every body. Add rows with `kiripix clips-add`.
+# [[character.clips]]
+# name = "idle"                # a clip name, lower-case snake_case
+# frames = 8                   # rendered frames in one direction
+# fps = 4
+# loop = true
+# foot = false                 # optional: the clip must have foot frames
 
 # A Model generator: a Blender script of this Project that builds a character's Model from its parameter file
 # (kiripix import <character> <file.toml> --role parameters). Kiripix runs it as

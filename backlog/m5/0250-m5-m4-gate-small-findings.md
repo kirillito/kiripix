@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: core-engineer
 type: ticket
@@ -29,7 +29,22 @@ behind the back gate in [0254](0254-m5-looks-markers-combining-and-reach.md).
 
 ## Acceptance criteria
 
-- [ ] CLI seam, one test per item: `new --help` lists every registered Kind; a prune removes the `.import` and the empty
+- [x] CLI seam, one test per item: `new --help` lists every registered Kind; a prune removes the `.import` and the empty
       folder; `check <id>` and `export <id>` give `exit.no_room` the same severity; `run --force --from palette` rebuilds
       `palette` to `export`.
-- [ ] Contract sample updated for `run`'s new flag. Spec ยง9 (Manifest, deleting an asset) and ยง10.5 updated.
+- [x] Contract sample updated for `run`'s new flag. Spec ยง9 (Manifest, deleting an asset) and ยง10.5 updated.
+
+## Result
+
+1. `new --help` takes the Kind list from `all_kinds()` (`kiripix/commands/project.py`).
+2. `export --prune` removes the `.import` sidecar of each file it removes (backed up with it under `--force`), then the
+   empty folders (`kiripix/export/prune.py`). A sidecar of a file the prune doesn't touch stays. `removed` and
+   `would_remove` still list only Manifest files.
+3. `check <id>` now runs Exit pairing for that room as a warning, as `export <id>` does; `check --all` still errors. The
+   warning's message says so (`kiripix/export/checks.py`, `kiripix/commands/checks.py`). Before, `check <id>` didn't run
+   pairing at all.
+4. `run <id> --force --from <stage>` forces that Stage and each Stage after it (`run_asset(from_stage=)`). It needs
+   `--force`, an Asset ID and no positional Stage. Plain `--force` is unchanged.
+
+Tests: `tests/cli/test_gate_small_findings.py`; `test_export_prune.py` (the sidecar test now expects removal);
+`test_contract.py` sample for `run` uses the flag. Spec ง6.1, ง9, ง10.5 updated.

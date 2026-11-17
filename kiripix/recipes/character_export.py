@@ -10,10 +10,16 @@
                              "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
                                         "events": {"foot": [0, 5]},   # frames (the same in every direction) where a foot plants
                                         "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78,
-                                                                                     "height": 78}}, ...]}}],
+                                                                                     "height": 78},
+                                                              "points": {"hand_r": {"x": 12, "y": -20, "hidden": false}}},
+                                                             ...]}}],
                              "parts": [{"name": "skin", "materials": ["skin"], "row": 0, "shared": true,
                                         "indexes": [12, 3, 9], "rgb": [[r, g, b], ...]}],
                              "rows": [{"name": "skin", "length": 3}, {"name": "hair", "length": 3}]}
+
+`points` (schema_version 5, only for a character that has them: render's `points`, ticket 0237) is, per frame, each named point's
+whole pixel relative to the pivot, y down as Godot draws, and `hidden` when the body is in front of it; `sheet` computes it.
+The game reads the points from this file; the `.tres` and the scene don't carry them.
 
 `parts` is each part's ramp, dark to light, from `palette`, in row order ([] without parts); `shared` is true when its colours
 are the Project ramp table's. `rows` is `ramps.png`'s rows: the table's parts in its order, those the character lacks too, so it
@@ -36,7 +42,11 @@ from kiripix.recipes.character_sheet import COLOR_ATLAS, NORMAL_ATLAS, SHEET_FIL
 # 2: `parts`, each swappable part's ramp from `palette` (`[]` without parts)
 # 3: each part's `row` and `shared`, in row order, and `rows`, the Project ramp table's (ticket 0169); refused when older
 # 4: each clip's `events`, from `clips` (ticket 0172)
+# 5: each frame's `points`, from `sheet` (ticket 0237). Written only for a character with points, so a character without them
+#    keeps its version 4 file byte for byte; a reader takes both
 CHARACTER_SCHEMA_VERSION = 4
+CHARACTER_POINTS_SCHEMA_VERSION = 5
+CHARACTER_SCHEMA_VERSIONS = (CHARACTER_SCHEMA_VERSION, CHARACTER_POINTS_SCHEMA_VERSION)
 CHARACTER_FILE = "character.json"
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -85,8 +95,9 @@ def run_character_export(run: StageRun) -> None:
     for name in (COLOR_ATLAS, NORMAL_ATLAS):
         run.check_cancel()
         shutil.copyfile(folder / name, run.output_dir / name)
+    pointed = any("points" in f for c in sheet["clips"] for frames in c["directions"].values() for f in frames)
     character = {
-        "schema_version": CHARACTER_SCHEMA_VERSION,
+        "schema_version": CHARACTER_POINTS_SCHEMA_VERSION if pointed else CHARACTER_SCHEMA_VERSION,
         "asset": run.asset_id,
         "files": {"color": COLOR_ATLAS, "normal": NORMAL_ATLAS},
         "cell": sheet["cell"],
