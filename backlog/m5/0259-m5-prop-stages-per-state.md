@@ -66,3 +66,5 @@ state's files and picks should be inputs of that state's Stages only.
   cutout hashes are the ones taken before the change; `fit` gained an empty Decision list, which no hash holds).
 
 Tests: `tests/cli/test_prop_state_stages.py` (also own offsets, pinned hashes); `tests/cli/test_prop*.py` and `test_export_prop.py` pass (52).
+
+The Owner, 2026-11-17: per-state staleness is [0288](0288-m5-a-prop-state-rebuilds-alone.md).

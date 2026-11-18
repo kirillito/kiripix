@@ -45,6 +45,7 @@ from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune
 from kiripix.export.prop import SPRITE_FILE, read_prop
 from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, ROOM_FILE, built_dir, read_room
 from kiripix.export.target import GodotTarget, resolve_target
+from kiripix.recipes.character_export import CHARACTER_FILE
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,8 @@ def _prop_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
 
 def _character_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
     """The files of a character's export, by `res://` path, and the IDs they carry: both atlases, the CanvasTexture over
-    them, the SpriteFrames over that, and the scene."""
+    them, the SpriteFrames over that, the scene, and `character.json` byte for byte (ticket 0289: the game reads its foot
+    events and points; its `files` are names relative to it, and the atlases sit beside it in the game too)."""
     character = read_character(graph)
     name = graph.asset.id.split(".", 1)[1]
     folder = f"{target.root}/{graph.kind.name}/{name}"
@@ -143,6 +145,7 @@ def _character_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, 
         texture: character_texture(colour, normal).encode("utf-8"),
         colour: (built_dir(graph) / COLOR_FILE).read_bytes(),
         normal: (built_dir(graph) / NORMAL_FILE).read_bytes(),
+        f"{folder}/{CHARACTER_FILE}": (built_dir(graph) / CHARACTER_FILE).read_bytes(),
     }
     if rows:
         files[ramps] = ramps_png(character, rows)

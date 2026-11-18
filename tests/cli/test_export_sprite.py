@@ -13,7 +13,7 @@ from test_sprite import FOUR, SPRITE, decide, import_sheet, load, new_sprite, pn
 FOLDER = "game/kiripix/sprite/npc"
 RES = "res://kiripix/sprite/npc"
 MANIFEST = "game/kiripix/manifest/sprite.npc.json"
-FILES = [f"{RES}/color.png", f"{RES}/frames.tres", f"{RES}/normal.png", f"{RES}/npc.tscn", f"{RES}/texture.tres"]
+FILES = [f"{RES}/character.json", f"{RES}/color.png", f"{RES}/frames.tres", f"{RES}/normal.png", f"{RES}/npc.tscn", f"{RES}/texture.tres"]
 
 
 def manifest(project: Kiripix) -> dict[str, Any]:

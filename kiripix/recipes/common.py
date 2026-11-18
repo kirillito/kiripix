@@ -390,7 +390,7 @@ def check_mapping(run: StageRun, source: np.ndarray, mapped: np.ndarray, fit_ima
         shown = fit_image.relative_to(run.asset_dir.parent.parent.parent).as_posix()
     except ValueError:
         shown = fit_image.as_posix()
-    kind = run.asset_dir.parent.name  # assets/<kind>/<name>
+    kind = run.kind
     # a room's or a prop's default state: the `fit` Grid transform gives the scale (0280). A Prop's other state has its own
     # Source, which `--asset` doesn't read, so it gets the image path.
     if kind in ("room", "prop") and fit_image.parent.parent.name != "states":

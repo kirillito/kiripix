@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: character-pipeline
 type: ticket
@@ -28,11 +28,22 @@ On the art repo's `chargen` cast, with the split sleeves and trouser legs merged
 characters: the cast sheet ([0226](../m4/0226-m4-cast-sheet-probe.md)) at `line_depth` 0, 1.5 and 3, next to today's split
 materials. Record the Owner's choice of default, and whether `chargen` can stop splitting materials.
 
+Prepared (rows top to bottom: `split_today`, `merged_0`, `merged_1_5`, `merged_3`; characters `mc03_male_clothes01`, `npc_elder_coat`,
+`npc_mc_m_a`; scale 3), in [0247-check/](0247-check/):
+- [sheet1_idle_s.png](0247-check/sheet1_idle_s.png): idle, south. Open this one first.
+- [sheet3_walk_se_e_ne.png](0247-check/sheet3_walk_se_e_ne.png): walk, se, e, ne, 2 frames.
+- [sheet2_idle_walk_5dirs_2frames.png](0247-check/sheet2_idle_walk_5dirs_2frames.png): idle and walk, s/se/e/ne/n, 2 frames (very wide).
+Built in a scratch copy of the art Project, with `CHARGEN_MERGE=1` in the copy's `chargen/generate.py` (sleeve and hood into top,
+bottom_r into bottom). Not applied to the art repo. The Owner, 2026-11-17: `split_today` looks the best. The default stays `line_depth` 0 (off), and `chargen` keeps
+splitting materials; `CHARGEN_MERGE` is not ported to the art repo. `line_depth` stays as an option for a Model whose
+materials can't be split. (Caveat on the sheets: the merged rows were rebuilt with `render.band_smooth` 0.0, today's
+row has it mixed, so their shading differs too.)
+
 ## Acceptance criteria
 
 - [x] CLI seam: on the fake Blender, with a depth step inside one material, `line_depth` above 0 puts a line pixel there in
       the line colour, and 0 is byte-equal to a run without the parameter.
-- [ ] The Owner's check above, with the sheet's path and the chosen default recorded here.
+- [x] The Owner's check above, with the sheet's path and the chosen default recorded here.
 - [x] Spec §6.3 (finish) describes `line_depth`. `uv run lint-imports` and `uv run mypy` pass.
 
 ## Result

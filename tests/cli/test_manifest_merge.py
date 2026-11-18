@@ -23,6 +23,7 @@ MANIFEST_RES = "res://kiripix/manifest/room.alley.json"
 ATTRIBUTES = "game/kiripix/manifest/.gitattributes"
 MISSING = "export.merge_driver_missing"
 TSCN = "res://kiripix/room/alley/alley.tscn"
+OURS_RULE = "character.json merge=kiripix-ours\n"  # one line of <root>/.gitattributes
 
 
 def git(folder: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -325,6 +326,26 @@ def test_the_manifest_rules_without_the_image_rules_still_warn(project: Kiripix)
     assert warning["fix"] == "kiripix manifest install"
     assert git(game, "config", "--get", "merge.kiripix-ours.driver").stdout.strip() == "true"
     project.json("manifest", "install")
+    assert project.json("export", "room.alley")["findings"] == []
+
+
+@needs_git
+def test_install_covers_character_json_and_a_clone_installed_before_it_warns_until_installed_again(project: Kiripix) -> None:
+    exportable_room(project)
+    game = init_game(project)
+    project.json("manifest", "install")
+    rules = project.cwd / "game/kiripix/.gitattributes"
+    assert "character.json merge=kiripix-ours" in rules.read_text("utf-8").splitlines()
+    assert "merge: kiripix-ours" in git(game, "check-attr", "merge", "--", "kiripix/character/hero/character.json").stdout
+    assert "merge: kiripix-manifest" in git(game, "check-attr", "merge", "--", "kiripix/manifest/character.hero.json").stdout
+    older = rules.read_text("utf-8").replace(OURS_RULE, "")
+    rules.write_text(older, "utf-8", newline="")  # as `manifest install` wrote it before ticket 0289
+
+    [warning] = findings(project.json("export", "room.alley"), MISSING)
+
+    assert "character.json" in warning["message"] and warning["fix"] == "kiripix manifest install"
+    assert project.json("manifest", "install")["data"]["changed"] == ["res://kiripix/.gitattributes"]
+    assert rules.read_text("utf-8") == older + OURS_RULE
     assert project.json("export", "room.alley")["findings"] == []
 
 

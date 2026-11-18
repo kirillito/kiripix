@@ -29,7 +29,7 @@ SCENE = f"{FOLDER}/hero.tscn"
 FRAMES = f"{FOLDER}/frames.tres"
 TEXTURE = f"{FOLDER}/texture.tres"
 MANIFEST = "game/kiripix/manifest/character.hero.json"
-FILES = [f"{RES}/color.png", f"{RES}/frames.tres", f"{RES}/hero.tscn", f"{RES}/normal.png", f"{RES}/texture.tres"]
+FILES = [f"{RES}/character.json", f"{RES}/color.png", f"{RES}/frames.tres", f"{RES}/hero.tscn", f"{RES}/normal.png", f"{RES}/texture.tres"]
 DIRECTIONS = ["s", "sw", "w", "nw", "n", "ne", "e", "se"]
 GAMES = b"the game's own\n"
 
@@ -109,6 +109,22 @@ def test_re_exporting_writes_nothing_and_a_rebuild_is_byte_identical(project: Ki
 
     assert {path: (project.cwd / path).read_bytes() for path in before} == before
     assert data["written"] == [] and data["counter"] == 1
+
+
+def test_character_json_reaches_the_game_byte_for_byte_and_follows_a_rebuild(project: Kiripix) -> None:
+    folder = exportable_character(project)
+    project.json("export", HERO)
+    game = project.cwd / FOLDER / "character.json"
+
+    assert game.read_bytes() == (folder / "out" / "export" / "character.json").read_bytes()
+    assert "res://" not in game.read_text("utf-8")  # its `files` are names beside it, as in out/export/
+
+    clip(project, WALK)
+    project.json("run", HERO)
+    data = project.json("export", HERO)["data"]
+    assert f"{RES}/character.json" in data["written"] and data["counter"] == 2
+    assert game.read_bytes() == (folder / "out" / "export" / "character.json").read_bytes()
+    assert "walk" in [c["name"] for c in json.loads(game.read_text("utf-8"))["clips"]]
 
 
 def test_a_clip_taken_away_is_refused_and_a_clip_added_is_fine(project: Kiripix) -> None:

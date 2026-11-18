@@ -43,3 +43,6 @@ Part of [0255](0255-m5-traversal-links.md). `reach` through a Link is [0266](026
   freeze ignores a Link until 0267 adds `link` to `EXPORTED_MARKER_TYPES`.
 - Tests: `tests/cli/test_place.py` (Links section, 6 tests) and `test_the_link_decision_validates` in `test_contract.py`.
   Glossary: Link. Spec: a paragraph under §6.1 place.
+
+The Owner, 2026-11-17: no `remove` or `rename` Decision for Links. Markers have none: a Decision with the same ID moves
+a Link, and `undo` takes one back. A Marker-wide `remove`/`rename` is a ticket of its own if the Owner wants one.

@@ -9,7 +9,8 @@ parent: 0236-m5-the-games-next-needs.md
 
 Spec §6.2 (Prop) and §9 (Prop). Part of [0236](0236-m5-the-games-next-needs.md), item 3. Child tickets:
 [0258](0258-m5-prop-state-decision-and-import.md), [0259](0259-m5-prop-stages-per-state.md),
-[0260](0260-m5-export-prop-states.md), [0261](0261-m5-ui-prop-states.md).
+[0260](0260-m5-export-prop-states.md), [0261](0261-m5-ui-prop-states.md),
+[0288](0288-m5-a-prop-state-rebuilds-alone.md).
 
 The game's `docs/MILESTONE_PLANS.md` M05-02, M05-08 and M06-07, and `docs/TECHNICAL.md` ("Movable battle objects (bins) are
 Kiripix Props"). Asked for by the Owner on 2026-11-16: "There might be more than two, why not support several?"

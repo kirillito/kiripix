@@ -123,6 +123,18 @@ def test_the_events_reach_character_json(project: Kiripix) -> None:
     assert clips["step"]["events"] == {"foot": [1, 6]} and clips["idle"]["events"] == {"foot": []}
 
 
+def test_the_events_reach_the_game_in_its_character_json(project: Kiripix) -> None:
+    with_steps(project)
+    godot_project(project)
+    set_target(project)
+    project.json("run", HERO)
+
+    project.json("export", HERO)
+
+    game = json.loads((project.cwd / "game/kiripix/character/hero/character.json").read_text("utf-8"))
+    assert {c["name"]: c["events"] for c in game["clips"]} == {"idle": {"foot": []}, "step": {"foot": [1, 6]}}
+
+
 def test_an_older_clips_json_is_refused_by_export_with_the_rebuild(project: Kiripix) -> None:
     folder = with_steps(project)
     godot_project(project)

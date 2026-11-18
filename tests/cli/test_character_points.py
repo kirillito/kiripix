@@ -57,6 +57,21 @@ def test_character_json_has_the_points_relative_to_the_pivot(project: Kiripix) -
     assert pivot  # the cell's pivot is the pivot of every frame of a stationary clip
 
 
+def test_the_points_reach_the_game_in_its_character_json(project: Kiripix) -> None:
+    folder, character = exported(project, "hand_r@hand_r", "hand_l@head")
+
+    data = project.json("export", HERO)["data"]
+
+    game = project.cwd / "game/kiripix/character/hero/character.json"
+    assert "res://kiripix/character/hero/character.json" in data["written"]
+    assert game.read_bytes() == (folder / "out" / "export" / "character.json").read_bytes()
+    frame = json.loads(game.read_text("utf-8"))["clips"][0]["directions"]["s"][0]
+    assert set(frame["points"]) == {"hand_r", "hand_l"} and frame["points"]["hand_r"] == character["clips"][0][
+        "directions"]["s"][0]["points"]["hand_r"]
+    again = project.json("export", HERO)["data"]
+    assert again["written"] == [] and "res://kiripix/character/hero/character.json" in again["unchanged"]
+
+
 def test_without_the_parameter_nothing_is_written_and_character_json_is_as_before(project: Kiripix) -> None:
     folder, character = exported(project)
 

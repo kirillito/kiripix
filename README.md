@@ -192,7 +192,8 @@ kiripix run character.courier
 default) at the target pixel height, with toon shading, and `palette` gives the character one palette across all its
 frames. `finish` draws a 1 px outline in a palette colour and lines the normal map up with the colour frames, `sheet` packs
 both into atlases with the feet at a fixed pivot, and `kiripix export` writes a `SpriteFrames`, a `CanvasTexture` with
-the normal map, an `AnimatedSprite2D` scene whose animations are `<clip>_<dir>`, such as `walk_sw`, and `character.json`.
+the normal map, an `AnimatedSprite2D` scene whose animations are `<clip>_<dir>`, such as `walk_sw`, and `character.json`
+beside the scene, with each clip's foot frames and each frame's points.
 `kiripix describe character` lists every clip field and Check.
 
 More for characters:
@@ -350,7 +351,7 @@ Every Decision goes into the Stage's append-only journal, `decisions/<stage>.jso
 
 | Command | What it does |
 |---|---|
-| `kiripix export <asset>` | Write a fully built room, Prop, character or sprite into the Godot project at `export.godot.project`: its scene, images and Manifest entries (and a room's Masks and `room.json`). A single room only warns about Exit pairing. |
+| `kiripix export <asset>` | Write a fully built room, Prop, character or sprite into the Godot project at `export.godot.project`: its scene, images and Manifest entries (and a room's Masks and `room.json`, a character's `character.json`). A single room only warns about Exit pairing. |
 | `kiripix export --all` | Export every Asset, or none: Exit pairing must hold and no file may be refused. |
 | `--force` / `--adopt` | Back up and overwrite a file the game changed since it was exported / a file at a target path the Manifest doesn't list. Without them, export refuses both. |
 | `--prune` | Remove the files of Assets deleted from the Project, under the same rule. |

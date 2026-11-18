@@ -643,6 +643,7 @@ class AssetGraph:
         return StageRun(
             asset_id=self.asset.id,
             asset_dir=self.asset.dir,
+            kind=self.asset.kind,
             output_dir=output_dir,
             files=self.files(spec),
             upstream={name: self.output_dir(self.spec(name)) for name in spec.inputs.upstream},

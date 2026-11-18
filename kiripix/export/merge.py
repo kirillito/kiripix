@@ -25,7 +25,8 @@ from kiripix.export.target import GodotTarget
 
 DRIVER = "kiripix-manifest"
 OURS_DRIVER = "kiripix-ours"  # keeps our side of an exported image or scene; the next export rewrites it
-OURS_PATTERNS = ("*.png", "*.tscn", "*.tres", "room.json")  # room.json: a room's exported data (ticket 0140)
+# room.json: a room's exported data (ticket 0140); character.json: a character's or sprite's (ticket 0289)
+OURS_PATTERNS = ("*.png", "*.tscn", "*.tres", "room.json", "character.json")
 INSTALL_FIX = "kiripix manifest install"
 _GIT_TIMEOUT = 20
 
@@ -204,7 +205,8 @@ def driver_finding(target: GodotTarget) -> Finding | None:
     return Finding(code="export.merge_driver_missing", severity="warning",
                    message="the game's clone has no Manifest merge driver or no merge rule for the exported images and "
                            "scenes, so two branches that export the same Asset will conflict in its Manifest, "
-                           "`.png`, `.tscn`, `.tres` and `room.json` files (`.gitattributes` alone does nothing; the clone needs "
+                           "`.png`, `.tscn`, `.tres`, `room.json` and `character.json` files (`.gitattributes` alone does "
+                           "nothing; the clone needs "
                            "the drivers configured)",
                    fix=INSTALL_FIX)
 

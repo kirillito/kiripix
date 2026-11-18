@@ -250,6 +250,8 @@ class StageRun:
     progress: ProgressCallback
     decisions: tuple[CurrentDecision, ...] = ()
     asset_params: dict[str, Scalar] = field(default_factory=dict)
+    # The Asset's Kind, such as room: for a Stage shared between Kinds that words a finding by Kind.
+    kind: str = ""
     # The current Decisions of each upstream Stage, by name, for a Stage that must know what an earlier Stage was told
     # (the `looks` Stage reads which Source the room picked). Read-only; it is already part of the upstream's input hash.
     upstream_decisions: Mapping[str, tuple[CurrentDecision, ...]] = field(default_factory=dict)

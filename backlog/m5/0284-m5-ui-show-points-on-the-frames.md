@@ -42,3 +42,6 @@ Review fixes: neither `show` nor `render.json`/`sheet.json` gives the pixel in t
 sheet has offsets from the pivot), so the `floor` and pivot-plus-offset stay as display-only math in one helper, `pointsOf` in
 `web/src/frameScreen.tsx`; no backend change. The cross is now made of image pixels (the pixel and one each way), so it scales
 with the zoom and marks the exact pixel; a hidden point is still hollow.
+
+The Owner, 2026-11-17: "the clips screen's playback" is the frame screen's Player, which plays a Clip; the clips screen has
+no player of its own. Accepted as built.

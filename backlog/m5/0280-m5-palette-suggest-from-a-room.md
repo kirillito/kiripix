@@ -54,7 +54,7 @@ Review fixes:
 - `--asset` on a Kind other than room or prop: `palette.suggest_input`. A malformed box (wrong count, not integers):
   `palette.box_invalid`; so is a box whose cells reach past the Source (no test: a Grid reaching past its Source isn't
   built by `fit`).
-- `check_mapping` decides by the Asset's Kind folder, and a Prop's other state (its `fit` under `states/<id>/`) gets the
+- `check_mapping` decides by the Asset's Kind (`StageRun.kind`, set by core), and a Prop's other state (its `fit` under `states/<id>/`) gets the
   image-path fix, not `--asset`.
 - The spec line moved to section 7; section 10 keeps a pointer.
 - Tests: two more in `tests/cli/test_palette_grow.py`.
