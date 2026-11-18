@@ -8,17 +8,19 @@ import {
   coloursOf,
   directionOf,
   isDrawnFromTwoPoints,
+  isLink,
   MarkerTool,
   shapeOf,
   type EmitterGesture,
   type EmitterMode,
+  type Link,
   type Marker,
 } from "./markerTool";
 import type { CanvasPixel, PixelCanvas } from "./pixelCanvas";
 import { LayerHighlight, layerFiles, loadImage } from "./sortView";
-import { loadMask, WalkTest, type SortedLayers } from "./walkTest";
+import { CROSS_KEY, loadMask, WalkTest, type Crossing, type Crossings, type SortedLayers } from "./walkTest";
 
-const TYPES = ["spawn", "exit", "interactable", "light", "emitter", "ysort", "area"] as const;
+const TYPES = ["spawn", "exit", "interactable", "light", "emitter", "ysort", "area", "link"] as const;
 const LABELS: Record<string, string> = {
   spawn: "Spawns",
   exit: "Exits",
@@ -27,9 +29,11 @@ const LABELS: Record<string, string> = {
   emitter: "Emitters",
   ysort: "Y-sort lines",
   area: "Areas",
+  link: "Links",
 };
 
 export const PLACE_DECISION = "marker";
+export const LINK_DECISION = "link";
 export const ABOVE_DECISION = "above";
 export const REACH_STAGE = "reach";
 const PLACE_STAGE = "place";
@@ -43,6 +47,8 @@ interface Fields {
   name: string;
   cell: string; // px, blank for none
   walkable: boolean;
+  kind: string; // a Link's kind, free text in snake_case
+  two_way: boolean;
 }
 
 const DEFAULTS: Fields = {
@@ -54,6 +60,8 @@ const DEFAULTS: Fields = {
   name: "emitter",
   cell: "",
   walkable: false,
+  kind: "hop",
+  two_way: true,
 };
 
 function cellSize(text: string): number | null {
@@ -89,6 +97,12 @@ function forDecision(marker: Marker): Record<string, unknown> {
   return kept;
 }
 
+// A Link's Decision: its ends, kind and direction, as `show` gives them.
+function linkDecision(link: Link, change: Partial<Link> = {}): Record<string, unknown> {
+  const { id, from, to, kind, two_way } = { ...link, ...change };
+  return { id, from, to, kind, two_way };
+}
+
 function ownFields(type: string, fields: Fields, layer: string): Record<string, unknown> {
   if (type === "ysort") return { layer };
   if (type === "exit") return { target_room: fields.target_room, target_exit: fields.target_exit };
@@ -112,10 +126,11 @@ export function PlacePanel(props: {
   focusLayer: { layer: string; count: number } | null;
   findings: Finding[];
   decide: (marker: Record<string, unknown>) => void;
+  decideLink: (link: Record<string, unknown>) => void;
   decideAbove: (layer: string, above: boolean) => void;
   disabled: boolean;
 }) {
-  const { canvas, show, detail, status, imageVersion, focusLayer, findings, decide, decideAbove, disabled } = props;
+  const { canvas, show, detail, status, imageVersion, focusLayer, findings, decide, decideLink, decideAbove, disabled } = props;
   const markers = markersOf(detail);
   const [type, setType] = useState<string>(TYPES[0]);
   const [typedId, setTypedId] = useState<string | null>(null);
@@ -190,8 +205,8 @@ export function PlacePanel(props: {
     send({ ...emitter, shape });
   }
 
-  const form = useRef({ type, id, fields, layer, decide: send, disabled, markers, selectedId, pickColour, drawingPolygon, mode });
-  form.current = { type, id, fields, layer, decide: send, disabled, markers, selectedId, pickColour, drawingPolygon, mode };
+  const form = useRef({ type, id, fields, layer, decide: send, decideLink, disabled, markers, selectedId, pickColour, drawingPolygon, mode });
+  form.current = { type, id, fields, layer, decide: send, decideLink, disabled, markers, selectedId, pickColour, drawingPolygon, mode };
   const tool = useRef<MarkerTool | null>(null);
   const highlight = useRef(new LayerHighlight());
 
@@ -203,7 +218,7 @@ export function PlacePanel(props: {
     setHint("");
     setFields((before) => ({
       ...before,
-      ...(marker as unknown as Partial<Fields>),
+      ...(isLink(marker) ? { kind: marker.kind, two_way: marker.two_way } : (marker as unknown as Partial<Fields>)),
       cell: typeof marker.cell === "number" ? String(marker.cell) : "",
       walkable: marker.walkable === true,
     }));
@@ -260,6 +275,18 @@ export function PlacePanel(props: {
       move(marker: Marker) {
         form.current.decide(marker); // queued behind a Run, never dropped (ticket 0083)
       },
+      placeLink(from: CanvasPixel, to: CanvasPixel) {
+        const { id: name, fields: own, decideLink: record } = form.current;
+        record({ id: name, from: [from.x, from.y], to: [to.x, to.y], kind: own.kind, two_way: own.two_way });
+        setTypedId(null);
+        setSelectedId(null);
+      },
+      moveLink(link: Link) {
+        form.current.decideLink(linkDecision(link));
+      },
+      selectLink(link: Link) {
+        choose(link as unknown as Marker);
+      },
       select: choose,
       emitter(gesture: EmitterGesture) {
         const { markers: all, selectedId: current, decide: record, pickColour: pick } = form.current;
@@ -309,14 +336,21 @@ export function PlacePanel(props: {
   const drawnCell = type === "area" ? cellSize(fields.cell) : null;
   const ambiguous = findings.flatMap((finding) => ambiguousCells(finding) ?? []);
   const ambiguousKey = JSON.stringify(ambiguous);
+  const linkProblemKey = JSON.stringify(
+    findings
+      .filter((finding) => finding.code.startsWith("link.") && finding.position?.x != null && finding.position.y != null)
+      .map((finding) => ({ x: finding.position!.x, y: finding.position!.y })),
+  );
   useEffect(() => {
     tool.current?.setMarkers(markersOf(detail));
+    tool.current?.setLinking(type === "link");
+    tool.current?.setLinkProblems(JSON.parse(linkProblemKey) as CanvasPixel[]);
     tool.current?.setSelected(selectedId);
     tool.current?.setDrawing(type, drawnCell);
     tool.current?.setEmitter(mode, shapeKind, drawingPolygon);
     tool.current?.setAmbiguous(JSON.parse(ambiguousKey) as typeof ambiguous);
     canvas.current?.redraw();
-  }, [canvas, detail, selectedId, type, drawnCell, ambiguousKey, mode, shapeKind, drawingPolygon]);
+  }, [canvas, detail, selectedId, type, drawnCell, ambiguousKey, linkProblemKey, mode, shapeKind, drawingPolygon]);
 
   // The room's pixels for the eyedropper, and the Project palette for the swatches: only an emitter needs either.
   const placeImage = detail.image ?? detail.input_image;
@@ -360,6 +394,7 @@ export function PlacePanel(props: {
         setDrawingPolygon(false);
         return;
       }
+      if (event.key === "Escape") tool.current?.cancelLink();
       if (chosen && open && event.key === "Escape") {
         setDrawingPolygon(false);
         return;
@@ -367,6 +402,12 @@ export function PlacePanel(props: {
       if (chosen && key in EMITTER_KEYS) {
         setMode(EMITTER_KEYS[key]);
         setDrawingPolygon(false);
+        return;
+      }
+      if (key === "l") {
+        setType("link");
+        setTypedId(null);
+        setSelectedId(null);
         return;
       }
       if (key !== "a") return;
@@ -649,14 +690,43 @@ export function PlacePanel(props: {
           </label>
         </>
       )}
+      {type === "link" && (
+        <>
+          <div className="param">
+            <label htmlFor="marker-kind">Kind</label>
+            <input
+              id="marker-kind"
+              data-testid="marker-kind"
+              value={fields.kind}
+              onChange={(event) => update({ kind: event.target.value })}
+            />
+          </div>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              data-testid="marker-two-way"
+              checked={fields.two_way}
+              onChange={(event) => update({ two_way: event.target.checked })}
+            />
+            two way (an actor can cross it back, from its to end)
+          </label>
+          <p className="hint" data-testid="link-help">
+            Click the room for the from end, then again for the to end. Drag an end to move it. Escape drops a first click.
+          </p>
+        </>
+      )}
       <p className="hint">
-        {isDrawnFromTwoPoints(type) ? "Drag on the canvas to draw it." : "Click the canvas to place it."} Drag a Marker to
+        {type === "link" ? "" : isDrawnFromTwoPoints(type) ? "Drag on the canvas to draw it." : "Click the canvas to place it."} Drag a Marker to
         move it.
       </p>
       {selected && (
         <button
           data-testid="marker-save"
           onClick={() => {
+            if (isLink(selected)) {
+              decideLink(linkDecision(selected, { kind: fields.kind, two_way: fields.two_way }));
+              return;
+            }
             const { x, y, x2, y2 } = selected;
             send({
               id: selected.id,
@@ -684,9 +754,12 @@ export function PlacePanel(props: {
                 data-testid={`marker-${marker.id}`}
                 onClick={() => choose(marker)}
               >
-                {marker.id} ({marker.x}, {marker.y}
-                {marker.x2 !== undefined && marker.type === "area" ? ` to ${marker.x2}, ${marker.y2}` : ""}){typeof marker.layer === "string" ? ` for ${marker.layer}` : ""}
-  </button>
+                {isLink(marker)
+                  ? `${marker.id} (${marker.kind}, ${marker.from.join(", ")} ${marker.two_way ? "<->" : "->"} ${marker.to.join(", ")})`
+                  : `${marker.id} (${marker.x}, ${marker.y}`}
+                {!isLink(marker) && (<>
+                {marker.x2 !== undefined && marker.type === "area" ? ` to ${marker.x2}, ${marker.y2}` : ""}){typeof marker.layer === "string" ? ` for ${marker.layer}` : ""}</>)}
+              </button>
             ))}
         </section>
       ))}
@@ -734,6 +807,7 @@ export function PlacePanel(props: {
 
 interface ReachReport {
   markers: { id: string; reached: boolean }[];
+  links?: { id: string; reached: boolean }[];
 }
 
 export function ReachPanel(props: {
@@ -754,6 +828,7 @@ export function ReachPanel(props: {
   const clear = place?.outputs.find((path) => path.endsWith("/clear.png"));
   const tool = useRef(new MarkerTool(null));
   const sorted = useRef<SortedLayers>({ layers: [] });
+  const crossings = useRef<Crossings>({ links: [] });
 
   // The Layers the walk test draws over the Body, and where each sorts: `place`'s `sort`, and the Layers' own files.
   const files = layerFiles(show);
@@ -793,7 +868,7 @@ export function ReachPanel(props: {
     fetch(fileUrl(report, imageVersion))
       .then((response) => response.json() as Promise<ReachReport>)
       .then((read) => {
-        if (current) setUnreachable(read.markers.filter((marker) => !marker.reached).map((marker) => marker.id));
+        if (current) setUnreachable([...read.markers, ...(read.links ?? [])].filter((marker) => !marker.reached).map((marker) => marker.id));
       })
       .catch(() => {
         if (current) setUnreachable([]); // Rebuilt while it was read; the next refresh reads it again.
@@ -804,7 +879,9 @@ export function ReachPanel(props: {
   }, [report, imageVersion]);
 
   useEffect(() => {
-    tool.current.setMarkers(JSON.parse(shown) as Marker[]);
+    const all = JSON.parse(shown) as Marker[];
+    crossings.current.links = all.filter((marker) => isLink(marker)) as unknown as Crossing[];
+    tool.current.setMarkers(all);
     tool.current.setUnreachable(unreachable);
     canvas.current?.redraw();
   }, [canvas, shown, unreachable]);
@@ -841,7 +918,7 @@ export function ReachPanel(props: {
         }
         stopWalking();
         const body = { size: [bodyWidth, bodyHeight] as [number, number], dash };
-        const test = new WalkTest(ground, open, body, x, y, () => canvas.current?.redraw(), sorted.current);
+        const test = new WalkTest(ground, open, body, x, y, () => canvas.current?.redraw(), sorted.current, crossings.current);
         walk.current = { from, test };
         canvas.current?.setTools([tool.current, test]);
       },
@@ -871,6 +948,7 @@ export function ReachPanel(props: {
           </button>
           <p className="hint">
             The arrow keys walk the {bodyWidth} x {bodyHeight} Body.
+            {crossings.current.links.length > 0 && ` ${CROSS_KEY.toUpperCase()} crosses a Link when the Body stands near one of its ends.`}
             {dash > 0 && ` Shift and an arrow dashes over a pit of up to ${dash} px.`}
           </p>
         </>

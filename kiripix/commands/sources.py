@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import editof, loopedits, loopkit, sheets, sources
+from kiripix.core import editof, emotions, loopedits, loopkit, sheets, sources
 from kiripix.core.errors import fail
 from kiripix.core.assets import is_asset_id, load_asset
 from kiripix.core.graph import AssetGraph, StageState
@@ -65,6 +65,11 @@ class ImportInput(_AssetInput):
                                                 "(src/states/<state>/), declared first by a `state` Decision on `source` "
                                                 "(`prop.state_unknown` gives the command). Not the default state's ID: that "
                                                 "is the Source. Pick it with `kiripix pick <asset> <variant> --state <state>`.")
+    emotion: str | None = Field(None, description="A portrait's emotion: store the image as a Variant of that emotion "
+                                                  "(src/emotions/<emotion>/), an edit of the neutral image, declared first by "
+                                                  "an `emotion` Decision on `source` (`portrait.emotion_unknown` gives the "
+                                                  "command). Not `neutral`: that is the Source. Pick it with `kiripix pick "
+                                                  "<asset> <variant> --emotion <emotion>`.")
     of: str | None = Field(None, description="With --look, or --loop with --frame: the edit was made on a piece or a crop "
                                              "of the room, not on its whole Source. A crop `kiripix extend "
                                              "<room> crop --box ...` wrote (its name, the start of its hash in "
@@ -92,6 +97,7 @@ class ImportData(BaseModel):
     frame: int | None = Field(None, description="With --loop --frame: the frame the edit is a Variant of.")
     skipped: list[str] = Field([], description="With --loop: the files left out because they are frame 0.")
     state: str | None = Field(None, description="With --state: the Prop's state the Variant belongs to.")
+    emotion: str | None = Field(None, description="With --emotion: the portrait's emotion the Variant belongs to.")
     of: str | None = Field(None, description="With --of: what the edit was made on.")
     placed_scale: tuple[float, float] | None = Field(None, description="With --of: the edit's px per Source px.")
     placed_at: tuple[int, int] | None = Field(None, description="With --of: where the edit's top-left lies in the Source.")
@@ -102,6 +108,9 @@ class ImportData(BaseModel):
 
     def text(self) -> str:
         added = "added" if self.created else "already had"
+        if self.emotion is not None:
+            return (f"{self.asset}: {added} the Variant {self.variant} of emotion {self.emotion} ({self.file}); pick it with "
+                    f"kiripix pick {self.asset} {self.variant} --emotion {self.emotion}")
         if self.state is not None:
             return (f"{self.asset}: {added} the Variant {self.variant} of state {self.state} ({self.file}); pick it with "
                     f"kiripix pick {self.asset} {self.variant} --state {self.state}")
@@ -143,6 +152,18 @@ class ImportData(BaseModel):
 def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if arguments.emotion is not None:
+        if (arguments.state is not None or arguments.look is not None or arguments.loop is not None or arguments.frames
+                or arguments.kit is not None or arguments.frame is not None or arguments.of is not None):
+            raise fail("import.emotion_takes_one_image", "--emotion is one image for a portrait's emotion: not with --state, "
+                       "--look, --loop, --frame, --kit, --of or more files",
+                       fix=f"kiripix import {asset.id} {arguments.file} --emotion {arguments.emotion}")
+        declared_emotion, name, path, created = emotions.import_emotion(
+            project, asset, context.cwd / arguments.file, str(arguments.file), arguments.role or "variant", arguments.emotion)
+        return Outcome(ImportData(
+            asset=asset.id, look=None, role="variant", variant=name, sheet=None, clip_source=None, rigged=None,
+            file=project.relative(path), created=created, emotion=declared_emotion.id,
+            variants=list(emotions.emotion_variants(asset, declared_emotion)), clip_sources=[], sheets=[]))
     if arguments.state is not None:
         if (arguments.look is not None or arguments.loop is not None or arguments.frames or arguments.kit is not None
                 or arguments.frame is not None or arguments.of is not None):
@@ -247,11 +268,15 @@ class PickInput(_AssetInput):
     frame: int | None = Field(None, ge=0, description="With --loop: the frame, from 1 (frame 0 is the room's and is refused).")
     state: str | None = Field(None, description="A Prop's other state: pick that state's Variant (`import --state`) "
                                                 "as the state's Source, instead of the default Source.")
+    emotion: str | None = Field(None, description="A portrait's emotion: pick that emotion's Variant (`import --emotion`, "
+                                                  "made on the portrait's current neutral Source) as the emotion's image, "
+                                                  "instead of the neutral Source.")
 
 
 class PickData(BaseModel):
     asset: str
     state: str | None = Field(None, description="With --state: the state whose Variant was picked.")
+    emotion: str | None = Field(None, description="With --emotion: the emotion whose Variant was picked.")
     look: str | None = Field(description="With --look: the Look whose edit was picked.")
     loop: str | None = Field(None, description="With --loop: the Loop whose frame was picked.")
     frame: int | None = Field(None, description="With --loop: the frame the edit was picked for.")
@@ -261,6 +286,8 @@ class PickData(BaseModel):
     stages: list[StageState]
 
     def text(self) -> str:
+        if self.emotion is not None:
+            return f"{self.asset}: picked {self.variant} as the image of emotion {self.emotion} ({self.stage} Decision {self.id})"
         if self.state is not None:
             return f"{self.asset}: picked {self.variant} as the Source of state {self.state} ({self.stage} Decision {self.id})"
         if self.loop is not None:
@@ -284,6 +311,15 @@ class PickData(BaseModel):
 def pick(arguments: PickInput, context: Context) -> Outcome[PickData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if arguments.emotion is not None:
+        if (arguments.state is not None or arguments.look is not None or arguments.loop is not None
+                or arguments.frame is not None):
+            raise fail("pick.emotion_alone", "--emotion is a portrait's emotion: not with --state, --look, --loop or --frame",
+                       fix=f"kiripix pick {asset.id} {arguments.variant} --emotion {arguments.emotion}")
+        spec, entry = emotions.pick_emotion(project, asset, arguments.emotion, arguments.variant)
+        stages = AssetGraph(project, asset, HashCache(project.state_dir)).states()
+        return Outcome(PickData(asset=asset.id, emotion=arguments.emotion, look=None, stage=spec.name,
+                                variant=arguments.variant, id=entry.id, stages=stages))
     if arguments.state is not None:
         if arguments.look is not None or arguments.loop is not None or arguments.frame is not None:
             raise fail("pick.state_alone", "--state is a Prop's state: not with --look, --loop or --frame",

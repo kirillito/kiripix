@@ -37,6 +37,7 @@ from kiripix.ops.cycle import (
     ramps,
     seam_ratio,
 )
+from kiripix.ops.stack import stack_by_depth, stack_by_order, stack_difference
 from kiripix.ops.chroma import chroma_key, key_fringe
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
 from kiripix.ops.colourset import SetReport, map_set, set_colours, set_report
@@ -236,6 +237,9 @@ __all__ = [
     "snap_cell",
     "split_painted",
     "srgb_to_oklab",
+    "stack_by_depth",
+    "stack_by_order",
+    "stack_difference",
     "suggest_palette",
     "target_centre",
     "upscale",

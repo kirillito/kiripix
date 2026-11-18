@@ -216,7 +216,8 @@ def _reserved(table: list[dict[str, Any]]) -> np.ndarray:
     return np.array(colours, dtype=np.uint8).reshape(-1, 3)
 
 
-def _run_palette(run: StageRun, source: str) -> None:
+def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) -> None:
+    """`exclude` (N, 3): colours no fixed colour or fitted ramp of this run may use, such as a Wearable's body's (ticket 0292)."""
     render = run.upstream[source]
     document = _render(run, source)
     files = _colour_files(document)
@@ -241,6 +242,8 @@ def _run_palette(run: StageRun, source: str) -> None:
     fitted = [s for s in specs if s.rgb is None]
     shared = [s for s in specs if s.rgb is not None]
     reserved = _reserved(table) if specs else np.zeros((0, 3), dtype=np.uint8)
+    if exclude is not None and len(exclude):
+        reserved = np.concatenate([reserved, exclude.astype(np.uint8).reshape(-1, 3)])
     free = ~(palette[:, None, :] == reserved[None, :, :]).all(axis=2).any(axis=1) if len(reserved) else np.ones(len(palette),
                                                                                                                 bool)
     claimed = sorted(i for indexes in parts.values() for i in indexes)
@@ -273,7 +276,9 @@ def _run_palette(run: StageRun, source: str) -> None:
             subset = (palette_subset(counted, available, min(count, room)) if has_fixed
                       else np.zeros((0, 3), dtype=np.uint8))
         else:
-            subset = palette_subset(frames, palette, count)
+            allowed = palette if exclude is None or not len(exclude) else palette[
+                ~(palette[:, None, :] == exclude[None, :, :]).all(axis=2).any(axis=1)]
+            subset = palette_subset(frames, allowed, count)
     except ValueError as error:
         raise StageFailure(f"can't choose the character's colours: {error}") from None
     ramps: dict[str, np.ndarray] = {s.name: np.array(s.rgb, dtype=np.uint8).reshape(-1, 3) for s in shared}
@@ -383,3 +388,8 @@ def palette_stage(frames: str = "render") -> tuple[StageFunction, CheckFunction]
 
 
 run_character_palette, check_character_palette = palette_stage("render")
+
+
+def palette_stage_excluding(exclude: Callable[[StageRun], np.ndarray]) -> StageFunction:
+    """`run` of a palette Stage on `render`'s frames that keeps clear of the colours `exclude` gives (a Wearable's, ticket 0292)."""
+    return lambda run: _run_palette(run, "render", exclude(run))

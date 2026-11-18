@@ -38,7 +38,7 @@ def _clips(project: Project, asset: Asset) -> list[CurrentDecision]:
 
 
 def _need_character(asset: Asset) -> None:
-    if not sources.takes_models(asset):
+    if asset.kind != sources.CHARACTER:
         raise fail("clips.not_character", f"{asset.id} is a {asset.kind}, and only a character has clips",
                    fix="kiripix new character <name>", position=Position(asset=asset.id))
 

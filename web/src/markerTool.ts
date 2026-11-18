@@ -72,8 +72,25 @@ export function arrowLength(marker: Marker): number | null {
   return direction ? Math.round(Math.hypot(direction.x - marker.x, direction.y - marker.y)) : null;
 }
 
+// A Link as `show` gives it: a Marker of type `link` with two ends and no x or y (ticket 0265).
+export interface Link {
+  id: string;
+  type: "link";
+  from: [number, number];
+  to: [number, number];
+  kind: string;
+  two_way: boolean;
+}
+
+export function isLink(marker: { type?: unknown }): marker is Link {
+  return marker.type === "link";
+}
+
 export interface MarkerGestures {
   place(pixel: CanvasPixel, end: CanvasPixel): void;
+  placeLink?(from: CanvasPixel, to: CanvasPixel): void;
+  moveLink?(link: Link): void;
+  selectLink?(link: Link): void;
   move(marker: Marker): void;
   select(marker: Marker): void;
   emitter?(gesture: EmitterGesture): void;
@@ -125,6 +142,7 @@ const COLOURS: Record<string, string> = {
   ysort: "#ff9b6b",
   area: "#4ee0d0",
 };
+const LINK = "#ff7bd5";
 const UNREACHABLE = "#ff3b6b";
 const SELECTED = "#ffffff";
 const HIT_RADIUS = 6; // canvas pixels around a Marker
@@ -138,7 +156,9 @@ type Drag =
   | { kind: "emitter"; marker: Marker; origin: Marker; how: Handle; from: CanvasPixel; room: { width: number; height: number }; moved: boolean }
   | { kind: "aim"; aim: "shape" | "direction"; start: CanvasPixel; at: CanvasPixel }
   | { kind: "pick"; at: CanvasPixel }
-  | { kind: "click"; at: CanvasPixel };
+  | { kind: "click"; at: CanvasPixel }
+  | { kind: "linkend"; link: Link; end: "from" | "to"; moved: boolean }
+  | { kind: "linkclick"; at: CanvasPixel };
 type AreaDrag = {
   area: Marker;
   origin: Marker;
@@ -187,6 +207,10 @@ const AREA_ALPHA = "33";
 
 export class MarkerTool implements CanvasTool {
   private markers: Marker[] = [];
+  private links: Link[] = [];
+  private linking = false;
+  private pending: CanvasPixel | null = null;
+  private linkProblems: CanvasPixel[] = [];
   private unreachable = new Set<string>();
   private selected: string | null = null;
   private drag: Drag | null = null;
@@ -201,7 +225,34 @@ export class MarkerTool implements CanvasTool {
   constructor(private readonly gestures: MarkerGestures | null) {}
 
   setMarkers(markers: Marker[]): void {
-    if (!this.drag) this.markers = markers.map((marker) => ({ ...marker }));
+    if (this.drag) return;
+    this.markers = markers.filter((marker) => !isLink(marker)).map((marker) => ({ ...marker }));
+    this.links = (markers.filter((marker) => isLink(marker)) as unknown as Link[]).map((link) => ({ ...link, from: [...link.from], to: [...link.to] }));
+  }
+
+  // Whether a click on empty canvas sets a Link's end: the first click its `from`, the second its `to`.
+  setLinking(on: boolean): void {
+    this.linking = on;
+    if (!on) this.pending = null;
+  }
+
+  cancelLink(): void {
+    this.pending = null;
+  }
+
+  // Where `link.*` findings put an end: ringed on the canvas.
+  setLinkProblems(points: CanvasPixel[]): void {
+    this.linkProblems = points;
+  }
+
+  private hitLinkEnd(pixel: CanvasPixel, zoom: number): { link: Link; end: "from" | "to" } | null {
+    const near = (end: [number, number]) =>
+      Math.hypot((end[0] - pixel.x) * zoom, (end[1] - pixel.y) * zoom) <= Math.max(HIT_RADIUS, zoom);
+    for (const link of [...this.links].reverse()) {
+      if (near(link.from)) return { link, end: "from" };
+      if (near(link.to)) return { link, end: "to" };
+    }
+    return null;
   }
 
   setUnreachable(ids: string[]): void {
@@ -388,6 +439,15 @@ export class MarkerTool implements CanvasTool {
 
   pointerDown(pixel: CanvasPixel, frame: CanvasFrame): boolean {
     if (!this.gestures) return false;
+    const onEnd = this.hitLinkEnd(pixel, frame.zoom);
+    if (onEnd) {
+      this.drag = { kind: "linkend", link: onEnd.link, end: onEnd.end, moved: false };
+      return true;
+    }
+    if (this.linking) {
+      this.drag = { kind: "linkclick", at: pixel };
+      return true;
+    }
     const emitter = this.selectedEmitter();
     if (emitter && this.gestures.emitter && this.pointerDownEmitter(emitter, pixel, frame)) return true;
     const inArea = this.hitArea(pixel, frame.zoom);
@@ -409,7 +469,11 @@ export class MarkerTool implements CanvasTool {
     if (!this.drag) return;
     if ("kind" in this.drag) {
       if (this.drag.kind === "emitter") this.dragEmitter(this.drag, pixel);
-      else this.drag.at = pixel;
+      else if (this.drag.kind === "linkend") {
+        const was = this.drag.link[this.drag.end];
+        this.drag.moved ||= was[0] !== pixel.x || was[1] !== pixel.y;
+        this.drag.link[this.drag.end] = [pixel.x, pixel.y];
+      } else this.drag.at = pixel;
     } else if ("area" in this.drag) {
       this.dragArea(this.drag, pixel);
       const [now, was] = [boxOf(this.drag.area), boxOf(this.drag.origin)];
@@ -433,7 +497,17 @@ export class MarkerTool implements CanvasTool {
     this.drag = null;
     if (!drag || !this.gestures) return;
     if ("kind" in drag) {
-      if (drag.kind === "emitter") {
+      if (drag.kind === "linkend") {
+        if (drag.moved) this.gestures.moveLink?.({ ...drag.link });
+        else this.gestures.selectLink?.({ ...drag.link });
+      } else if (drag.kind === "linkclick") {
+        if (!this.pending) this.pending = drag.at;
+        else if (this.pending.x !== drag.at.x || this.pending.y !== drag.at.y) {
+          const from = this.pending;
+          this.pending = null;
+          this.gestures.placeLink?.(from, drag.at);
+        }
+      } else if (drag.kind === "emitter") {
         if (drag.moved) this.gestures.move({ ...drag.marker });
         else this.gestures.select(drag.marker);
       } else if (drag.kind === "pick") {
@@ -522,6 +596,57 @@ export class MarkerTool implements CanvasTool {
     for (const [x, y] of handles) context.fillRect(at(x, frame.left) - 3, at(y, frame.top) - 3, 6, 6);
   }
 
+  // Each Link: a line with a dot at each end, and an arrow at `to` when it is one way. A first click waiting for its
+  // second shows its dot and a line to the pointer.
+  private drawLinks(context: CanvasRenderingContext2D, frame: CanvasFrame): void {
+    const at = (value: number, origin: number) => origin + (value + 0.5) * frame.zoom;
+    for (const link of this.links) {
+      const colour = this.unreachable.has(link.id) ? UNREACHABLE : LINK;
+      const [x1, y1, x2, y2] = [at(link.from[0], frame.left), at(link.from[1], frame.top), at(link.to[0], frame.left), at(link.to[1], frame.top)];
+      context.strokeStyle = colour;
+      context.fillStyle = colour;
+      context.lineWidth = link.id === this.selected ? 3 : 1.5;
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.lineTo(x2, y2);
+      if (!link.two_way) {
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+        for (const side of [-0.45, 0.45]) {
+          context.moveTo(x2, y2);
+          context.lineTo(x2 - 10 * Math.cos(angle + side), y2 - 10 * Math.sin(angle + side));
+        }
+      }
+      context.stroke();
+      for (const [x, y] of [[x1, y1], [x2, y2]]) {
+        context.beginPath();
+        context.arc(x, y, 4, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.fillText(`${link.id} (${link.kind})`, (x1 + x2) / 2 + 6, (y1 + y2) / 2 - 6);
+      context.lineWidth = 1;
+    }
+    context.strokeStyle = UNREACHABLE;
+    for (const point of this.linkProblems) {
+      context.beginPath();
+      context.arc(at(point.x, frame.left), at(point.y, frame.top), 8, 0, Math.PI * 2);
+      context.stroke();
+    }
+    if (this.pending) {
+      const [x, y] = [at(this.pending.x, frame.left), at(this.pending.y, frame.top)];
+      context.strokeStyle = SELECTED;
+      context.fillStyle = SELECTED;
+      context.beginPath();
+      context.arc(x, y, 4, 0, Math.PI * 2);
+      context.fill();
+      if (this.cursor) {
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(at(this.cursor.x, frame.left), at(this.cursor.y, frame.top));
+        context.stroke();
+      }
+    }
+  }
+
   draw(context: CanvasRenderingContext2D, frame: CanvasFrame): void {
     const at = (value: number, origin: number) => origin + (value + 0.5) * frame.zoom;
     const grid = (box: Box, cell: number | null, colour: string) => {
@@ -583,6 +708,7 @@ export class MarkerTool implements CanvasTool {
       context.lineTo(at(plain.at.x, frame.left), at(plain.at.y, frame.top));
       context.stroke();
     }
+    this.drawLinks(context, frame);
     for (const marker of this.markers) {
       if (marker.type === "area") {
         const box = boxOf(marker);
@@ -645,6 +771,10 @@ export class MarkerTool implements CanvasTool {
       .filter((marker) => marker.type === "area")
       .flatMap((marker) => this.ambiguousOf(marker).map((found) => `${marker.id}@${found.x},${found.y}`))
       .join(" ");
+    frame.element.dataset.links = this.links
+      .map((link) => `${link.id}:${link.from.join(",")}>${link.to.join(",")}:${link.kind}:${link.two_way ? "two" : "one"}`)
+      .join(" ");
+    frame.element.dataset.pendingLink = this.pending ? `${this.pending.x},${this.pending.y}` : "";
     frame.element.dataset.unreachable = [...this.unreachable].join(" ");
   }
 }

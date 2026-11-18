@@ -15,9 +15,16 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "toon": {"bands": 2 to 4, "shadow": 0 to 1, "band_edge": 0 to 1, "band_smooth": px, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
                   toward the camera>}}, "eyes": [<names of the materials that are the eyes; optional>],
          "points": [{"name": <the point's name>, "target": <a bone of the armature or an Empty, by name>}; optional],
+         "wearable": {"file": <a Wearable's model.blend, on the body's skeleton>, "holdout": <bool, default true>}; optional,
          "output": <folder to write the frames into>}
 result: {"device": <what rendered>, "depth_range": [<near>, <far>], "materials": [{"index": <from 1>, "name"}],
          "frames": {<clip>: {<direction>: [{"pivot": [x, y]}]}}}
+
+With `wearable` (ticket 0291) `rig_file` is the body's file and the Wearable's meshes are brought into it, re-pointed at the
+body's armature by bone name. The scene is set up with the body alone (the camera, the depth range and the body's material
+numbers are the body's own, so the passes stack on the body's), then the body is a holdout (it hides what is behind it, is not
+drawn, and is outside the object mask) and the Wearable renders. The Wearable's materials are numbered after the body's, and the
+result's `materials` are the Wearable's own. With `measure` the extents are the Wearable's alone.
 
 With `eyes`, each frame also has `"eyes"`: one entry per eye, the Model's right one first (ticket 0203), from the posed mesh and
 not from the pixels: `{"x", "y"}`, the eye's centre in px (x right, y down), `"width"` and `"height"`, its extent on screen in
@@ -328,6 +335,67 @@ def number_materials() -> list:
     for index, material in enumerate(ordered, start=1):
         material.pass_index = index
     return [{"index": index, "name": material.name} for index, material in enumerate(ordered, start=1)]
+
+
+_wearable: list = []  # the Wearable's mesh objects, brought in by `bring_wearable`
+
+
+def bring_wearable(args: dict, armature) -> None:
+    """Brings the Wearable's skinned meshes into the scene, hidden from renders until `show_wearable`, and puts them on the
+    body's armature: their Armature modifiers and their parent are the body's, which has the same bones by name and the same
+    place (both files were normalised by the same `model_root`). The Wearable's own armature and Empties are dropped."""
+    spec = args.get("wearable")
+    if not spec:
+        return
+    with bpy.data.libraries.load(str(spec["file"])) as (source, wanted):
+        wanted.objects = list(source.objects)
+    brought = [o for o in wanted.objects if o is not None]
+    for obj in brought:
+        bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.update()
+    skinned = [o for o in brought if o.type == "MESH" and any(m.type == "ARMATURE" and m.object is not None for m in o.modifiers)]
+    if not skinned:
+        raise ValueError(f"{Path(spec['file']).name} has no mesh skinned to an armature")
+    for obj in skinned:
+        world = obj.matrix_world.copy()
+        for modifier in obj.modifiers:
+            if modifier.type == "ARMATURE":
+                modifier.object = armature
+        obj.parent = armature
+        obj.matrix_parent_inverse = armature.matrix_world.inverted()
+        obj.matrix_basis = world
+        obj.hide_render = True
+        obj.pass_index = 1
+    for obj in brought:
+        if obj not in skinned:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    _wearable[:] = skinned
+    bpy.context.view_layer.update()
+
+
+def show_wearable(args: dict, setup: dict, measuring: bool) -> list:
+    """After the scene is set up with the body alone: the Wearable shows, and the body is a holdout, or, to measure the
+    Wearable alone, hidden. Numbers the Wearable's materials after the body's; returns them as [{"index", "name"}]."""
+    if not _wearable:
+        return setup["materials"]
+    body = rendered_meshes()
+    first = len(setup["materials"]) + 1
+    used = {slot.material for obj in _wearable for slot in obj.material_slots if slot.material is not None}
+    ordered = sorted(used, key=lambda m: m.name)
+    if first - 1 + len(ordered) > MAX_MATERIALS:
+        raise ValueError(f"the body and the Wearable have {first - 1 + len(ordered)} materials; the material pass holds at most {MAX_MATERIALS}")
+    for index, material in enumerate(ordered, start=first):
+        material.pass_index = index
+    for obj in _wearable:
+        obj.hide_render = False
+    for obj in body:
+        if measuring or not args["wearable"].get("holdout", True):
+            obj.hide_render = measuring
+        else:
+            obj.is_holdout = True
+            obj.pass_index = 0  # outside the object mask
+    bpy.context.view_layer.update()
+    return [{"index": index, "name": material.name} for index, material in enumerate(ordered, start=first)]
 
 
 def set_up_scene(args: dict, armature, root_bone: str) -> dict:
@@ -761,10 +829,12 @@ def measure_poses(args: dict) -> dict:
     the point the camera orbits (x right, y down), and `under`, the point under the root from that point, in px: the pivot
     `render` reports is the cell's pivot plus `under`. The camera is the render's own, so these are the frames' pixels."""
     armature, root_bone = open_posable(args)
+    bring_wearable(args, armature)
     unknown = points_unknown(args, armature)
     if unknown:
         return unknown
     setup = set_up_scene(args, armature, root_bone)
+    show_wearable(args, setup, measuring=True)
     ground, turntable, camera = setup["ground"], setup["turntable"], setup["camera"]
     scale = float(args["px_per_unit"])
     directions = args["directions"]
@@ -803,6 +873,7 @@ def render(args: dict) -> dict:
     if args.get("measure"):
         return measure_poses(args)
     armature, root_bone = open_posable(args)
+    bring_wearable(args, armature)
     unknown = points_unknown(args, armature)
     if unknown:
         return unknown
@@ -815,6 +886,7 @@ def render(args: dict) -> dict:
     device = choose_device(args["device"])
     setup = set_up_scene(args, armature, root_bone)
     scene.render.filepath = str(exr)
+    materials = show_wearable(args, setup, measuring=False)
     ground, turntable, camera = setup["ground"], setup["turntable"], setup["camera"]
     depth_range = (DISTANCE - DEPTH_MARGIN * setup["radius"], DISTANCE + DEPTH_MARGIN * setup["radius"])
 
@@ -854,7 +926,7 @@ def render(args: dict) -> dict:
     shutil.rmtree(scratch, ignore_errors=True)
     progress(total, total, "done")
     return {"device": device, "depth_range": [round(depth_range[0], 4), round(depth_range[1], 4)],
-            "materials": setup["materials"], "frames": pivots}
+            "materials": materials, "frames": pivots}
 
 
 def main() -> None:

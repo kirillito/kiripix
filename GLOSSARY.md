@@ -169,6 +169,19 @@ state has its own declared ID and size, its own image, cutout, footprint and ori
 and finish. The game shows one state at a time. Not a Stage's status, and not a Look.
 _Avoid_: Look (that is a room's), variant (an image to pick from), frame, pose
 
+**Portrait**:
+A character's dialogue portraits: one Asset holds one character's set, a neutral image and an Emotion for each mood, all
+on one canvas with one anchor so a swap never moves the body. The picked Source is the neutral image. The set has its own
+colours, not the Project palette's.
+_Avoid_: avatar, face, headshot
+
+**Emotion**:
+A named member of a Portrait set other than the neutral one, such as `happy` or `worried`: an edit of the neutral image
+with its own Variants and Pick, which records the neutral Source it was made on, so a new neutral Source puts it in
+needs-input. Its ID is its name in the game, frozen at its first export. Not a Look (a room's), not a State (a Prop's),
+and not a Variant.
+_Avoid_: expression, mood, state, look
+
 **Condition**:
 An optional label naming the game state that shows a Look, such as `circuit.hall:off`, for people and other Exporters.
 Kiripix stores and exports it, and never interprets it; the game binds a Look by its ID, not by its Condition.
@@ -224,6 +237,11 @@ with a clip of that name must match (`clips.timing_differs`; a sprite only gets 
 **Sprite**:
 An Asset of Kind sprite: an actor built from imported 2D frames, exported as a character is.
 _Avoid_: sprite for one frame (say frame), or for Godot's `Sprite2D`
+
+**Wearable**:
+An Asset of Kind wearable: a hair style, an outfit, an accessory or a held thing, rendered over the character it names as
+its body, with the body as a holdout, so the game stacks it on the body pixel for pixel. Not a combination: each renders once.
+_Avoid_: layer (a room's image plane), outfit or costume for the Kind
 
 ## Verification and output
 

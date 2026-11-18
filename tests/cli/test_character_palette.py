@@ -8,11 +8,11 @@ from typing import Any
 
 import numpy as np
 import pytest
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from PIL import Image
 from test_character_clips import clip, real_hero
 from test_character_model import HERO
-from test_character_render import ready, render_json
+from test_character_render import build_ready, ready, render_json
 
 from kiripix.ops import parse_gpl
 
@@ -35,13 +35,19 @@ def palette_findings(project: Kiripix, **kwargs: Any) -> list[dict[str, Any]]:
     return [f for f in result["findings"] if f["code"].startswith("palette.")]
 
 
-def built(project: Kiripix, *params: str) -> Path:
-    folder = ready(project)
+def build_built(project: Kiripix, *params: str) -> None:
+    build_ready(project)
     project.json("run", HERO, "render")
     for param in params:
         project.json("set", HERO, "palette", param)
     project.json("run", HERO, "palette")
-    return folder
+
+
+def built(project: Kiripix, *params: str) -> Path:
+    """The hero through `palette` with these palette parameters; one template per set of them, built once per worker and
+    copied into the test's Project (ticket 0275)."""
+    restore_template(project, f"character-palette-{'-'.join(params)}", lambda template: build_built(template, *params))
+    return project.cwd / "assets" / "character" / "hero"
 
 
 def test_the_stage_declares_the_room_parameters_and_colors(project: Kiripix) -> None:

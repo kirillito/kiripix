@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from PIL import Image
 
 ROOM = "room.alley"
@@ -26,7 +26,7 @@ def target_image() -> np.ndarray:
     return image
 
 
-def built_room(project: Kiripix) -> Path:
+def build_room(project: Kiripix) -> None:
     project.json("new", "room", "alley", "--view", "top")
     project.json("set", ROOM, "brief", f"width={WIDTH}", f"height={HEIGHT}")
     project.json("set", ROOM, "fit", f"scale={SCALE}")
@@ -35,6 +35,11 @@ def built_room(project: Kiripix) -> Path:
     data: dict[str, Any] = project.json("import", ROOM, "source.png")["data"]
     project.json("pick", ROOM, str(data["variant"]))
     project.json("run", ROOM, expect=3)
+
+
+def built_room(project: Kiripix) -> Path:
+    """The room of `target_image()` at `SCALE`, run down to `masks`; built once per worker and copied (ticket 0275)."""
+    restore_template(project, "room-layers", build_room)
     return project.cwd / "assets" / "room" / "alley"
 
 

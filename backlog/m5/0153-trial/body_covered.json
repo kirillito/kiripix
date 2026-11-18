@@ -1,0 +1,12 @@
+{
+ "jacket": {
+  "body_px": 114412,
+  "covered_by_layers_px": 100631,
+  "share": 0.88
+ },
+ "coat": {
+  "body_px": 114412,
+  "covered_by_layers_px": 101430,
+  "share": 0.887
+ }
+}

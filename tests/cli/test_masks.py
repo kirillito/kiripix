@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from PIL import Image
 
 ROOM = "room.alley"
@@ -23,8 +23,7 @@ def plate() -> np.ndarray:
     return image
 
 
-def built_room(project: Kiripix) -> Path:
-    """A room run through `masks` (no Decisions yet); the Plate is `plate()`. Returns the Asset folder."""
+def build_room(project: Kiripix) -> None:
     project.json("new", "room", "alley", "--view", "top")
     project.json("set", ROOM, "brief", f"width={WIDTH}", f"height={HEIGHT}")
     project.json("set", ROOM, "fit", "scale=1")
@@ -32,6 +31,12 @@ def built_room(project: Kiripix) -> Path:
     data: dict[str, Any] = project.json("import", ROOM, "source.png")["data"]
     project.json("pick", ROOM, str(data["variant"]))
     project.json("run", ROOM, expect=3)  # fit, layers and an empty masks; palette is not built yet
+
+
+def built_room(project: Kiripix) -> Path:
+    """A room run through `masks` (no Decisions yet); the Plate is `plate()`. Built once per worker and copied into the
+    test's Project (ticket 0275). Returns the Asset folder."""
+    restore_template(project, "room-masks", build_room)
     return project.cwd / "assets" / "room" / "alley"
 
 

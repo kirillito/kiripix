@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from PIL import Image
 from test_layers_stage import accept, click, lift
-from test_layers_stage import built_room as layers_room
-from test_masks import FLOOR, ROOM, RUG, WALL, built_room, decide
+from test_layers_stage import build_room as build_layers_room
+from test_masks import FLOOR, ROOM, RUG, WALL, build_room, built_room, decide
 
 # built_room's Plate is 48 x 32, with a wall on its left 16 columns. With the wall flooded into `solid` and the default
 # 12 x 8 Body, walkable is x 22 to 42, y 4 to 28: a footprint at (x, y) covers x - 6 to x + 5 and y - 4 to y + 3.
@@ -18,10 +18,14 @@ ON_THE_FLOOR = (30, 16)
 WALL_EDGE = 21  # one column too near the wall for the footprint
 
 
-def walled_room(project: Kiripix) -> Path:
-    folder = built_room(project)
+def build_walled(project: Kiripix) -> None:
+    build_room(project)
     decide(project, "flood", {"x": 0, "y": 0, "mask": "solid"})
-    return folder
+
+
+def walled_room(project: Kiripix) -> Path:
+    restore_template(project, "room-walled", build_walled)  # built once per worker, copied for each test (ticket 0275)
+    return project.cwd / "assets" / "room" / "alley"
 
 
 def place(project: Kiripix, marker_id: str, marker_type: str, at: tuple[int, int] = ON_THE_FLOOR, expect: int = 0,
@@ -302,14 +306,18 @@ def test_a_view_that_derives_walkable_without_a_solid_mask_fails_the_stage_and_s
 # y-sort lines and "always above" (ticket 0046, D3)
 
 
-def lamp_room(project: Kiripix) -> Path:
-    """The layers room with one Layer, `lamp`, lifted and accepted, and built down to `place`."""
-    folder = layers_room(project)
+def build_lamp(project: Kiripix) -> None:
+    build_layers_room(project)
     click(project, "lamp", 8, 8)
     lift(project)
     accept(project)
     built_place(project, expect=2)  # layer.no_ysort: the Layer has no line yet
-    return folder
+
+
+def lamp_room(project: Kiripix) -> Path:
+    """The layers room with one Layer, `lamp`, lifted and accepted, and built down to `place` (a template, ticket 0275)."""
+    restore_template(project, "room-lamp", build_lamp)
+    return project.cwd / "assets" / "room" / "alley"
 
 
 def line(project: Kiripix, layer: str, y: int = 20, y2: int | None = None, marker_id: str = "ysort.lamp",

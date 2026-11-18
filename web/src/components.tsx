@@ -162,34 +162,62 @@ function NewCharacter(props: { characters: string[]; onCreate: (name: string, ba
   );
 }
 
+// A Wearable on the board: the body it is worn on, and its cost (ticket 0295).
+export interface WornAsset {
+  body: string | null;
+  cost: string;
+}
+
 export function StatusBoard(props: {
   status: StatusData | null;
   filter: Filter;
   onOpen: (asset: string, stage: string) => void;
   onCreateCharacter?: (name: string, base: string, parameters: File | null) => void;
+  worn?: Record<string, WornAsset>;
 }) {
   const assets = (props.status?.assets ?? []).filter((asset) => matches(asset.stages, props.filter));
+  const worn = props.worn ?? {};
+  const shown = new Set(assets.map((asset) => asset.asset));
+  // A Wearable shows under its body when the body is on the board too; else in its own Kind's section.
+  const under = (body: string) => assets.filter((asset) => asset.kind === "wearable" && worn[asset.asset]?.body === body);
+  const loose = (asset: { asset: string; kind: string }) => asset.kind !== "wearable" || !shown.has(worn[asset.asset]?.body ?? "");
+  const row = (asset: (typeof assets)[number], nested: boolean) => (
+    <div
+      className={nested ? "board-row board-worn" : "board-row"}
+      key={asset.asset}
+      data-testid={`board-${asset.asset}`}
+      data-body={nested ? worn[asset.asset]?.body : undefined}
+    >
+      <span className="board-name">{nested ? "↳ " : ""}{asset.asset}</span>
+      {asset.stages.map((stage) => (
+        <button
+          key={stage.stage}
+          className="glyph-button"
+          data-status={stage.status}
+          title={[stage.stage, stage.status, stage.reason].filter(Boolean).join(": ")}
+          onClick={() => props.onOpen(asset.asset, stage.stage)}
+        >
+          {stage.stage} {GLYPH[stage.status]}
+        </button>
+      ))}
+      {worn[asset.asset]?.cost && (
+        <span className="hint board-cost" data-testid={`cost-${asset.asset}`}>
+          {worn[asset.asset].cost}
+        </span>
+      )}
+    </div>
+  );
   return (
     <div className="board" data-testid="board">
-      {[...new Set(assets.map((asset) => asset.kind))].map((kind) => (
+      {[...new Set(assets.filter(loose).map((asset) => asset.kind))].map((kind) => (
         <section key={kind}>
           <h2>{kind}</h2>
           {assets
-            .filter((asset) => asset.kind === kind)
+            .filter((asset) => asset.kind === kind && loose(asset))
             .map((asset) => (
-              <div className="board-row" key={asset.asset} data-testid={`board-${asset.asset}`}>
-                <span className="board-name">{asset.asset}</span>
-                {asset.stages.map((stage) => (
-                  <button
-                    key={stage.stage}
-                    className="glyph-button"
-                    data-status={stage.status}
-                    title={[stage.stage, stage.status, stage.reason].filter(Boolean).join(": ")}
-                    onClick={() => props.onOpen(asset.asset, stage.stage)}
-                  >
-                    {stage.stage} {GLYPH[stage.status]}
-                  </button>
-                ))}
+              <div key={asset.asset}>
+                {row(asset, false)}
+                {under(asset.asset).map((one) => row(one, true))}
               </div>
             ))}
         </section>

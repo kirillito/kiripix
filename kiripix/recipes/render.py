@@ -19,6 +19,8 @@ rendering, Blender measures where every frame of every clip lands (`"measure": t
 shrinks, until every pose fits with a pixel to spare on each side for `finish`'s outline, both as rendered and as `sheet` places
 it by its pivot. So no pose is cut, and characters of one height share a cell unless one reaches further. The measures are kept
 per clip in `render.json` with a key of what poses the clip, so a rebuild measures only clips that changed.
+`cell_margin` (ticket 0291) grows every measured extent by that many px on each side before the cell is fitted, so a Wearable
+that reaches past the body (`wearable.outside_cell`) can fit; the recorded `bounds` stay the poses' own.
 
 Pivots (ticket 0154): a `stationary` clip's pivot is the cell's pivot in every frame, where the feet are: the point under the
 root sways with the hips, and a pivot that follows it would make `sheet` shift the whole sprite by a pixel as it crosses a half
@@ -158,6 +160,30 @@ def fit_cell(height: int, bounds: list[list[float]]) -> tuple[int, list[float]]:
     return side, [side / 2, float(side - below)]
 
 
+def padded(bounds: list[float], margin: int) -> list[float]:
+    """A clip's extent grown by `margin` px on every side (the `cell_margin` parameter)."""
+    return [bounds[0] - margin, bounds[1] - margin, bounds[2] + margin, bounds[3] + margin] if margin else bounds
+
+
+def fits_cell(side: int, pivot: list[float], bounds: list[float]) -> bool:
+    """Whether an extent [left, top, right, bottom] in px from the pivot fits a cell of `side` px with `pivot` in it, with the
+    pixel to spare on each side that `fit_cell` keeps for the outline."""
+    left, top, right, bottom = bounds
+    half = math.ceil(max(-left, right, 0.0)) + 1
+    return (half <= pivot[0] and half <= side - pivot[0] and math.ceil(bottom) + 1 <= side - pivot[1]
+            and math.ceil(max(-top, 0.0)) + 1 <= pivot[1])
+
+
+def needed_margin(height: int, bodies: list[list[float]], wearing: list[list[float]], most: int = 64) -> int | None:
+    """The smallest `cell_margin` at which a cell fitted to the body's extents (`bodies`) holds every extent in `wearing`,
+    or None when none up to `most` does."""
+    for margin in range(0, most + 1):
+        side, pivot = fit_cell(height, [padded(b, margin) for b in bodies])
+        if all(fits_cell(side, pivot, w) for w in wearing):
+            return margin
+    return None
+
+
 def _json(path: Path) -> dict[str, Any]:
     document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return document
@@ -175,7 +201,7 @@ def _clip_file(run: StageRun, clip: dict[str, Any]) -> str | None:
     return str(found) if found is not None else None
 
 
-def _blender_clip(run: StageRun, clip: dict[str, Any]) -> dict[str, Any]:
+def blender_clip(run: StageRun, clip: dict[str, Any]) -> dict[str, Any]:
     """A clip as the script gets it. A `transition` (ticket 0218) has no action of its own: it carries its two ends, each an
     action, its file and a frame, and `frames` are the blend positions between them."""
     if "transition" not in clip:
@@ -333,7 +359,7 @@ def run_render(run: StageRun) -> None:
         "rig_file": str(_rig_file(run, rig)),
         "root": [*ROOTS, str(rig["mapping"].get("hips", "hips"))],
         "model_height": model_height,
-        "clips": [_blender_clip(run, c) for c in clips],
+        "clips": [blender_clip(run, c) for c in clips],
         "directions": [{"name": d, "yaw": YAW[d]} for d in names],
         "elevation": elevation,
         "frame": [side, side],
@@ -370,7 +396,8 @@ def run_render(run: StageRun) -> None:
             if clip["name"] in measured:
                 follows_root = not clip["stationary"] and not clip["root_motion"]
                 bounds[clip["name"]] = clip_bounds(measured[clip["name"]], follows_root)
-    side, pivot = fit_cell(height, [bounds[c["name"]] for c in clips])
+    margin = int(run.params.get("cell_margin", 0))
+    side, pivot = fit_cell(height, [padded(bounds[c["name"]], margin) for c in clips])
     args.update(frame=[side, side], pivot=pivot)
     shared: dict[str, Any] = {name: args[name] for name in ("frame", "pivot", "toon")}
     shared.update(posing)

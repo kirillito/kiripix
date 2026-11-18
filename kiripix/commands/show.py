@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.decisions import DecisionOut, current_decisions
 from kiripix.commands.registry import CliMeta, command
-from kiripix.core import sheets, sources
+from kiripix.core import emotions, sheets, sources
 from kiripix.core.assets import Asset, load_asset
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
@@ -46,6 +46,15 @@ class LookOut(BaseModel):
     look: str = Field(description="The Look's ID.")
     variants: list[VariantOut] = Field(description="The Look's stored edits, named by hash.")
     picked: str | None = Field(description="The edit the `looks` Stage cuts the Look from; null without a Pick.")
+
+
+class EmotionOut(BaseModel):
+    emotion: str = Field(description="The emotion's ID.")
+    variants: list[VariantOut] = Field(description="The emotion's stored images, named by hash.")
+    picked: str | None = Field(description="The Variant picked as the emotion's image; null without a Pick.")
+    made_on: str | None = Field(description="The neutral Source (Variant name) the picked image was made on; null without a Pick.")
+    current: bool = Field(description="The picked image was made on the portrait's current neutral Source. False: the emotion "
+                                      "is in needs-input until it is made again from the new Source.")
 
 
 class StateImageOut(BaseModel):
@@ -116,6 +125,9 @@ class ShowData(BaseModel):
                                                         "`state`). Null for another Kind.")
     states: list[StateOut] = Field([], description="A Prop's other states, as declared (`state` Decision on `source`): "
                                                    "each with its Variants and Pick. Empty for a Prop with none.")
+    emotions: list[EmotionOut] = Field([], description="A portrait's emotions, as declared (`emotion` Decision on `source`): "
+                                                       "each with its Variants and Pick. The neutral image is `picked`. Empty "
+                                                       "for a portrait with none and for another Kind.")
     clip_sources: list[ClipSourceOut] = Field(description="A character's animation files, named by file stem; for one made "
                                                        "from a base, also the base's, which stay in the base's folder.")
     rigged: VariantOut | None = Field(description="A character's rigged file.")
@@ -133,6 +145,10 @@ class ShowData(BaseModel):
             lines.append(f"  state {state.state} ({state.width}x{state.height})"
                          + (f", picked {state.picked}" if state.picked else ", no Source picked"))
             lines += [f"    variant {v.name}{' (picked)' if v.name == state.picked else ''}" for v in state.variants]
+        for emotion in self.emotions:
+            lines.append(f"  emotion {emotion.emotion}" + (f", picked {emotion.picked}" if emotion.picked else ", no image picked")
+                         + ("" if emotion.current or emotion.picked is None else " (made on another Source)"))
+            lines += [f"    variant {v.name}{' (picked)' if v.name == emotion.picked else ''}" for v in emotion.variants]
         lines += [f"  parameters {self.parameters.file}"] if self.parameters is not None else []
         lines += [f"  clip source {c.name}" for c in self.clip_sources]
         lines += [f"  rigged {self.rigged.file}"] if self.rigged is not None else []
@@ -244,6 +260,8 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
     names = sources.imported_names(asset)
     look_picks = sources.picked_look_edits(graph)
     state_picks = sources.picked_states(graph)
+    emotion_picks = emotions.picked_emotions(graph)
+    neutral = emotions.neutral_source(graph) if emotions.is_portrait(asset) else None
     data = ShowData(
         asset=asset.id,
         kind=asset.kind,
@@ -263,6 +281,12 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
                                    for name, path in sources.state_variants(asset, state).items()],
                          images=_state_images(project, graph, state.id))
                 for state in sources.declared_states(graph).values()],
+        emotions=[EmotionOut(emotion=e.id, picked=emotion_picks[e.id][0] if e.id in emotion_picks else None,
+                             made_on=emotion_picks[e.id][1] if e.id in emotion_picks else None,
+                             current=e.id in emotion_picks and emotion_picks[e.id][1] == neutral,
+                             variants=[_variant(project, asset, names, name, path)
+                                       for name, path in emotions.emotion_variants(asset, e).items()])
+                  for e in emotions.declared_emotions(graph).values()],
         clip_sources=_clip_sources(project, graph, names),
         rigged=_variant(project, asset, names, rigged_path.stem, rigged_path)
         if (rigged_path := sources.rigged(asset)) is not None else None,

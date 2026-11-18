@@ -14,7 +14,7 @@ import pytest
 from conftest import Kiripix
 from PIL import Image
 from test_character_clips import IDLE, WALK, clip
-from test_character_finish import finished
+from test_character_finish import build_finished, finished
 from test_character_model import HERO
 from test_character_ramps import built_parts
 from test_export import GENERATED, godot_project, node, set_target
@@ -191,11 +191,11 @@ def test_an_unlisted_file_is_adopted(project: Kiripix) -> None:
 
 
 def test_export_all_exports_rooms_props_and_characters_together(project: Kiripix) -> None:
-    exported_room(project)  # a room alley, built, with its target set
+    exported_room(project)  # a room alley, built, with its target set (a template: it goes in first, 0275)
     to_finish(project)
     project.json("decide", PROP, "footprint", "--decision", decision(POLYGON, ORIGIN))
     project.json("run", PROP)
-    finished(project, border=3)
+    build_finished(project, border=3)  # built here, not from its template: the Project already holds Assets
     project.json("run", HERO)
 
     data = project.json("export", "--all")["data"]

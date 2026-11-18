@@ -209,3 +209,107 @@ def test_a_prop_without_states_has_the_input_hashes_and_outputs_it_had(project: 
                for stage, name in (("source", "source.png"), ("cutout", "cutout.png"), ("fit", "fit.png"),
                                    ("fit", "grid.json"), ("palette", "palette.png"), ("finish", "finish.png"))}
     assert stamps == HASHES and outputs == OUTPUTS
+
+
+# a change to one state rebuilds that state only (ticket 0288)
+
+
+def stamps_of(folder: Path, stage: str) -> dict[str, Any]:
+    return json.loads((folder / "work" / stage / ".stage.json").read_text("utf-8"))
+
+
+def mtimes(folder: Path, stage: str, *, state: str | None = None) -> dict[str, int]:
+    """The modification time of each file of the Stage's default state (or of one state), the stamp left out."""
+    root = folder / "work" / stage / ("states/" + state if state else "")
+    return {p.name: p.stat().st_mtime_ns for p in sorted(root.iterdir()) if p.is_file() and not p.name.startswith(".")}
+
+
+def row(project: Kiripix, stage: str) -> dict[str, Any]:
+    assets = project.json("status")["data"]["assets"]
+    return next(s for a in assets if a["asset"] == PROP for s in a["stages"] if s["stage"] == stage)
+
+
+def progress_of(project: Kiripix, *args: str) -> list[str]:
+    result = project("run", PROP, *args, "--json", "--progress", "jsonl")
+    assert result.code == 0, result.stdout + result.stderr
+    events = [json.loads(line) for line in result.stderr.splitlines() if line.startswith("{")]
+    return [e["message"] for e in events if e["event"] == "stage_progress" and e["stage"] == args[0]]
+
+
+def test_a_footprint_decision_on_one_state_rebuilds_that_state_only(project: Kiripix) -> None:
+    folder = to_finish(project, {"toppled": (12, 6)})
+    project.json("decide", PROP, "footprint", "--decision", decision(None, [[1, 5], [6, 5], [6, 7], [1, 7]], [3, 7]))
+    project.json("decide", PROP, "footprint", "--decision", decision("toppled", [[1, 3], [10, 3], [10, 5]], [5, 5]))
+    project.json("run", PROP, "footprint")
+    default, toppled = mtimes(folder, "footprint"), mtimes(folder, "footprint", state="toppled")
+
+    project.json("decide", PROP, "footprint", "--decision", decision("toppled", [[1, 3], [10, 3], [10, 4]], [5, 5]))
+    stale = row(project, "footprint")
+    assert stale["status"] == "stale" and "toppled" in stale["reason"] and "default" not in stale["reason"]
+    messages = progress_of(project, "footprint")
+
+    assert [m for m in messages if "toppled" in m] and not [m for m in messages if "default" in m], messages
+    assert mtimes(folder, "footprint") == default, "the default state's files were copied, not rebuilt"
+    assert all(mtimes(folder, "footprint", state="toppled")[n] > t for n, t in toppled.items())
+    shape = json.loads(work(folder, "footprint", "states/toppled/footprint.json").read_text("utf-8"))
+    assert shape["polygon"] == [[1, 3], [10, 3], [10, 4]]
+    assert stage_status(project, PROP)["footprint"] == "done"
+
+
+def test_a_new_picked_variant_of_a_state_rebuilds_that_state_in_every_stage_and_the_default_in_none(
+    project: Kiripix,
+) -> None:
+    folder = to_finish(project, {"toppled": (12, 6)})
+    before = {stage: mtimes(folder, stage) for stage in CHAIN[1:]}
+    changed = a_state_source(12, 6)
+    changed[8:12, 8:12, :3] = (0, 100, 255)
+    import_state(project, "toppled", changed)
+
+    for stage in CHAIN[1:]:
+        project.json("run", PROP, stage)
+
+    for stage in CHAIN[1:]:
+        assert mtimes(folder, stage) == before[stage], f"{stage}: the default state was rebuilt"
+    assert (read(work(folder, "source", "states/toppled/source.png")) == changed).all()
+    assert (read(work(folder, "finish", "states/toppled/finish.png")) != 0).any()
+    assert stage_status(project, PROP)["finish"] == "done"
+
+
+def test_a_palette_change_rebuilds_every_state(project: Kiripix) -> None:
+    folder = to_finish(project, {"toppled": (12, 6)})
+    default, toppled = mtimes(folder, "palette"), mtimes(folder, "palette", state="toppled")
+
+    project.json("set", PROP, "palette", "dither=bayer4")
+    messages = progress_of(project, "palette")
+
+    assert all(mtimes(folder, "palette")[n] > t for n, t in default.items())
+    assert all(mtimes(folder, "palette", state="toppled")[n] > t for n, t in toppled.items())
+    assert [m for m in messages if "toppled" in m] and [m for m in messages if "default" in m], messages
+
+
+def test_a_stamp_from_before_parts_is_current_and_builds_every_state_on_its_next_run(project: Kiripix) -> None:
+    folder = to_finish(project, {"toppled": (12, 6)})
+    for stage in CHAIN[1:]:
+        path = folder / "work" / stage / ".stage.json"
+        stamp = stamps_of(folder, stage)
+        assert stamp.pop("parts"), "a stamp records the hash of each part"
+        path.write_text(json.dumps(stamp), encoding="utf-8")
+    assert [stage_status(project, PROP)[s] for s in CHAIN] == ["done"] * 6
+    default = mtimes(folder, "finish")
+
+    project.json("set", PROP, "finish", "outline=true")
+    project.json("run", PROP, "finish")
+
+    assert all(mtimes(folder, "finish")[n] > t for n, t in default.items())
+    assert "toppled" in " ".join(stamps_of(folder, "finish")["parts"])
+
+
+def test_a_prop_without_states_has_one_part_and_says_nothing_of_states(project: Kiripix) -> None:
+    folder = to_finish(project, {})
+    project.json("set", PROP, "finish", "outline=true")
+
+    stale = row(project, "finish")
+    project.json("run", PROP, "finish")
+
+    assert stale["reason"] == "an input changed since the output was built"
+    assert list(stamps_of(folder, "finish")["parts"]) == ["default state"]

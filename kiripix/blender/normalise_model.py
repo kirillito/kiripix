@@ -5,7 +5,9 @@
 args:   {"input": <file>, "output": <model.blend to write>, "height": <the Model's height afterwards, in Blender units>,
          "upload": <optional: an .fbx to write for Mixamo's auto-rigger when the Model has no armature>,
          "facing": <optional: the way the Model faces in the file, "-y" (default), "+y", "-x" or "+x">,
-         "still": <optional: a .png to write, a 256 px preview of the normalised Model from direction `s`>}
+         "still": <optional: a .png to write, a 256 px preview of the normalised Model from direction `s`>,
+         "like": <optional, a Wearable (ticket 0291): the body's model.blend. The Model is turned, scaled and moved as that file's
+                  `model_root` is, so it stays on the body whatever its own size, and `height` and `facing` are not used>}
 result: {"still": <true when the still was written>, "height", "source_height": <the Model's height before it was scaled, in Blender units as imported, in the rest pose: `render` scales a character made from a base by it (ADR 0012)>,
          "up", "facing", "bounds": {"min", "max"}, "vertices", "armature", "bones", "fps": <the file's frame rate, which the actions' frames count in>,
          "actions": [{"name", "start", "end"}],
@@ -248,10 +250,20 @@ def normalise(args: dict) -> dict:
     if height <= 1e-6:
         raise ValueError("the Model has no height")
     source_height = height  # in the file's own size, as Blender imported it, in the rest pose
-    scale = float(args["height"]) / height
-    centre = (low + high) / 2
-    root.scale = (scale, scale, scale)
-    root.location = (-centre.x * scale, -centre.y * scale, -low.z * scale)
+    if args.get("like"):
+        # a Wearable: the body's own turn, scale and move, whatever this Model's size (a hat is not the body's height)
+        with bpy.data.libraries.load(str(args["like"])) as (source, wanted):
+            if ROOT not in source.objects:
+                raise ValueError(f"{Path(args['like']).name} has no {ROOT}: it is not a normalised Model")
+            wanted.objects = [ROOT]
+        body_root = wanted.objects[0]
+        root.rotation_euler, root.scale, root.location = body_root.rotation_euler.copy(), body_root.scale.copy(), body_root.location.copy()
+        bpy.data.objects.remove(body_root)
+    else:
+        scale = float(args["height"]) / height
+        centre = (low + high) / 2
+        root.scale = (scale, scale, scale)
+        root.location = (-centre.x * scale, -centre.y * scale, -low.z * scale)
     bpy.context.view_layer.update()
     for obj in bpy.data.objects:
         if obj.type == "MESH" and not any(m.type == "ARMATURE" for m in obj.modifiers) and obj.data.shape_keys is None:

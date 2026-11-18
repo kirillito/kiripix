@@ -41,7 +41,8 @@ def takes_sheets(asset: Asset) -> bool:
 
 
 def takes_models(asset: Asset) -> bool:
-    return asset.kind == CHARACTER
+    """A character, and a Wearable (a Kind with a body), take 3D Models."""
+    return asset.kind == CHARACTER or bool(get_kind(asset.kind).takes_body)
 
 
 def variants(asset: Asset) -> dict[str, Path]:
@@ -213,6 +214,10 @@ def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path,
                        f"{shown} is a 3D Model, and a {asset.kind} takes an image (a PNG or JPEG)",
                        fix=f"kiripix new character {_slug(asset)}", position=position)
         return import_variant(asset, file, shown)
+    if role == "clip-source" and get_kind(asset.kind).takes_body:
+        raise fail("import.wearable_uses_body_clips", f"{asset.id} is a {asset.kind}, which uses its body's clips, not its own",
+                   owner_action=f"Import the animation file into the body: kiripix import <body> {shown} --role clip-source.",
+                   position=position)
     if role == "parameters":
         return _import_parameters(asset, file, shown, data)
     if _is_image(file, data):

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from conftest import Kiripix
+from conftest import Kiripix, restore_template
 from PIL import Image
 from test_character_model import HERO
 from test_character_sheet import sheet_of
@@ -37,11 +37,16 @@ def hand_sheet(project: Kiripix, name: str, *, cell: tuple[int, int] = (40, 50),
     return folder
 
 
-def built_sprite(project: Kiripix) -> None:
-    """sprite.npc from a PixelLab-style ZIP, built to its `sheet`."""
+def build_sprite(project: Kiripix) -> None:
     new_sprite(project)
     import_sheet(project, make_zip(project, "npc.zip", pixellab_zip(WORDS)))
     project.json("run", SPRITE)
+
+
+def built_sprite(project: Kiripix) -> None:
+    """sprite.npc from a PixelLab-style ZIP, built to its `sheet`; built once per worker and copied into the test's
+    Project, which has no Assets yet (ticket 0275)."""
+    restore_template(project, "sprite-sheet", build_sprite)
 
 
 def png(project: Kiripix, data: dict[str, Any]) -> np.ndarray:

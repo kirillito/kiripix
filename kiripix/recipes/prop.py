@@ -30,6 +30,7 @@ from kiripix.recipes.base import (
     KindSpec,
     NeedsInput,
     ParamSpec,
+    PartHooks,
     RunnerCall,
     StageFailure,
     StageInputs,
@@ -59,9 +60,16 @@ from kiripix.recipes.prop_states import (
     STATES_OUT,
     about_state,
     apply_edits as apply_state_edits,
+    builds,
+    copy_part,
+    part_inputs,
+    DEFAULT_PART,
     check_each_state,
     default_state,
+    digest,
     each_state,
+    for_each_part,
+    part_hooks,
     state_ids,
     state_needs_input,
     state_offsets,
@@ -124,7 +132,8 @@ def _check_brief(run: StageRun) -> list[Finding]:
 
 
 def _source(run: StageRun) -> None:
-    run_source(top_files(run))
+    if builds(run, DEFAULT_PART):
+        run_source(top_files(run))
     write_state_sources(run)  # each declared state's Source, under `states/<id>/`
 
 
@@ -153,6 +162,18 @@ def _cutout_calls(run: StageRun) -> list[RunnerCall]:
     images = [folder / "source.png", *(folder / STATES_OUT / s / "source.png" for s in state_ids(folder))]
     return [RunnerCall(runner=MATTER, image=image, params={"max_size": _RUNNER_MAX_SIZE}, decisions=[])
             for image in images if image.is_file()]
+
+
+def _cutout_parts(run: StageRun) -> dict[str, Any]:
+    """The parts' inputs, and for matting each Source's pinned result (a new one is a new matte)."""
+    parts = part_inputs(run, "source")
+    if run.params["method"] == "matting":
+        folder = run.upstream["source"]
+        for call in _cutout_calls(run):
+            part = DEFAULT_PART if call.image == folder / "source.png" else call.image.parent.name
+            pinned = run.pinned(call)
+            parts[part]["pinned"] = digest(pinned) if pinned.is_file() else None
+    return parts
 
 
 def _cutout(run: StageRun) -> None:
@@ -204,13 +225,18 @@ def _check_cutout_one(run: StageRun) -> list[Finding]:
 
 def _fit(run: StageRun) -> None:
     """The default state first; every other state is fitted at the default's scale, into its own size."""
-    run_fit(run, run.upstream["cutout"] / "cutout.png", vote_alpha=True)
-    grid = Grid.from_json(json.loads((run.output_dir / "grid.json").read_text(encoding="utf-8")))
-    for state in state_ids(run.upstream["cutout"]):
-        run.check_cancel()
-        view = state_view(run, state)
+
+    def one(part: str, view: StageRun) -> None:
+        if part == DEFAULT_PART:
+            run_fit(view, view.upstream["cutout"] / "cutout.png", vote_alpha=True)
+            return
+        # the default's grid is in `output_dir`: built just now, or copied from the last build when it is unchanged
+        grid = Grid.from_json(json.loads((run.output_dir / "grid.json").read_text(encoding="utf-8")))
         run_fit(view, view.upstream["cutout"] / "cutout.png", vote_alpha=True,
-                size=state_size(run.upstream["cutout"], state), scale=(grid.scale_x, grid.scale_y), state=state, offsets=state_offsets(run, state))
+                size=state_size(run.upstream["cutout"], part), scale=(grid.scale_x, grid.scale_y), state=part,
+                offsets=state_offsets(run, part))
+
+    for_each_part(run, state_ids(run.upstream["cutout"]), one)
 
 
 def _check_fit_of(run: StageRun, state: str | None = None, size: tuple[int, int] | None = None) -> list[Finding]:
@@ -320,10 +346,8 @@ def _footprint_needs_input(run: StageRun) -> NeedsInput | None:
 
 
 def _footprint(run: StageRun) -> None:
-    _footprint_of(run, None)
-    for state in state_ids(run.upstream["finish"]):
-        run.check_cancel()
-        _footprint_of(state_view(run, state), state)
+    for_each_part(run, state_ids(run.upstream["finish"]),
+                  lambda part, view: _footprint_of(view, None if part == DEFAULT_PART else part))
 
 
 def _footprint_of(run: StageRun, state: str | None) -> None:
@@ -488,6 +512,7 @@ PROP = KindSpec(
             available_from="M2",
             image="source.png",
             run=_source,
+            parts=part_hooks(None),
             needs_input=_source_needs_input,
             decisions_view=apply_state_edits,
         ),
@@ -512,6 +537,7 @@ PROP = KindSpec(
             available_from="M2",
             image="cutout.png",
             run=_cutout,
+            parts=PartHooks(inputs=_cutout_parts, copy=copy_part),
             check=_check_cutout,
             runner_calls=_cutout_calls,  # `gpu` stays off: a Runner call takes the GPU lock itself (0037 D10)
         ),
@@ -531,6 +557,7 @@ PROP = KindSpec(
             available_from="M2",
             image="fit.png",
             run=_fit,
+            parts=part_hooks("cutout", default_feeds_all=True),
             check=_check_fit,
         ),
         StageSpec(
@@ -545,6 +572,7 @@ PROP = KindSpec(
             available_from="M2",
             image="palette.png",
             run=_palette,
+            parts=part_hooks("fit"),
             check=_check_palette,
         ),
         StageSpec(
@@ -559,6 +587,7 @@ PROP = KindSpec(
             available_from="M2",
             image="finish.png",
             run=_finish,
+            parts=part_hooks("palette"),
             check=_check_finish,
         ),
         StageSpec(
@@ -593,6 +622,7 @@ PROP = KindSpec(
             available_from="M2",
             image="sprite.png",
             run=_footprint,
+            parts=part_hooks("finish"),
             needs_input=_footprint_needs_input,
             check=_check_footprint,
         ),

@@ -6,6 +6,7 @@ the cutout on a fixed square, centred in its padding. An icon has no footprint a
 from __future__ import annotations
 
 import json
+import shutil
 from typing import TYPE_CHECKING
 
 from kiripix.ops.lazy import lazy_module
@@ -137,8 +138,16 @@ def _check_fit(run: StageRun) -> list[Finding]:
     return findings
 
 
+ICON_SCHEMA_VERSION = 1  # 1: `asset` and `size` (ticket 0263)
+ICON_FILE, ICON_RECORD = "icon.png", "icon.json"
+
+
 def _export(run: StageRun) -> None:
-    raise StageFailure("exporting an icon isn't built yet (ticket 0263)")
+    """What the game gets: the finished icon and its record. No scene: the game's inventory UI loads the texture."""
+    shutil.copyfile(run.upstream["finish"] / "finish.png", run.output_dir / ICON_FILE)
+    size, _ = _read_brief(run)
+    record = {"schema_version": ICON_SCHEMA_VERSION, "asset": run.asset_id, "size": size}
+    (run.output_dir / ICON_RECORD).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
 ICON = KindSpec(
@@ -230,7 +239,9 @@ ICON = KindSpec(
         ),
         StageSpec(
             name="export",
-            description="Not built yet (ticket 0263): will leave the icon and its record for the Exporter.",
+            description="Builds what the game gets: `icon.png` and `icon.json`. `kiripix export` then writes them under "
+                        "the export root's `icons/`.",
+            version=2,  # 2: the Stage writes `icon.png` and `icon.json` (ticket 0263); it was a stub
             inputs=StageInputs(upstream=["finish", "brief"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),),
             output_root="out",

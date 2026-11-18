@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.commands.contract import Context, ExitCode, Outcome
 from kiripix.commands.registry import CliMeta, command
+from kiripix.core import cliptable as _cliptable  # noqa: F401 - registers its Project check
+from kiripix.core import ramps as _ramps  # noqa: F401 - registers `palette.parts_differ` (commands load lazily, 0277)
 from kiripix.core.assets import list_assets, load_asset
 from kiripix.core.hashing import HashCache
 from kiripix.core.previews import write_preview

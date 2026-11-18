@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { fileUrl, type Finding, type ShowData, type StageDetail } from "./api";
 import { FootprintTool, type Footprint, type FootprintMode, type Point } from "./footprintTool";
-import { isTyping, type PixelCanvas } from "./pixelCanvas";
+import { isTyping, type CanvasFrame, type CanvasTool, type PixelCanvas } from "./pixelCanvas";
+import { outputOf, useDocument } from "./characterScreens";
 
 export const FOOTPRINT_DECISION = "footprint";
 export const FOOTPRINT_STAGE = "footprint";
@@ -408,5 +409,68 @@ function SideImage(props: {
       onLoad={(event) => props.onSize(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)}
       onError={() => setTried((n) => n + 1)}
     />
+  );
+}
+
+// An icon's `fit` screen (ticket 0264, spec §6.6): the Prop's, with the square drawn on it. The image is the square, so its
+// edge is the square's, and the padding is the dashed line inside it, from the `inset` of the Stage's `grid.json`. No
+// Decision, no Command: it only draws over what the Stage built.
+export const ICON_KIND = "icon";
+export const ICON_FIT_STAGE = "fit";
+
+class SquareTool implements CanvasTool {
+  inset = 0;
+
+  draw(context: CanvasRenderingContext2D, frame: CanvasFrame): void {
+    const { left, top, zoom, width, height } = frame;
+    context.save();
+    context.lineWidth = 1;
+    context.strokeStyle = "#f2c14e";
+    context.strokeRect(left - 0.5, top - 0.5, width * zoom + 1, height * zoom + 1);
+    if (this.inset > 0 && width > 2 * this.inset) {
+      context.setLineDash([4, 3]);
+      context.strokeStyle = "#7fd4ff";
+      context.strokeRect(
+        left + this.inset * zoom + 0.5,
+        top + this.inset * zoom + 0.5,
+        (width - 2 * this.inset) * zoom - 1,
+        (height - 2 * this.inset) * zoom - 1,
+      );
+    }
+    context.restore();
+  }
+}
+
+export function IconSquarePanel(props: {
+  canvas: RefObject<PixelCanvas | null>;
+  show: ShowData;
+  detail: StageDetail;
+  refreshes: number;
+}) {
+  const { canvas, show, detail } = props;
+  const grid = useDocument<{ inset?: number }>(outputOf(detail, "grid.json"), props.refreshes);
+  const inset = grid?.inset ?? 0;
+  const tool = useRef(new SquareTool());
+  const brief = show.stages.find((entry) => entry.stage === "brief")?.params ?? {};
+  const size = Number(brief.size) || 0; // 0: the Project's `[icon] size`; the square's own size is the image's
+  const padding = Number(brief.padding ?? inset);
+
+  useEffect(() => {
+    canvas.current?.setTools([tool.current]);
+    return () => canvas.current?.setTools([]);
+  }, [canvas]);
+  useEffect(() => {
+    tool.current.inset = inset;
+    canvas.current?.redraw();
+  }, [canvas, inset]);
+
+  return (
+    <div className="icon-square" data-testid="icon-square" data-inset={inset}>
+      <h2>Square</h2>
+      <p className="hint">
+        The gold line is the icon's square{size ? `, ${size} x ${size} px` : ""}; the dashed line is its padding
+        {padding ? ` of ${padding} px` : ""}. The Source is fitted inside it.
+      </p>
+    </div>
   );
 }

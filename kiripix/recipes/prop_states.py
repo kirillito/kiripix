@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from kiripix.checks import Finding, Position
-from kiripix.recipes.base import CheckSpec, CurrentDecision, DecisionSpec, NeedsInput, StageFailure, StageRun
+from kiripix.recipes.base import CheckSpec, CurrentDecision, DecisionSpec, NeedsInput, PartHooks, StageFailure, StageRun
 
 SOURCE_STAGE = "source"
 BRIEF_STAGE = "brief"
@@ -32,6 +32,7 @@ STATES_DIR = "src/states"  # a Prop's other states' Variants: `src/states/<folde
 STATES_OUT = "states"  # in a Stage's output folder: `states/<id>/<the Stage's files>`
 STATE_RECORD = "state.json"  # `source` records a state's size here; `cutout` passes it on to `fit`
 DEFAULT_STATE = "default"
+DEFAULT_PART = "default state"  # a Stage part's name for the default state (not snake_case, so no state has it)
 STATE_ID = "^[a-z][a-z0-9]*(_[a-z0-9]+)*$"  # snake_case
 
 _ID: dict[str, Any] = {"type": "string", "pattern": STATE_ID}
@@ -270,6 +271,8 @@ def write_state_sources(run: StageRun) -> None:
     """`source`: each declared state's picked Variant, as `states/<id>/source.png`, with its size in `state.json`."""
     picks, files = state_picks(run.decisions), state_files(run)
     for state in declared_states(run.decisions).values():
+        if not builds(run, state.id):
+            continue
         chosen = picks[state.id]  # `state_needs_input` holds the Stage back until each has one
         path = files[state.folder][chosen]
         if not hashlib.sha256(path.read_bytes()).hexdigest().startswith(chosen):
@@ -303,13 +306,94 @@ def state_view(run: StageRun, state: str) -> StageRun:
     return replace(run, output_dir=out, upstream=upstream)
 
 
+def builds(run: StageRun, part: str) -> bool:
+    """Whether this run builds the part (the default state's or a state's), or finds it already in `output_dir`."""
+    return run.build_parts is None or part in run.build_parts
+
+
+def for_each_part(run: StageRun, ids: list[str], function: Callable[[str, StageRun], None]) -> None:
+    """Call `function(part, view)` for the default state (part `DEFAULT_PART`, the run itself) and each of `ids`, those
+    this run builds only (0288), in that order. It reports each on `progress`, naming it, and checks for a cancel between
+    them."""
+    todo = [part for part in (DEFAULT_PART, *ids) if builds(run, part)]
+    for done, part in enumerate(todo):
+        label = "the default state" if part == DEFAULT_PART else f"the state {part}"
+        run.progress(done, len(todo), label)  # raises on a cancel
+        function(part, run if part == DEFAULT_PART else state_view(run, part))
+    if todo:
+        run.progress(len(todo), len(todo), "built " + ", ".join("the default state" if p == DEFAULT_PART else p for p in todo))
+
+
 def each_state(run: StageRun, main: str, function: Callable[[StageRun], None]) -> None:
-    """Run `function` for the default state, then for each state of the `main` upstream's output, checking for a cancel
-    between states."""
-    function(run)
-    for state in state_ids(run.upstream[main]):
-        run.check_cancel()
-        function(state_view(run, state))
+    """Run `function` for the default state, then for each state of the `main` upstream's output (only for those this run
+    builds), checking for a cancel between states."""
+    for_each_part(run, state_ids(run.upstream[main]), lambda part, view: function(view))
+
+
+# the parts of a Stage's output (ticket 0288): the default state's files, and each state's folder
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tree(folder: Path, skip_states: bool = False) -> dict[str, str]:
+    """The content hash of each file under a folder (a Stage's stamp, a dot file, left out), as a part reads its upstream."""
+    found: dict[str, str] = {}
+    if folder.is_dir():
+        for path in sorted(folder.rglob("*")):
+            name = path.relative_to(folder).as_posix()
+            if path.is_file() and not path.name.startswith(".") and not (skip_states and name.startswith(STATES_OUT + "/")):
+                found[name] = digest(path)
+    return found
+
+
+def part_inputs(run: StageRun, main: str | None, default_feeds_all: bool = False) -> dict[str, Any]:
+    """What each part of a Stage is built from, the default state's first (`PartHooks.inputs`): the Decisions that name
+    the state (those naming none are the default's), its files in `src/`, and its part of the `main` upstream's output
+    (the other upstreams, the brief, count whole). `main` is None for `source`, whose states are the declared ones."""
+    states = list(declared_states(run.decisions)) if main is None else state_ids(run.upstream[main])
+    shared = {name: _tree(path) for name, path in run.upstream.items() if name != main}
+    above = run.upstream[main] if main is not None else None
+    default_up = _tree(above, skip_states=True) if above is not None else {}
+
+    def decisions(state: str | None) -> list[Any]:
+        return [[d.name, d.data, d.image_hash] for d in run.decisions if _key(d) == state]
+
+    parts: dict[str, Any] = {DEFAULT_PART: {
+        "decisions": decisions(None), "upstream": default_up, "other": shared,
+        "files": {name: digest(path) for name, path in top_files(run).files.items()} if main is None else {}}}
+    declared = declared_states(run.decisions)
+    variants = state_files(run) if main is None else {}
+    for state in states:
+        folder = declared[state].folder if state in declared else state
+        parts[state] = {
+            "decisions": decisions(state), "other": shared,
+            "upstream": _tree(above / STATES_OUT / state) if above is not None else {},
+            "files": {name: digest(path) for name, path in variants.get(folder, {}).items()},
+            **({"default": default_up} if default_feeds_all else {})}
+    return parts
+
+
+def copy_part(previous: Path, output: Path, part: str) -> bool:
+    """Copy one part of a Stage's previous output into its new folder, keeping modification times (`PartHooks.copy`);
+    False when the previous output doesn't hold it."""
+    if part != DEFAULT_PART:
+        there = previous / STATES_OUT / part
+        if not there.is_dir():
+            return False
+        shutil.copytree(there, output / STATES_OUT / part, copy_function=shutil.copy2, dirs_exist_ok=True)
+        return True
+    copied = False
+    for path in previous.iterdir():
+        if path.name == STATES_OUT:
+            continue
+        if path.is_dir():
+            shutil.copytree(path, output / path.name, copy_function=shutil.copy2, dirs_exist_ok=True)
+        else:
+            shutil.copy2(path, output / path.name)
+        copied = copied or not path.name.startswith(".")
+    return copied
 
 
 def about_state(findings: list[Finding], state: str) -> list[Finding]:
@@ -338,3 +422,8 @@ def state_offsets(run: StageRun, state: str) -> tuple[int, int] | None:
     """A state's own crop offsets (`state_offset`), the latest counting; None when it has none: the Stage's count."""
     found = [d for d in run.decisions if d.name == STATE_OFFSET.name and d.data.get("state") == state]
     return (int(found[-1].data["offset_x"]), int(found[-1].data["offset_y"])) if found else None
+
+
+def part_hooks(main: str | None, default_feeds_all: bool = False) -> PartHooks:
+    """The Stage's parts: the default state and each state, built from `main`'s output (None for `source`)."""
+    return PartHooks(inputs=lambda run: part_inputs(run, main, default_feeds_all), copy=copy_part, default_feeds_all=default_feeds_all)

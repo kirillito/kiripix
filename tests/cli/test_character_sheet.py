@@ -6,17 +6,23 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from conftest import Kiripix
+from conftest import Kiripix, restore_template
 from PIL import Image
-from test_character_finish import finished
+from test_character_finish import build_finished, finished
 from test_character_model import HERO
 
 CELL = 78
 
 
-def sheet_of(project: Kiripix, *, border: int = 3) -> tuple[Path, dict[str, Any]]:
-    folder = finished(project, border=border)
+def build_sheet(project: Kiripix, border: int) -> None:
+    build_finished(project, border=border)
     project.json("run", HERO, "sheet")
+
+
+def sheet_of(project: Kiripix, *, border: int = 3) -> tuple[Path, dict[str, Any]]:
+    """The hero through `sheet`; built once per worker and copied into the test's Project (ticket 0275)."""
+    restore_template(project, f"character-sheet-{border}", lambda template: build_sheet(template, border))
+    folder = project.cwd / "assets" / "character" / "hero"
     return folder, load(folder)
 
 

@@ -66,6 +66,9 @@ class NewInput(_Input):
                                                "character.body_m. Its Model carries the base's skeleton, so it needs no "
                                                "rigged file; it starts with the base's clips; and a Stage parameter it "
                                                "doesn't set takes the base's value. The base has no base of its own.")
+    body: str | None = Field(None, description="For a wearable: the character or sprite it is worn on, such as "
+                                               "character.body_m. Its Model, rig, clips and cell make the wearable stale "
+                                               "when they change; its cell and pivot are the wearable's.")
     from_parameters: Path | None = Field(
         None, description="For a character: a parameter file (.toml or .json) that the Project's generator builds its Model "
                           "from ([character.generators] in kiripix.toml). It is stored in the new character's "
@@ -112,7 +115,7 @@ def _parameters_to_import(arguments: NewInput, context: Context) -> Path | None:
 )
 def new(arguments: NewInput, context: Context) -> Outcome[NewData]:
     project = find_project(context.cwd)
-    params = {name: value for name, value in (("view", arguments.view), ("base", arguments.base)) if value is not None}
+    params = {name: value for name, value in (("view", arguments.view), ("base", arguments.base), ("body", arguments.body)) if value is not None}
     parameters = _parameters_to_import(arguments, context)
     if parameters is not None:
         sources.check_parameters(parameters, str(arguments.from_parameters))

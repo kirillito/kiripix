@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: qa-engineer
 type: ticket
@@ -37,7 +37,34 @@ many calls. The tests then change only what they test.
 
 ## Acceptance criteria
 
-- [ ] Every test still passes, and none reads another's Project.
-- [ ] The room, character and sprite files are measurably faster. The before-and-after times (rooms, then characters) and
+- [x] Every test still passes, and none reads another's Project.
+- [x] The room, character and sprite files are measurably faster. The before-and-after times (rooms, then characters) and
       the slowest 30 are recorded in `docs/test-speed.md`.
-- [ ] The CLI seam rule holds: the tests still check through `kiripix … --json`, never through internals.
+- [x] The CLI seam rule holds: the tests still check through `kiripix … --json`, never through internals.
+
+## Result
+
+`restore_template(project, key, build)` in `tests/conftest.py` (see [docs/test-speed.md](../../docs/test-speed.md)): the
+first test of a worker builds in its own Project through `kiripix ... --json` and a copy of the folder is kept; later tests
+get a copy in their own `tmp_path`, and the fixture runs `status --json` on every copy and fails unless each Stage reads as
+it did in the template. Files a test wrote before asking (fake-Blender signal files, `kiripix.toml` edits) belong to the
+template's identity, so those tests keep their set-up and get their own template.
+
+Moved: `built_room` of `test_masks.py` and `test_layers_stage.py` (about 30 files import them), `walled_room` and
+`lamp_room` of `test_place.py`; `rigged_hero`, `ready`, `built`, `finished`, `sheet_of` and `body` of the character files;
+`built_sprite` of `test_cast_sheet.py` (also used by `test_contract.py`). Kept their own set-up: files that read absolute
+paths of the Project from `blender-calls.jsonl`, and the prop files (0288 works there).
+
+Measured on a machine shared with other agents (wall times rough; call counts exact), `-n auto --dist loadfile`, HEAD copy
+as "before":
+
+- Rooms (`test_masks`, `test_layers_stage`, `test_place`, 91 tests): 1600 s to 792 s; 1060 to 607 `kiripix` calls.
+- Characters and sprites (`test_character_sheet`, `_palette`, `_base`, `test_cast_sheet`, plus `test_masks`, 83 tests): 583 s to
+  308 s; 1038 to 666 calls.
+- The slowest tests are listed in docs/test-speed.md. The Owner's full-suite time is not measured here (the run takes about
+  40 min on this machine).
+
+An earlier version compared `kiripix.toml` with the folder's name in it, so every copy was a miss and the first "after"
+timings showed no gain; fixed, and the numbers above are from the fixed version. A wider run (the ten character files, rooms,
+`test_contract.py`) passed 427 of 429 with the only failures in `test_contract.py::describe` and `test_an_icon_validates`,
+from other tickets' in-flight changes (a `body` key in a Stage's input schema, icon output), not from templates.

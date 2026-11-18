@@ -69,6 +69,17 @@ exported, like clip names (ADR 0003).
 4. **The canvas and scale:** what the image model gives at 160 x 224 after `downscale`, and whether the style reads beside a
    painted room and a 52 px sprite (the game's M04-02 style test).
 
+## Answers (the Owner, 2026-11-18, from the trial 0241)
+
+1. **Registration** holds on the image model's edits without a `face` region (Sanjay's set: 0.03-0.09 source px). `register`
+   and `portrait.misaligned` stay, for the edits that do drift.
+2. **Shimmer:** `lock_outside_face` is in the first build, on by default when a `face` region is drawn (the image model
+   redraws the clothes' shading lines on every edit: 1,000-1,300 px an emotion outside the face, 0 with the lock).
+3. **Colours:** the set's own, one set over every emotion, no dither. **The Owner wants more colours, at least eventually:**
+   `n` is a parameter with room to grow (up to 256), its default 32 for now (the trial: 24 the least that reads smoothly, 32
+   smooth). No ramps.
+4. **Canvas:** 160 x 224, bottom centre, one scale from the neutral (`Grid.cover`) and one crop for the set.
+
 ## Order
 
 | Wave | Tickets |

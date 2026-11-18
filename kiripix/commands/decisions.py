@@ -10,6 +10,7 @@ from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import editing, journal
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.assets import is_asset_id, load_asset
+from kiripix.core.emotions import emotion_edit_findings
 from kiripix.export import frozen_layer_findings, loop_edit_findings, state_edit_findings
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
@@ -173,6 +174,8 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
         raise KiripixError(refused)  # a Loop's `remove` or `rename`: unknown, an ID taken, or its ID is frozen (spec §9)
     if refused := state_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
         raise KiripixError(refused)  # a Prop's state: a duplicate ID, an unknown state, or an exported ID (spec §9)
+    if refused := emotion_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
+        raise KiripixError(refused)  # a portrait's emotion: a duplicate ID, or an unknown emotion
     if is_array:
         entries, after = editing.record_decisions(project, asset, arguments.stage, documents)
     else:
@@ -252,6 +255,9 @@ def redo(arguments: StepInput, context: Context) -> Outcome[StepData]:
     if arguments.stage == "source" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
         if refused := state_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
             raise KiripixError(refused)  # redoing a state Decision is recording it: the same checks as `decide`
+    if arguments.stage == "source" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
+        if refused := emotion_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
+            raise KiripixError(refused)  # redoing an emotion Decision is recording it: the same checks as `decide`
     entry, after = editing.redo(project, asset, arguments.stage)
     return Outcome(_step(entry, after, asset.id, arguments.stage, arguments.brief))
 

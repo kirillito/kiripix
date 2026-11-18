@@ -8,10 +8,10 @@ from pathlib import Path
 from kiripix.checks import Finding, Position
 from kiripix.core import atomic
 from kiripix.core.errors import KiripixError, fail
-from kiripix.core.kinds import get_kind
+from kiripix.core.kinds import all_kinds, get_kind
 from kiripix.core.project import Project
 from kiripix.core.settings import AssetSettings, Scalar, load_asset_settings, save_settings
-from kiripix.recipes.base import BASE_PARAM, KindSpec
+from kiripix.recipes.base import BASE_PARAM, BODY_PARAM, KindSpec
 
 ASSET_FILE = "asset.toml"
 HISTORY_FILE = "history.jsonl"
@@ -106,6 +106,46 @@ def _check_base(project: Project, kind: str, asset_id: str, named: object, *, fi
     return base
 
 
+def _check_body(project: Project, kind: KindSpec, asset_id: str, named: object, *, fix: str | None = None,
+                owner_action: str | None = None, file: str | None = None) -> Asset:
+    """The Asset `named` as the body of the Wearable `asset_id` (ticket 0290): an Asset of one of the Kind's body Kinds that
+    exists; otherwise `wearable.body_unknown`, with the reason. A Wearable is never a body."""
+
+    def refuse(reason: str) -> KiripixError:
+        return fail("wearable.body_unknown", f"{asset_id} has no body {named!r}: {reason}", fix=fix,
+                    owner_action=owner_action, position=Position(asset=asset_id, file=file, field=f"params.{BODY_PARAM}"))
+
+    if not isinstance(named, str) or not is_asset_id(named):
+        raise refuse("it is not an Asset ID (<kind>.<name>)")
+    body_kind, body_name = parse_asset_id(named)
+    if body_kind not in kind.takes_body:
+        raise refuse(f"it is a {body_kind}, and the body of a {kind.name} is a {' or a '.join(kind.takes_body)}")
+    if not (asset_dir(project, body_kind, body_name) / ASSET_FILE).is_file():
+        raise refuse("there is no such Asset in this Project")
+    return _load(project, body_kind, body_name)
+
+
+def body_of(project: Project, asset: Asset) -> Asset | None:
+    """The Wearable's body (ticket 0290): the Asset its `body` parameter names, for a Kind that takes one; None for any
+    other Asset. Refuses a body that isn't one (`wearable.body_unknown`)."""
+    kind = get_kind(asset.kind)
+    if not kind.takes_body:
+        return None
+    file = project.relative(asset.dir / ASSET_FILE)
+    return _check_body(project, kind, asset.id, asset.settings.params.get(BODY_PARAM), file=file,
+                       owner_action=f"Set {BODY_PARAM} under [params] in {file} to a {' or a '.join(kind.takes_body)} of this "
+                                    "Project, or put the body back under its old name.")
+
+
+def wearables_of(project: Project, body_id: str) -> list[str]:
+    """The IDs of the Wearables whose body is `body_id`, sorted. Whatever removes or renames an Asset refuses while there
+    are some, naming them (ticket 0290). An Asset that can't be read is skipped here; `list_assets` reports it."""
+    assets, _ = list_assets(project)
+    kinds = all_kinds()
+    return sorted(a.id for a in assets
+                  if a.kind in kinds and kinds[a.kind].takes_body and a.settings.params.get(BODY_PARAM) == body_id)
+
+
 def base_of(project: Project, asset: Asset) -> Asset | None:
     """The Asset's base (ADR 0012): the Asset its `base` parameter names, for a Kind that takes one; None without one."""
     if not get_kind(asset.kind).takes_base or BASE_PARAM not in asset.settings.params:
@@ -180,6 +220,8 @@ def create_asset(project: Project, kind_name: str, name: str, params: Mapping[st
         raise KiripixError(findings)
     if kind.takes_base and BASE_PARAM in params:
         _check_base(project, kind_name, asset_id, params[BASE_PARAM], fix=f"kiripix status --kind {kind_name}")
+    if kind.takes_body:
+        _check_body(project, kind, asset_id, params[BODY_PARAM], fix=f"kiripix status --kind {kind.takes_body[0]}")
     settings = AssetSettings(kind=kind_name, params=dict(params))
     save_settings(directory / ASSET_FILE, settings)
     atomic.write_text(directory / HISTORY_FILE, "")

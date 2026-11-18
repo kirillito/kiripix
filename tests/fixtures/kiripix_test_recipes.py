@@ -639,6 +639,8 @@ if Path("inpainter-b").exists():
 # - blender-materials: JSON list of the Model's material names, for a render's material pass (default skin, cloth);
 # - blender-material-split: while it exists, the material pass is 1 on the left half of a frame and 2 on the right (else all 1);
 # - blender-material-frames: JSON {"clip/dir/index" | "clip/dir" | "*": [material indexes]}, what each frame's material pass holds;
+# - blender-wearable-reach: JSON {<clip>: [left, top, right, bottom]}, how far a Wearable's frames reach (ticket 0291; else inside the cell);
+# - blender-wearable-materials: JSON list of the Wearable's material names (default hat), numbered after the body's;
 # - blender-depth-step: an integer; the depth pass is 16 bit, with the right half of a frame that many units farther (ticket 0247);
 # - hold-blender: while it exists, a call marks `blender-holding` and waits in chunks, checking the cancel token.
 # It writes what each script would write, with fixed contents, so a test sees a Stage's own work apart from Blender's.
@@ -748,6 +750,10 @@ class FakeBlender:
         `blender-reach` (JSON {<clip>: [left, top, right, bottom]}) says how far a clip reaches; and `under` from `_sway`."""
         tall = args["model_height"] * math.cos(math.radians(args["elevation"])) * args["px_per_unit"]
         reach = json.loads(Path("blender-reach").read_text("utf-8")) if Path("blender-reach").exists() else {}
+        if args.get("wearable"):  # a Wearable alone: a small hat on the head unless `blender-wearable-reach` says more
+            reach = json.loads(Path("blender-wearable-reach").read_text("utf-8")) if Path("blender-wearable-reach").exists() else {}
+            tall = tall / 4
+            reach = {clip["name"]: reach.get(clip["name"], [-tall / 2, -tall * 4, tall / 2, -tall * 3]) for clip in args["clips"]}
         frames: dict[str, Any] = {}
         for clip in args["clips"]:
             bounds = reach.get(clip["name"], [-tall / 4, -tall, tall / 4, 0.0])
@@ -834,6 +840,9 @@ class FakeBlender:
                     frames[clip["name"]][direction["name"]].append(placed)
         device = "cpu" if Path("blender-no-gpu").exists() else args["device"]  # as Blender falls back with no GPU
         materials = [{"index": i, "name": n} for i, n in enumerate(sorted(names), start=1)]  # by name, from 1 (ticket 0148)
+        if args.get("wearable"):  # the Wearable's own materials, numbered after the body's (ticket 0291)
+            worn = json.loads(Path("blender-wearable-materials").read_text("utf-8")) if Path("blender-wearable-materials").exists() else ["hat"]
+            materials = [{"index": i, "name": n} for i, n in enumerate(sorted(worn), start=len(names) + 1)]
         return {"device": device, "depth_range": [8.0, 12.0], "materials": materials, "frames": frames}
 
     @staticmethod
@@ -855,6 +864,25 @@ class FakeBlender:
 FAKE_BONES = ["root", *(f"mixamorig:{n}" for n in (
     "Hips", "Spine", "Spine1", "Neck", "Head", "LeftShoulder", "LeftArm", "LeftForeArm", "RightShoulder", "RightArm",
     "RightForeArm", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"))]
+
+
+# The test Kind `demo_wearable` (ticket 0290): the real `wearable`'s `body` and its `render` reading the body, with `render` made
+# a Stage that runs, reading none of the body's built files (the real one waits for them): it writes `out.txt`. Its one Stage has no upstream.
+def _wear(run: StageRun) -> None:
+    (run.output_dir / "out.txt").write_text("worn", encoding="utf-8")
+
+
+def _demo_wearable() -> KindSpec:
+    from dataclasses import replace
+    from kiripix.recipes.wearable import WEARABLE
+
+    render = next(stage for stage in WEARABLE.stages if stage.name == "render")
+    assert render.inputs.body is not None
+    inputs = render.inputs.model_copy(update={"upstream": [], "body": render.inputs.body.model_copy(update={"wait": False})})
+    return replace(WEARABLE, name="demo_wearable", stages=(replace(render, inputs=inputs, run=_wear),))
+
+
+register_kind(_demo_wearable())
 
 
 set_launcher(FakeBlender())

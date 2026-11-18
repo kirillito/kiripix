@@ -37,7 +37,7 @@ from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
 from kiripix.core import atomic, cancel, journal, pinning, warm
-from kiripix.core.assets import HISTORY_FILE, Asset, base_of, list_assets
+from kiripix.core.assets import HISTORY_FILE, Asset, base_of, body_of, list_assets, load_asset, wearables_of
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.hashing import HashCache, hash_bytes, hash_json
 from kiripix.core.images import load_rgba, save_png
@@ -47,7 +47,7 @@ from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
 from kiripix.recipes.base import (
-    BASE_PARAM, COMPUTED_SETTINGS, BaseInputs, BaseView, CurrentDecision, LazyMap, NeedsInput, ParamSource, RunnerCall, Scalar,
+    BASE_PARAM, COMPUTED_SETTINGS, BaseInputs, BaseView, BodyView, CurrentDecision, LazyMap, NeedsInput, ParamSource, RunnerCall, Scalar,
     StageFailure, StageRun, StageSpec,
 )
 import kiripix.ops as ops_package
@@ -208,6 +208,8 @@ class AssetGraph:
         self._known_settings: dict[str, Any] | None = None
         self._base_asset = base_of(project, asset)  # refuses a base that can't be one (`asset.base_invalid`)
         self._base: AssetGraph | None = None
+        self._body_asset = body_of(project, asset)  # refuses a body that isn't one (`wearable.body_unknown`)
+        self._body: AssetGraph | None = None
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
         if unknown:
             file = project.relative(asset.dir / "asset.toml")
@@ -247,6 +249,22 @@ class AssetGraph:
         if self._base is None and self._base_asset is not None:
             self._base = AssetGraph(self.project, self._base_asset, self.cache)
         return self._base
+
+    @property
+    def body(self) -> AssetGraph | None:
+        """The graph of a Wearable's body (ticket 0290), or None. It is only read, never written or locked from here."""
+        if self._body is None and self._body_asset is not None:
+            self._body = AssetGraph(self.project, self._body_asset, self.cache)
+        return self._body
+
+    def body_hashes(self, spec: StageSpec, hash_of: Callable[["AssetGraph", str], str] | None = None) -> dict[str, str]:
+        """The input hash of each Stage of the Asset's body that the Stage reads (`StageInputs.body`), for the body's Kind;
+        empty for a Stage that reads none of a body."""
+        body, wanted = self.body, spec.inputs.body
+        if body is None or wanted is None:
+            return {}
+        hash_of = hash_of or AssetGraph.input_hash
+        return {name: hash_of(body, name) for name in wanted.built.get(body.asset.kind, [])}
 
     def params(self, spec: StageSpec) -> dict[str, Scalar]:
         """The Stage's parameters: declared defaults, overridden by the base's `[stages.<stage>]` for an Asset made from a
@@ -355,6 +373,53 @@ class AssetGraph:
                                   command=f"kiripix run {base.asset.id} {name}")
         return None
 
+    def _body_view(self, spec: StageSpec) -> BodyView | None:
+        """What a Wearable's Stage is handed of its body: the folders of the body's Stages it reads, and their source files."""
+        body, wanted = self.body, spec.inputs.body
+        if body is None or wanted is None:
+            return None
+        names = wanted.built.get(body.asset.kind, [])
+        files: dict[str, Path] = {}
+        for name in names:
+            theirs = body.spec(name)
+            files.update(body.base_files(theirs))  # the body's own files win a name its base has too
+            files.update(body.files(theirs))
+        return BodyView(asset_id=body.asset.id, asset_dir=body.asset.dir, kind=body.asset.kind,
+                        built={name: body.output_dir(body.spec(name)) for name in names}, files=files)
+
+    def _wearing(self, spec: StageSpec) -> tuple[dict[str, Path], dict[str, int]]:
+        """The built output of the Stage `spec.worn_stage` of each Wearable of this Asset, by Wearable ID (ticket 0294), and
+        each one's `order`, the `sheet` parameter that is its default stacking order (ticket 0293)."""
+        if spec.worn_stage is None:
+            return {}, {}
+        found: dict[str, Path] = {}
+        orders: dict[str, int] = {}
+        for wearable in wearables_of(self.project, self.asset.id):
+            try:
+                theirs = AssetGraph(self.project, load_asset(self.project, wearable), self.cache)
+                worn = theirs.spec(spec.worn_stage)
+            except KiripixError:
+                continue
+            if theirs.built_hash(worn) is not None:
+                found[wearable] = theirs.output_dir(worn)
+                try:
+                    orders[wearable] = int(theirs.params(theirs.spec("sheet")).get("order", 0))
+                except (KiripixError, TypeError, ValueError):
+                    orders[wearable] = 0
+        return found, orders
+
+    def _body_not_built(self, spec: StageSpec) -> NeedsInput | None:
+        """Why a Stage that reads the body's built files (`BodyInputs.wait`) must wait: a Stage of the body it reads isn't done."""
+        body, wanted = self.body, spec.inputs.body
+        if body is None or wanted is None or not wanted.wait:
+            return None
+        for name in wanted.built.get(body.asset.kind, []):
+            state = body.state(name)
+            if state.status != "done":
+                return NeedsInput(f"its body {body.asset.id} has no built {name} (it is {state.status})",
+                                  command=f"kiripix run {body.asset.id} {name}")
+        return None
+
     def project_files(self, spec: StageSpec) -> dict[str, Path]:
         """The Project's own files that build this Asset in the Stage (`StageSpec.project_files`), by the path the Stage
         gave, relative to the Project's root; none for a Stage without the hook."""
@@ -408,6 +473,9 @@ class AssetGraph:
                 "built": {name: hash_of(base, name) for name in wanted.built},
                 "params": self._base_params(spec),
             }
+        body = self.body
+        if body is not None and spec.inputs.body is not None:
+            extra["body"] = {"asset": body.asset.id, "built": self.body_hashes(spec, hash_of)}
         files = self.project_files(spec)
         if files:
             extra["project_files"] = self._project_hashes(files)
@@ -480,6 +548,47 @@ class AssetGraph:
         """The hashes a record of the Stage may carry and still be current: today's, and the older form's."""
         return (self.input_hash(stage), self.legacy_input_hash(stage))
 
+    def part_hashes(self, spec: StageSpec, run: StageRun) -> dict[str, str]:
+        """The hash of each part of a Stage built in parts (`StageSpec.parts`, ticket 0288), the default first: what every
+        part shares (parameters, settings, the version), and the part's own inputs as the Stage names them from `run`, which
+        reads the upstream outputs as they are built now. Only the stamp and a run's reuse use them; status is the
+        Stage's one input hash."""
+        assert spec.parts is not None
+        shared = {
+            "kind": self.kind.name, "stage": spec.name, "version": spec.version,
+            "asset_params": self.asset.settings.params, "params": self._hashed_params(spec),
+            "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
+            **self._outside_inputs(spec),
+        }
+        return {part: hash_json({"shared": shared, "part": inputs}) for part, inputs in spec.parts.inputs(run).items()}
+
+    def _changed_parts(self, spec: StageSpec) -> list[str] | None:
+        """The parts of a built, stale Stage that changed (its own inputs, and the parts changed in a Stage above that is
+        stale too), for `status` to say; None when it can't tell (a Stage without parts, an older stamp, no change found, or
+        no built output to compare). A part that the default feeds follows it."""
+        hooks = spec.parts
+        recorded = self._stamp(spec).get("parts")
+        if hooks is None or not isinstance(recorded, dict):
+            return None
+        changed: set[str] = set()
+        for name in spec.inputs.upstream:
+            above = self.spec(name)
+            if above.parts is not None and self.built_hash(above) not in (None, *self.current_hashes(name)):
+                found = self._changed_parts(above)
+                if found is None:
+                    return None
+                changed |= set(found)
+        try:
+            current = self.part_hashes(spec, self.stage_run(spec, self.output_dir(spec)))
+        except Exception:  # noqa: BLE001 - only wording: an upstream that can't be read now leaves the reason as it was
+            return None
+        changed |= {part for part, hashed in current.items() if recorded.get(part) != hashed}
+        changed |= {part for part in recorded if part not in current}
+        if hooks.default_feeds_all and next(iter(current), None) in changed:
+            changed |= set(current)
+        parts = [part for part in current if part in changed]
+        return parts if len(current) > 1 and parts else None
+
     def _pinned_for_hash(self, spec: StageSpec) -> dict[str, Any]:
         calls = self.runner_calls(spec)
         if not calls:
@@ -498,6 +607,8 @@ class AssetGraph:
         self._project_files.clear()
         if self._base is not None:
             self._base.forget_hashes()  # the base may have been built again meanwhile, by another Command
+        if self._body is not None:
+            self._body.forget_hashes()
 
     def _calls_key(self, spec: StageSpec) -> str:
         """What a Stage's Runner calls derive from: its own inputs, every file of its upstream outputs, and which
@@ -657,13 +768,16 @@ class AssetGraph:
             upstream_decisions=LazyMap(spec.inputs.upstream, lambda name: self.decisions(self.spec(name))),
             upstream_params=LazyMap(spec.inputs.upstream, lambda name: self.params(self.spec(name))),
             base=self._base_view(spec),
+            body=self._body_view(spec),
+            wearing=(worn := self._wearing(spec))[0],
+            wearing_order=worn[1],
             param_sources=self.param_sources(spec),
         )
 
     def needs_input(self, spec: StageSpec) -> NeedsInput | None:
         """Why the Stage can't run until the Owner acts, from its inputs alone, or until its Runner calls are made, or
         until a Stage of its base that it reads is built."""
-        waiting = self._base_not_built(spec)
+        waiting = self._base_not_built(spec) or self._body_not_built(spec)
         if waiting is not None:
             return waiting
         if spec.needs_input is not None:
@@ -708,6 +822,16 @@ class AssetGraph:
                     chain.append(each)
         return chain
 
+    def _changed_body(self, spec: StageSpec, stamp: dict[str, Any]) -> str | None:
+        """A Wearable's body and the Stages of it that changed since the output was built, such as `character.hero (clips,
+        render)`; None when the Stage reads no body, the stamp has none, or nothing of it changed."""
+        recorded = stamp.get("body")
+        if self.body is None or not isinstance(recorded, dict):
+            return None
+        now = self.body_hashes(spec)
+        changed = [name for name, hashed in now.items() if recorded.get(name) != hashed]
+        return f"{self.body.asset.id} ({', '.join(changed)})" if changed else None
+
     def stale_reason(self, spec: StageSpec) -> str:
         """Why a built Stage is stale: Kiripix's own change to the Stage, or to a Stage above it, by its version, or an
         input (ticket 0278). A stamp without a version was built at version 1. The stamp holds the versions of the Stages
@@ -726,6 +850,12 @@ class AssetGraph:
                 then = self._stamp(above).get("version", 1) if self.built_hash(above) is not None else above.version
             if isinstance(then, int) and then != above.version:
                 return f"Kiripix's `{name}` changed: version {then} → {above.version}"
+        body = self._changed_body(spec, stamp)
+        if body:
+            return f"its body {body} changed since the output was built"
+        parts = self._changed_parts(spec)
+        if parts:
+            return f"an input changed since the output was built (changed: {', '.join(parts)})"
         return "an input changed since the output was built"
 
     def state(self, stage: str) -> StageState:
@@ -970,6 +1100,30 @@ class _Runner:
         save_png(image_path, image)
         return unpainted
 
+    def _reuse_parts(self, spec: StageSpec, context: StageRun, building: Path,
+                     old: Path | None) -> tuple[dict[str, str], StageRun, bool]:
+        """For a Stage built in parts (ticket 0288): each part's hash, and the parts whose hash is the one the last build
+        recorded copied from it into `building` (keeping their modification times), so the Stage builds the others only.
+        Gives the hashes to stamp, the run told which parts to build, and whether the default part was reused. A forced
+        run, a first build and a stamp without hashes build every part."""
+        assert spec.parts is not None
+        hashes = self.graph.part_hashes(spec, context)
+        recorded = self.graph._stamp(spec).get("parts") if old is not None and not self.force else None
+        if not isinstance(recorded, dict) or old is None:
+            return hashes, context, False
+        stale = {part for part, hashed in hashes.items() if recorded.get(part) != hashed}
+        if spec.parts.default_feeds_all and next(iter(hashes), None) in stale:
+            stale = set(hashes)  # every part is built from the default: a changed default rebuilds them all
+        reused = [part for part in hashes if part not in stale]
+        for part in reused:
+            cancel.check()
+            if not spec.parts.copy(old, building, part):
+                stale.add(part)
+        reused = [part for part in reused if part not in stale]
+        if reused:
+            context.notes.append("reused " + ", ".join(reused))
+        return hashes, replace(context, build_parts=frozenset(stale)), next(iter(hashes), None) in reused
+
     def execute(self, spec: StageSpec) -> tuple[StageRunResult, list[Finding]]:
         """Run the Stage, paint its Overrides over its image, run its `after_overrides` hook, then run its Checks on
         the result; their findings come back beside the result."""
@@ -998,10 +1152,16 @@ class _Runner:
             context = graph.stage_run(spec, building, progress=report)
             old = final if (final / STAMP_FILE).is_file() else None
             context = replace(context, cpu=self.cpu, previous=old, forced=self.force, notes=[])
+            parts: dict[str, str] | None = None
+            reused_default = False
+            if spec.parts is not None:
+                parts, context, reused_default = self._reuse_parts(spec, context, building, old)
             with self._hold_gpu(spec.name, spec.gpu):
                 spec.run(context)
             cancel.check()
-            unpainted = self._paint_overrides(spec, building)
+            # the default part's image, copied, is already painted: its Overrides aren't painted over it again
+            kept = graph.unpainted_hash(spec) if reused_default else None
+            unpainted = kept if kept is not None else self._paint_overrides(spec, building)
             if spec.after_overrides is not None:
                 spec.after_overrides(context)
                 cancel.check()
@@ -1010,8 +1170,12 @@ class _Runner:
             stamp = {"stage": spec.name, "input_hash": input_hash, "version": spec.version,
                      "upstream_versions": {n: graph.spec(n).version for n in graph.upstream_chain(spec)},
                      "finished": _now()}
+            if spec.inputs.body is not None and graph.body is not None:
+                stamp["body"] = graph.body_hashes(spec)
             if unpainted is not None:
                 stamp["unpainted_hash"] = unpainted
+            if parts is not None:
+                stamp["parts"] = parts
             atomic.write_json(building / STAMP_FILE, stamp)
             _swap_into_place(building, final)
             graph.forget_hashes()

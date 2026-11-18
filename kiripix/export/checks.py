@@ -36,7 +36,7 @@ from kiripix.recipes.sprite_frames import FRAMES_FILE
 
 STATE_NAMES = frozenset(d.name for d in _STATE_DECISIONS)
 
-EXPORTERS = frozenset({"room", "prop", "character", "sprite"})  # the Kinds that have an exporter
+EXPORTERS = frozenset({"room", "prop", "character", "sprite", "icon", "wearable"})  # the Kinds that have an exporter
 
 
 def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:

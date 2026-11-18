@@ -107,6 +107,23 @@ class IconSettings(_Strict):
     size: Literal[16, 24, 32] = Field(24, description="The icon's side in px: 16, 24 or 32.")
 
 
+class PortraitSettings(_Strict):
+    """`[portrait]`: the canvas every portrait set is fitted to, and where its figure stands on it, the same for every portrait
+    in the Project unless its own brief says otherwise (ticket 0242)."""
+
+    canvas: tuple[int, int] = Field((160, 224), description="Width and height of a portrait's canvas in px.")
+    anchor: tuple[int, int] | None = Field(
+        None, description="The canvas pixel the figure stands on: x and y. Unset: the bottom centre, (width // 2, height - 1).")
+
+    @model_validator(mode="after")
+    def _inside(self) -> Self:
+        if min(self.canvas) < 16:
+            raise ValueError("canvas must be at least 16 x 16 px")
+        if self.anchor is not None and not (0 <= self.anchor[0] < self.canvas[0] and 0 <= self.anchor[1] < self.canvas[1]):
+            raise ValueError(f"anchor {list(self.anchor)} must be a pixel of the {self.canvas[0]} x {self.canvas[1]} canvas")
+        return self
+
+
 class Providers(_Strict):
     default: str = "import"
     budget_usd_month: float = Field(20, ge=0)
@@ -225,14 +242,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 8
+PROJECT_SCHEMA_VERSION = 9
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[8] = 8
+    schema_version: Literal[9] = 9
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -241,6 +258,7 @@ class ProjectSettings(_Strict):
     character: CharacterSettings = Field(default_factory=CharacterSettings)
     extend: ExtendSection = Field(default_factory=ExtendSection)
     icon: IconSettings = Field(default_factory=IconSettings)
+    portrait: PortraitSettings = Field(default_factory=PortraitSettings)
 
 
 class AssetSettings(_Strict):
@@ -302,9 +320,16 @@ def _add_icon_section(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 8}
 
 
+def _add_portrait_section(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 8 had no `[portrait]`; version 9 adds it (ticket 0242), its canvas defaulting to 160 x 224 and its anchor to the
+    bottom centre."""
+    return {**document, "schema_version": 9}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
-    4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section}
+    4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section,
+    8: _add_portrait_section}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 

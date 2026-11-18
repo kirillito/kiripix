@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from test_character_model import FIXTURES, HERO, calls, picked_hero, set_blender
 
 IDLE = {"name": "idle", "source": "idle", "start": 0, "end": 24, "fps": 12, "loop": True, "stationary": True}
@@ -26,11 +26,16 @@ def clips_json(folder: Path) -> dict[str, Any]:
     return document
 
 
-def rigged_hero(project: Kiripix) -> Path:
-    folder = picked_hero(project)
+def build_rigged(project: Kiripix) -> None:
+    picked_hero(project)
     project.json("run", HERO, "model")
     project.json("run", HERO, "rig")
-    return folder
+
+
+def rigged_hero(project: Kiripix) -> Path:
+    """The hero through `rig`; built once per worker and copied into the test's Project (ticket 0275)."""
+    restore_template(project, "character-rigged", build_rigged)
+    return project.cwd / "assets" / "character" / "hero"
 
 
 def add_source(project: Kiripix, name: str, **content: Any) -> None:

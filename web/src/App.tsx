@@ -34,10 +34,13 @@ import { MASKS_STAGE, MasksPanel } from "./maskScreen";
 import { LOOKS_DECISION, LOOKS_STAGE, LooksPanel, roomImageOf } from "./lookScreen";
 import { LOOPS_DECISION, LOOPS_STAGE, LoopsPanel } from "./loopScreen";
 import { ambiguousCells } from "./markerTool";
-import { ABOVE_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
+import { ABOVE_DECISION, LINK_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
 import {
   FOOTPRINT_DECISION,
   FootprintPanel,
+  ICON_FIT_STAGE,
+  ICON_KIND,
+  IconSquarePanel,
   SideBySide,
   STATE_DECISION,
   STATE_OFFSET_DECISION,
@@ -50,6 +53,7 @@ import { layerIdOf } from "./sortView";
 import { CHARACTER_KIND, CHARACTER_SCREENS, CharacterScreen, type ImportRole } from "./characterScreens";
 import { SPRITE_FRAMES_STAGE, SPRITE_KIND, SpriteFramesScreen } from "./spriteScreens";
 import { FRAME_STAGES, FrameScreen, frameOf, type FrameFocus } from "./frameScreen";
+import { costText, StackPreview, useWearables } from "./wearableScreens";
 import { WorkStrip, type Working } from "./workStrip";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
@@ -127,6 +131,7 @@ export function App() {
   const [selectedState, setSelectedState] = useState<string | null>(null); // a Prop's state; null: the default state
   const [sideBySide, setSideBySide] = useState(false);
   const canvas = useRef<PixelCanvas>(null);
+  const wearables = useWearables(data.status, data.refreshes);
 
   // One refresh at a time, in order, and one more if something changed meanwhile: what shows is never older than a change.
   const selection = useRef(asset);
@@ -241,6 +246,7 @@ export function App() {
   const isReach = current === REACH_STAGE && show?.kind === "room";
   const isCharacterScreen =
     show?.kind === CHARACTER_KIND && current !== null && CHARACTER_SCREENS.includes(current) && description !== undefined;
+  const wearablesOfBody = Object.values(wearables).filter((one) => one.body === asset && one.id !== asset);
   const hasFrames = show?.kind === CHARACTER_KIND || show?.kind === SPRITE_KIND;
   const isFrames = hasFrames && current !== null && FRAME_STAGES.includes(current) && description !== undefined;
   const isSpriteFrames = show?.kind === SPRITE_KIND && current === SPRITE_FRAMES_STAGE && description !== undefined;
@@ -293,6 +299,13 @@ export function App() {
     (marker: Record<string, unknown>) => {
       const decision = JSON.stringify({ decision: PLACE_DECISION, data: marker });
       void perform(() => call("decide", { asset, stage: current, decision }), "Placing a marker");
+    },
+    [asset, current, perform],
+  );
+  const decideLink = useCallback(
+    (link: Record<string, unknown>) => {
+      const decision = JSON.stringify({ decision: LINK_DECISION, data: link });
+      void perform(() => call("decide", { asset, stage: current, decision }), "Placing a link");
     },
     [asset, current, perform],
   );
@@ -694,7 +707,13 @@ export function App() {
       <AssetList status={data.status} selected={asset} filter={filter} onSelect={(id) => open(id, null)} />
       <main>
         {!asset || !show ? (
-          <StatusBoard status={data.status} filter={filter} onOpen={open} onCreateCharacter={createCharacter} />
+          <StatusBoard
+            status={data.status}
+            filter={filter}
+            onOpen={open}
+            onCreateCharacter={createCharacter}
+            worn={Object.fromEntries(Object.values(wearables).map((one) => [one.id, { body: one.body, cost: costText(one) }]))}
+          />
         ) : isCharacterScreen && detail && description ? (
           <CharacterScreen
             key={`${asset}/${current}`}
@@ -722,16 +741,28 @@ export function App() {
             decide={decideCharacter}
           />
         ) : isFrames && detail ? (
-          <FrameScreen
-            key={`${asset}/${current}`}
-            stage={current ?? ""}
-            show={show}
-            detail={detail}
-            refreshes={data.refreshes}
-            imageVersion={imageVersion}
-            focus={focusFrame}
-            pivotTool={isPivot ? { disabled: busy, decide: decidePivot } : undefined}
-          />
+          <div className="frames-with-stack">
+            <FrameScreen
+              key={`${asset}/${current}`}
+              stage={current ?? ""}
+              show={show}
+              detail={detail}
+              refreshes={data.refreshes}
+              imageVersion={imageVersion}
+              focus={focusFrame}
+              pivotTool={isPivot ? { disabled: busy, decide: decidePivot } : undefined}
+            />
+            {current === "sheet" && kind === CHARACTER_KIND && wearablesOfBody.length > 0 && (
+              <StackPreview
+                key={asset}
+                show={show}
+                wearables={wearablesOfBody}
+                findings={data.checks}
+                refreshes={data.refreshes}
+                imageVersion={imageVersion}
+              />
+            )}
+          </div>
         ) : isProp && sideBySide ? (
           <SideBySide show={show} imageVersion={imageVersion} />
         ) : isSource ? (
@@ -792,9 +823,13 @@ export function App() {
                 focusLayer={focusLayer}
                 findings={data.checks}
                 decide={decideMarker}
+                decideLink={decideLink}
                 decideAbove={decideAbove}
                 disabled={busy}
               />
+            )}
+            {kind === ICON_KIND && current === ICON_FIT_STAGE && (
+              <IconSquarePanel key={asset} canvas={canvas} show={show} detail={detail} refreshes={data.refreshes} />
             )}
             {isFootprint && (
               <FootprintPanel

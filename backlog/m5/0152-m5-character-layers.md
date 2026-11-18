@@ -58,6 +58,20 @@ Inputs for the trial, from the game's list at the M4 gate ([0236](0236-m5-the-ga
   is exported (the same animation names, cell and pivot) plus a stacking order, so the game stacks them by name.
 - **Cost:** report the render minutes and the atlas size per layer, so the game can budget each new hair style or outfit.
 
+## Answers (the Owner, 2026-11-18, from the trial 0153)
+
+1. **Order:** each layer exports a default stacking order and its depth pass (and normal); the game stacks by order (1.5-2 %
+   wrong at a thick outfit's and a pack's edges) or by depth (exact to a few px). The body is the one holdout.
+2. **Outline:** none in a layer; the game draws it once on the stack. Normals per layer, never palette-mapped.
+3. **How Kiripix holds it:** its own Asset of a new Kind, `wearable` (the Owner's word, 2026-11-18: Layer is a room's
+   image plane), naming its body; stale whenever the body's model, rig, clips
+   or cell change, through the Stage input hash.
+
+Work tickets: [0290](0290-m5-wearable-kind.md) (core-engineer), [0291](0291-m5-wearable-model-rig-render.md) (character-pipeline),
+[0292](0292-m5-wearable-palette-finish.md) and [0294](0294-m5-wearable-stack-check.md) (imaging-engineer),
+[0293](0293-m5-wearable-sheet-and-export.md) (godot-export), [0295](0295-m5-ui-wearables.md) (ui-engineer). In the art repo, for the
+Owner: chargen writes each part as its own Model file on the base's skeleton.
+
 ## Order
 
 M5's order puts layers in its last wave, after the game's nearer needs ([0236](0236-m5-the-games-next-needs.md)). The trial

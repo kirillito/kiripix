@@ -12,9 +12,10 @@ from typing import Any
 
 import numpy as np
 import pytest
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from PIL import Image
-from test_character_clips import HIT, IDLE, WALK, add_source, blender_script, clip, clips_json, real_hero, rigged_hero
+from test_character_clips import (HIT, IDLE, WALK, add_source, blender_script, build_rigged, clip, clips_json, real_hero,
+                                  rigged_hero)
 from test_character_model import FIXTURES, HERO, calls, set_blender
 from test_locks import wait_for
 from test_serve import Server, server  # noqa: F401 - the `server` fixture
@@ -36,12 +37,24 @@ def measure_calls(project: Kiripix) -> list[dict[str, Any]]:
     return [c for c in calls(project) if c["script"] == "render_frames" and c["args"].get("measure")]
 
 
-def ready(project: Kiripix, *clips: dict[str, Any]) -> Path:
-    folder = rigged_hero(project)
+def build_ready(project: Kiripix, *clips: dict[str, Any]) -> None:
+    build_rigged(project)
     for data in clips or (IDLE, HIT):
         clip(project, data)
     project.json("run", HERO, "clips")
-    return folder
+
+
+def ready(project: Kiripix, *clips: dict[str, Any]) -> Path:
+    """The hero through `clips` (idle and hit unless others are given). The default is built once per worker and copied
+    into the test's Project (ticket 0275)."""
+    if clips:
+        folder = rigged_hero(project)
+        for data in clips:
+            clip(project, data)
+        project.json("run", HERO, "clips")
+        return folder
+    restore_template(project, "character-ready", build_ready)
+    return project.cwd / "assets" / "character" / "hero"
 
 
 def add_camera(project: Kiripix, text: str) -> None:
@@ -148,7 +161,7 @@ def test_the_stage_takes_the_gpu_lock(project: Kiripix) -> None:
     [stage] = kind["stages"]
 
     assert stage["gpu"] is True
-    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes", "points"}
+    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes", "points", "cell_margin"}
     by_name = {p["name"]: p for p in stage["params"]}
     assert (by_name["bands"]["minimum"], by_name["bands"]["maximum"], by_name["bands"]["default"]) == (2, 4, 3)
 

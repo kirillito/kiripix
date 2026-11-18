@@ -82,7 +82,7 @@ layers, and the layers get stacked back into a scene.
 
 | Term | Meaning |
 |---|---|
-| **Asset**, **Kind**, **Recipe**, **Stage** | An asset has a kind; the kind fixes its recipe, an ordered list of stages. Kinds: `room`, `prop`, `character` first, then `sprite` (an actor from imported 2D frames, M4) and `icon` (an item or skill icon on a fixed square, M5); `tileset`, `portrait`, `vfx` later. |
+| **Asset**, **Kind**, **Recipe**, **Stage** | An asset has a kind; the kind fixes its recipe, an ordered list of stages. Kinds: `room`, `prop`, `character` first, then `sprite` (an actor from imported 2D frames, M4) and `icon` (an item or skill icon on a fixed square, M5) and `wearable` (a part of a character's dress, M5: hair, an outfit, an accessory; it names its body, a character, in `body`, and follows it) and `portrait` (a character's dialogue portraits, one image per emotion, M5); `tileset`, `vfx` later. |
 | **Decision** | Recorded human input that a stage replays: a Pick, segmentation clicks, an Override, marker positions. |
 | **Override** | A recorded hand edit on a stage's image output, tied to the hash of the image it was painted on. |
 | **Layer** / **Plate** | A visible image plane of a room; the Plate is the room with its foreground objects removed. |
@@ -175,6 +175,10 @@ canvas = [1376, 768]           # width and height in px
 
 [icon]                         # `kiripix new icon <name>` (M5)
 size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) overrides it
+
+[portrait]                     # `kiripix new portrait <name>` (M5, §6.7)
+canvas = [160, 224]            # width and height in px; a portrait's own brief overrides it
+# anchor = [80, 223]           # the pixel the figure stands on; the bottom centre when unset
 
 [character]
 height = 52                    # target height in px; a character's own `height` parameter overrides it
@@ -485,6 +489,21 @@ Kiripix holds no parts and no game content: it runs the script and reads what it
 - A generator that fails is `model.generator_failed`, with the script and its last 20 lines; one that ends without its
   Model or its JSON says which is missing.
 
+**Wearables** (ticket 0290; M5). A part of a character's dress is its own Asset of Kind `wearable`, made with
+`kiripix new wearable <name> --body <character>`; `body` is in its `asset.toml`, and a body that is missing, is itself a
+Wearable or isn't a character (a sprite has no Model to hold out), is `wearable.body_unknown`. Recipe: **model → rig → render → palette → finish → sheet → export**, the
+character's without `clips`: the body's clips, camera, cell and pivot are used, not copied, so the Wearable's frames land
+on the body's, pixel for pixel. `render`'s input hash holds the input hashes of the body's `model`, `rig`, `clips` and
+`render` (the last one fixes the cell), so a change to any of them makes the Wearable stale through the Stage graph, and
+`status` names the body; a change to the body's `palette`, `finish` or `sheet` does not. A Wearable whose frames don't fit the body's cell is `wearable.outside_cell` (error, naming the frames; its
+fix is the body's `cell_margin`, a `render` parameter that keeps room round the poses). No Command removes or renames an Asset yet; when
+one does, it refuses a body that has Wearables (`wearables_of` lists them). `model` puts the Wearable's meshes on the body (turned and scaled by the body's own
+`model_root`, never by their own height); `rig` checks the Wearable's armature against the body's by bone name (the body's
+armature drives it); `render` is the body's render with the body as a holdout, so the Wearable holds only the pixels that show
+(its depth and normal passes are the body's, for the game to stack by depth), and records its render seconds. Each of the three
+waits, needs-input, until the body's Stages it reads are built, and a body whose rig came from Mixamo is refused
+(`wearable.body_rigged`). `sheet` and `export` (0293) are the character's on the body's cell, with a depth atlas and the `order` parameter; §9 has the export. Design: [0152](../backlog/m5/0152-m5-character-layers.md).
+
 ### 6.4 Sprite (2D frames to pixel; M4)
 
 An actor built from imported 2D frames, such as a PixelLab figure, exported exactly as a character is (the game's sprite route,
@@ -518,7 +537,25 @@ per icon; Godot atlases the exported PNGs itself. Design: [0253](../backlog/m5/0
 | **brief** | `size` (16, 24 or 32; 0 takes the Project's `[icon] size`, default 24), `padding` in px (default 1, room for the outline), `notes`. | Writes the brief | `brief.size_invalid`, `brief.padding_too_large` |
 | **source**, **cutout**, **palette**, **finish** | The Prop's (one Source, no states): chroma key or matting, the palette once, an optional outline. | Picks a Source | the Prop's |
 | **fit** | The Prop's `grid` or `downscale` onto the square less the padding on each side, centred in it; the alpha goes to the grid by vote. `grid.json` is the inner square's, and its `inset` is the padding. | — | `icon.size` (exactly the square), `fit.padded`, `fit.cropped`, `image.partial_alpha` |
-| **export** | Not built yet ([0263](../backlog/m5/0263-m5-export-an-icon.md)). | — | `export.no_target` |
+| **export** | Leaves `icon.png` (the `finish` image) and `icon.json` (`schema_version` 1, `asset`, `size`) in `out/export/` for the Exporter (§9). | — | `export.no_target` |
+
+### 6.7 Portrait (M5)
+
+A character's dialogue portraits: one Asset per character's set, a neutral image and an **emotion** for each mood (`happy`,
+`sad`, ...), all on one canvas with one anchor, so an emotion swap never moves the body. Each emotion is an edit of the neutral
+image, not a Look and not a Variant of the Source. Design: [0240](../backlog/m5/0240-m5-portrait-kind.md), the trial
+[0241](../backlog/m5/0241-m5-portrait-trial.md); the Kind is [0242](../backlog/m5/0242-m5-portrait-asset-and-emotions.md).
+
+**brief → source → cutout → register → fit → palette → finish → export**
+
+`[portrait]` in `kiripix.toml` holds the canvas (default 160 x 224) and the optional `anchor` (a pixel of the canvas; the bottom
+centre, `(width // 2, height - 1)`, when unset), so every set matches.
+
+| Stage | What it does | Owner input | Checks |
+|---|---|---|---|
+| **brief** | `width` and `height` (0 takes the Project's `[portrait] canvas`), `anchor_x` and `anchor_y` (-1 takes the Project's anchor, else the bottom centre), `fallback`: the emotion the game shows for one it doesn't know (default `neutral`). Writes `brief.json`: `width`, `height`, `anchor`, `fallback`. | Writes the brief | `brief.larger_than_resolution`, `brief.anchor_outside`, `brief.fallback_invalid` |
+| **source** | The neutral image is the Source (a Pick; its ID in the set is `neutral`). An `emotion` Decision declares an emotion ID (snake_case, unique in the set, never `neutral`). `import <id> <png> --emotion <e>` stores a Variant under `src/emotions/<e>/`, and `pick <id> <v> --emotion <e>` records an `emotion_pick` Decision with the neutral Source's hash it was made on. A new neutral Source puts every emotion's Pick in needs-input ("the edit was made on another Source"), as a Look's is. `emotion_remove` and `emotion_rename` change an ID before its first export; after it the ID is frozen (ADR 0003). Builds `source.png`, `emotions/<id>.png` and `emotions.json` (`schema_version` 1, `neutral`, `emotions` in declaration order). | Imports, names, picks. Picking an emotion's Variant among several is the Owner's; an agent may pick a lone Variant | `portrait.emotion_unknown`, `portrait.emotion_unpicked` (needs-input, naming the emotion), `portrait.emotion_duplicate`, `portrait.fallback_unknown` |
+| **cutout**, **register**, **fit**, **palette**, **finish**, **export** | Declared; built by [0243](../backlog/m5/0243-m5-portrait-recipe.md) and [0244](../backlog/m5/0244-m5-export-a-portrait.md): the cutout per image, each emotion registered to the neutral, one fit for the set, the set's own colours, the outline and `lock_outside_face`, then one PNG per emotion and `portrait.json`. | | |
 
 ## 7. Ops library (first set)
 
@@ -605,6 +642,8 @@ Kiripix writes Godot 4 text resources (`.tscn`, `.tres`) and PNGs under `export.
 | Prop | A scene: a `Node2D` root at the origin (the y-sort point), a `Sprite2D` offset so the origin pixel is the root's own place, and a `StaticBody2D` footprint on collision layer 1, with a `CollisionPolygon2D` per convex piece of the polygon, relative to the origin. No body when the polygon is empty. The prop's `export` Stage leaves `sprite.png` and `prop.json` (`schema_version`, `asset`, `size`, `origin`, `collision`) in `out/export/`. The scene instances the sprite as `sprite.png` beside it. No ID is frozen for a Prop without states, so the footprint can be emptied. A Prop with states (6.2) exports one scene: the root `Node2D` at the default state's origin, and one `Node2D` per state named by its ID (the default's included), each with its own `Sprite2D` (offset so its origin pixel is the node's place) and `StaticBody2D` footprint on layer 1. Only the default is `visible` with its polygons enabled; every other state is `visible = false` with its `CollisionPolygon2D`s `disabled = true`. The node carries metadata `kiripix_id` (the Prop's), `kiripix_type = "prop_state"` and `kiripix_state`. The game shows a node and enables its polygons to switch. Files: `sprite.png` for the default, `states/<s>.png` for the others; `prop.json` (`schema_version` 2) adds `default` and `states` (ID, file, size, origin, collision). State IDs are frozen once exported (`ids.states` in the Manifest). |
 | Character | `texture.tres` (`CanvasTexture`: the colour atlas as diffuse, the normal atlas as its normal map), `frames.tres` (`SpriteFrames`: one animation `<clip>_<dir>` per clip and direction, such as `walk_sw`, each frame an `AtlasTexture` region of the `CanvasTexture`, at the clip's speed and loop flag), and a scene: a `Node2D` root at the feet with an `AnimatedSprite2D` child `Sprite`, `centered = false`, offset so the pivot pixel is the origin. Both atlases sit beside them. So does `character.json`, copied byte for byte from the `export` Stage (ticket 0289): the game reads its foot events and points there, and its `files` are names relative to it, so it needs no `res://` path. The character's `export` Stage leaves `color.png`, `normal.png` and `character.json` (`schema_version`, `asset`, `files`, `cell`, `pivot`, `atlas`, `directions`, `clips` with each direction's frames as `index` and `rect`, `fps`, `loop`, `stationary`) in `out/export/`. The frozen IDs are the animation names. **Part ramps (M4):** `character.json`'s `parts` (each part's name, materials, row, `shared` when its colours are the table's, palette indexes and RGB, dark to light) and `rows` (the table's part names and lengths, in order), and `ramps.png` beside the atlases, one row per part of the Project's ramp table in its order, padded to the longest ramp; a part the character lacks is a transparent row, so a row is the same part on every character. The scene's root names it in `metadata/kiripix_ramps`, with the part names in row order in `metadata/kiripix_parts`. **Points (M5, ticket 0237):** for a character whose `render` has `points`, `character.json` has `schema_version` 5 and each frame of each direction a `points` map, `{name: {x, y, hidden}}`: the pixel that holds the point, in whole px relative to the pivot, y down as Godot draws, carried by `sheet` from `render.json`; the game reads them there, and the `.tres` files and the scene don't change. A character without points keeps `schema_version` 4 and its file byte for byte. **Events (M4, lower priority):** each clip's `events`, such as `foot`, the game frames where a foot plants. |
 | Sprite | As a character, under `sprite/`. |
+| Icon | No scene: the game's inventory UI loads the texture. `icons/<name>.png` and `icons/<name>.json` (`schema_version`, `asset`, `size`) under the export root, both in the Manifest, copied byte for byte from the icon's `export` Stage (`out/export/icon.png`, `icon.json`). They sit in one `icons/` folder for every icon, not under `icon/<name>/`, so the game can load any icon by name. The icon's ID is its Asset ID (`icon.<name>`), which names its Manifest and is frozen once exported like any Asset's; no other ID is exported. `--prune` removes a deleted icon's files with their `.import` sidecars. |
+| Wearable | Under `wearable/<name>/`, laid out as a character's and on its cell, pivot and frame layout: `color.png`, `normal.png` and `depth.png` (16 bit gray, 0 nearest, the body's depth scale), `texture.tres`, `frames.tres` (the body's animation names `<clip>_<dir>`, each frame the same cell of the atlas as the body's), a scene (a `Node2D` and an `AnimatedSprite2D`, drawn offset like the body's), and `wearable.json` (`schema_version`, `asset`, `body`, `order`, `files`, `cell`, `pivot`, `atlas`, `directions`, `clips`, `parts` with their ramps), all in the Manifest. `order` is the default stacking order over the body (0), the `sheet` parameter `order` (default 10); the game stacks by it, or by `depth.png` for an exact result. No outline: the game draws it once on the stack. Refused with `wearable.body_not_exported` until its body is in the game (its Manifest lists it as exported) with the same cell and pivot in its `character.json`; in `export --all` the body counts when it is exported in the same call. The animation names are the clip IDs frozen in its Manifest. `--prune` removes a deleted Wearable's files with their `.import` sidecars. |
 
 The game instances these scenes and adds its own scripts in its own scenes, so nothing it writes is ever regenerated
 over (principle 10).

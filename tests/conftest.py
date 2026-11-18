@@ -3,10 +3,13 @@
 Tests check only what an agent can see: the JSON result, the exit code and the files on disk.
 """
 
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -70,6 +73,7 @@ class Kiripix:
 
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd
+        self.initial: dict[str, bytes] | None = None  # the files `init` wrote, set by the `project` fixture
 
     def __call__(self, *args: str | Path, test_recipes: bool = True, owner: bool = False,
                  timeout: float = 60) -> Result:
@@ -115,7 +119,78 @@ def project(tmp_path: Path) -> Kiripix:
     """`kiripix` in a freshly initialised Project."""
     runner = Kiripix(tmp_path)
     runner.json("init")
+    runner.initial = _files(tmp_path)
     return runner
+
+
+_TEMPLATE_ROOT: list[Path] = []
+_TEMPLATES: dict[str, tuple[Path, dict[str, str]]] = {}
+_TEMPLATE_PROJECT_NAMES: dict[str, str] = {}  # the `name` in each template's kiripix.toml: its folder's name
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _template_root(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Where the built template Projects live: one folder per test session (per xdist worker)."""
+    _TEMPLATE_ROOT[:] = [tmp_path_factory.mktemp("templates")]
+
+
+def stage_statuses(project: Kiripix) -> dict[str, str]:
+    """Every Asset's Stage statuses, as `status --json` gives them: {"asset/stage": status}."""
+    data = project.json("status")["data"]
+    return {f"{a['asset']}/{s['stage']}": s["status"] for a in data["assets"] for s in a["stages"]}
+
+
+def _unnamed(text: bytes, folder: Path) -> bytes:
+    """A kiripix.toml without its Project's name, which `init` takes from the folder's name."""
+    return text.replace(f'name = "{folder.name}"'.encode("utf-8"), b'name = "?"', 1)
+
+
+def _files(folder: Path) -> dict[str, bytes]:
+    """Every file under `folder` by relative path, with the Project's name in kiripix.toml left out."""
+    found: dict[str, bytes] = {}
+    for path in sorted(folder.rglob("*")):
+        if path.is_file():
+            found[path.relative_to(folder).as_posix()] = path.read_bytes()
+    if "kiripix.toml" in found:
+        found["kiripix.toml"] = _unnamed(found["kiripix.toml"], folder)
+    return found
+
+
+def _pre_state(project: Kiripix) -> dict[str, bytes]:
+    """What a test put in the Project before asking for a template (a signal file of the fake Blender, a setting): every
+    file that `init` didn't write, and kiripix.toml when it differs from the one `init` wrote."""
+    assert project.initial is not None, "a template goes into a Project that the `project` fixture initialised"
+    return {name: content for name, content in _files(project.cwd).items() if project.initial.get(name) != content}
+
+
+def restore_template(project: Kiripix, key: str, build: Callable[[Kiripix], object]) -> None:
+    """Put a built Project into `project`'s folder: build it once per worker, then copy it for each test.
+
+    `build` gets the freshly initialised Project and builds what the tests share, through `kiripix ... --json` as the
+    tests do. The first test to ask in a worker builds in its own Project and a copy of the result is kept as the
+    template (so a template nobody asks for twice costs one folder copy); each later test gets a copy in its own folder,
+    so Projects stay independent. What the test put in the Project before the call (signal files, settings) is part of the
+    template's identity: the same `key` with other files is another template.
+    The template's status is read once and the copy's status after every copy: the copy must read as built as the
+    template did (the hash cache and journals came along), or the fixture fails."""
+    assert not any((project.cwd / "assets").glob("*/*")), "a template goes into a Project with no Assets yet"
+    before = _pre_state(project)
+    digest = hashlib.sha256(repr(sorted(before.items())).encode("utf-8")).hexdigest()[:12]
+    name = f"{key}-{digest}"
+    if name not in _TEMPLATES:  # the first test to ask builds in its own Project, which then becomes the template
+        build(project)
+        folder = _TEMPLATE_ROOT[0] / name
+        shutil.copytree(project.cwd, folder)
+        _TEMPLATES[name] = (folder, stage_statuses(project))
+        _TEMPLATE_PROJECT_NAMES[name] = project.cwd.name
+        return
+    folder, expected = _TEMPLATES[name]
+    shutil.copytree(folder, project.cwd, dirs_exist_ok=True)
+    settings = project.cwd / "kiripix.toml"  # the copy is this Project: it keeps the name `init` gave it
+    settings.write_bytes(settings.read_bytes().replace(f'name = "{_TEMPLATE_PROJECT_NAMES[name]}"'.encode("utf-8"),
+                                                        f'name = "{project.cwd.name}"'.encode("utf-8"), 1))
+    found = stage_statuses(project)
+    assert found == expected, f"the copy of template {key!r} does not read as the template did: {found} / {expected}"
 
 
 def make_demo(project: Kiripix, name: str = "a", extra: str = "extra") -> Path:

@@ -158,7 +158,8 @@ def test_an_old_settings_file_migrates_in_memory_and_the_stage_takes_a_height(pr
     assert project.json("status")["ok"]
     assert path.read_text(encoding="utf-8") == old
     render = {s["name"]: s for s in project.json("describe", "character")["data"]["kinds"][0]["stages"]}["render"]
-    assert {p["name"] for p in render["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes", "points"}
+    assert {p["name"] for p in render["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes", "points",
+                                                        "cell_margin"}
     project.json("set", HERO, "render", "height=40")
     assert project.json("show", HERO)["data"]["stages"][3]["params"]["height"] == 40
 
@@ -166,8 +167,8 @@ def test_an_old_settings_file_migrates_in_memory_and_the_stage_takes_a_height(pr
 def test_a_version_2_settings_file_migrates_in_memory_and_gets_the_default_light(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
-    assert "schema_version = 7" in text  # 0105 added the key light, 0167 the ramp table, 0136 `[extend]`, 0224 the generators
-    old = text.replace("schema_version = 7", "schema_version = 2")
+    assert "schema_version = 9" in text  # 0105 added the key light, 0167 the ramp table, 0136 `[extend]`, 0224 the generators, 0262 `[icon]`, 0242 `[portrait]`
+    old = text.replace("schema_version = 9", "schema_version = 2")
     for key in ("light_angle", "light_tilt"):
         old = "\n".join(line for line in old.splitlines() if not line.startswith(key)) + "\n"
     path.write_text(old, encoding="utf-8")

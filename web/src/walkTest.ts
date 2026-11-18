@@ -14,6 +14,41 @@ const KEYS: Record<string, [number, number]> = {
   ArrowDown: [0, 1],
 };
 
+// The reach of a Link's end, in px: the Project's default `project.tile`. The Commands don't give the Project's tile to
+// the UI yet (reported in ticket 0268), so this is the default.
+export const LINK_REACH = 16;
+export const CROSS_KEY = "c";
+
+// A Link the Body can cross: `from` and `to` as `show` gives them, and whether it can be crossed back.
+export interface Crossing {
+  id: string;
+  from: [number, number];
+  to: [number, number];
+  two_way: boolean;
+}
+
+// Read at every key, so a rebuilt Link works without sending the Body back to the Spawn.
+export interface Crossings {
+  links: Crossing[];
+}
+
+// Where the Body goes when it crosses from (x, y): the other end of the nearest Link with an end within `reach`, and the
+// one-way Links only from their `from` end. Null when no Link is near.
+export function crossFrom(links: Crossing[], x: number, y: number, reach = LINK_REACH): [number, number] | null {
+  let best: { distance: number; to: [number, number] } | null = null;
+  for (const link of links) {
+    const ends: [[number, number], [number, number], boolean][] = [
+      [link.from, link.to, true],
+      [link.to, link.from, link.two_way],
+    ];
+    for (const [near, far, allowed] of ends) {
+      const distance = Math.hypot(near[0] - x, near[1] - y);
+      if (allowed && distance <= reach && (!best || distance < best.distance)) best = { distance, to: far };
+    }
+  }
+  return best ? [best.to[0], best.to[1]] : null;
+}
+
 export interface MaskPixels {
   width: number;
   height: number;
@@ -68,6 +103,7 @@ export class WalkTest implements CanvasTool {
     private y: number,
     private readonly redraw: () => void,
     private readonly sorted: SortedLayers = { layers: [] },
+    private readonly crossings: Crossings = { links: [] },
   ) {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -129,6 +165,14 @@ export class WalkTest implements CanvasTool {
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key.toLowerCase() === CROSS_KEY && !event.ctrlKey && !event.metaKey && !event.altKey && !isTyping(event.target)) {
+      const to = crossFrom(this.crossings.links, this.x, this.y);
+      if (to) {
+        [this.x, this.y] = to;
+        this.redraw();
+      }
+      return;
+    }
     if (!(event.key in KEYS) || event.ctrlKey || event.metaKey || event.altKey) return;
     if (isTyping(event.target) || (event.target instanceof HTMLInputElement && event.target.type === "range")) return; // a slider's arrows
     event.preventDefault();

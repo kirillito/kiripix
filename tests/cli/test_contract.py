@@ -261,6 +261,29 @@ def test_a_props_states_validate(project: Kiripix, schemas: dict[str, dict[str, 
     assert {"prop.state_unknown", "prop.state_unpicked", "prop.state_duplicate"} <= {c["code"] for c in source["checks"]}
 
 
+def test_a_portraits_emotions_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The emotion shapes of the `emotion` Decision, `import --emotion`, `pick --emotion` and `show` (ticket 0242)."""
+    from test_portrait import PORTRAIT, declare, image, with_neutral
+
+    with_neutral(project)
+    declared = declare(project, "happy")
+    imported = project.json("import", PORTRAIT, image(project, "h.png", (10, 200, 10)), "--emotion", "happy")
+    picked = project.json("pick", PORTRAIT, imported["data"]["variant"], "--emotion", "happy")
+    shown = project.json("show", PORTRAIT)
+
+    jsonschema.validate(declared, schemas["decide"]["output"])
+    jsonschema.validate(imported, schemas["import"]["output"])
+    jsonschema.validate(picked, schemas["pick"]["output"])
+    jsonschema.validate(shown, schemas["show"]["output"])
+    assert imported["data"]["emotion"] == "happy" and picked["data"]["emotion"] == "happy" and picked["data"]["stage"] == "source"
+    assert shown["data"]["emotions"][0]["current"] is True
+    for name in ("import", "pick"):
+        assert "emotion" in schemas[name]["input"]["properties"]  # type: ignore[index]
+    kind = next(k for k in project.json("describe", "portrait")["data"]["kinds"] if k["name"] == "portrait")
+    source = next(s for s in kind["stages"] if s["name"] == "source")
+    assert {"emotion", "emotion_remove", "emotion_rename", "emotion_pick"} <= {d["name"] for d in source["decisions"]}
+
+
 def test_import_of_loop_frames_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
     """The Loop shape of `import --loop` (ticket 0193)."""
     from test_loop_kit import a_frame_loop, painted, write_kit
@@ -367,6 +390,20 @@ def test_an_icon_validates(project: Kiripix, schemas: dict[str, dict[str, object
     kind = next(k for k in described["data"]["kinds"] if k["name"] == "icon")
     assert [s["name"] for s in kind["stages"]][:6] == ["brief", "source", "cutout", "fit", "palette", "finish"]
     assert "icon.size" in {c["code"] for s in kind["stages"] for c in s["checks"]}
+
+
+def test_a_wearable_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The `wearable` Kind (ticket 0290): `new --body`, `describe`, and the `wearable.body_unknown` refusal."""
+    project.json("new", "character", "zed")
+
+    made = project.json("new", "wearable", "hair", "--body", "character.zed")
+    described = project.json("describe", "wearable")
+    refused = project.json("new", "wearable", "cap", "--body", "character.nobody", expect=1)
+
+    for result, name in ((made, "new"), (described, "describe"), (refused, "new")):
+        jsonschema.validate(result, schemas[name]["output"])
+    assert "body" in schemas["new"]["input"]["properties"]  # type: ignore[index]
+    assert refused["findings"][0]["code"] == "wearable.body_unknown"
 
 
 def test_a_bad_decision_of_a_look_is_refused(project: Kiripix) -> None:

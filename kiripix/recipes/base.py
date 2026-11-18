@@ -118,6 +118,36 @@ class BaseInputs(BaseModel):
     built: list[str] = []
 
 
+BODY_PARAM = "body"  # the Asset parameter that names a Wearable's body (ticket 0290)
+
+
+class BodyInputs(BaseModel):
+    """What a Stage reads of the Asset's body (ticket 0290), for a Kind that takes one (a Wearable). `built` names, by the
+    body's Kind, the Stages of the body whose input hashes are part of this Stage's input hash: a change to any of them makes
+    the Stage stale, and `status` names the body. A body of a Kind not listed counts for nothing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    built: dict[str, list[str]] = {}
+    # The Stage reads the body's built files (ticket 0291): until each of these Stages of the body is done, it is
+    # needs-input with the command that builds it. Without it the Stage only follows the body's hashes.
+    wait: bool = False
+
+
+@dataclass(frozen=True)
+class BodyView:
+    """What a Stage is handed of a Wearable's body (ticket 0291), for a Stage whose `StageInputs.body` has `built`. READ-ONLY:
+    a Stage never writes into the body's folder. `built` holds the output folders of the body's Stages named for its Kind;
+    `files` the body's source files that those Stages read (its clip sources, and its base's under the same names), by their
+    path relative to the body's folder."""
+
+    asset_id: str
+    asset_dir: Path
+    kind: str
+    built: dict[str, Path] = field(default_factory=dict)
+    files: dict[str, Path] = field(default_factory=dict)
+
+
 class StageInputs(BaseModel):
     """What a Stage's input hash covers.
 
@@ -125,7 +155,8 @@ class StageInputs(BaseModel):
     by dotted path into `kiripix.toml` (`body`, `project.tile`), where `palette` means the palette file's contents, or a
     computed setting (`computed_setting`). `given` names settings the Stage is given but that don't count as inputs, such
     as where a tool is installed: moving it must not make anything stale. Both reach the Stage in `StageRun.settings`.
-    `base` is what the Stage reads of the Asset's base (`BaseInputs`); a Stage without it reads nothing of a base.
+    `base` is what the Stage reads of the Asset's base (`BaseInputs`); a Stage without it reads nothing of a base. `body` is
+    the same for a Wearable's body (`BodyInputs`).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -135,6 +166,7 @@ class StageInputs(BaseModel):
     settings: list[str] = []
     given: list[str] = []
     base: BaseInputs | None = None
+    body: BodyInputs | None = None
 
 
 COMPUTED_SETTINGS: dict[str, Callable[[], Any]] = {}
@@ -278,12 +310,22 @@ class StageRun:
     # What the Stage's `StageInputs.base` declares of the Asset's base (ADR 0012); None for an Asset without a base and for
     # a Stage that declares nothing.
     base: BaseView | None = None
+    # What the Stage's `StageInputs.body` declares of a Wearable's body (ticket 0291); None for any other Asset.
+    body: BodyView | None = None
+    # The Wearables worn on this Asset (ticket 0294), for a Stage with `StageSpec.worn_stage`: each Wearable's ID and the output
+    # folder of its Stage of that name, for those that are built, in ID order. READ-ONLY. Empty for any other Stage.
+    wearing: dict[str, Path] = field(default_factory=dict)
+    # Each of those Wearables' default stacking `order` (its `sheet` parameter, ticket 0293), by ID.
+    wearing_order: dict[str, int] = field(default_factory=dict)
     # Who set each of `params`: "asset" (the Asset's own `asset.toml`), "base" (its base's) or "default". A Stage that has
     # a better value than a default (one a Model's generator worked out) uses it unless the Asset set the parameter itself.
     param_sources: Mapping[str, ParamSource] = field(default_factory=dict)
     # The files and folders the Stage's `project_files` names, by the path it gave (relative to the Project's root), each
     # with its absolute path. They are the only files of the Project outside the Asset that the Stage may read.
     project_files: dict[str, Path] = field(default_factory=dict)
+    # The parts of a Stage with `StageSpec.parts` that this run builds; the others are already in `output_dir`, copied from
+    # `previous`. None builds every part (a first build, `--force`, or a Stage without parts).
+    build_parts: frozenset[str] | None = None
 
 
 def param_or_generated(run: StageRun, name: str, generated: Mapping[str, Scalar]) -> Scalar | None:
@@ -357,6 +399,23 @@ class ReachHooks:
 
 
 @dataclass(frozen=True)
+class PartHooks:
+    """A Stage whose output is made of parts that are built from their own inputs (a Prop's states, ticket 0288). The
+    Stage's input hash stays one, but core also keeps a hash per part in the stamp, so a run builds only the parts whose
+    inputs changed and copies the others from the Stage's previous output, inside the one folder it swaps into place.
+
+    `inputs` gives each part's own inputs as JSON-able values, content hashes of what it reads (its Decisions, its files,
+    its upstream's part of the output), the default part first; core adds what every part shares (parameters, settings,
+    the version). It must name everything a part is built from, or a stale part is copied. `copy` copies one part from
+    the previous output folder into the new one, and says whether it could (else the part is built). `default_feeds_all`: the other parts are built from the default part
+    too (one scale for every state), so a change to it is a change to all of them, as `status` says."""
+
+    inputs: Callable[[StageRun], dict[str, Any]]
+    copy: Callable[[Path, Path, str], bool]
+    default_feeds_all: bool = False
+
+
+@dataclass(frozen=True)
 class StageSpec:
     """One Stage of a Recipe.
 
@@ -385,6 +444,9 @@ class StageSpec:
     image: str | None = None
     needs_input: NeedsInputFunction | None = None
     check: CheckFunction | None = None
+    # The name of a Wearable's Stage: this Stage's `check` is handed the built output of that Stage of each Wearable whose body
+    # is this Asset (`StageRun.wearing`), so a Check of the body can look across its Wearables (ticket 0294).
+    worn_stage: str | None = None
     # Runs after core paints the Stage's Overrides over its image and before its Checks, on the same output folder
     # (`output_dir`), so it sees the image as painted and its Checks see what it wrote. The image's unpainted hash and
     # the Stage's input hash don't depend on it. A Stage without it behaves as before.
@@ -414,6 +476,8 @@ class StageSpec:
     # before it is built. The Stage uses one unless the Asset set that parameter itself (`StageRun.param_sources`), and
     # `show` reports it the same way.
     generated_params: Callable[[StageRun], dict[str, Scalar]] | None = None
+    # The Stage's parts, each built from its own inputs (`PartHooks`); none for a Stage that is built whole.
+    parts: PartHooks | None = None
 
 
 @dataclass(frozen=True)
@@ -428,6 +492,9 @@ class KindSpec:
     # An Asset of this Kind can be made from a base (ADR 0012): its `base` parameter names another Asset of the Kind, whose
     # parameters it falls back to and of which its Stages read what their `StageInputs.base` declares.
     takes_base: bool = False
+    # An Asset of this Kind names its body in the `body` parameter (ticket 0290): an Asset of one of these Kinds, never of
+    # this Kind. Its Stages' `StageInputs.body` say what they read of it. Empty: the Kind has no body.
+    takes_body: tuple[str, ...] = ()
 
     def stage(self, name: str) -> StageSpec | None:
         return next((s for s in self.stages if s.name == name), None)

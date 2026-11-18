@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 8
+PROJECT_TEMPLATE = """schema_version = 9
 
 [project]
 name = "{name}"
@@ -90,6 +90,10 @@ canvas = [1376, 768]           # width and height in px
 
 [icon]                         # `kiripix new icon <name>`: the square an icon is fitted to
 size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) overrides it
+
+[portrait]                     # `kiripix new portrait <name>`: the canvas of a character's dialogue portraits
+canvas = [160, 224]            # width and height in px; a portrait's own brief overrides it
+# anchor = [80, 223]           # the pixel the figure stands on; the bottom centre when unset
 
 [character]
 height = 52                    # target height in px; a character's own `height` parameter overrides it

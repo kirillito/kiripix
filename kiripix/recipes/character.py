@@ -25,6 +25,7 @@ from kiripix.recipes.base import (
 from kiripix.recipes.blender_launcher import SETTING as BLENDER_SETTING
 from kiripix.recipes.blender_launcher import VERSION_SETTING as BLENDER_VERSION_SETTING
 from kiripix.recipes.blender_launcher import ScriptFailure, launch_file
+from kiripix.recipes.wearable_stack import check_render_stack
 from kiripix.recipes.character_finish import check_character_finish, run_character_finish
 from kiripix.recipes.character_palette import check_character_palette, palette_generated_params, run_character_palette
 from kiripix.recipes.character_sheet import check_character_sheet, run_character_sheet
@@ -180,10 +181,13 @@ def run_model(run: StageRun) -> None:
         path = variants(_imported_models(run))[chosen]
         source = path.name
     run.progress(1 if parameters else 0, 2 if parameters else 1, "starting Blender")
-    result = launch(run, "normalise_model", {"input": str(path), "output": str(run.output_dir / "model.blend"),
-                                             "height": MODEL_HEIGHT, "upload": str(run.output_dir / UPLOAD),
-                                             "facing": str(run.params.get("facing", "-y")),
-                                             "still": str(run.output_dir / STILL)})
+    arguments: dict[str, Any] = {"input": str(path), "output": str(run.output_dir / "model.blend"), "height": MODEL_HEIGHT,
+                                 "upload": str(run.output_dir / UPLOAD), "facing": str(run.params.get("facing", "-y")),
+                                 "still": str(run.output_dir / STILL)}
+    if run.body is not None:  # a Wearable (ticket 0291): put on the body's skeleton, so it is turned and scaled as the body is
+        arguments["like"] = str(run.body.built["model"] / "model.blend")
+        del arguments["upload"]
+    result = launch(run, "normalise_model", arguments)
     if result.get("upload") and not (run.output_dir / UPLOAD).is_file():
         raise StageFailure("Blender finished without writing the file for Mixamo")
     if not (run.output_dir / STILL).is_file():
@@ -349,6 +353,16 @@ CHARACTER = KindSpec(
                     default="top34_8",
                 ),
                 ParamSpec(
+                    name="cell_margin",
+                    type="int",
+                    description="Px of room kept round the poses on every side of the cell, beyond the pixel `finish`'s "
+                                "outline needs: a Wearable that reaches past the body (a hat, a pack) fits the cell when "
+                                "this is large enough (wearable.outside_cell says how large). 0 is the cell the poses "
+                                "themselves need.",
+                    default=0,
+                    minimum=0,
+                ),
+                ParamSpec(
                     name="bands",
                     type="int",
                     description="Toon shading: the number of light bands on the colour pass.",
@@ -403,8 +417,13 @@ CHARACTER = KindSpec(
             ),
             gpu=True,
             run=run_render,
+            check=check_render_stack,
+            worn_stage="render",
             generated_params=render_generated_params,
-            checks=(CheckSpec(code="render.camera_unknown", description="The camera preset exists in kiripix.toml."),),
+            checks=(CheckSpec(code="render.camera_unknown", description="The camera preset exists in kiripix.toml."),
+                    CheckSpec(code="wearable.stack_differs",
+                              description="Info, once a Wearable's render is built: where its Wearables stacked over the body "
+                                          "by order differ from stacked by depth, per clip, with the worst frames' boxes.")),
             owner_input="Tunes the camera preset once per project.",
             available_from="M3",
         ),

@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from test_character_clips import IDLE, WALK, clips_json
 from test_character_model import FIXTURES, calls
 from test_character_render import render_json
@@ -39,8 +39,7 @@ def clip_source(project: Kiripix, asset: str, name: str, **content: Any) -> None
     project.json("import", asset, str(path), "--role", "clip-source")
 
 
-def body(project: Kiripix, build: bool = True) -> Path:
-    """The base: the rigged fixture, with idle and walk (actions of its Model) and wave (a clip-source file)."""
+def build_body(project: Kiripix, build: bool = True) -> None:
     project.json("new", "character", "zed")
     shutil.copy(FIXTURES / "rigged.glb", project.cwd / "zed.glb")
     project.json("pick", BODY, project.json("import", BODY, "zed.glb")["data"]["variant"])
@@ -50,6 +49,12 @@ def body(project: Kiripix, build: bool = True) -> Path:
     if build:
         for stage in ("model", "rig", "clips"):
             project.json("run", BODY, stage)
+
+
+def body(project: Kiripix, build: bool = True) -> Path:
+    """The base: the rigged fixture, with idle and walk (actions of its Model) and wave (a clip-source file). Built once
+    per worker and copied into the test's Project (ticket 0275)."""
+    restore_template(project, f"character-base-body-{build}", lambda template: build_body(template, build))
     return folder_of(project, BODY)
 
 

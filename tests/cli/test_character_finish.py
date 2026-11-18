@@ -7,17 +7,17 @@ from typing import Any
 
 import numpy as np
 import pytest
-from conftest import Kiripix, stage_status
+from conftest import Kiripix, restore_template, stage_status
 from PIL import Image
 from test_character_model import HERO
-from test_character_palette import built, frames, project_palette
+from test_character_palette import build_built, frames, project_palette
 
 PALETTE_PARAMS = ("colors=3",)
 
 
-def finished(project: Kiripix, *params: str, border: int = 0) -> Path:
-    """Build to `palette`, optionally shrink the opaque part to leave `border` transparent px, then run `finish`."""
-    folder = built(project, *PALETTE_PARAMS)
+def build_finished(project: Kiripix, *params: str, border: int = 0) -> None:
+    build_built(project, *PALETTE_PARAMS)
+    folder = project.cwd / "assets" / "character" / "hero"
     if border:
         for path in frames(folder, "palette") + frames(folder, "render", "normal"):  # as a render's alpha is
             image = np.array(Image.open(path))
@@ -26,7 +26,14 @@ def finished(project: Kiripix, *params: str, border: int = 0) -> Path:
     if params:
         project.json("set", HERO, "finish", *params)
     project.json("run", HERO, "finish")
-    return folder
+
+
+def finished(project: Kiripix, *params: str, border: int = 0) -> Path:
+    """Build to `palette`, optionally shrink the opaque part to leave `border` transparent px, then run `finish`. One
+    template per set of arguments, built once per worker and copied into the test's Project (ticket 0275)."""
+    restore_template(project, f"character-finished-{border}-{'-'.join(params)}",
+                     lambda template: build_finished(template, *params, border=border))
+    return project.cwd / "assets" / "character" / "hero"
 
 
 def read(path: Path) -> np.ndarray:

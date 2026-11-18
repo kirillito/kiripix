@@ -41,6 +41,21 @@ before M6's `gen`.
 
 ## Acceptance criteria
 
-- [ ] The skill is in the repo, with a line in the README on installing it in a Project.
+- [x] The skill is in the repo, with a line in the README on installing it in a Project.
 - [ ] A fresh session with the skill takes the next ch01 room (not `harbor_front`) through its first pass. Its tokens and
       the Owner's UI minutes afterwards (`stats`) are recorded here, against the laneway's 19 minutes.
+
+## Result (2026-11-17)
+
+- **The skill:** [skills/room-first-pass/SKILL.md](../../skills/room-first-pass/SKILL.md), model-invoked (a session asked
+  for a room's first pass reaches it). It is the laneway's first pass (0134) as ten steps (brief, extend, source, fit, Layers,
+  Masks, palette, place, reach, export), each ending on its Stage `done` with no fixable error, plus the loop at every step
+  (`next`, one `decide --file` batch per Stage, `run`, `check`, Probes before looking), where the session stops (an
+  `owner_action` or exit code 3, normally `layers` in `needs-review`; and `todo` after the Owner's Decisions is ready to run,
+  as 0233 found), and the hand-over (what waits on the Owner, what's left for the UI, the Decision count for `stats`).
+  It names only Commands and finding codes, and points at `--help`, `describe room` and `schema` for the rest.
+- **README:** a line under "Further reading" on copying the folder to `.claude/skills/` in an asset Project.
+- **No new Command found missing** while writing it: `area-settle` (0279), `palette-suggest` (0280) and `probe layer-stats`
+  cover what 0134 scripted by hand.
+- **Left (the Owner):** the real run on the next ch01 room, its tokens and the Owner's `stats` minutes afterwards, against
+  the laneway's 19. The ticket stays `todo` until then.

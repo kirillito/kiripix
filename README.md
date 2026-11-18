@@ -468,6 +468,8 @@ check.
 - [docs/runner-licences.md](docs/runner-licences.md): the Runners' licences.
 - [docs/acceptance/](docs/acceptance/): the agent acceptance test and its recorded runs.
 - [CLAUDE.md](CLAUDE.md): rules for contributors and agents working on Kiripix itself.
+- [skills/room-first-pass/](skills/room-first-pass/SKILL.md): a Claude Code skill for an agent's first pass on a room,
+  from brief to export. Install it in your asset Project by copying the folder to `.claude/skills/room-first-pass/` there.
 
 ## License
 
