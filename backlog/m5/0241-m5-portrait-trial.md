@@ -42,8 +42,8 @@ folder of PNGs, with a short README, so the game can use it if the Kind isn't bu
 
 ## Acceptance criteria
 
-- [x] The numbers and images above (Results, below; the Owner's view of the sheets is still to record).
-- [x] The Owner's answers to 0240's questions recorded, and 0242–0245 updated to match.
+- [x] The numbers and images above (Results, below; the Owner's view of them is in "The Owner's view").
+- [ ] The Owner's answers to 0240's questions recorded, and 0242–0245 updated to match. **Withdrawn 2026-11-18** (see "The Owner's view"): the approach changes, so the questions are asked again after the redesign.
 - [x] The prototype runs on a folder of PNGs, with its README, for the game's fallback.
 
 ## Results
@@ -53,7 +53,7 @@ where the ticket asks for three), six 896 x 1200 JPEGs on a green that is about 
 in [0241-trial/](0241-trial/) (`portrait_set.py`, the fallback, with its [README](0241-trial/README.md); `experiments.py`;
 `register_check.py`; `layout.py`). It reads `kiripix.ops` only; nothing in `kiripix/` or `tests/` changed. The inputs are copied
 there as `input/<emotion>.jpeg`, originals untouched. Output is in `0241-trial/out/`; the figures below are in
-`out/results.json`. Status stays todo: the Owner's view and answers are still to come.
+`out/results.json`. Status stays todo: the Owner's view (2026-11-18) rejected the approach, see "The Owner's view".
 
 ### The Owner's time (told by the coordinator, 2026-11-18)
 
@@ -182,11 +182,36 @@ dialogue box. The portrait is the n=32 joint set, unlocked (`portraits/`), then 
 - GIF, the portrait alone, 3x, 0.6 s each: `c:/Homespace/kiripix/backlog/m5/0241-trial/out/flip_portrait_3x.gif`.
 - The same four with the lock: `out/sheet_1x_locked.png`, `out/sheet_3x_locked.png`, `out/flip_2x_locked.gif`,
   `out/flip_portrait_3x_locked.gif`.
-- **Owner's view: to record.** (My own check on the 1x sheet: the portrait is 224 px tall against the sprite's 57; its pixels
+- **Owner's view:** see "The Owner's view" below. (The agent's own check on the 1x sheet: the portrait is 224 px tall against the sprite's 57; its pixels
   are the same size as the room's and the sprite's; I could not judge the GIFs' motion, only that they are built from the
   same frames as the sheets.)
 
-### Answers to 0240's four questions (proposed here; the Owner accepted 1, 2 and 4 on 2026-11-18, and on 3 wants more
+### The Owner's view (2026-11-18): not what was wanted
+
+The Owner looked at the sheets and GIFs. They read fine, but the approach is wrong, for two reasons.
+
+**1. A technical fault: white patches that change from emotion to emotion.** Light specks sit along the outline (the hair
+strands, the hoodie's edge) and differ between the emotions. Cause, found by looking at the pixels afterwards: the image
+model draws a white sticker rim around the figure, the `cutout` here strips most of it but not all, and the rim differs per
+image, so what survives changes with the emotion (a speck at the hair's left edge is in neutral, happy and angry alike; a
+few more edge pixels turn pale or dark per emotion). The trial's own measure missed it (`key_fringe` finds 0, and the
+near-white test finds none), because the specks are pale grey-white, not white, and sit on the edge. A Check for it, and a
+cutout that takes the rim off whole, are part of any portrait Stage.
+
+**2. The premise.** The portraits were wanted to make the characters expressive, since at their size in the game they show
+no emotion or body language. The trial varied only the face, held the body still, and showed half the figure beside a small
+face patch that changes: it barely achieves that. A portrait should show emotion with the whole body (posture, shoulders, arms,
+gesture, the head's turn), so the body is expected to change between emotions. That inverts three things built on the
+trial's findings: "an emotion swap never moves the body by a pixel" (0240 and the game's M04 acceptance), registration
+outside a `face` region, and `lock_outside_face`, which would freeze the body to the neutral's. It also makes the half-figure
+crop pointless when only the face changes. For the game, Sanjay's portraits (and his character) are to be regenerated to be more
+expressive with the whole body.
+
+What this ticket still gives: the cutout, fit and colour findings hold (one scale, `n` colours for the set, the outline
+placement), the numbers on how an image model's edits drift, and a prototype for the fallback. The answers to 0240's four
+questions below are **withdrawn** until the portrait is redesigned.
+
+### Answers to 0240's four questions (proposed here; accepted by the Owner on 2026-11-18 and withdrawn the same day; on 3 the Owner wanted more
 colours, at least eventually: `n` a parameter up to 256, default 32 for now; see 0240's Answers)
 
 1. **Does registration hold on the free image model's edits, and is a `face` region needed?** Proposal: yes, it holds; on this

@@ -9,6 +9,12 @@ depends_on: [0242-m5-portrait-asset-and-emotions.md, 0274-m5-set-colours-op.md]
 
 # M5: the portrait's Stages: cutout, register, fit, palette, finish
 
+> **On hold (the Owner, 2026-11-18).** The design below assumes the body never changes between emotions (`register`,
+> `lock_outside_face`, `portrait.shimmer`). The Owner wants portraits that express emotion with the whole body, so those
+> parts are in question; see [0241](0241-m5-portrait-trial.md) "The Owner's view" and [0240](0240-m5-portrait-kind.md). Don't
+> start until 0240 is redesigned. Kept from the trial: the key tolerance, the white-rim removal (and a Check for
+> leftover rim specks, which differed between emotions), one scale and `n` colours for the set, the outline placement.
+
 Part of [0240](0240-m5-portrait-kind.md). Its table is the design, with the trial [0241](0241-m5-portrait-trial.md)'s
 changes the Owner accepted (2026-11-18, 0240's Answers). The trial's prototype, `0241-trial/portrait_set.py`, is the
 reference for each step.

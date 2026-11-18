@@ -69,7 +69,14 @@ exported, like clip names (ADR 0003).
 4. **The canvas and scale:** what the image model gives at 160 x 224 after `downscale`, and whether the style reads beside a
    painted room and a 52 px sprite (the game's M04-02 style test).
 
-## Answers (the Owner, 2026-11-18, from the trial 0241)
+## Answers (the Owner, 2026-11-18, from the trial 0241): WITHDRAWN
+
+> Withdrawn the same day, after the Owner saw the sheets ([0241](0241-m5-portrait-trial.md), "The Owner's view"). The
+> portraits are for emotion through the whole body (posture, gesture, the head's turn), not a face patch on a still body, so
+> the body is expected to change between emotions, and "an emotion swap never moves the body", registration outside a
+> `face` region and `lock_outside_face` are in question, and so is the half-figure crop. This Kind needs a redesign before
+> 0243–0245 are built. Kept below as what was answered, for the redesign to start from. The canvas, the set's own colours
+> (more of them, eventually) and one scale for a set may stand.
 
 1. **Registration** holds on the image model's edits without a `face` region (Sanjay's set: 0.03-0.09 source px). `register`
    and `portrait.misaligned` stay, for the edits that do drift.

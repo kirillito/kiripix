@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: character-pipeline
 type: trial
@@ -66,7 +66,9 @@ outlined for free, attachment materials numbered after the Model's.
 
 - [x] The sheets and numbers above (steps 1 to 5, on the generated mc03 male base instead of mc02: see Results).
 - [x] The Owner's answers to 0152's questions are recorded here, and the work tickets are filed.
-- [ ] The weapon compared as (a) and (c) against 0170, held in the hand, with the Owner's choice and its build ticket.
+- [x] ~~The weapon compared as (a) and (c) against 0170, held in the hand, with the Owner's choice and its build ticket.~~ Moved to
+      [0238](0238-m5-held-things-trial.md) (2026-11-16), and closed here by the Owner on 2026-11-18: 0238 runs it on the
+      `wearable` render path ([0291](0291-m5-wearable-model-rig-render.md)).
 
 ## Results (2026-11-18, steps 1 to 5; the weapon, steps 6 to 8, is 0238's)
 
