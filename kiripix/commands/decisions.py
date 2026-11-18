@@ -1,7 +1,7 @@
 """The Commands that change an Asset's decisions: set, decide, undo, redo, override, mask-import, plate-import and accept."""
 
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -9,12 +9,13 @@ from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import editing, journal
 from kiripix.core.errors import ExitCode, KiripixError, fail
-from kiripix.core.assets import is_asset_id, load_asset
+from kiripix.checks import Finding
+from kiripix.core.assets import Asset, is_asset_id, load_asset
 from kiripix.core.emotions import emotion_edit_findings
-from kiripix.export import frozen_layer_findings, loop_edit_findings, state_edit_findings
+from kiripix.export import emotion_freeze_findings, frozen_layer_findings, loop_edit_findings, state_edit_findings
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
-from kiripix.core.project import find_project
+from kiripix.core.project import Project, find_project
 from kiripix.recipes.base import CurrentDecision, Scalar
 
 
@@ -170,12 +171,8 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
                if arguments.stage == "layers" and d.decision == "remove" and isinstance(d.data.get("layer"), str)]
     if removed and (frozen := frozen_layer_findings(project, asset, removed)):
         raise KiripixError(frozen, ExitCode.CHECK_FAILED)  # an exported Layer's ID is frozen (spec §9)
-    if refused := loop_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
-        raise KiripixError(refused)  # a Loop's `remove` or `rename`: unknown, an ID taken, or its ID is frozen (spec §9)
-    if refused := state_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
-        raise KiripixError(refused)  # a Prop's state: a duplicate ID, an unknown state, or an exported ID (spec §9)
-    if refused := emotion_edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
-        raise KiripixError(refused)  # a portrait's emotion: a duplicate ID, or an unknown emotion
+    if refused := _edit_findings(project, asset, arguments.stage, [(d.decision, d.data) for d in documents]):
+        raise KiripixError(refused)
     if is_array:
         entries, after = editing.record_decisions(project, asset, arguments.stage, documents)
     else:
@@ -186,6 +183,17 @@ def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
                               decision=documents[-1].decision,
                               current=None if arguments.brief else current_decisions(after.current),
                               count=len(after.current), ids=[e.id for e in entries]))
+
+
+def _edit_findings(project: Project, asset: Asset, stage: str, edits: list[tuple[str, dict[str, Any]]]) -> list[Finding]:
+    """What refuses recording these Decisions on the Stage, from the first check that does: a Loop's `remove` or `rename`
+    (unknown, an ID taken, or its ID is frozen), a Prop's state (a duplicate ID, an unknown state, or an exported ID), a
+    portrait's emotion (a duplicate ID, an unknown emotion, or an exported emotion's remove or rename), spec §9. Each reads
+    the Stage's journal itself and keeps to its own Stage."""
+    for check in (loop_edit_findings, state_edit_findings, emotion_edit_findings, emotion_freeze_findings):
+        if found := check(project, asset, stage, edits):
+            return found
+    return []
 
 
 # undo and redo
@@ -249,15 +257,10 @@ def redo(arguments: StepInput, context: Context) -> Outcome[StepData]:
         if target.decision == "remove" and isinstance(layer, str) and (
                 frozen := frozen_layer_findings(project, asset, [layer])):
             raise KiripixError(frozen, ExitCode.CHECK_FAILED)  # redoing a remove is a remove: the freeze holds
-    if arguments.stage == "loops" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
-        if refused := loop_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
-            raise KiripixError(refused)  # redoing a remove or a rename is one: the same checks as `decide`
-    if arguments.stage == "source" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
-        if refused := state_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
-            raise KiripixError(refused)  # redoing a state Decision is recording it: the same checks as `decide`
-    if arguments.stage == "source" and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
-        if refused := emotion_edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
-            raise KiripixError(refused)  # redoing an emotion Decision is recording it: the same checks as `decide`
+    if arguments.stage in ("loops", "source") and (target := editing.next_redo(project, asset, arguments.stage)) is not None:
+        # redoing a Decision is recording it: the same checks as `decide`
+        if refused := _edit_findings(project, asset, arguments.stage, [(str(target.decision), dict(target.data or {}))]):
+            raise KiripixError(refused)
     entry, after = editing.redo(project, asset, arguments.stage)
     return Outcome(_step(entry, after, asset.id, arguments.stage, arguments.brief))
 

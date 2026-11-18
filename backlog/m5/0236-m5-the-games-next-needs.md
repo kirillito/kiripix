@@ -73,7 +73,7 @@ the ADR 0269, 0249's measured room, and 0232's real edit.
 
 | # | Item (game milestone) | Result |
 |---|---|---|
-| 1 | Things held in the hand (M03, M05, M06) | **Filed** [0237](0237-m5-render-records-named-points.md) (points per frame) and [0284](0284-m5-ui-show-points-on-the-frames.md) (their UI). **Trial first** [0238](0238-m5-held-things-trial.md): (a) or (c), the grip, the colours and the cell. Its build tickets come from it. |
+| 1 | Things held in the hand (M03, M05, M06) | **Filed** [0237](0237-m5-render-records-named-points.md) (points per frame) and [0284](0284-m5-ui-show-points-on-the-frames.md) (their UI). **Trial done** [0238](0238-m5-held-things-trial.md) (2026-11-18): (a) attached at a `grip_r` socket bone, a cell per clip, a ramp row for a class weapon. Build: [0300](0300-m5-clip-attach.md) to [0306](0306-m5-ui-held-things.md); atlas size: trial [0307](0307-m5-sprite-atlas-size-trial.md). |
 | 2 | A `portrait` Kind (M04) | **Trial first** [0241](0241-m5-portrait-trial.md) (its prototype is also the game's fallback script). **Filed** the spec [0240](0240-m5-portrait-kind.md) and 0242 to 0245 and [0274](0274-m5-set-colours-op.md). |
 | 3 | Prop states (M05–M06) | **Filed**, any number of states: [0257](0257-m5-prop-states.md) and 0258 to 0261. |
 | 4 | One clip timing for every body (M03) | **Filed** [0239](0239-m5-project-clip-table.md). Bases don't make it moot: the MC's two bodies are two bases. |

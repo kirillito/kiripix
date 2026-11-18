@@ -203,3 +203,63 @@ def sheet_stage(frames: str = "finish") -> tuple[StageFunction, CheckFunction]:
 
 
 run_character_sheet, check_character_sheet = sheet_stage("finish")
+
+
+DEPTH_ATLAS = "depth.png"
+FAR = 65535
+
+
+def _depth_frame(path: Any, asset: str) -> Any:
+    from PIL import Image
+
+    with Image.open(path) as image:
+        depth = np.asarray(image, dtype=np.uint16)
+    if depth.ndim != 2:
+        raise StageFailure("a depth frame of render is not a 16 bit gray image; run render again",
+                           fix=f"kiripix run {asset} render --force")
+    return depth
+
+
+def run_body_sheet(run: StageRun) -> None:
+    """The character's `sheet`: the colour and normal atlases, and `depth.png` in the same layout (ticket 0296)."""
+    run_character_sheet(run)
+    add_depth_atlas(run, None)
+
+
+def add_depth_atlas(run: StageRun, order: int | None) -> None:
+    """Write `depth.png` next to the sheet's atlases, in their layout, and list it in `sheet.json` (`files.depth`; `order`
+    too when given, a Wearable's)."""
+    from PIL import Image
+
+    from kiripix.ops import pack_atlas
+
+    sheet: dict[str, Any] = json.loads((run.output_dir / SHEET_FILE).read_text(encoding="utf-8"))
+    document: dict[str, Any] = json.loads((run.upstream["render"] / RENDER_FILE).read_text(encoding="utf-8"))
+    frames = {(c["name"], d, int(f["index"])): f for c in document["clips"] for d, listed in c["directions"].items()
+              for f in listed}
+    cell = (int(sheet["cell"]["width"]), int(sheet["cell"]["height"]))
+    cell_pivot = (int(sheet["pivot"]["x"]), int(sheet["pivot"]["y"]))
+    encoded: list[Any] = []
+    pivots: list[tuple[int, int]] = []
+    for clip in sheet["clips"]:
+        for direction, listed in clip["directions"].items():
+            for entry in listed:
+                run.check_cancel()
+                found = frames[(clip["name"], direction, int(entry["index"]))]
+                depth = _depth_frame(run.upstream["render"] / str(found["files"]["depth"]), run.asset_id)
+                rgba = np.zeros((*depth.shape, 4), dtype=np.uint8)  # the 16 bit value in two bytes; alpha marks a pixel
+                rgba[..., 0], rgba[..., 1], rgba[..., 3] = depth >> 8, depth & 255, 255
+                encoded.append(rgba)
+                pivots.append((int(np.floor(found["pivot"][0] + 0.5)), int(np.floor(found["pivot"][1] + 0.5))))
+    atlas, rects = pack_atlas(encoded, pivots, cell, int(sheet["columns"]), cell_pivot)
+    expected = [(e["rect"]["x"], e["rect"]["y"], e["rect"]["width"], e["rect"]["height"])
+                for c in sheet["clips"] for listed in c["directions"].values() for e in listed]
+    if rects != expected:
+        raise StageFailure("the depth atlas doesn't share the colour atlas's layout")  # can't happen
+    depth_atlas = (atlas[..., 0].astype(np.uint16) << 8) | atlas[..., 1].astype(np.uint16)
+    depth_atlas[atlas[..., 3] == 0] = FAR
+    Image.fromarray(depth_atlas).save(run.output_dir / DEPTH_ATLAS)
+    sheet["files"]["depth"] = DEPTH_ATLAS
+    if order is not None:
+        sheet["order"] = order
+    (run.output_dir / SHEET_FILE).write_text(json.dumps(sheet, indent=1) + "\n", encoding="utf-8")

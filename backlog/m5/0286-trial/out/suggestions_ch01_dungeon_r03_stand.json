@@ -1,0 +1,535 @@
+[
+ {
+  "name": "stand0",
+  "box": [
+   278,
+   21,
+   361,
+   80
+  ],
+  "why": "mask from point (296,24)",
+  "best_key": "trash2",
+  "iou": 0.0,
+  "pixels": 4698
+ },
+ {
+  "name": "stand1",
+  "box": [
+   364,
+   31,
+   607,
+   88
+  ],
+  "why": "mask from point (392,40)",
+  "best_key": "booth",
+  "iou": 0.002,
+  "pixels": 6847
+ },
+ {
+  "name": "stand2",
+  "box": [
+   29,
+   33,
+   497,
+   89
+  ],
+  "why": "mask from point (200,72)",
+  "best_key": "bin",
+  "iou": 0.0,
+  "pixels": 11797
+ },
+ {
+  "name": "stand3",
+  "box": [
+   37,
+   85,
+   57,
+   115
+  ],
+  "why": "mask from point (40,88)",
+  "best_key": "bin",
+  "iou": 0.895,
+  "pixels": 530
+ },
+ {
+  "name": "stand4",
+  "box": [
+   30,
+   29,
+   589,
+   91
+  ],
+  "why": "mask from point (72,88)",
+  "best_key": "booth",
+  "iou": 0.002,
+  "pixels": 16497
+ },
+ {
+  "name": "stand5",
+  "box": [
+   206,
+   78,
+   218,
+   238
+  ],
+  "why": "mask from point (216,88)",
+  "best_key": "rail_a",
+  "iou": 0.38,
+  "pixels": 1275
+ },
+ {
+  "name": "stand6",
+  "box": [
+   276,
+   19,
+   552,
+   90
+  ],
+  "why": "mask from point (376,88)",
+  "best_key": "booth",
+  "iou": 0.0,
+  "pixels": 6012
+ },
+ {
+  "name": "stand7",
+  "box": [
+   275,
+   19,
+   499,
+   90
+  ],
+  "why": "mask from point (408,88)",
+  "best_key": "trash2",
+  "iou": 0.0,
+  "pixels": 4809
+ },
+ {
+  "name": "stand8",
+  "box": [
+   36,
+   19,
+   499,
+   90
+  ],
+  "why": "mask from point (456,88)",
+  "best_key": "trash2",
+  "iou": 0.0,
+  "pixels": 12129
+ },
+ {
+  "name": "stand9",
+  "box": [
+   565,
+   86,
+   596,
+   135
+  ],
+  "why": "mask from point (568,88)",
+  "best_key": "booth",
+  "iou": 0.145,
+  "pixels": 1453
+ },
+ {
+  "name": "stand10",
+  "box": [
+   103,
+   91,
+   119,
+   166
+  ],
+  "why": "mask from point (104,104)",
+  "best_key": "planter_n",
+  "iou": 0.974,
+  "pixels": 1126
+ },
+ {
+  "name": "stand11",
+  "box": [
+   209,
+   80,
+   220,
+   168
+  ],
+  "why": "mask from point (216,104)",
+  "best_key": "rail_a",
+  "iou": 0.688,
+  "pixels": 599
+ },
+ {
+  "name": "stand12",
+  "box": [
+   249,
+   80,
+   256,
+   167
+  ],
+  "why": "mask from point (248,104)",
+  "best_key": "rail_b",
+  "iou": 0.901,
+  "pixels": 465
+ },
+ {
+  "name": "stand13",
+  "box": [
+   451,
+   53,
+   607,
+   136
+  ],
+  "why": "mask from point (600,104)",
+  "best_key": "booth",
+  "iou": 0.404,
+  "pixels": 4270
+ },
+ {
+  "name": "stand14",
+  "box": [
+   108,
+   103,
+   122,
+   165
+  ],
+  "why": "mask from point (120,120)",
+  "best_key": "planter_n",
+  "iou": 0.103,
+  "pixels": 267
+ },
+ {
+  "name": "stand15",
+  "box": [
+   498,
+   108,
+   599,
+   135
+  ],
+  "why": "mask from point (504,120)",
+  "best_key": "booth",
+  "iou": 0.122,
+  "pixels": 1260
+ },
+ {
+  "name": "stand16",
+  "box": [
+   595,
+   113,
+   604,
+   135
+  ],
+  "why": "mask from point (600,120)",
+  "best_key": "booth",
+  "iou": 0.012,
+  "pixels": 173
+ },
+ {
+  "name": "stand17",
+  "box": [
+   208,
+   92,
+   220,
+   167
+  ],
+  "why": "mask from point (216,136)",
+  "best_key": "rail_a",
+  "iou": 0.433,
+  "pixels": 372
+ },
+ {
+  "name": "stand18",
+  "box": [
+   246,
+   80,
+   259,
+   238
+  ],
+  "why": "mask from point (248,136)",
+  "best_key": "rail_b",
+  "iou": 0.291,
+  "pixels": 1256
+ },
+ {
+  "name": "stand19",
+  "box": [
+   498,
+   83,
+   603,
+   136
+  ],
+  "why": "mask from point (520,136)",
+  "best_key": "booth",
+  "iou": 0.174,
+  "pixels": 1914
+ },
+ {
+  "name": "stand20",
+  "box": [
+   498,
+   39,
+   602,
+   153
+  ],
+  "why": "mask from point (568,136)",
+  "best_key": "booth",
+  "iou": 0.244,
+  "pixels": 3611
+ },
+ {
+  "name": "stand21",
+  "box": [
+   499,
+   82,
+   605,
+   146
+  ],
+  "why": "mask from point (600,136)",
+  "best_key": "booth",
+  "iou": 0.299,
+  "pixels": 3231
+ },
+ {
+  "name": "stand22",
+  "box": [
+   208,
+   90,
+   219,
+   167
+  ],
+  "why": "mask from point (216,152)",
+  "best_key": "rail_a",
+  "iou": 0.629,
+  "pixels": 566
+ },
+ {
+  "name": "stand23",
+  "box": [
+   127,
+   168,
+   140,
+   238
+  ],
+  "why": "mask from point (136,168)",
+  "best_key": "pylons",
+  "iou": 0.099,
+  "pixels": 827
+ },
+ {
+  "name": "stand24",
+  "box": [
+   166,
+   169,
+   179,
+   238
+  ],
+  "why": "mask from point (168,168)",
+  "best_key": "pylons",
+  "iou": 0.094,
+  "pixels": 779
+ },
+ {
+  "name": "stand25",
+  "box": [
+   206,
+   81,
+   219,
+   239
+  ],
+  "why": "mask from point (216,168)",
+  "best_key": "rail_a",
+  "iou": 0.162,
+  "pixels": 1082
+ },
+ {
+  "name": "stand26",
+  "box": [
+   286,
+   169,
+   298,
+   238
+  ],
+  "why": "mask from point (296,168)",
+  "best_key": "pylons",
+  "iou": 0.095,
+  "pixels": 798
+ },
+ {
+  "name": "stand27",
+  "box": [
+   340,
+   169,
+   355,
+   238
+  ],
+  "why": "mask from point (344,168)",
+  "best_key": "pylons",
+  "iou": 0.099,
+  "pixels": 846
+ },
+ {
+  "name": "stand28",
+  "box": [
+   381,
+   169,
+   394,
+   238
+  ],
+  "why": "mask from point (392,168)",
+  "best_key": "pylons",
+  "iou": 0.096,
+  "pixels": 795
+ },
+ {
+  "name": "stand29",
+  "box": [
+   420,
+   169,
+   432,
+   238
+  ],
+  "why": "mask from point (424,168)",
+  "best_key": "pylons",
+  "iou": 0.092,
+  "pixels": 754
+ },
+ {
+  "name": "stand30",
+  "box": [
+   500,
+   169,
+   513,
+   238
+  ],
+  "why": "mask from point (504,168)",
+  "best_key": "pylons",
+  "iou": 0.093,
+  "pixels": 782
+ },
+ {
+  "name": "stand31",
+  "box": [
+   245,
+   102,
+   259,
+   238
+  ],
+  "why": "mask from point (248,184)",
+  "best_key": "pylons",
+  "iou": 0.098,
+  "pixels": 936
+ },
+ {
+  "name": "stand32",
+  "box": [
+   460,
+   169,
+   476,
+   238
+  ],
+  "why": "mask from point (472,184)",
+  "best_key": "pylons",
+  "iou": 0.092,
+  "pixels": 796
+ },
+ {
+  "name": "stand33",
+  "box": [
+   302,
+   180,
+   337,
+   218
+  ],
+  "why": "mask from point (312,200)",
+  "best_key": "post",
+  "iou": 0.906,
+  "pixels": 478
+ },
+ {
+  "name": "stand34",
+  "box": [
+   35,
+   169,
+   604,
+   238
+  ],
+  "why": "mask from point (376,200)",
+  "best_key": "arms",
+  "iou": 0.202,
+  "pixels": 10119
+ },
+ {
+  "name": "stand35",
+  "box": [
+   305,
+   206,
+   334,
+   225
+  ],
+  "why": "mask from point (312,216)",
+  "best_key": "post",
+  "iou": 0.005,
+  "pixels": 331
+ },
+ {
+  "name": "stand36",
+  "box": [
+   36,
+   258,
+   58,
+   311
+  ],
+  "why": "mask from point (56,264)",
+  "best_key": "bench_w",
+  "iou": 0.728,
+  "pixels": 960
+ },
+ {
+  "name": "stand37",
+  "box": [
+   102,
+   258,
+   118,
+   311
+  ],
+  "why": "mask from point (104,264)",
+  "best_key": "planter_sw",
+  "iou": 0.99,
+  "pixels": 792
+ },
+ {
+  "name": "stand38",
+  "box": [
+   501,
+   258,
+   517,
+   311
+  ],
+  "why": "mask from point (504,264)",
+  "best_key": "planter_se",
+  "iou": 0.963,
+  "pixels": 825
+ },
+ {
+  "name": "stand39",
+  "box": [
+   37,
+   263,
+   61,
+   317
+  ],
+  "why": "mask from point (56,312)",
+  "best_key": "bench_w",
+  "iou": 0.756,
+  "pixels": 785
+ },
+ {
+  "name": "stand40",
+  "box": [
+   582,
+   257,
+   604,
+   332
+  ],
+  "why": "mask from point (584,312)",
+  "best_key": "bench_e",
+  "iou": 0.725,
+  "pixels": 1040
+ }
+]

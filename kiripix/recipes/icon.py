@@ -47,7 +47,7 @@ from kiripix.recipes.prop import (
     _check_export,
     _cutout,
     _cutout_calls,
-    _export_needs_input,
+    export_needs_input,
     _finish,
 )
 from kiripix.recipes.prop import PROP
@@ -247,7 +247,7 @@ ICON = KindSpec(
             output_root="out",
             available_from="M5",
             run=_export,
-            needs_input=_export_needs_input,
+            needs_input=export_needs_input,
             check=_check_export,
         ),
     ),

@@ -49,12 +49,17 @@ class Finding(BaseModel):
     points: list[tuple[int, int]] = Field(default_factory=list)
     """Further pixels, `[x, y]` in target px, that the finding is about. Left out of the JSON when empty."""
 
+    data: dict[str, Any] = Field(default_factory=dict)
+    """What the finding says as data for a reader that shouldn't parse `message` (ticket 0296). Each code that has some
+    documents its keys. Left out of the JSON when empty."""
+
     @model_serializer(mode="wrap")
     def _omit_empty_points(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        data: dict[str, Any] = handler(self)
-        if not data.get("points"):
-            data.pop("points", None)
-        return data
+        found: dict[str, Any] = handler(self)
+        for key in ("points", "data"):
+            if not found.get(key):
+                found.pop(key, None)
+        return found
 
     @model_validator(mode="after")
     def _one_remedy(self) -> Self:

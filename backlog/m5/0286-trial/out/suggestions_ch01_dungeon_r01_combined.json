@@ -1,0 +1,223 @@
+[
+ {
+  "name": "stand0",
+  "box": [
+   28,
+   15,
+   226,
+   69
+  ],
+  "why": "mask from point (136,24)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 4259
+ },
+ {
+  "name": "stand1",
+  "box": [
+   41,
+   15,
+   350,
+   70
+  ],
+  "why": "mask from point (168,24)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 7330
+ },
+ {
+  "name": "stand2",
+  "box": [
+   41,
+   14,
+   381,
+   108
+  ],
+  "why": "mask from point (232,24)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 9179
+ },
+ {
+  "name": "stand3",
+  "box": [
+   242,
+   21,
+   374,
+   67
+  ],
+  "why": "mask from point (344,24)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 4650
+ },
+ {
+  "name": "stand4",
+  "box": [
+   133,
+   22,
+   173,
+   68
+  ],
+  "why": "mask from point (152,40)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 756
+ },
+ {
+  "name": "stand5",
+  "box": [
+   160,
+   30,
+   241,
+   56
+  ],
+  "why": "mask from point (168,40)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 1754
+ },
+ {
+  "name": "stand6",
+  "box": [
+   232,
+   24,
+   351,
+   68
+  ],
+  "why": "mask from point (248,40)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 3924
+ },
+ {
+  "name": "stand7",
+  "box": [
+   29,
+   20,
+   164,
+   69
+  ],
+  "why": "mask from point (72,56)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 4554
+ },
+ {
+  "name": "stand8",
+  "box": [
+   68,
+   22,
+   136,
+   64
+  ],
+  "why": "mask from point (104,56)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 2453
+ },
+ {
+  "name": "stand9",
+  "box": [
+   133,
+   22,
+   174,
+   69
+  ],
+  "why": "mask from point (152,56)",
+  "best_key": "pipe_w",
+  "iou": 0.0,
+  "pixels": 1036
+ },
+ {
+  "name": "stand10",
+  "box": [
+   25,
+   15,
+   372,
+   123
+  ],
+  "why": "mask from point (56,72)",
+  "best_key": "layer3",
+  "iou": 0.002,
+  "pixels": 22218
+ },
+ {
+  "name": "stand11",
+  "box": [
+   246,
+   102,
+   365,
+   468
+  ],
+  "why": "mask from point (248,120)",
+  "best_key": "pipe_e",
+  "iou": 0.012,
+  "pixels": 17749
+ },
+ {
+  "name": "stand12",
+  "box": [
+   37,
+   102,
+   156,
+   471
+  ],
+  "why": "mask from point (152,424)",
+  "best_key": "layer1",
+  "iou": 0.374,
+  "pixels": 11189
+ },
+ {
+  "name": "stand13",
+  "box": [
+   39,
+   429,
+   148,
+   465
+  ],
+  "why": "mask from point (56,456)",
+  "best_key": "layer1",
+  "iou": 0.048,
+  "pixels": 2058
+ },
+ {
+  "name": "stand14",
+  "box": [
+   245,
+   103,
+   363,
+   470
+  ],
+  "why": "mask from point (264,456)",
+  "best_key": "pipe_e",
+  "iou": 0.017,
+  "pixels": 17921
+ },
+ {
+  "name": "stand15",
+  "box": [
+   245,
+   107,
+   362,
+   471
+  ],
+  "why": "mask from point (280,456)",
+  "best_key": "pipe_e",
+  "iou": 0.029,
+  "pixels": 10757
+ },
+ {
+  "name": "stand16",
+  "box": [
+   254,
+   443,
+   362,
+   465
+  ],
+  "why": "mask from point (296,456)",
+  "best_key": "pipe_e",
+  "iou": 0.038,
+  "pixels": 1957
+ }
+]

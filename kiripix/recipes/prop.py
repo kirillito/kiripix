@@ -84,7 +84,7 @@ _RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
 _CHROMA = re.compile("^#[0-9A-Fa-f]{6}$")
 PROP_SCHEMA_VERSION = 2  # 1: `size`, `origin` and the footprint's convex `collision` shapes (ticket 0052)
 # 2: a Prop with states adds `default` and `states` (ticket 0260); a Prop without them differs only in the number
-_NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
+NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
 
 # brief
@@ -404,10 +404,10 @@ def _check_footprint_of(run: StageRun, state: str | None) -> list[Finding]:
 # footprint as convex collision shapes. The Exporter (`kiripix.export`) turns those into the engine's files.
 
 
-def _export_needs_input(run: StageRun) -> NeedsInput | None:
+def export_needs_input(run: StageRun) -> NeedsInput | None:
     if run.settings["export.godot"].get("project"):
         return None
-    return NeedsInput("no Godot project to export into", owner_action=_NO_TARGET)
+    return NeedsInput("no Godot project to export into", owner_action=NO_TARGET)
 
 
 def _footprint_shapes(polygon: list[list[int]], asset: str) -> list[list[list[int]]]:
@@ -464,7 +464,7 @@ def _check_export(run: StageRun) -> list[Finding]:
     if run.settings["export.godot"].get("project"):
         return []
     return [Finding(code="export.no_target", message="no Godot project to export into",
-                    position=Position(asset=run.asset_id, stage="export"), owner_action=_NO_TARGET)]
+                    position=Position(asset=run.asset_id, stage="export"), owner_action=NO_TARGET)]
 
 
 PROP = KindSpec(
@@ -635,7 +635,7 @@ PROP = KindSpec(
             output_root="out",
             available_from="M2",
             run=_export,
-            needs_input=_export_needs_input,
+            needs_input=export_needs_input,
             check=_check_export,
         ),
     ),

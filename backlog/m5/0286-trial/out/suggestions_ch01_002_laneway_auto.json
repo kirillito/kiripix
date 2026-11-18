@@ -1,0 +1,54 @@
+[
+ {
+  "name": "auto0",
+  "box": [
+   1046,
+   85,
+   1054,
+   121
+  ],
+  "why": "tall thin from point (1050,110)",
+  "best_key": "van",
+  "iou": 0.005,
+  "pixels": 219
+ },
+ {
+  "name": "auto1",
+  "box": [
+   1047,
+   116,
+   1054,
+   153
+  ],
+  "why": "tall thin from point (1050,130)",
+  "best_key": "van",
+  "iou": 0.007,
+  "pixels": 186
+ },
+ {
+  "name": "auto2",
+  "box": [
+   849,
+   402,
+   873,
+   624
+  ],
+  "why": "tall thin from point (870,470)",
+  "best_key": "van",
+  "iou": 0.0,
+  "pixels": 3737
+ },
+ {
+  "name": "auto3",
+  "box": [
+   106,
+   538,
+   125,
+   624
+  ],
+  "why": "tall thin from point (110,610)",
+  "best_key": "van",
+  "iou": 0.0,
+  "pixels": 948
+ }
+]

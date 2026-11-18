@@ -263,8 +263,24 @@ class AssetGraph:
         body, wanted = self.body, spec.inputs.body
         if body is None or wanted is None:
             return {}
+        return self._built_hashes(body, wanted.built.get(body.asset.kind, []), hash_of)
+
+    @staticmethod
+    def _built_hashes(related: "AssetGraph", names: list[str],
+                      hash_of: Callable[["AssetGraph", str], str] | None) -> dict[str, str]:
+        """The input hash of each named Stage of a related Asset (a base, a body), in the form wanted."""
         hash_of = hash_of or AssetGraph.input_hash
-        return {name: hash_of(body, name) for name in wanted.built.get(body.asset.kind, [])}
+        return {name: hash_of(related, name) for name in names}
+
+    @staticmethod
+    def _unbuilt(related: "AssetGraph", names: list[str], role: str) -> NeedsInput | None:
+        """Why a Stage must wait for a related Asset (`role`: its base, its body): a Stage of it that it reads isn't done."""
+        for name in names:
+            state = related.state(name)
+            if state.status != "done":
+                return NeedsInput(f"its {role} {related.asset.id} has no built {name} (it is {state.status})",
+                                  command=f"kiripix run {related.asset.id} {name}")
+        return None
 
     def params(self, spec: StageSpec) -> dict[str, Scalar]:
         """The Stage's parameters: declared defaults, overridden by the base's `[stages.<stage>]` for an Asset made from a
@@ -366,12 +382,7 @@ class AssetGraph:
         base, wanted = self.base, spec.inputs.base
         if base is None or wanted is None:
             return None
-        for name in wanted.built:
-            state = base.state(name)
-            if state.status != "done":
-                return NeedsInput(f"its base {base.asset.id} has no built {name} (it is {state.status})",
-                                  command=f"kiripix run {base.asset.id} {name}")
-        return None
+        return self._unbuilt(base, list(wanted.built), "base")
 
     def _body_view(self, spec: StageSpec) -> BodyView | None:
         """What a Wearable's Stage is handed of its body: the folders of the body's Stages it reads, and their source files."""
@@ -387,6 +398,12 @@ class AssetGraph:
         return BodyView(asset_id=body.asset.id, asset_dir=body.asset.dir, kind=body.asset.kind,
                         built={name: body.output_dir(body.spec(name)) for name in names}, files=files)
 
+    def worn_order(self) -> int:
+        """This Wearable's default stacking order over its body, from the Stage whose recipe gives `StageSpec.worn_order`; a
+        Wearable that can't be read is a finding naming its file, not a silent 0."""
+        spec, hook = self.stage_with(lambda s: s.worn_order, "gives a Wearable's stacking order")
+        return hook(self.params(spec))
+
     def _wearing(self, spec: StageSpec) -> tuple[dict[str, Path], dict[str, int]]:
         """The built output of the Stage `spec.worn_stage` of each Wearable of this Asset, by Wearable ID (ticket 0294), and
         each one's `order`, the `sheet` parameter that is its default stacking order (ticket 0293)."""
@@ -395,17 +412,11 @@ class AssetGraph:
         found: dict[str, Path] = {}
         orders: dict[str, int] = {}
         for wearable in wearables_of(self.project, self.asset.id):
-            try:
-                theirs = AssetGraph(self.project, load_asset(self.project, wearable), self.cache)
-                worn = theirs.spec(spec.worn_stage)
-            except KiripixError:
-                continue
+            theirs = AssetGraph(self.project, load_asset(self.project, wearable), self.cache)
+            worn = theirs.spec(spec.worn_stage)
             if theirs.built_hash(worn) is not None:
                 found[wearable] = theirs.output_dir(worn)
-                try:
-                    orders[wearable] = int(theirs.params(theirs.spec("sheet")).get("order", 0))
-                except (KiripixError, TypeError, ValueError):
-                    orders[wearable] = 0
+                orders[wearable] = theirs.worn_order()
         return found, orders
 
     def _body_not_built(self, spec: StageSpec) -> NeedsInput | None:
@@ -413,12 +424,7 @@ class AssetGraph:
         body, wanted = self.body, spec.inputs.body
         if body is None or wanted is None or not wanted.wait:
             return None
-        for name in wanted.built.get(body.asset.kind, []):
-            state = body.state(name)
-            if state.status != "done":
-                return NeedsInput(f"its body {body.asset.id} has no built {name} (it is {state.status})",
-                                  command=f"kiripix run {body.asset.id} {name}")
-        return None
+        return self._unbuilt(body, wanted.built.get(body.asset.kind, []), "body")
 
     def project_files(self, spec: StageSpec) -> dict[str, Path]:
         """The Project's own files that build this Asset in the Stage (`StageSpec.project_files`), by the path the Stage
@@ -470,7 +476,7 @@ class AssetGraph:
                 "asset": base.asset.id,
                 "files": {name: self.cache.file_hash(path) for name, path in self.base_files(spec).items()},
                 "decisions": {name: journal.hashable(base.replay(name)) for name in wanted.decisions},
-                "built": {name: hash_of(base, name) for name in wanted.built},
+                "built": self._built_hashes(base, list(wanted.built), hash_of),
                 "params": self._base_params(spec),
             }
         body = self.body
@@ -1296,6 +1302,7 @@ def run_asset(
                     position=Position(asset=asset.id, stage=spec.name),
                     fix=fix,
                     owner_action=owner_action,
+                    data=dict(waiting.data) if waiting is not None and waiting.data else {},
                 )
             )
             exit_code = _worse(exit_code, ExitCode.NEEDS_OWNER)

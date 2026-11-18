@@ -145,6 +145,63 @@ def remove_small_pieces(mask: BoolMask, min_piece: int) -> BoolMask:
     return result
 
 
+def remove_small_islands(mask: BoolMask, min_piece: int, *, eight: bool = True) -> BoolMask:
+    """`mask` without its pieces of fewer than `min_piece` pixels: what `remove_small_pieces` does (8-connected unless
+    `eight` is false), found a great deal faster on a large image. It joins the runs of each row, not the pixels, so the work
+    follows the shape's edges, not its area. The input is not modified."""
+    if mask.dtype != np.bool_ or mask.ndim != 2:
+        raise ValueError("a Mask is a 2-D boolean array")
+    if min_piece < 0:
+        raise ValueError(f"min_piece can't be negative, got {min_piece}")
+    result = mask.copy()
+    if min_piece <= 1 or not mask.any():
+        return result
+    height, width = mask.shape
+    padded = np.zeros((height, width + 2), dtype=np.int8)
+    padded[:, 1:-1] = mask
+    edges = np.diff(padded, axis=1)
+    run_y, start_x = np.nonzero(edges == 1)  # raster order: rows ascending, then x ascending
+    end_y, end_x = np.nonzero(edges == -1)
+    assert (run_y == end_y).all()
+    ys, starts, ends = run_y.tolist(), start_x.tolist(), (end_x - 1).tolist()  # ends are inclusive
+    count = len(ys)
+    parent = list(range(count))
+
+    def find(at: int) -> int:
+        while parent[at] != at:
+            parent[at] = parent[parent[at]]
+            at = parent[at]
+        return at
+
+    slack = 1 if eight else 0  # 8-connected runs may touch diagonally: they overlap in the range widened by one
+    row_start: dict[int, int] = {}
+    for index, y in enumerate(ys):
+        row_start.setdefault(y, index)
+    low, low_row = 0, -1
+    for index in range(count):
+        below = row_start.get(ys[index] + 1)
+        if below is None:
+            continue
+        if low_row != ys[index]:  # a new row: its runs ascend, so what can't touch one run can't touch the next either
+            low, low_row = below, ys[index]
+        while low < count and ys[low] == ys[index] + 1 and ends[low] + slack < starts[index]:
+            low += 1
+        at = low
+        while at < count and ys[at] == ys[index] + 1 and starts[at] <= ends[index] + slack:
+            a, b = find(index), find(at)
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+            at += 1
+    sizes: dict[int, int] = {}
+    for index in range(count):
+        root = find(index)
+        sizes[root] = sizes.get(root, 0) + ends[index] - starts[index] + 1
+    for index in range(count):
+        if sizes[find(index)] < min_piece:
+            result[ys[index], starts[index]:ends[index] + 1] = False
+    return result
+
+
 def enclosed_holes(mask: BoolMask) -> BoolMask:
     """The pixels a binary Mask encloses without containing: clear pixels that can't reach the image edge through clear
     pixels, moving up, down, left or right (so a gap one pixel wide, even a diagonal one, doesn't let a hole out of an

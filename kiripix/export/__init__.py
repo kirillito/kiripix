@@ -2,7 +2,7 @@
 
 A room's, prop's or character's `export` Stage leaves engine-free outputs in `out/export/`: a room's mapped Plate and
 `room.json` with its shapes and Markers, a prop's sprite and `prop.json` with its origin and collision shapes, a
-character's two atlases and `character.json` with its clips, an icon's `icon.png` and `icon.json`. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
+character's two atlases and `character.json` with its clips, an icon's `icon.png` and `icon.json`, a portrait's images and `portrait.json`. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
 
 The game's work is never overwritten (ADR 0003). A file is written only if the Manifest lists it and it still has the
 listed hash. `force` backs up and overwrites an owned file the game changed; `adopt` backs up and takes over a file the
@@ -30,6 +30,7 @@ from kiripix.export.checks import (
     frozen_findings,
     frozen_layer_findings,
     frozen_loop_findings,
+    emotion_freeze_findings,
     loop_edit_findings,
     state_edit_findings,
     pairing_findings,
@@ -43,6 +44,7 @@ from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
 from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
 from kiripix.export.icon import ICON_FILE, ICON_RECORD, read_icon
+from kiripix.export.portrait import PORTRAIT_FILE, emotion_ids, read_portrait
 from kiripix.export.prop import SPRITE_FILE, read_prop
 from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, ROOM_FILE, built_dir, read_room
 from kiripix.export.wearable import COLOR_FILE as WEARABLE_COLOR, DEPTH_FILE, NORMAL_FILE as WEARABLE_NORMAL, body_exported, read_wearable
@@ -87,7 +89,12 @@ class _Plan:
     result: ExportResult
 
 
-def _room_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
+# The files, by `res://` path, that the same export call is about to write: the one thing a Kind's function can read beyond the
+# Asset itself (a Wearable's body exported in the same `--all`). Most Kinds ignore it.
+_Planned = dict[str, bytes] | None
+
+
+def _room_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
     """The files of a room's export, by `res://` path, and the IDs they carry."""
     room = read_room(graph)
     name = graph.asset.id.split(".", 1)[1]
@@ -115,7 +122,7 @@ def _room_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
     return files, room_ids(room)
 
 
-def _prop_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
+def _prop_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
     """The files of a prop's export, by `res://` path, and the IDs they carry."""
     prop = read_prop(graph)
     name = graph.asset.id.split(".", 1)[1]
@@ -131,7 +138,7 @@ def _prop_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
     return files, prop_ids(prop)
 
 
-def _character_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
+def _character_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
     """The files of a character's export, by `res://` path, and the IDs they carry: both atlases, the CanvasTexture over
     them, the SpriteFrames over that, the scene, and `character.json` byte for byte (ticket 0289: the game reads its foot
     events and points; its `files` are names relative to it, and the atlases sit beside it in the game too)."""
@@ -155,7 +162,7 @@ def _character_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, 
     return files, character_ids(character)
 
 
-def _wearable_files(graph: AssetGraph, target: GodotTarget, planned: dict[str, bytes] | None = None) -> tuple[dict[str, bytes], ExportedIds]:
+def _wearable_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
     """The files of a Wearable's export, by `res://` path, and the IDs they carry: its three atlases, the CanvasTexture over
     colour and normal, the SpriteFrames with the body's animation names, a scene, and `wearable.json` byte for byte. Refused
     until its body is in the game with the same cell (`wearable.body_not_exported`)."""
@@ -177,7 +184,7 @@ def _wearable_files(graph: AssetGraph, target: GodotTarget, planned: dict[str, b
     return files, character_ids(wearable)
 
 
-def _icon_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes], ExportedIds]:
+def _icon_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
     """The files of an icon's export, by `res://` path: the texture and its record, under `icons/`, and no scene. The
     icon's ID is its Asset ID, which the Manifest's name already freezes, so no other ID is exported."""
     read_icon(graph)
@@ -190,12 +197,29 @@ def _icon_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
     return files, ExportedIds(markers=[], layers=[], masks=[])
 
 
-_FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget], tuple[dict[str, bytes], ExportedIds]]] = {
+def _portrait_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
+    """The files of a portrait set's export, by `res://` path: `<id>.png` for the neutral and each emotion, and
+    `portrait.json`, under `portraits/<name>/` and with no scene. The emotion IDs are the exported IDs."""
+    portrait = read_portrait(graph)
+    name = graph.asset.id.split(".", 1)[1]
+    folder = f"{target.root}/portraits/{name}"
+    files = {f"{folder}/{PORTRAIT_FILE}": (built_dir(graph) / PORTRAIT_FILE).read_bytes()}
+    for emotion in portrait["emotions"]:
+        files[f"{folder}/{emotion['file']}"] = (built_dir(graph) / str(emotion["file"])).read_bytes()
+    return files, ExportedIds(markers=[], layers=[], masks=[], emotions=emotion_ids(portrait))
+
+
+_FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget, _Planned], tuple[dict[str, bytes], ExportedIds]]] = {
     "room": _room_files, "prop": _prop_files, "character": _character_files, "sprite": _character_files,
-    "icon": _icon_files, "wearable": _wearable_files}  # a sprite is exported as a character, under sprite/
+    "icon": _icon_files, "wearable": _wearable_files,
+    "portrait": _portrait_files}  # a sprite is exported as a character, under sprite/
 
 
-_NOT_AVAILABLE = "a {} can't be exported yet; only rooms, props, characters, sprites, icons and Wearables can"
+# A Kind that is exported after the others of the same call, because it reads what they plan (a Wearable after its body).
+_EXPORT_RANK = {"wearable": 1}
+
+
+_NOT_AVAILABLE = "a {} can't be exported yet; only rooms, props, characters, sprites, icons, Wearables and portraits can"
 
 
 def _hashes(files: dict[str, bytes]) -> dict[str, str]:
@@ -256,7 +280,7 @@ def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget,
     if frozen:
         raise KiripixError(frozen, ExitCode.CHECK_FAILED)
     graph = _refuse_unless_ready(project, asset, cache)
-    files, ids = _wearable_files(graph, target, planned) if asset.kind == "wearable" else _FILES_BY_KIND[asset.kind](graph, target)
+    files, ids = _FILES_BY_KIND[asset.kind](graph, target, planned)
     hashes = _hashes(files)
     manifest_res = target.manifest(asset.id)
     manifest_path = target.path(manifest_res)
@@ -392,7 +416,7 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
     refused: list[Finding] = []
     code = ExitCode.ERROR
     planned: dict[str, bytes] = {}
-    for asset in sorted(assets, key=lambda a: a.kind == "wearable"):  # a Wearable after its body, which may be in this call
+    for asset in sorted(assets, key=lambda a: _EXPORT_RANK.get(a.kind, 0)):  # a Wearable after its body, which may be in this call
         cancel.check()
         try:
             plans.append(_plan(project, asset, cache, target, options, planned))
@@ -419,7 +443,7 @@ def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
     if manifest is None:
         return True
     try:
-        files, _ = _FILES_BY_KIND[asset.kind](AssetGraph(project, asset, cache), target)
+        files, _ = _FILES_BY_KIND[asset.kind](AssetGraph(project, asset, cache), target, None)
     except KiripixError as error:
         if all(f.code == "wearable.body_not_exported" for f in error.findings):
             return True  # a Wearable whose body is not in the game yet: `export` says why
@@ -442,5 +466,5 @@ def export_command(project: Project, asset: Asset, cache: HashCache, states: lis
 
 
 __all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "ExportRun", "PruneResult", "export_assets",
-           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "frozen_loop_findings", "loop_edit_findings", "state_edit_findings", "install_driver", "merge_files", "pairing_findings",
+           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "frozen_loop_findings", "loop_edit_findings", "state_edit_findings", "emotion_freeze_findings", "install_driver", "merge_files", "pairing_findings",
            "apply_repairs", "plan_repairs", "prune_assets", "resolve_target"]

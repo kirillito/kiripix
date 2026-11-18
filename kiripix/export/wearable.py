@@ -4,10 +4,10 @@ import json
 from typing import Any
 
 from kiripix.checks import Finding, Position
-from kiripix.core.errors import ExitCode, KiripixError, fail
+from kiripix.core.errors import ExitCode, KiripixError
 from kiripix.core.graph import AssetGraph
 from kiripix.export.manifest import read_manifest
-from kiripix.export.room import EXPORT_STAGE, built_dir
+from kiripix.export.built import EXPORT_STAGE, read_built_record
 from kiripix.export.target import GodotTarget
 from kiripix.recipes.wearable_export import WEARABLE_FILE, WEARABLE_SCHEMA_VERSION
 
@@ -17,12 +17,7 @@ DEPTH_FILE = "depth.png"
 
 
 def read_wearable(graph: AssetGraph) -> dict[str, Any]:
-    wearable: dict[str, Any] = json.loads((built_dir(graph) / WEARABLE_FILE).read_text(encoding="utf-8"))
-    if wearable.get("schema_version") != WEARABLE_SCHEMA_VERSION:
-        raise fail("export.wearable_invalid", f"{graph.asset.id}'s {WEARABLE_FILE} has schema_version "
-                   f"{wearable.get('schema_version')}; this Kiripix reads {WEARABLE_SCHEMA_VERSION}",
-                   fix=f"kiripix run {graph.asset.id} {EXPORT_STAGE} --force")
-    return wearable
+    return read_built_record(graph, "wearable", WEARABLE_FILE, WEARABLE_SCHEMA_VERSION)
 
 
 def body_exported(wearable: dict[str, Any], target: GodotTarget, planned: dict[str, bytes] | None = None) -> None:

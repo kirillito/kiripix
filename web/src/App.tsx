@@ -55,6 +55,7 @@ import { SPRITE_FRAMES_STAGE, SPRITE_KIND, SpriteFramesScreen } from "./spriteSc
 import { FRAME_STAGES, FrameScreen, frameOf, type FrameFocus } from "./frameScreen";
 import { costText, StackPreview, useWearables } from "./wearableScreens";
 import { WorkStrip, type Working } from "./workStrip";
+import { EMOTION_DECISION, EmotionStrip, FACE_DECISION, FACE_STAGE, PORTRAIT_KIND, PortraitPanel } from "./portraitScreens";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
 const REFRESH_DELAY_MS = 100; // one refresh for a burst of "changed" events
@@ -130,6 +131,8 @@ export function App() {
   const [, setRefocus] = useState(0); // one more render, to run the focus effect when a finding is on this Stage
   const [selectedState, setSelectedState] = useState<string | null>(null); // a Prop's state; null: the default state
   const [sideBySide, setSideBySide] = useState(false);
+  const [selectedEmotion, setSelectedEmotion] = useState<string | null>(null); // a portrait's emotion; null: the neutral
+  const [faceRebuild, setFaceRebuild] = useState(true); // register again after each face edit, so the region shown is the Stage's
   const canvas = useRef<PixelCanvas>(null);
   const wearables = useWearables(data.status, data.refreshes);
 
@@ -202,6 +205,9 @@ export function App() {
   const isProp = kind === "prop";
   const stateShown = isProp ? show?.states?.find((entry) => entry.state === selectedState) : undefined;
   const activeState = stateShown ? stateShown.state : null; // a state that was removed falls back to the default
+  const isPortrait = kind === PORTRAIT_KIND;
+  const emotionShown = isPortrait ? show?.emotions?.find((entry) => entry.emotion === selectedEmotion) : undefined;
+  const activeEmotion = emotionShown ? emotionShown.emotion : null; // an emotion that was removed falls back to the neutral
   useEffect(() => {
     if (!kind || recipes[kind]) return;
     call<DescribeData>("describe", { target: kind })
@@ -251,6 +257,7 @@ export function App() {
   const isFrames = hasFrames && current !== null && FRAME_STAGES.includes(current) && description !== undefined;
   const isSpriteFrames = show?.kind === SPRITE_KIND && current === SPRITE_FRAMES_STAGE && description !== undefined;
   const isPivot = show?.kind === SPRITE_KIND && current === "fit";
+  const isFace = isPortrait && current === FACE_STAGE && (description?.decisions.some((decision) => decision.name === FACE_DECISION) ?? false);
   const isFootprint = description?.decisions.some((decision) => decision.name === FOOTPRINT_DECISION) ?? false;
 
   // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
@@ -348,7 +355,7 @@ export function App() {
   const rebuilt = useCallback(
     async <T,>(result: Envelope<T>, rerun = false, force = false): Promise<Envelope<unknown>> => {
       // `force`: a removed Layer is taken out by a plain `run layers`, with no rerun and no accept (ticket 0091).
-      if (!(force || (isMasks ? rebuild : isLooks ? looksRebuild : isLoops ? loopsRebuild : isLayers && layersRebuild)) || !result.ok) return result;
+      if (!(force || (isMasks ? rebuild : isLooks ? looksRebuild : isLoops ? loopsRebuild : isFace ? faceRebuild : isLayers && layersRebuild)) || !result.ok) return result;
       const id = crypto.randomUUID();
       setRebuilding(id);
       try {
@@ -359,7 +366,7 @@ export function App() {
         setProgress(null);
       }
     },
-    [asset, current, isMasks, isLayers, isLooks, isLoops, rebuild, layersRebuild, looksRebuild, loopsRebuild],
+    [asset, current, isMasks, isLayers, isLooks, isLoops, isFace, faceRebuild, rebuild, layersRebuild, looksRebuild, loopsRebuild],
   );
   const decideMask = useCallback(
     (name: string, data: Record<string, unknown>, settled?: () => void) => {
@@ -382,13 +389,14 @@ export function App() {
         timing: "Setting the timing of",
         frames: "Setting the frames of",
         hold: "Holding a part of",
+        face: "Drawing the face region",
       };
       const label =
         name === "click" && isLayers
           ? data.positive === false
             ? `Taking from ${into}`
             : `Lifting into ${into}`
-          : `${verbs[name] ?? "Deciding on"} ${into}`;
+          : `${verbs[name] ?? "Deciding on"} ${into}`.trim();
       void perform(
         async () => rebuilt(await call("decide", { asset, stage: current, decision }), name === "click", name === "remove" && isLayers),
         label,
@@ -483,18 +491,46 @@ export function App() {
     (variant: string) => {
       if (!busy)
         void perform(
-          () => call("pick", { asset, variant, ...(activeState ? { state: activeState } : {}) }),
-          activeState ? `Picking a Variant of ${activeState}` : "Picking a Variant",
+          () => call("pick", { asset, variant, ...(activeState ? { state: activeState } : {}), ...(activeEmotion ? { emotion: activeEmotion } : {}) }),
+          activeEmotion ? `Picking an image of ${activeEmotion}` : activeState ? `Picking a Variant of ${activeState}` : "Picking a Variant",
         );
     },
-    [activeState, asset, busy, perform],
+    [activeEmotion, activeState, asset, busy, perform],
   );
   const importFiles = async (files: File[], role: ImportRole = "variant") => {
     for (const file of files) {
-      const input = activeState && role === "variant" ? { asset, state: activeState } : { asset, role };
+      const input =
+        activeEmotion && role === "variant"
+          ? { asset, emotion: activeEmotion }
+          : activeState && role === "variant"
+            ? { asset, state: activeState }
+            : { asset, role };
       await perform(() => callWithFile("import", input, "file", file), `Importing ${file.name}`);
     }
   };
+  // An emotion is declared on `source`, whatever Stage is open: one `decide`.
+  const declareEmotion = useCallback(
+    (id: string) => {
+      const decision = JSON.stringify({ decision: EMOTION_DECISION, data: { id } });
+      void perform(async () => {
+        const result = await call("decide", { asset, stage: "source", decision });
+        if (result.ok) setSelectedEmotion(id);
+        return result;
+      }, `Declaring the emotion ${id}`);
+    },
+    [asset, perform],
+  );
+  // An image dropped on an emotion in the strip is stored as its Variant and picked at once, as an edit of a Look is.
+  const importEmotion = useCallback(
+    (file: File, emotion: string) =>
+      void perform(async () => {
+        const stored = await callWithFile<{ variant: string }>("import", { asset, emotion }, "file", file);
+        if (!stored.ok || !stored.data) return stored;
+        const picked = await call("pick", { asset, emotion, variant: stored.data.variant });
+        return { ...picked, findings: [...stored.findings, ...picked.findings] };
+      }, `Importing an image of ${emotion}`),
+    [asset, perform],
+  );
   // `new` for a character: one Command, and the new Asset opens when it was made. A parameter file goes with it.
   const createCharacter = (name: string, base: string, parameters: File | null) =>
     void perform(async () => {
@@ -521,12 +557,12 @@ export function App() {
             // Runner call still missing waits for the Owner). Every step on `layers` does it, because which Decision a
             // queued step undoes is only known once the steps before it have landed.
             const result = await call(command, { asset, stage: current });
-            return rebuilt(result, false, isLayers || isPivot || (isLooks && looksRebuild) || (isLoops && loopsRebuild));
+            return rebuilt(result, false, isLayers || isPivot || (isLooks && looksRebuild) || (isLoops && loopsRebuild) || (isFace && faceRebuild));
           },
           command === "undo" ? "Undoing" : "Redoing",
         );
     },
-    [asset, busy, current, isLayers, isLooks, isLoops, isPivot, looksRebuild, loopsRebuild, perform, rebuilt],
+    [asset, busy, current, faceRebuild, isFace, isLayers, isLooks, isLoops, isPivot, looksRebuild, loopsRebuild, perform, rebuilt],
   );
 
   // The job exists once it reaches the front of the queue, and only then can it be cancelled.
@@ -563,8 +599,13 @@ export function App() {
   const names = show?.stages.map((entry) => entry.stage) ?? [];
   const following = current ? names[names.indexOf(current) + 1] : undefined;
 
-  const variants = stateShown ? stateShown.variants : show?.variants;
-  const gridShow = show && stateShown ? { ...show, variants: stateShown.variants, picked: stateShown.picked } : show;
+  const variants = emotionShown ? emotionShown.variants : stateShown ? stateShown.variants : show?.variants;
+  const gridShow =
+    show && emotionShown
+      ? { ...show, variants: emotionShown.variants, picked: emotionShown.picked }
+      : show && stateShown
+        ? { ...show, variants: stateShown.variants, picked: stateShown.picked }
+        : show;
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (isTyping(event.target)) return;
@@ -595,6 +636,7 @@ export function App() {
     setFocusLayer(null);
     setFocusFrame(null);
     setSelectedState(null);
+    setSelectedEmotion(null);
     setSideBySide(false);
   }
 
@@ -810,6 +852,35 @@ export function App() {
                 onSideBySide={setSideBySide}
                 declare={declareState}
                 importFiles={(files) => void importFiles(files)}
+              />
+            )}
+            {isPortrait && (
+              <EmotionStrip
+                show={show}
+                emotion={activeEmotion}
+                findings={data.checks}
+                imageVersion={imageVersion}
+                disabled={busy}
+                onSelect={setSelectedEmotion}
+                declare={declareEmotion}
+                importAndPick={importEmotion}
+              />
+            )}
+            {isPortrait && !isSource && (
+              <PortraitPanel
+                key={`${asset}/${current}`}
+                canvas={canvas}
+                show={show}
+                stage={current ?? ""}
+                detail={detail}
+                emotion={activeEmotion}
+                onSelect={setSelectedEmotion}
+                findings={data.checks}
+                imageVersion={imageVersion}
+                disabled={busy}
+                rebuild={faceRebuild}
+                onRebuild={setFaceRebuild}
+                decide={decideMask}
               />
             )}
             {isPlace && (
