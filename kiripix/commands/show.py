@@ -9,7 +9,7 @@ from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.decisions import DecisionOut, current_decisions
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core import emotions, sheets, sources
-from kiripix.core.assets import Asset, load_asset
+from kiripix.core.assets import Asset, load_asset, wearables_of
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project, find_project
@@ -110,6 +110,12 @@ class BodyOut(BaseModel):
     dash: int = Field(description="The widest pit it can dash over, in px.")
 
 
+class WearableOut(BaseModel):
+    asset: str = Field(description="The Wearable's Asset ID.")
+    order: int = Field(description="Its default stacking order over the body (the Wearable's `sheet` parameter `order`); the "
+                                   "body is 0.")
+
+
 class ShowData(BaseModel):
     asset: str
     kind: str
@@ -117,6 +123,9 @@ class ShowData(BaseModel):
     base: str | None = Field(None, description="The Asset this one is made from (a character's `base` parameter), or null.")
     resolution: tuple[int, int] = Field(description="The game's internal resolution, from kiripix.toml.")
     body: BodyOut = Field(description="The stand-in player, from kiripix.toml.")
+    tile: int = Field(description="The Project's tile in px, from kiripix.toml (`project.tile`).")
+    wearables: list[WearableOut] = Field(
+        [], description="A body's Wearables, by stacking order and then ID. Empty for an Asset that has none.")
     variants: list[VariantOut]
     picked: str | None
     looks: list[LookOut] = Field(description="A room's Looks that have a stored edit (`import --look`): their edits and "
@@ -166,6 +175,15 @@ class ShowData(BaseModel):
 def _variant(project: Project, asset: Asset, names: dict[str, str], name: str, path: Path) -> VariantOut:
     return VariantOut(name=name, file=project.relative(path),
                       imported_as=names.get(path.relative_to(asset.dir).as_posix()), size=path.stat().st_size)
+
+
+def _wearables(project: Project, asset: Asset, cache: HashCache) -> list[WearableOut]:
+    """The Wearables whose body is the Asset, with their `order` (ticket 0296)."""
+    found: list[WearableOut] = []
+    for wearable in wearables_of(project, asset.id):
+        theirs = AssetGraph(project, load_asset(project, wearable), cache)
+        found.append(WearableOut(asset=wearable, order=theirs.worn_order()))
+    return sorted(found, key=lambda w: (w.order, w.asset))
 
 
 def _clip_sources(project: Project, graph: AssetGraph, names: dict[str, str]) -> list[ClipSourceOut]:
@@ -261,7 +279,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
     look_picks = sources.picked_look_edits(graph)
     state_picks = sources.picked_states(graph)
     emotion_picks = emotions.picked_emotions(graph)
-    neutral = emotions.neutral_source(graph) if emotions.is_portrait(asset) else None
+    neutral = emotions.neutral_source(graph)
     data = ShowData(
         asset=asset.id,
         kind=asset.kind,
@@ -269,6 +287,8 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         base=graph.base.asset.id if graph.base is not None else None,
         resolution=project.settings.project.resolution,
         body=BodyOut(size=project.settings.body.size, dash=project.settings.body.dash),
+        tile=project.settings.project.tile,
+        wearables=_wearables(project, asset, cache),
         variants=[_variant(project, asset, names, name, path) for name, path in variants.items()],
         picked=sources.picked(graph) if takes_variants else None,
         looks=[LookOut(look=look, picked=look_picks.get(look),

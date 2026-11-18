@@ -56,7 +56,7 @@ def test_run_writes_both_atlases_and_sheet_json_whose_rectangles_line_up(project
     folder, sheet = sheet_of(project)
 
     out = folder / "work" / "sheet"
-    assert sheet["schema_version"] == 1 and sheet["files"] == {"color": "color.png", "normal": "normal.png"}
+    assert sheet["schema_version"] == 1 and sheet["files"] == {"color": "color.png", "normal": "normal.png", "depth": "depth.png"}
     assert sheet["cell"] == {"width": CELL, "height": CELL} and sheet["pivot"] == {"x": 39, "y": 72}
     colour, normal = np.array(Image.open(out / "color.png")), np.array(Image.open(out / "normal.png"))
     assert colour.shape == normal.shape == (sheet["atlas"]["height"], sheet["atlas"]["width"], 4)

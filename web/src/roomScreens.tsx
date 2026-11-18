@@ -18,7 +18,7 @@ import {
 } from "./markerTool";
 import type { CanvasPixel, PixelCanvas } from "./pixelCanvas";
 import { LayerHighlight, layerFiles, loadImage } from "./sortView";
-import { CROSS_KEY, loadMask, WalkTest, type Crossing, type Crossings, type SortedLayers } from "./walkTest";
+import { CROSS_KEY, LINK_REACH, loadMask, WalkTest, type Crossing, type Crossings, type SortedLayers } from "./walkTest";
 
 const TYPES = ["spawn", "exit", "interactable", "light", "emitter", "ysort", "area", "link"] as const;
 const LABELS: Record<string, string> = {
@@ -828,7 +828,8 @@ export function ReachPanel(props: {
   const clear = place?.outputs.find((path) => path.endsWith("/clear.png"));
   const tool = useRef(new MarkerTool(null));
   const sorted = useRef<SortedLayers>({ layers: [] });
-  const crossings = useRef<Crossings>({ links: [] });
+  const crossings = useRef<Crossings>({ links: [], reach: show.tile ?? LINK_REACH });
+  crossings.current.reach = show.tile ?? LINK_REACH;
 
   // The Layers the walk test draws over the Body, and where each sorts: `place`'s `sort`, and the Layers' own files.
   const files = layerFiles(show);

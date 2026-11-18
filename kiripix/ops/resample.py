@@ -333,6 +333,20 @@ def mask_to_target(mask: BoolMask, grid: Grid) -> BoolMask:
     return result
 
 
+def mask_touching_target(mask: BoolMask, grid: Grid) -> BoolMask:
+    """A Source-resolution Mask as a target-resolution one, wide: a cell is set when any of its pixels is. Where a region
+    must hold everything inside it (the face a portrait's emotions may change), a cell the region only grazes is in."""
+    if mask.dtype != np.bool_ or mask.ndim != 2:
+        raise ValueError("a Mask is a 2-D boolean array")
+    index_x, index_y = _cell_index(grid.edges_x(), mask.shape[1]), _cell_index(grid.edges_y(), mask.shape[0])
+    rows, columns = np.nonzero(mask)
+    cell_x, cell_y = index_x[columns], index_y[rows]
+    inside = (cell_x >= 0) & (cell_y >= 0)
+    result = np.zeros((grid.height, grid.width), dtype=np.bool_)
+    result[cell_y[inside], cell_x[inside]] = True
+    return result
+
+
 def mask_to_source(mask: BoolMask, grid: Grid, source_width: int, source_height: int) -> BoolMask:
     """A target-resolution Mask at Source resolution: each cell's pixels take its value; outside the grid is clear."""
     if mask.shape != (grid.height, grid.width):

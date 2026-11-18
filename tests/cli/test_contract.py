@@ -399,9 +399,11 @@ def test_a_wearable_validates(project: Kiripix, schemas: dict[str, dict[str, obj
     made = project.json("new", "wearable", "hair", "--body", "character.zed")
     described = project.json("describe", "wearable")
     refused = project.json("new", "wearable", "cap", "--body", "character.nobody", expect=1)
+    shown = project.json("show", "character.zed")  # the tile and the body's Wearables (ticket 0296)
 
-    for result, name in ((made, "new"), (described, "describe"), (refused, "new")):
+    for result, name in ((made, "new"), (described, "describe"), (refused, "new"), (shown, "show")):
         jsonschema.validate(result, schemas[name]["output"])
+    assert shown["data"]["tile"] == 16 and shown["data"]["wearables"] == [{"asset": "wearable.hair", "order": 10}]
     assert "body" in schemas["new"]["input"]["properties"]  # type: ignore[index]
     assert refused["findings"][0]["code"] == "wearable.body_unknown"
 

@@ -1,0 +1,17 @@
+{
+ "device": "cuda",
+ "input": [
+  364,
+  518
+ ],
+ "load_s": 0.78,
+ "first_run_s": 0.63,
+ "run_s": 0.03,
+ "vram_baseline_mib": 1383,
+ "vram_peak_mib": 1707,
+ "vram_delta_mib": 324,
+ "providers": [
+  "CUDAExecutionProvider",
+  "CPUExecutionProvider"
+ ]
+}

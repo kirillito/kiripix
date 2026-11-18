@@ -28,7 +28,7 @@ def is_portrait(asset: Asset) -> bool:
 
 def declared_emotions(graph: AssetGraph) -> dict[str, DeclaredEmotion]:
     """A portrait's declared emotions (the `emotion` Decisions of `source`, edits replayed); none for another Kind."""
-    if graph.asset.kind != PORTRAIT:
+    if not is_portrait(graph.asset):
         return {}
     return portrait.declared_emotions(graph.decisions(graph.spec(portrait.SOURCE_STAGE)))
 
@@ -41,20 +41,22 @@ def emotion_variants(asset: Asset, emotion: DeclaredEmotion) -> dict[str, Path]:
 
 def picked_emotions(graph: AssetGraph) -> dict[str, tuple[str, str]]:
     """Each emotion's current Pick as (Variant, the neutral Source it was made on)."""
-    if graph.asset.kind != PORTRAIT:
+    if not is_portrait(graph.asset):
         return {}
     return portrait.emotion_picks(graph.decisions(graph.spec(portrait.SOURCE_STAGE)))
 
 
 def neutral_source(graph: AssetGraph) -> str | None:
-    """The Variant the neutral Pick names now; None without one."""
+    """The Variant the neutral Pick names now; None without one, and for another Kind."""
+    if not is_portrait(graph.asset):
+        return None
     return portrait.neutral_source(graph.decisions(graph.spec(portrait.SOURCE_STAGE)))
 
 
 def _declared(graph: AssetGraph, emotion: str, command: str, position: Position) -> DeclaredEmotion:
     """The declared emotion, or the refusal: `neutral` is no emotion, and an undeclared one has a fix that declares it."""
     asset = graph.asset
-    if asset.kind != PORTRAIT:
+    if not is_portrait(asset):
         raise fail(f"{command}.emotion_needs_portrait", f"--emotion is for a portrait; {asset.id} is a {asset.kind}",
                    owner_action="Use --emotion on a portrait's emotions.", position=position)
     if emotion == portrait.NEUTRAL:
@@ -125,7 +127,7 @@ def emotion_edit_findings(project: Project, asset: Asset, stage: str, documents:
     """What refuses a portrait's emotion Decision (on `decide` and on `redo`): an ID that is `neutral` or taken, and an
     emotion that isn't declared. The ID freeze after export is the exporter's (ticket 0244), which knows the Manifest."""
     names = {d.name for d in portrait.DECISIONS}
-    if asset.kind != PORTRAIT or stage != portrait.SOURCE_STAGE or not any(name in names for name, _ in documents):
+    if not is_portrait(asset) or stage != portrait.SOURCE_STAGE or not any(name in names for name, _ in documents):
         return []
     graph = AssetGraph(project, asset, HashCache(project.state_dir))
     found, _ = portrait.edit_problems(asset.id, graph.decisions(graph.spec(portrait.SOURCE_STAGE)), documents)

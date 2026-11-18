@@ -14,8 +14,7 @@ const KEYS: Record<string, [number, number]> = {
   ArrowDown: [0, 1],
 };
 
-// The reach of a Link's end, in px: the Project's default `project.tile`. The Commands don't give the Project's tile to
-// the UI yet (reported in ticket 0268), so this is the default.
+// The reach of a Link's end, in px, until `show` has given the Project's tile (`project.tile`, its default).
 export const LINK_REACH = 16;
 export const CROSS_KEY = "c";
 
@@ -30,6 +29,7 @@ export interface Crossing {
 // Read at every key, so a rebuilt Link works without sending the Body back to the Spawn.
 export interface Crossings {
   links: Crossing[];
+  reach: number; // the Project's tile, from `show`
 }
 
 // Where the Body goes when it crosses from (x, y): the other end of the nearest Link with an end within `reach`, and the
@@ -103,7 +103,7 @@ export class WalkTest implements CanvasTool {
     private y: number,
     private readonly redraw: () => void,
     private readonly sorted: SortedLayers = { layers: [] },
-    private readonly crossings: Crossings = { links: [] },
+    private readonly crossings: Crossings = { links: [], reach: LINK_REACH },
   ) {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -166,7 +166,7 @@ export class WalkTest implements CanvasTool {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key.toLowerCase() === CROSS_KEY && !event.ctrlKey && !event.metaKey && !event.altKey && !isTyping(event.target)) {
-      const to = crossFrom(this.crossings.links, this.x, this.y);
+      const to = crossFrom(this.crossings.links, this.x, this.y, this.crossings.reach);
       if (to) {
         [this.x, this.y] = to;
         this.redraw();

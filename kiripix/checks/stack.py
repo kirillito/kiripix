@@ -51,5 +51,9 @@ def check_stack_differs(frames: list[StackFrame], body: str, wearables: list[str
             position=Position(asset=body, stage="render", field=f"{clip}/{top.direction}/{top.index}",
                               x=top.box[0] if top.box else None, y=top.box[1] if top.box else None,
                               width=top.box[2] if top.box else None, height=top.box[3] if top.box else None),
-            fix=fix))
+            fix=fix,
+            data={"clip": clip, "differing": total, "shown": seen,
+                  "worst": [{"direction": f.direction, "frame": f.index, "differing": f.differing,
+                             "box": {"x": f.box[0], "y": f.box[1], "width": f.box[2], "height": f.box[3]}}
+                            for f in worst if f.box is not None]}))
     return findings

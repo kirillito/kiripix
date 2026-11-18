@@ -199,46 +199,35 @@ export async function decodeGray(buffer: ArrayBuffer): Promise<Gray | null> {
   return { width, height, data };
 }
 
-const pictures = new Map<string, Promise<ImageData | null>>();
-const grays = new Map<string, Promise<Gray | null>>();
-
-function picture(url: string): Promise<ImageData | null> {
-  let found = pictures.get(url);
-  if (!found) {
-    found = (async () => {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
-        const bitmap = await createImageBitmap(await response.blob(), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
-        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        if (!context) return null;
-        context.drawImage(bitmap, 0, 0);
-        return context.getImageData(0, 0, bitmap.width, bitmap.height);
-      } catch {
-        return null;
-      }
-    })();
-    pictures.set(url, found);
-  }
-  return found;
+// Each file read once per URL (a URL changes with a rebuild), as `decode` makes it from the response; null when it can't be read.
+function cached<T>(found: Map<string, Promise<T | null>>, decode: (response: Response) => Promise<T | null>) {
+  return (url: string): Promise<T | null> => {
+    let one = found.get(url);
+    if (!one) {
+      one = (async () => {
+        try {
+          const response = await fetch(url);
+          return response.ok ? await decode(response) : null;
+        } catch {
+          return null;
+        }
+      })();
+      found.set(url, one);
+    }
+    return one;
+  };
 }
 
-function gray(url: string): Promise<Gray | null> {
-  let found = grays.get(url);
-  if (!found) {
-    found = (async () => {
-      try {
-        const response = await fetch(url);
-        return response.ok ? await decodeGray(await response.arrayBuffer()) : null;
-      } catch {
-        return null;
-      }
-    })();
-    grays.set(url, found);
-  }
-  return found;
-}
+const picture = cached(new Map<string, Promise<ImageData | null>>(), async (response) => {
+  const bitmap = await createImageBitmap(await response.blob(), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return null;
+  context.drawImage(bitmap, 0, 0);
+  return context.getImageData(0, 0, bitmap.width, bitmap.height);
+});
+
+const gray = cached(new Map<string, Promise<Gray | null>>(), async (response) => decodeGray(await response.arrayBuffer()));
 
 // One image in the stack (the body or a Wearable), ready for one frame: colour of the cell's size, and a depth for each pixel of it.
 interface Stacked {

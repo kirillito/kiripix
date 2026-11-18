@@ -28,7 +28,7 @@ from kiripix.recipes.blender_launcher import ScriptFailure, launch_file
 from kiripix.recipes.wearable_stack import check_render_stack
 from kiripix.recipes.character_finish import check_character_finish, run_character_finish
 from kiripix.recipes.character_palette import check_character_palette, palette_generated_params, run_character_palette
-from kiripix.recipes.character_sheet import check_character_sheet, run_character_sheet
+from kiripix.recipes.character_sheet import check_character_sheet, run_body_sheet
 from kiripix.recipes.render import FORMAT_SETTING as RENDER_FORMAT_SETTING, render_generated_params, run_render
 from kiripix.recipes.blender_launcher import launch
 from kiripix.recipes.common import picked, source_needs_input, variants
@@ -536,15 +536,16 @@ CHARACTER = KindSpec(
         ),
         StageSpec(
             name="sheet",
-            description="Packs frames into an atlas with a fixed pivot per frame.",
-            inputs=StageInputs(upstream=["finish", "clips"]),
+            description="Packs frames into colour, normal and depth atlases with a fixed pivot per frame.",
+            version=2,  # depth.png, and `files.depth` in sheet.json (ticket 0296)
+            inputs=StageInputs(upstream=["finish", "clips", "render"]),
             checks=(
                 CheckSpec(code="sheet.pivot_drift", description="The feet don't move in a stationary clip."),
                 CheckSpec(code="sheet.frame_overflow", description="Every frame fits its cell."),
                 CheckSpec(code="sheet.frame_count", description="Frame counts match the clip."),
                 CheckSpec(code="sheet.empty_frame", description="No frame is empty."),
             ),
-            run=run_character_sheet,
+            run=run_body_sheet,
             check=check_character_sheet,
             available_from="M3",
         ),

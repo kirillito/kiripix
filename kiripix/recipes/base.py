@@ -348,6 +348,7 @@ class NeedsInput:
     command: str | None = None
     owner_action: str | None = None
     code: str | None = None  # the finding code `run` gives it, instead of `stage.needs_input` (`prop.state_unpicked`)
+    data: dict[str, Any] | None = None  # the finding's `data` (`portrait.emotion_unpicked` names its `emotion`)
 
 
 NeedsInputFunction = Callable[[StageRun], NeedsInput | None]
@@ -447,6 +448,9 @@ class StageSpec:
     # The name of a Wearable's Stage: this Stage's `check` is handed the built output of that Stage of each Wearable whose body
     # is this Asset (`StageRun.wearing`), so a Check of the body can look across its Wearables (ticket 0294).
     worn_stage: str | None = None
+    # On a Wearable's Stage: its default stacking order over the body, from the Stage's parameters, so core names no Stage
+    # or parameter (`AssetGraph.worn_order`).
+    worn_order: Callable[[dict[str, Scalar]], int] | None = None
     # Runs after core paints the Stage's Overrides over its image and before its Checks, on the same output folder
     # (`output_dir`), so it sees the image as painted and its Checks see what it wrote. The image's unpainted hash and
     # the Stage's input hash don't depend on it. A Stage without it behaves as before.

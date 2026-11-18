@@ -19,3 +19,7 @@ that mean nothing there, like an `upload` that copies a file onto itself. So the
   find them as it finds Commands.
 - A transport feature that later means something on every surface becomes a real Command. The likely one is a
   `cancel` that one agent sends from another terminal, which needs a job list shared between processes.
+- A UI preview may composite client-side from files a Command already wrote: stacking a body's Wearables over it for a
+  preview (the UI's `stack()`) is a view, not an operation, and it changes nothing in the Project. The game's own
+  stacking is the Exporter's `order` and `depth.png` (ticket 0293), and the Checks read those, never the preview. If a
+  preview ever has to match the Exporter pixel for pixel, a file the body's `sheet` writes replaces the client's copy.

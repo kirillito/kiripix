@@ -1,0 +1,58 @@
+{
+ "base": {
+  "total_s": 48.76917420000245,
+  "loop_s": 48.67413650000526,
+  "frames": 800,
+  "ms_per_frame": 60.8,
+  "cell": 78
+ },
+ "a1": {
+  "total_s": 47.18458570000075,
+  "loop_s": 47.09433100000024,
+  "frames": 800,
+  "ms_per_frame": 58.9,
+  "cell": 86
+ },
+ "a_attack": {
+  "total_s": 8.850936799994088,
+  "loop_s": 8.762007500001346,
+  "frames": 152,
+  "ms_per_frame": 57.6,
+  "cell": 86
+ },
+ "a_phone": {
+  "total_s": 25.547925599996233,
+  "loop_s": 25.45366230000218,
+  "frames": 456,
+  "ms_per_frame": 55.8,
+  "cell": 78
+ },
+ "c_stick": {
+  "total_s": 8.5637912999955,
+  "loop_s": 8.449962099999539,
+  "frames": 152,
+  "ms_per_frame": 55.6,
+  "cell": 86
+ },
+ "c_phone": {
+  "total_s": 22.060328000006848,
+  "loop_s": 21.968416900010197,
+  "frames": 456,
+  "ms_per_frame": 48.2,
+  "cell": 78
+ },
+ "rake_a": {
+  "total_s": 10.100467399999616,
+  "loop_s": 10.0058846000029,
+  "frames": 152,
+  "ms_per_frame": 65.8,
+  "cell": 138
+ },
+ "rake_c": {
+  "total_s": 10.230535799986683,
+  "loop_s": 10.126866799997515,
+  "frames": 152,
+  "ms_per_frame": 66.6,
+  "cell": 138
+ }
+}

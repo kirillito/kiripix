@@ -1,0 +1,16 @@
+{
+ "device": "cpu",
+ "input": [
+  742,
+  1036
+ ],
+ "load_s": 0.56,
+ "first_run_s": 3.83,
+ "run_s": 4.77,
+ "vram_baseline_mib": 1416,
+ "vram_peak_mib": null,
+ "vram_delta_mib": null,
+ "providers": [
+  "CPUExecutionProvider"
+ ]
+}

@@ -38,7 +38,14 @@ from kiripix.ops.cycle import (
     seam_ratio,
 )
 from kiripix.ops.stack import stack_by_depth, stack_by_order, stack_difference
-from kiripix.ops.chroma import chroma_key, key_fringe
+from kiripix.ops.chroma import (
+    border_colour,
+    chroma_key,
+    chroma_key_tolerant,
+    key_fringe,
+    remove_key_spill,
+    remove_light_rim,
+)
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
 from kiripix.ops.colourset import SetReport, map_set, set_colours, set_report
 from kiripix.ops.compose import overlay
@@ -64,6 +71,7 @@ from kiripix.ops.layers import (
     mask_from_difference,
     partial_cells,
     recompose,
+    remove_small_islands,
     remove_small_pieces,
 )
 from kiripix.ops.looks import (
@@ -110,6 +118,7 @@ from kiripix.ops.resample import (
     downscale,
     mask_to_source,
     mask_to_target,
+    mask_touching_target,
     point_to_target,
     sample_nearest,
     target_centre,
@@ -199,6 +208,7 @@ __all__ = [
     "seam_join",
     "mask_to_source",
     "mask_to_target",
+    "mask_touching_target",
     "nearest_index",
     "normals_from_height",
     "outline_mask",
@@ -230,7 +240,12 @@ __all__ = [
     "reachable_via",
     "recompose",
     "remove_orphans",
+    "remove_small_islands",
     "remove_small_pieces",
+    "border_colour",
+    "chroma_key_tolerant",
+    "remove_key_spill",
+    "remove_light_rim",
     "sample_nearest",
     "simplify",
     "slice_grid",

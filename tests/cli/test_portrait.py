@@ -265,14 +265,15 @@ def test_new_help_lists_portrait_and_describe_shows_the_recipe(project: Kiripix)
         c["code"] for c in source["checks"]}
 
 
-def test_the_stages_after_source_are_not_built_yet(project: Kiripix) -> None:
+def test_the_image_stages_are_built_and_only_export_waits_for_0244(project: Kiripix) -> None:
     two_emotions(project)
     project.json("run", PORTRAIT, "source")
 
     status = stage_status(project, PORTRAIT)
 
     assert [status[s] for s in ("brief", "source")] == ["done", "done"]
-    assert status["cutout"] == "needs-input"
+    assert [status[s] for s in ("cutout", "register", "fit", "palette", "finish")] == ["todo"] * 5
+    assert status["export"] == "needs-input"
 
 
 def test_the_portrait_folder_has_no_status(project: Kiripix) -> None:

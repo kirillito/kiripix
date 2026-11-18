@@ -8,7 +8,8 @@ Source puts every emotion's Pick in needs-input ("the edit was made on another S
 
 An emotion's ID is its name in the game, frozen at its first export (ADR 0003). `emotion_remove` and `emotion_rename` change
 it before that; `apply_edits` replays them (`StageSpec.decisions_view`), as a Prop's state edits are, and a rename keeps the
-folder the Variants were imported into (`folder`). The Stages after `source` are 0243.
+folder the Variants were imported into (`folder`). The image Stages after `source` are `portrait_set` (0243); `export` is 0244: `<id>.png` for each
+emotion (and `neutral.png`) and `portrait.json`.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from kiripix.checks import Finding, Position
 from kiripix.recipes.base import (
@@ -37,14 +40,25 @@ from kiripix.recipes.base import (
     chain,
 )
 from kiripix.recipes.common import run_source, source_needs_input
+from kiripix.recipes.portrait_set import (  # noqa: F401 (the names are this module's too)
+    EMOTIONS_OUT,
+    FINISH,
+    FIT,
+    NEUTRAL,
+    STAGES,
+    ids_of,
+    image_file,
+    read_record,
+)
+from kiripix.recipes.prop import NO_TARGET, export_needs_input
 
 SOURCE_STAGE = "source"
 BRIEF_STAGE = "brief"
-NEUTRAL = "neutral"  # the picked Source's ID in the set, and the default fallback emotion
 EMOTIONS_DIR = "src/emotions"  # an emotion's Variants: `src/emotions/<folder>/<hash>.png`
-EMOTIONS_OUT = "emotions"  # in `source`'s output folder: `emotions/<id>.png`
 EMOTIONS_RECORD = "emotions.json"
 BRIEF_SCHEMA_VERSION = 1  # 1: width, height, anchor and fallback (ticket 0242)
+PORTRAIT_FILE = "portrait.json"  # the export Stage's record; its images are `<id>.png` beside it
+PORTRAIT_SCHEMA_VERSION = 1  # 1: asset, canvas, anchor, fallback, emotions (ticket 0244)
 EMOTIONS_SCHEMA_VERSION = 1  # 1: `neutral` and `emotions`, the IDs in declaration order (ticket 0242)
 EMOTION_ID = "^[a-z][a-z0-9]*(_[a-z0-9]+)*$"  # snake_case
 
@@ -208,6 +222,7 @@ def emotion_needs_input(run: StageRun) -> NeedsInput | None:
         remake = "; ".join(f"kiripix import {run.asset_id} <png> --emotion {e}, then kiripix pick {run.asset_id} "
                            f"<variant> --emotion {e}" for e in other)
         return NeedsInput("the edit was made on another Source", code="portrait.emotion_unpicked",
+                          data={"emotion": other[0], "emotions": other},
                           owner_action=f"Re-make the emotion {', '.join(other)} from the new neutral Source ({remake}).")
     for emotion in declared.values():
         found = sorted(files.get(emotion.folder, {}))
@@ -217,14 +232,14 @@ def emotion_needs_input(run: StageRun) -> NeedsInput | None:
         reason = (f"no image is picked for the emotion {emotion.id}" if chosen is None
                   else f"the picked Variant {chosen[0]} of the emotion {emotion.id} was deleted")
         if not found:
-            return NeedsInput(reason, code="portrait.emotion_unpicked",
+            return NeedsInput(reason, code="portrait.emotion_unpicked", data={"emotion": emotion.id},
                               owner_action=f"Make the emotion {emotion.id} as an edit of the neutral image and import it "
                                            f"(kiripix import {run.asset_id} <png> --emotion {emotion.id}), then pick it "
                                            f"(kiripix pick {run.asset_id} <variant> --emotion {emotion.id}).")
         if len(found) == 1:  # a lone Variant is no choice: an agent may pick it
-            return NeedsInput(reason, code="portrait.emotion_unpicked",
+            return NeedsInput(reason, code="portrait.emotion_unpicked", data={"emotion": emotion.id},
                               command=f"kiripix pick {run.asset_id} {found[0]} --emotion {emotion.id}")
-        return NeedsInput(reason, code="portrait.emotion_unpicked",
+        return NeedsInput(reason, code="portrait.emotion_unpicked", data={"emotion": emotion.id},
                           owner_action=f"Pick one of the Variants {', '.join(found)}: "
                                        f"kiripix pick {run.asset_id} <variant> --emotion {emotion.id}")
     return None
@@ -374,6 +389,61 @@ def _check_source(run: StageRun) -> list[Finding]:
     return findings
 
 
+def _export(run: StageRun) -> None:
+    """What the game gets: the finished images as `<id>.png` (the neutral's is `neutral.png`) and `portrait.json`. No scene:
+    the game's portrait UI loads the PNGs."""
+    brief = json.loads((run.upstream[BRIEF_STAGE] / "brief.json").read_text(encoding="utf-8"))
+    ids = [NEUTRAL, *ids_of(run.upstream[FINISH], FINISH)]
+    for one in ids:
+        shutil.copyfile(image_file(run.upstream[FINISH], FINISH, one), run.output_dir / f"{one}.png")
+    record = {"schema_version": PORTRAIT_SCHEMA_VERSION, "asset": run.asset_id, "canvas": [brief["width"], brief["height"]],
+              "anchor": brief["anchor"], "fallback": brief["fallback"],
+              "emotions": [{"id": one, "file": f"{one}.png"} for one in ids]}
+    (run.output_dir / PORTRAIT_FILE).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def _check_export(run: StageRun) -> list[Finding]:
+    """`export.no_target`; every image the canvas's size with binary alpha, on the Grid's anchor (`export.portrait_canvas`);
+    the fallback an emotion of the set."""
+    where = Position(asset=run.asset_id, stage="export")
+    findings: list[Finding] = []
+    if not run.settings["export.godot"].get("project"):
+        findings.append(Finding(code="export.no_target", message="no Godot project to export into", position=where,
+                                owner_action=NO_TARGET))
+    record = json.loads((run.output_dir / PORTRAIT_FILE).read_text(encoding="utf-8"))
+    width, height = (int(v) for v in record["canvas"])
+    figure = read_record(run.upstream[FIT], FIT, run.asset_id)["figure"]
+    anchor_x, anchor_y = (int(v) for v in record["anchor"])
+    if figure and (abs(float(figure["centre_x"]) - anchor_x) > 1 or abs(int(figure["foot_y"]) - anchor_y) > 1):
+        findings.append(Finding(
+            code="export.portrait_canvas", severity="warning", position=where,
+            message=f"the neutral figure stands with its centre at x {figure['centre_x']:g} and its foot at y "
+                    f"{figure['foot_y']}, more than a pixel off the anchor ({anchor_x}, {anchor_y}): the crop offset is "
+                    "set, or the source image ends before the figure can reach the anchor",
+            owner_action=f"Nothing is needed if the offset is meant. Otherwise let `fit` place the figure (kiripix set "
+                         f"{run.asset_id} fit offset_x=-1 offset_y=-1), or move the anchor (kiripix set {run.asset_id} brief "
+                         f"anchor_x=.. anchor_y=..)."))
+    ids = [str(e["id"]) for e in record["emotions"]]
+    for one in ids:
+        with Image.open(run.output_dir / f"{one}.png") as opened:
+            rgba = opened.convert("RGBA")
+        if rgba.size != (width, height):
+            findings.append(Finding(
+                code="export.portrait_canvas", position=where,
+                message=f"{one}.png is {rgba.size[0]}x{rgba.size[1]}, not the canvas {width}x{height}",
+                fix=f"kiripix run {run.asset_id} fit --force"))
+        if sum(rgba.getchannel("A").histogram()[1:255]):
+            findings.append(Finding(code="image.partial_alpha", position=where,
+                                    message=f"{one}.png has partly transparent pixels: a portrait's alpha is binary",
+                                    fix=f"kiripix run {run.asset_id} finish --force"))
+    if str(record["fallback"]) not in ids:
+        findings.append(Finding(
+            code="portrait.fallback_unknown", position=where,
+            message=f"the fallback emotion {record['fallback']} is not in the set ({', '.join(ids)})",
+            fix=f"kiripix set {run.asset_id} brief fallback={NEUTRAL}"))
+    return findings
+
+
 PORTRAIT = KindSpec(
     name="portrait",
     description="A character's dialogue portraits: a neutral image and an emotion for each mood, all on one canvas with "
@@ -423,15 +493,23 @@ PORTRAIT = KindSpec(
             check=_check_source,
             decisions_view=apply_edits,
         ),
-        StageSpec(name="cutout", description="Chroma key or matting on each image (ticket 0243).", available_from="M5"),
-        StageSpec(name="register", description="Each emotion laid on the neutral image (ticket 0243).", available_from="M5"),
-        StageSpec(name="fit", description="One Grid transform for the set, from the neutral image (ticket 0243).",
-                  available_from="M5"),
-        StageSpec(name="palette", description="The set's own colours, one choice over every image (ticket 0243).",
-                  available_from="M5"),
-        StageSpec(name="finish", description="The outline, and the neutral's pixels outside the face (ticket 0243).",
-                  available_from="M5"),
-        StageSpec(name="export", description="One PNG per emotion and `portrait.json` (ticket 0244).", output_root="out",
-                  available_from="M5"),
+        *STAGES,
+        StageSpec(
+            name="export",
+            description="Builds what the game gets: `<id>.png` for the neutral and each emotion, and `portrait.json`. "
+                        "`kiripix export` then writes them under the export root's `portraits/<name>/`.",
+            version=2,  # 2: the Stage writes the images and `portrait.json` (ticket 0244); it was a stub
+            inputs=StageInputs(upstream=[FINISH, FIT, BRIEF_STAGE], settings=["export.godot"]),
+            checks=(CheckSpec(code="export.no_target", description="The export target is set."),
+                    CheckSpec(code="export.portrait_canvas",
+                              description="Every image is the canvas's size, on the same anchor."),
+                    CheckSpec(code="image.partial_alpha", description="Alpha is binary."),
+                    CheckSpec(code="portrait.fallback_unknown", description="The fallback names an emotion of the set.")),
+            output_root="out",
+            available_from="M5",
+            run=_export,
+            needs_input=export_needs_input,
+            check=_check_export,
+        ),
     ),
 )

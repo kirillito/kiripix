@@ -21,7 +21,7 @@ from kiripix.recipes.character_finish import check_character_finish
 from kiripix.recipes.character_palette import check_character_palette
 from kiripix.recipes.render import FORMAT_SETTING as RENDER_FORMAT_SETTING
 from kiripix.recipes.wearable_export import check_wearable_export, export_needs_input, run_wearable_export
-from kiripix.recipes.wearable_sheet import ORDER, check_wearable_sheet, run_wearable_sheet
+from kiripix.recipes.wearable_sheet import DEFAULT_ORDER, ORDER, check_wearable_sheet, run_wearable_sheet
 from kiripix.recipes.wearable_palette import DROPPED_FINISH, run_wearable_finish, run_wearable_palette
 from kiripix.recipes.wearable_render import check_wearable_render, run_wearable_model, run_wearable_render, run_wearable_rig
 
@@ -109,6 +109,7 @@ WEARABLE = KindSpec(
             inputs=StageInputs(upstream=["finish", "render"]),
             params=(ORDER,),
             checks=_SHEET.checks,
+            worn_order=lambda params: int(params.get("order", DEFAULT_ORDER)),
             run=run_wearable_sheet, check=check_wearable_sheet, available_from="M5"),
         StageSpec(
             name="export",

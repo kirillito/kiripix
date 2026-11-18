@@ -24,6 +24,7 @@ export interface Finding {
   fix: string | null;
   owner_action: string | null;
   points?: [number, number][]; // further pixels the finding is about; absent when it has none
+  data?: Record<string, unknown>; // what the finding says as data (ticket 0296); absent when it has none
 }
 
 export interface Envelope<T> {
@@ -111,8 +112,11 @@ export interface ShowData {
     variants: FileEntry[];
     images?: { stage: string; image: string | null; input_image: string | null }[]; // per Stage, this state's built images
   }[]; // a Prop's other states
+  emotions?: { emotion: string; picked: string | null; made_on: string | null; current: boolean; variants: FileEntry[] }[]; // a portrait's emotions
   looks?: { look: string; variants: FileEntry[]; picked: string | null }[]; // a room's Looks that have a stored edit
   sheets?: (FileEntry & { png_count: number | null })[]; // a sprite's imported sheets, named by hash
+  tile?: number; // the Project's tile, px (`project.tile`)
+  wearables?: { asset: string; order: number }[]; // a body's Wearables, by `order`
   stages: StageDetail[];
 }
 
