@@ -118,6 +118,10 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def _as_tuple(hashes: str | tuple[str, ...]) -> tuple[str, ...]:
+    return (hashes,) if isinstance(hashes, str) else hashes
+
+
 class Failures:
     """The last failure of each Stage of one Asset, with the input hash it failed on. Cache only."""
 
@@ -128,15 +132,18 @@ class Failures:
         except (OSError, ValueError):
             self._entries = {}
 
-    def get(self, stage: str, input_hash: str) -> str | None:
-        entry = self._entries.get(stage)
-        return entry["message"] if entry and entry["input_hash"] == input_hash else None
+    def has(self, stage: str) -> bool:
+        return stage in self._entries
 
-    def code(self, stage: str, input_hash: str) -> str | None:
+    def get(self, stage: str, input_hash: str | tuple[str, ...]) -> str | None:
+        entry = self._entries.get(stage)
+        return entry["message"] if entry and entry["input_hash"] in _as_tuple(input_hash) else None
+
+    def code(self, stage: str, input_hash: str | tuple[str, ...]) -> str | None:
         """The failure's finding code, such as rig.base_mismatch: `stage.failed` unless the Stage gave its own; None while
         the Stage isn't failed on these inputs."""
         entry = self._entries.get(stage)
-        return entry.get("code", "stage.failed") if entry and entry["input_hash"] == input_hash else None
+        return entry.get("code", "stage.failed") if entry and entry["input_hash"] in _as_tuple(input_hash) else None
 
     def record(self, stage: str, input_hash: str, message: str, code: str | None = None) -> None:
         self._entries[stage] = {"input_hash": input_hash, "message": message, "code": code or "stage.failed",
@@ -190,6 +197,7 @@ class AssetGraph:
         self.cache = cache
         self.failures = Failures(project.state_dir, asset.id)
         self._hashes: dict[str, str] = {}
+        self._legacy_hashes: dict[str, str] = {}
         self._image_hashes: dict[Path, str] = {}  # for `pin_key`, which a pass over a room's Stages asks hundreds of times
         self._replays: dict[str, journal.Replay] = {}
         self._calls: dict[str, list[RunnerCall]] = {}
@@ -381,11 +389,14 @@ class AssetGraph:
         """Whether a file of the Project builds this Asset in some Stage, as a generator builds a Model."""
         return any(self.project_files(s) for s in self.kind.stages if s.project_files is not None)
 
-    def _outside_inputs(self, spec: StageSpec) -> dict[str, Any]:
+    def _outside_inputs(self, spec: StageSpec,
+                        hash_of: Callable[["AssetGraph", str], str] | None = None) -> dict[str, Any]:
         """The part of the input hash that comes from outside the Asset's own folder and the settings: its base (ADR 0012)
         and the Project's files that build it (ticket 0224). With either, who set a parameter can change what a Stage
         builds, so the parameters the Asset sets itself are part of it too. Nothing for an Asset with neither, so its
-        hashes are what they were before either existed."""
+        hashes are what they were before either existed. `hash_of` works out the base's built Stages' hashes, in the form
+        wanted (`input_hash` unless told otherwise)."""
+        hash_of = hash_of or AssetGraph.input_hash
         extra: dict[str, Any] = {}
         base = self.base
         if base is not None:
@@ -394,7 +405,7 @@ class AssetGraph:
                 "asset": base.asset.id,
                 "files": {name: self.cache.file_hash(path) for name, path in self.base_files(spec).items()},
                 "decisions": {name: journal.hashable(base.replay(name)) for name in wanted.decisions},
-                "built": {name: base.input_hash(name) for name in wanted.built},
+                "built": {name: hash_of(base, name) for name in wanted.built},
                 "params": self._base_params(spec),
             }
         files = self.project_files(spec)
@@ -428,24 +439,46 @@ class AssetGraph:
                   for name in spec.inputs.settings}
         return {**hashed, **{name: _lookup(self._settings, self._known, name) for name in spec.inputs.given}}
 
+    def _hashed_params(self, spec: StageSpec) -> dict[str, Scalar]:
+        """The Stage's parameters that differ from their declared default: adding a parameter is not a rebuild."""
+        defaults = {p.name: p.default for p in spec.params}
+        return {name: value for name, value in self.params(spec).items()
+                if name not in defaults or value != defaults[name]}
+
+    def _hash_document(self, spec: StageSpec, older_form: bool) -> dict[str, Any]:
+        """What a Stage's input hash is made of. `older_form` is the form before a Stage declared a `version` and left
+        defaults out (ticket 0278): every parameter, and a version only when it isn't 1, so no old stamp matches a bumped
+        Stage."""
+        hash_of = AssetGraph.legacy_input_hash if older_form else AssetGraph.input_hash
+        return {
+            "kind": self.kind.name,
+            "stage": spec.name,
+            **({"version": spec.version} if spec.version != 1 or not older_form else {}),
+            "asset_params": self.asset.settings.params,
+            "params": self.params(spec) if older_form else self._hashed_params(spec),
+            "decisions": journal.hashable(self.replay(spec.name)),
+            "files": {name: self.cache.file_hash(path) for name, path in self.files(spec).items()},
+            "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
+            "upstream": {name: hash_of(self, name) for name in spec.inputs.upstream},
+            **self._pinned_for_hash(spec),
+            **self._outside_inputs(spec, hash_of),
+        }
+
     def input_hash(self, stage: str) -> str:
         if stage not in self._hashes:
-            spec = self.spec(stage)
-            self._hashes[stage] = hash_json(
-                {
-                    "kind": self.kind.name,
-                    "stage": spec.name,
-                    "asset_params": self.asset.settings.params,
-                    "params": self.params(spec),
-                    "decisions": journal.hashable(self.replay(stage)),
-                    "files": {name: self.cache.file_hash(path) for name, path in self.files(spec).items()},
-                    "settings": {name: self._setting_for_hash(name) for name in spec.inputs.settings},
-                    "upstream": {name: self.input_hash(name) for name in spec.inputs.upstream},
-                    **self._pinned_for_hash(spec),
-                    **self._outside_inputs(spec),
-                }
-            )
+            self._hashes[stage] = hash_json(self._hash_document(self.spec(stage), older_form=False))
         return self._hashes[stage]
+
+    def legacy_input_hash(self, stage: str) -> str:
+        """The input hash in its older form: a stamp or failure recorded before versions existed still counts as current
+        while the Stage is at version 1."""
+        if stage not in self._legacy_hashes:
+            self._legacy_hashes[stage] = hash_json(self._hash_document(self.spec(stage), older_form=True))
+        return self._legacy_hashes[stage]
+
+    def current_hashes(self, stage: str) -> tuple[str, ...]:
+        """The hashes a record of the Stage may carry and still be current: today's, and the older form's."""
+        return (self.input_hash(stage), self.legacy_input_hash(stage))
 
     def _pinned_for_hash(self, spec: StageSpec) -> dict[str, Any]:
         calls = self.runner_calls(spec)
@@ -457,6 +490,7 @@ class AssetGraph:
     def forget_hashes(self) -> None:
         """Forget the hashes worked out so far, after a Runner call added a pinned result or a Stage rebuilt its image."""
         self._hashes.clear()
+        self._legacy_hashes.clear()
         self._image_hashes.clear()
         self._calls.clear()
         self._files.clear()
@@ -664,6 +698,35 @@ class AssetGraph:
         value = self._stamp(spec).get("input_hash")
         return str(value) if value is not None else None
 
+    def upstream_chain(self, spec: StageSpec) -> list[str]:
+        """Every Stage the Stage reads from, directly or not, the furthest first."""
+        chain: list[str] = []
+        for name in spec.inputs.upstream:
+            for each in [*self.upstream_chain(self.spec(name)), name]:
+                if each not in chain:
+                    chain.append(each)
+        return chain
+
+    def stale_reason(self, spec: StageSpec) -> str:
+        """Why a built Stage is stale: Kiripix's own change to the Stage, or to a Stage above it, by its version, or an
+        input (ticket 0278). A stamp without a version was built at version 1. The stamp holds the versions of the Stages
+        above it, so a change in one still shows after that one is rebuilt; an older stamp falls back to what each of
+        those Stages' own stamps say."""
+        stamp = self._stamp(spec)
+        built = stamp.get("version", 1)
+        if isinstance(built, int) and built != spec.version:
+            return f"Kiripix's `{spec.name}` changed: version {built} → {spec.version}"
+        recorded = stamp.get("upstream_versions")
+        for name in self.upstream_chain(spec):
+            above = self.spec(name)
+            if isinstance(recorded, dict) and name in recorded:
+                then = recorded[name]
+            else:
+                then = self._stamp(above).get("version", 1) if self.built_hash(above) is not None else above.version
+            if isinstance(then, int) and then != above.version:
+                return f"Kiripix's `{name}` changed: version {then} → {above.version}"
+        return "an input changed since the output was built"
+
     def state(self, stage: str) -> StageState:
         spec = self.spec(stage)
         if spec.run is None:
@@ -676,14 +739,16 @@ class AssetGraph:
         if waiting is not None:
             return StageState(stage=stage, status="needs-input", reason=waiting.reason)
         current = self.input_hash(stage)
-        failure = self.failures.get(stage, current)
+        failure = None
+        if self.failures.has(stage):  # a failure recorded before versions existed carries the older form of the hash
+            failure = self.failures.get(stage, self.current_hashes(stage))
         if failure is not None:
             return StageState(stage=stage, status="failed", reason=failure)
         built = self.built_hash(spec)
         if built is None:
             return StageState(stage=stage, status="todo")
-        if built != current:
-            return StageState(stage=stage, status="stale", reason="an input changed since the output was built")
+        if built != current and built != self.legacy_input_hash(stage):
+            return StageState(stage=stage, status="stale", reason=self.stale_reason(spec))
         if self.replayed_on_other_images(spec):
             return StageState(stage=stage, status="needs-review", reason=REPLAYED_ON_CHANGED_IMAGE)
         if self.unreviewed_pins(spec):
@@ -941,7 +1006,9 @@ class _Runner:
                 cancel.check()
             if spec.check is not None:
                 checked = spec.check(context)
-            stamp = {"stage": spec.name, "input_hash": input_hash, "finished": _now()}
+            stamp = {"stage": spec.name, "input_hash": input_hash, "version": spec.version,
+                     "upstream_versions": {n: graph.spec(n).version for n in graph.upstream_chain(spec)},
+                     "finished": _now()}
             if unpainted is not None:
                 stamp["unpainted_hash"] = unpainted
             atomic.write_json(building / STAMP_FILE, stamp)

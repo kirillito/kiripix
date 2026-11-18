@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: imaging-engineer
 type: ticket
@@ -31,8 +31,24 @@ In `kiripix/ops/`, pure:
 
 ## Acceptance criteria
 
-- [ ] Golden seam: two images of one gradient, one shifted by a pixel, map to the same colours wherever their pixels match.
+- [x] Golden seam: two images of one gradient, one shifted by a pixel, map to the same colours wherever their pixels match.
       At `n` 8 against 32 the error report drops.
-- [ ] Unit cases: the `keep` colours are in the result; reordering the images changes nothing; every output pixel is a set
+- [x] Unit cases: the `keep` colours are in the result; reordering the images changes nothing; every output pixel is a set
       colour.
-- [ ] Exported from `kiripix.ops`. `uv run lint-imports` and `uv run mypy` pass.
+- [x] Exported from `kiripix.ops`. `uv run lint-imports` and `uv run mypy` pass.
+
+## Result
+
+`kiripix/ops/colourset.py`, exported from `kiripix.ops`:
+
+- `set_colours(images, alphas, n, keep=())` returns up to `n` sRGB colours, `keep` first and unchanged. `alphas` is a
+  list of opaque masks, or None to read each image's alpha. Each image weighs the same; colours and weights are merged in
+  a canonical order, so the image order changes nothing. Seeds go where the pixels are worst served, then 24 Lloyd rounds.
+- `map_set(images, palette, dither)` maps each RGBA image with `quantize` (nearest in OKLab, Bayer dither).
+- `set_report(before, after)` gives a `SetReport` per image: mean and 95th-percentile OKLab error, colours used.
+
+Tests: `tests/golden/test_colour_set.py`; golden `tests/golden/expected/colour_set_shifted.png`. Spec §7 updated.
+
+Review fix: a cluster mean that rounds onto a `keep` colour or another centre no longer shrinks the set. The gap is
+filled with the worst-served pixel colour, so `set_colours` returns exactly `n` colours when the opaque pixels have at
+least `n` distinct ones, and fewer only when they have fewer. Tests added for both. Stray blank lines removed.

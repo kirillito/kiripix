@@ -200,7 +200,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
             stage=state.stage,
             status=state.status,
             reason=state.reason,
-            failure_code=graph.failures.code(state.stage, graph.input_hash(state.stage))
+            failure_code=graph.failures.code(state.stage, graph.current_hashes(state.stage))
             if state.status == "failed" else None,
             params=params,
             param_sources=origins,

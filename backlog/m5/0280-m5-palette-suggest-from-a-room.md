@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: core-engineer
 type: ticket
@@ -29,7 +29,32 @@ Source at its own Grid transform, and often only the part that bands.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: on a built fixture room, `--asset` with a box gives the same proposal as the old path on a crop of the Source
+- [x] CLI seam: on a built fixture room, `--asset` with a box gives the same proposal as the old path on a crop of the Source
       at the room's scale.
-- [ ] A room whose `fit` isn't built is refused, with `run <room> fit` as its fix.
-- [ ] The Command's help and spec §7 say so.
+- [x] A room whose `fit` isn't built is refused, with `run <room> fit` as its fix.
+- [x] The Command's help and spec §7 say so.
+
+## Result
+
+- `op palette-suggest --asset <room|prop> [--box x,y,w,h] --add N` reads the Asset's Source, cuts the box (target px) to
+  Source px through the `fit` Grid transform, and downscales it by that crop's size, so the scale is the room's. `--scale`
+  is ignored there. `data` has `box`; `proposal.json` has optional `asset` and `box` (still schema 1: both default to null),
+  and `palette-add`'s stale-proposal fix re-runs the `--asset` form.
+- `fit` not built: `palette.suggest_needs_fit`, fix `kiripix run <room> fit`. A bad box: `palette.box_invalid`. An image
+  with `--asset` or `--box` without it: `palette.suggest_input`.
+- `palette.mapping_error` on a room or prop now offers `op palette-suggest --asset <id> --add 16` (the whole Asset; the
+  Check has no region box).
+
+Tests: `tests/cli/test_palette_grow.py` (two new); `test_contract.py` unchanged (the Command's sample still runs). Spec section 10 CLI list updated.
+
+Review fixes:
+- An `--asset` proposal's `image_hash` is a hash of the Source and the `fit` `grid.json`; `palette-add` recomputes it and
+  refuses a changed one with `palette.proposal_stale`, fix the `--asset ... --box ...` re-run (the box is kept, also in the
+  fix for an unreadable proposal).
+- `--asset` on a Kind other than room or prop: `palette.suggest_input`. A malformed box (wrong count, not integers):
+  `palette.box_invalid`; so is a box whose cells reach past the Source (no test: a Grid reaching past its Source isn't
+  built by `fit`).
+- `check_mapping` decides by the Asset's Kind folder, and a Prop's other state (its `fit` under `states/<id>/`) gets the
+  image-path fix, not `--asset`.
+- The spec line moved to section 7; section 10 keeps a pointer.
+- Tests: two more in `tests/cli/test_palette_grow.py`.

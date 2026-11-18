@@ -931,3 +931,41 @@ kbd {
   margin-top: 1.5em;
   max-width: 28em;
 }
+
+/* A character's named points (ticket 0237): a cross of image pixels (the pixel and one pixel each way, so it scales with the
+   zoom) at the pixel the game draws it; hollow when behind the body. */
+.point-mark {
+  pointer-events: auto;
+  position: absolute;
+}
+
+.point-mark::before,
+.point-mark::after {
+  background: #00e5ff;
+  content: "";
+  position: absolute;
+}
+
+.point-mark::before {
+  height: 100%;
+  left: -100%;
+  top: 0;
+  width: 300%;
+}
+
+.point-mark::after {
+  height: 300%;
+  left: 0;
+  top: -100%;
+  width: 100%;
+}
+
+.point-hollow::before,
+.point-hollow::after {
+  display: none;
+}
+
+.point-hollow {
+  border: 1px solid #00e5ff;
+  box-sizing: border-box;
+}

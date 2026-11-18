@@ -161,3 +161,70 @@ def test_the_eye_materials_get_no_line_and_a_stamped_eye_is_not_painted_over(pro
     frame = read(folder / "work" / "finish" / "color" / "idle" / "s" / "000.png")
     assert (frame == stamp_only).all()  # the border is skin's, an eye material: no line, and no stamped pixel changed
     assert render_json(folder)["eyes"] == ["skin"]
+
+
+def test_line_depth_draws_a_line_inside_one_material_at_a_depth_step(project: Kiripix) -> None:
+    frames_with(project, {"*": [1]})  # one material: the only border is the depth step at the frame's middle
+    folder = built(project, "colors=3")
+    px_per_unit = float(render_json(folder)["px_per_unit"])
+    (project.cwd / "blender-depth-step").write_text(str(round(2.0 / px_per_unit / 4.0 * 65535.0)), encoding="utf-8")  # 2 px; range 4
+    project.json("run", HERO, "render", "--force")
+    project.json("run", HERO, "palette")
+    project.json("set", HERO, "finish", "outline=false", "inner_lines=outline", "outline_colour=1")
+    path = folder / "work" / "finish" / "color" / "idle" / "s" / "000.png"
+    mapped = read(folder / "work" / "palette" / "color" / "idle" / "s" / "000.png")
+    palette = project_palette(project)
+
+    def changed(*params: str) -> set[int]:
+        project.json("set", HERO, "finish", *params)
+        project.json("run", HERO, "finish")
+        return {int(c) for c in np.nonzero((read(path) != mapped).any(axis=-1))[1]}
+
+    assert changed("line_depth=0") == set()
+    assert changed("line_depth=3") == set()  # the step is 2 px
+    assert changed("line_depth=1.5") == {COLUMN}
+    assert (read(path)[:, COLUMN, :3] == palette[1]).all()
+    assert drawn(folder)["inner_lines"]["line_depth"] == 1.5
+    assert changed("line_depth=1.5", "line_skip=cloth") == set()  # a single name skips its depth lines too
+
+
+def with_depth_step(project: Kiripix, *palette_params: str) -> Path:
+    """A built character whose one material (1, cloth) has a 2 px depth step at the frame's middle; palette run."""
+    frames_with(project, {"*": [1]})
+    folder = built(project, "colors=3", *palette_params)
+    px_per_unit = float(render_json(folder)["px_per_unit"])
+    (project.cwd / "blender-depth-step").write_text(str(round(2.0 / px_per_unit / 4.0 * 65535.0)), encoding="utf-8")
+    project.json("run", HERO, "render", "--force")
+    project.json("run", HERO, "palette")
+    return folder
+
+
+def finish_bytes(folder: Path) -> dict[str, bytes]:
+    root = folder / "work" / "finish"
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*.png"))}
+
+
+def test_line_depth_0_is_byte_equal_to_a_run_without_the_parameter(project: Kiripix) -> None:
+    folder = with_depth_step(project)
+    project.json("set", HERO, "finish", "inner_lines=outline", "outline_colour=1")
+    project.json("run", HERO, "finish", "--force")
+    without = finish_bytes(folder)
+
+    project.json("set", HERO, "finish", "line_depth=0")
+    project.json("run", HERO, "finish", "--force")
+
+    assert without and finish_bytes(folder) == without
+
+
+def test_dark_with_part_lines_draws_the_depth_line_in_the_part_line_step(project: Kiripix) -> None:
+    folder = with_depth_step(project, "parts=cloth", "part_lines=true")
+    project.json("set", HERO, "finish", "outline=false", "inner_lines=dark", "line_depth=1.5", "outline_colour=2")
+    project.json("run", HERO, "finish")
+
+    frame = read(folder / "work" / "finish" / "color" / "idle" / "s" / "000.png")
+    mapped = read(folder / "work" / "palette" / "color" / "idle" / "s" / "000.png")
+    document: dict[str, Any] = json.loads((folder / "work" / "palette" / "palette.json").read_text("utf-8"))
+    [cloth] = [p for p in document["parts"] if p["name"] == "cloth"]
+    assert set(np.nonzero((frame != mapped).any(axis=-1))[1]) == {COLUMN}
+    assert (frame[:, COLUMN, :3] == np.array(cloth["rgb"][0])).all()  # the first step of the ramp, not the outline's colour
+    assert drawn(folder)["inner_lines"]["colours"]["cloth"]["colour"] == cloth["indexes"][0]

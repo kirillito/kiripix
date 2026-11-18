@@ -457,6 +457,7 @@ CHARACTER = KindSpec(
         StageSpec(
             name="finish",
             description="Outline after mapping; the normal pass quantised and aligned to the colour frames.",
+            version=2,  # finish.json gains `line_depth` (ticket 0247)
             inputs=StageInputs(upstream=["palette", "render"], settings=["palette"]),
             params=(
                 ParamSpec(name="outline", type="bool", description="Draw a 1 px outline round the silhouette.", default=True),
@@ -493,6 +494,11 @@ CHARACTER = KindSpec(
                           description="Which borders get no inner line, comma-separated by material name: a+b is the border "
                                       "between two materials, a single name every border of that material, such as "
                                       "dragon+tee,sole+shoes."),
+                ParamSpec(name="line_depth", type="float", minimum=0.0, default=0.0,
+                          description="With inner_lines: also a line inside one material where the depth steps by more than "
+                                      "this many px of the render's scale (so it means the same at any height), on the "
+                                      "farther pixel, in the material's line colour. 0 is off. line_skip's single names skip "
+                                      "a material's depth lines too."),
                 ParamSpec(name="line_darkness", type="float", minimum=0.0, maximum=1.0, default=0.55,
                           description="With inner_lines=dark: how much darker than the part's dark colour the line is, "
                                       "0 to 1 (a share of its light)."),

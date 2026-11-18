@@ -30,7 +30,22 @@ materials. Record the Owner's choice of default, and whether `chargen` can stop 
 
 ## Acceptance criteria
 
-- [ ] CLI seam: on the fake Blender, with a depth step inside one material, `line_depth` above 0 puts a line pixel there in
+- [x] CLI seam: on the fake Blender, with a depth step inside one material, `line_depth` above 0 puts a line pixel there in
       the line colour, and 0 is byte-equal to a run without the parameter.
 - [ ] The Owner's check above, with the sheet's path and the chosen default recorded here.
-- [ ] Spec §6.3 (finish) describes `line_depth`. `uv run lint-imports` and `uv run mypy` pass.
+- [x] Spec §6.3 (finish) describes `line_depth`. `uv run lint-imports` and `uv run mypy` pass.
+
+## Result
+
+`finish line_depth=<px>` (float, default 0 = off) passes `depth_step` to the `inner_lines` Op: px / `px_per_unit` / (`far` - `near`)
+x 65535, from `render.json`. `finish.json`'s `inner_lines` records `line_depth`; `FINISH_SCHEMA_VERSION` is 3. The fake Blender
+gained `blender-depth-step` (a 16 bit depth with a step at the frame's middle). Test:
+`tests/cli/test_character_inner_lines.py::test_line_depth_draws_a_line_inside_one_material_at_a_depth_step`.
+
+Version: `FINISH_SCHEMA_VERSION` (now 3) is only written into `finish.json`, not hashed, so it does not make `finish` stale. The
+`finish` StageSpec's `version` is bumped to 2 instead (ticket 0278): `finish` is stale on every character, a deliberate rebuild
+(13 characters in the art Project). Tests also cover `line_depth=0` byte-equal to never set, and `dark` with `part_lines` drawing the
+depth line in the part's first ramp step.
+
+Left for the Owner: the cast-sheet check at `line_depth` 0, 1.5 and 3, the chosen default, and whether `chargen` can stop
+splitting materials.

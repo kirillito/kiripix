@@ -169,7 +169,8 @@ def test_cells_a_mask_half_covers_are_listed_with_their_positions_as_info(projec
 
     assert result.code == 0  # info only
     [finding] = findings(result.json, "area.ambiguous_cells")
-    assert finding["severity"] == "info" and finding["fix"] is None and finding["owner_action"]
+    assert finding["severity"] == "info" and finding["owner_action"] is None
+    assert finding["fix"] == f"kiripix area-settle {ROOM} battle.a"
     assert "1 cells" in finding["message"] and "(12, 0)" in finding["message"]
 
 

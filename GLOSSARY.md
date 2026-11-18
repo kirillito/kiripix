@@ -141,6 +141,10 @@ A Marker that is a box on a Room, optionally snapped to a cell grid. Kiripix giv
 is for, such as a battle area, an escape route or an Exit's trigger box.
 _Avoid_: region (that is a Look's), zone, battle area (in Kiripix's own code and messages)
 
+**Link**:
+A Marker with two ends on one Room, where an actor crosses by a scripted move (a hop, a climb, a jump).
+_Avoid_: portal, traversal, jump point (and Exit, which leads to another Room)
+
 **Exit**:
 A Marker that leads to an Exit in another Room.
 _Avoid_: door, portal

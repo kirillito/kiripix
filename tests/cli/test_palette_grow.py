@@ -8,7 +8,8 @@ import numpy as np
 from conftest import Kiripix, stage_status
 from PIL import Image
 from test_fit import ROOM
-from test_palette import fitted_room
+from test_fit import upscaled
+from test_palette import fitted_room, off_palette_art
 
 COLOURS = [(10, 200, 210), (230, 120, 240), (140, 200, 10)]  # far from anything in the default palette
 
@@ -166,3 +167,71 @@ def test_after_an_add_the_rooms_palette_and_later_stages_are_stale_and_run_rebui
     assert "needs-review" not in states.values()
     project.json("run", ROOM, expect=3)
     assert stage_status(project, ROOM)["palette"] == "done"
+
+
+def test_suggest_from_a_room_matches_the_old_path_on_a_crop_at_the_rooms_scale(project: Kiripix) -> None:
+    pixels = off_palette_art(48, 32)
+    fitted_room(project, source=pixels)
+    project.json("run", ROOM, "brief")
+    project.json("run", ROOM, "source")
+    project.json("run", ROOM, "fit")
+    x, y, w, h = 8, 4, 20, 16
+    crop = upscaled(pixels, 2)[2 * y : 2 * (y + h), 2 * x : 2 * (x + w)]
+    Image.fromarray(crop, "RGBA").save(project.cwd / "crop.png")
+
+    old = project.json("op", "palette-suggest", "crop.png", "--add", "5", "--scale", "2")["data"]
+    new = project.json("op", "palette-suggest", "--asset", ROOM, "--box", f"{x},{y},{w},{h}", "--add", "5")["data"]
+    whole = project.json("op", "palette-suggest", "--asset", ROOM, "--add", "5")["data"]
+
+    assert new["colours"] == old["colours"] and new["error_before"] == old["error_before"]
+    assert new["box"] == [x, y, w, h] and new["scale"] == 2.0 and (new["width"], new["height"]) == (w, h)
+    assert whole["box"] == [0, 0, 48, 32] and (whole["width"], whole["height"]) == (48, 32)
+    proposal = json.loads((project.cwd / str(new["proposal"])).read_text(encoding="utf-8"))
+    assert proposal["asset"] == ROOM and proposal["box"] == [x, y, w, h]
+    assert (project.cwd / str(new["proposal"])) != (project.cwd / str(whole["proposal"]))
+
+
+def test_suggest_from_a_room_needs_fit_and_a_box_inside_the_room(project: Kiripix) -> None:
+    fitted_room(project)
+
+    refused = project.json("op", "palette-suggest", "--asset", ROOM, "--add", "5", expect=1)
+    assert refused["findings"][0]["code"] == "palette.suggest_needs_fit"
+    assert refused["findings"][0]["fix"] == f"kiripix run {ROOM} fit"
+
+    project.json("run", ROOM, "brief")
+    project.json("run", ROOM, "source")
+    project.json("run", ROOM, "fit")
+    bad = project.json("op", "palette-suggest", "--asset", ROOM, "--box", "40,0,20,10", "--add", "5", expect=1)
+    assert bad["findings"][0]["code"] == "palette.box_invalid"
+    both = project.json("op", "palette-suggest", "x.png", "--asset", ROOM, "--add", "5", expect=1)
+    assert both["findings"][0]["code"] == "palette.suggest_input"
+
+
+def test_an_asset_proposal_goes_stale_when_the_fit_changes_and_the_fix_keeps_the_box(project: Kiripix) -> None:
+    pixels = off_palette_art(48, 32)
+    fitted_room(project, source=pixels)
+    project.json("run", ROOM, "brief")
+    project.json("run", ROOM, "source")
+    project.json("run", ROOM, "fit")
+    made = project.json("op", "palette-suggest", "--asset", ROOM, "--box", "8,4,20,16", "--add", "3")["data"]
+
+    project.json("set", ROOM, "fit", "scale=2", "offset_x=2")
+    project.json("run", ROOM, "fit")
+    stale = project.json("palette-add", str(made["proposal"]), owner=True, expect=1)
+
+    finding = stale["findings"][0]
+    assert finding["code"] == "palette.proposal_stale"
+    assert f"--asset {ROOM} --box 8,4,20,16" in finding["fix"]
+
+
+def test_a_malformed_box_and_a_kind_without_fit_are_refused(project: Kiripix) -> None:
+    fitted_room(project)
+    project.json("run", ROOM, "brief")
+    project.json("run", ROOM, "source")
+    project.json("run", ROOM, "fit")
+    for box in ("1,2,3", "a,b,c,d", "1,2,3,4,5"):
+        result = project.json("op", "palette-suggest", "--asset", ROOM, "--box", box, "--add", "2", expect=1)
+        assert result["findings"][0]["code"] == "palette.box_invalid"
+    project.json("new", "character", "hero")
+    other = project.json("op", "palette-suggest", "--asset", "character.hero", "--add", "2", expect=1)
+    assert other["findings"][0]["code"] == "palette.suggest_input"

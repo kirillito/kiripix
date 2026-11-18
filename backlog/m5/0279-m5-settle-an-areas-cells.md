@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: core-engineer
 type: ticket
@@ -31,7 +31,23 @@ cleared. But each cell takes a `polygon` Decision on `masks`, written by hand.
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a room whose area has three ambiguous cells (30 %, 52 % and 70 % `solid`) gets two fills and one clear, and
+- [x] CLI seam: a room whose area has three ambiguous cells (30 %, 52 % and 70 % `solid`) gets two fills and one clear, and
       `place` then raises no `area.ambiguous_cells`.
-- [ ] `--dry-run` changes nothing. `undo` on `masks` undoes it.
-- [ ] Contract sample. Spec §6.1 mentions the Command.
+- [x] `--dry-run` changes nothing. `undo` on `masks` undoes it.
+- [x] Contract sample. Spec §6.1 mentions the Command.
+
+## Result
+
+- `kiripix area-settle <room> <area> [--rule majority] [--dry-run]` (`kiripix/commands/area.py`). For each ambiguous cell it
+  records `polygon` Decisions on `masks` in one atomic append: a cell with `solid` and `pit` together at half or more is
+  filled on the Mask covering it most; any other is erased on each Mask that touches it (so a cell on both takes two Decisions).
+  `undo` on `masks` steps back one Decision at a time (the journal has no batch entry).
+- It needs `masks` built and `done` (`area.masks_not_built`, fix `kiripix run`), an existing area (`area.unknown`) with a `cell`
+  (`area.no_cell`). The result lists each cell: position, Mask, coverage, fill or clear.
+- `area.ambiguous_cells` now has `fix: kiripix area-settle <room> <area>` and no `owner_action`.
+- Code: `room.py` gains the public `current_area` and `ambiguous_cells`. Tests: `tests/cli/test_area_settle.py`, a contract
+  sample, and `test_area.py`'s finding test. Spec §6.1 (`place`) names the Command.
+- Review fixes: the spec and the Command say "one `polygon` Decision per cell and Mask" (a cleared cell touched by both `solid`
+  and `pit` takes two); `ambiguous_cells` in `room.py` is the one public function (no forwarder). The test uses 5 px cells at
+  28 %, 52 % and 68 % (7, 13 and 17 of 25 pixels), so none sits on the half tie, and the dry-run test checks the masks journal
+  file is unchanged.

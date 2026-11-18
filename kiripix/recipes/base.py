@@ -369,6 +369,8 @@ class StageSpec:
 
     name: str
     description: str
+    # Part of the input hash: a change to what the Stage writes bumps it, and the Stage is stale on every Asset (ticket 0278).
+    version: int = 1
     inputs: StageInputs = field(default_factory=StageInputs)
     params: tuple[ParamSpec, ...] = ()
     decisions: tuple[DecisionSpec, ...] = ()

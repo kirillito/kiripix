@@ -3,7 +3,9 @@
 The picked Source is the **default state**, whose ID is the brief's `state` (default `default`). Every other state is
 declared on the `source` Stage by a `state` Decision (an ID and a size), gets its Variants with `import --state` (stored in
 `src/states/<folder>/`) and its Source with `pick --state`. A state is not an edit of the default, so a new default Source
-doesn't touch it. The Stages per state are ticket 0259's.
+doesn't touch it. Each Stage after `source` runs once per state (0259): the default state's outputs are where
+they always were, a state's are under `states/<id>/` in the Stage's output folder (`STATES_OUT`), and a Stage finds its
+states by the folders of its upstream's output (`state_ids`).
 
 A state's ID is its name in the game, frozen at its first export (ADR 0003). `state_remove` and `state_rename` change it
 before that. They are replayed by `apply_edits` (`StageSpec.decisions_view`), the way a Loop's are: a rename keeps the
@@ -12,18 +14,23 @@ folder the Variants were imported into (`folder`), because a rename moves no fil
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from kiripix.checks import Finding, Position
-from kiripix.recipes.base import CheckSpec, CurrentDecision, DecisionSpec, NeedsInput, StageRun
+from kiripix.recipes.base import CheckSpec, CurrentDecision, DecisionSpec, NeedsInput, StageFailure, StageRun
 
 SOURCE_STAGE = "source"
 BRIEF_STAGE = "brief"
 STATES_DIR = "src/states"  # a Prop's other states' Variants: `src/states/<folder>/<hash>.png`
+STATES_OUT = "states"  # in a Stage's output folder: `states/<id>/<the Stage's files>`
+STATE_RECORD = "state.json"  # `source` records a state's size here; `cutout` passes it on to `fit`
 DEFAULT_STATE = "default"
 STATE_ID = "^[a-z][a-z0-9]*(_[a-z0-9]+)*$"  # snake_case
 
@@ -63,6 +70,16 @@ STATE_PICK = DecisionSpec(
                 "`kiripix pick <asset> <variant> --state <id>` records it.",
     entry_schema={"type": "object", "properties": {"state": _ID, "variant": {"type": "string"}},
                   "required": ["state", "variant"], "additionalProperties": False},
+)
+
+STATE_OFFSET = DecisionSpec(
+    name="state_offset",
+    description="Where a state's crop starts in `downscale` mode, in Source pixels from the top left (the `fit` "
+                "parameters `offset_x` and `offset_y` are the default state's). The latest one of a state counts.",
+    entry_schema={"type": "object",
+                  "properties": {"state": _ID, "offset_x": {"type": "integer", "minimum": 0},
+                                 "offset_y": {"type": "integer", "minimum": 0}},
+                  "required": ["state", "offset_x", "offset_y"], "additionalProperties": False},
 )
 
 DECISIONS = (STATE, STATE_REMOVE, STATE_RENAME, STATE_PICK)
@@ -244,3 +261,75 @@ def edit_problems(asset: str, decisions: tuple[CurrentDecision, ...], default: s
                         position=where, owner_action=f"Rename {state} to an ID the Prop doesn't have."))
                 states.add(new)
     return found, edited
+
+
+# the Stages per state (ticket 0259)
+
+
+def write_state_sources(run: StageRun) -> None:
+    """`source`: each declared state's picked Variant, as `states/<id>/source.png`, with its size in `state.json`."""
+    picks, files = state_picks(run.decisions), state_files(run)
+    for state in declared_states(run.decisions).values():
+        chosen = picks[state.id]  # `state_needs_input` holds the Stage back until each has one
+        path = files[state.folder][chosen]
+        if not hashlib.sha256(path.read_bytes()).hexdigest().startswith(chosen):
+            raise StageFailure(f"the Variant {path.name} of the state {state.id} was changed after it was imported, and "
+                               "Variants are immutable; import the changed image as a new Variant and pick that")
+        folder = run.output_dir / STATES_OUT / state.id
+        folder.mkdir(parents=True)
+        shutil.copyfile(path, folder / "source.png")
+        (folder / STATE_RECORD).write_text(json.dumps({"width": state.width, "height": state.height}) + "\n",
+                                           encoding="utf-8")
+
+
+def state_ids(upstream: Path) -> list[str]:
+    """The states a Stage's upstream built: the folders under `states/` in its output, in name order."""
+    folder = upstream / STATES_OUT
+    return sorted(p.name for p in folder.iterdir() if p.is_dir()) if folder.is_dir() else []
+
+
+def state_size(upstream: Path, state: str) -> tuple[int, int]:
+    """A state's declared size, from the `state.json` that `cutout` carried through."""
+    record = json.loads((upstream / STATES_OUT / state / STATE_RECORD).read_text(encoding="utf-8"))
+    return int(record["width"]), int(record["height"])
+
+
+def state_view(run: StageRun, state: str) -> StageRun:
+    """The run as a state's Stage reads it: it writes under `states/<id>/` and reads that folder of each upstream output
+    (the `brief` has none), so the Stage's own function does the work unchanged."""
+    out = run.output_dir / STATES_OUT / state
+    out.mkdir(parents=True, exist_ok=True)
+    upstream = {name: path if name == BRIEF_STAGE else path / STATES_OUT / state for name, path in run.upstream.items()}
+    return replace(run, output_dir=out, upstream=upstream)
+
+
+def each_state(run: StageRun, main: str, function: Callable[[StageRun], None]) -> None:
+    """Run `function` for the default state, then for each state of the `main` upstream's output, checking for a cancel
+    between states."""
+    function(run)
+    for state in state_ids(run.upstream[main]):
+        run.check_cancel()
+        function(state_view(run, state))
+
+
+def about_state(findings: list[Finding], state: str) -> list[Finding]:
+    """A state's findings, saying which state they are about, and in which of the Stage's files."""
+    for finding in findings:
+        finding.message = f"the state {state}: {finding.message}"
+        if finding.position is not None and finding.position.file is not None:
+            finding.position.file = f"{STATES_OUT}/{state}/{finding.position.file}"
+    return findings
+
+
+def check_each_state(run: StageRun, check: Callable[[StageRun], list[Finding]]) -> list[Finding]:
+    """The Stage's Checks for the default state, then for each state its output holds."""
+    findings = check(run)
+    for state in state_ids(run.output_dir):
+        findings += about_state(check(state_view(run, state)), state)
+    return findings
+
+
+def state_offsets(run: StageRun, state: str) -> tuple[int, int] | None:
+    """A state's own crop offsets (`state_offset`), the latest counting; None when it has none: the Stage's count."""
+    found = [d for d in run.decisions if d.name == STATE_OFFSET.name and d.data.get("state") == state]
+    return (int(found[-1].data["offset_x"]), int(found[-1].data["offset_y"])) if found else None

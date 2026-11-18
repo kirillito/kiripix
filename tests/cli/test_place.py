@@ -449,3 +449,97 @@ def test_show_gives_the_sort_position_of_each_layer_before_any_build(project: Ki
         {"layer": "lamp", "above": False, "marker": "ysort.lamp", "y": 20, "slope": 3},
         {"layer": "crate", "above": True, "marker": None, "y": None, "slope": 0},
     ]
+
+
+# Links (ticket 0265)
+
+
+def link(project: Kiripix, link_id: str, start: tuple[int, int], end: tuple[int, int], expect: int = 0,
+         **fields: Any) -> dict[str, Any]:
+    data = {"id": link_id, "from": list(start), "to": list(end), "kind": "hop", **fields}
+    return project.json("decide", ROOM, "place", "--decision", json.dumps({"decision": "link", "data": data}),
+                        expect=expect)
+
+
+def test_a_link_between_two_walkable_spots_is_recorded_built_and_shown(project: Kiripix) -> None:
+    folder = walled_room(project)
+    link(project, "hop.down", (24, 8), (40, 24), two_way=False)
+    place(project, "spawn.main", "spawn")
+
+    result = built_place(project)
+
+    assert findings(result, "link.outside") == [] and findings(result, "link.not_walkable") == []
+    built = json.loads((folder / "work" / "place" / "markers.json").read_text("utf-8"))
+    assert built["schema_version"] == 2
+    assert built["links"] == [{"id": "hop.down", "from": [24, 8], "to": [40, 24], "kind": "hop", "two_way": False}]
+    shown = project.json("show", ROOM)["data"]["stages"]
+    listed = next(s for s in shown if s["stage"] == "place")["markers"]
+    assert [m["id"] for m in listed if m["type"] == "link"] == ["hop.down"]
+
+
+def test_a_link_with_the_same_id_moves_it_and_two_way_defaults_to_true(project: Kiripix) -> None:
+    folder = walled_room(project)
+    link(project, "climb.up", (24, 8), (40, 24))
+    link(project, "climb.up", (24, 8), (30, 26), kind="climb")
+    built_place(project)
+
+    [only] = json.loads((folder / "work" / "place" / "markers.json").read_text("utf-8"))["links"]
+    assert (only["to"], only["kind"], only["two_way"]) == ([30, 26], "climb", True)
+
+
+def test_a_link_end_on_solid_reports_link_not_walkable_naming_the_end(project: Kiripix) -> None:
+    walled_room(project)
+    link(project, "hop.bad", (24, 8), ON_THE_WALL)
+
+    [finding] = findings(built_place(project, expect=2), "link.not_walkable")
+
+    assert "`to`" in finding["message"] and finding["owner_action"] and "fix" not in finding or not finding.get("fix")
+    assert (finding["position"]["x"], finding["position"]["y"]) == ON_THE_WALL
+
+
+def test_a_link_end_past_the_edge_reports_link_outside(project: Kiripix) -> None:
+    walled_room(project)
+    link(project, "hop.out", (24, 8), (60, 8))
+
+    result = built_place(project, expect=2)
+
+    [finding] = findings(result, "link.outside")
+    assert "`to`" in finding["message"]
+    assert findings(result, "link.not_walkable") == []
+
+
+def test_link_ends_under_a_tile_apart_warn_link_same_place(project: Kiripix) -> None:
+    walled_room(project)
+    place(project, "spawn.main", "spawn")
+    link(project, "hop.short", (30, 16), (32, 16))
+
+    result = built_place(project)
+
+    [finding] = findings(result, "link.same_place")
+    assert finding["severity"] == "warning"
+
+
+def test_a_link_sharing_a_marker_id_is_a_duplicate_and_a_bad_link_is_refused(project: Kiripix) -> None:
+    walled_room(project)
+    place(project, "spawn.main", "spawn")
+    link(project, "spawn.main", (24, 8), (40, 24))
+
+    assert findings(built_place(project, expect=2), "marker.duplicate_id") != []
+    link(project, "Bad Id", (24, 8), (40, 24), expect=1)
+    link(project, "ok.id", (24, 8), (40, 24), expect=1, kind="Hop")
+    link(project, "ok.id", (24, 8), (40, 24), expect=1, extra=1)
+
+
+def test_an_old_markers_file_is_refused_naming_the_rebuild(project: Kiripix) -> None:
+    folder = walled_room(project)
+    place(project, "spawn.main", "spawn")
+    built_place(project)
+    path = folder / "work" / "place" / "markers.json"
+    old = json.loads(path.read_text("utf-8"))
+    old["schema_version"] = 1
+    del old["links"]
+    path.write_text(json.dumps(old), "utf-8")
+
+    result = project.json("check", ROOM, expect=1)
+
+    assert any(f"kiripix run {ROOM} place" in json.dumps(f) for f in result["findings"])

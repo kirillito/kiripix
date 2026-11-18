@@ -39,6 +39,7 @@ from kiripix.ops.cycle import (
 )
 from kiripix.ops.chroma import chroma_key, key_fringe
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
+from kiripix.ops.colourset import SetReport, map_set, set_colours, set_report
 from kiripix.ops.compose import overlay
 from kiripix.ops.eyes import EyeAnchor, EyeStamp, fill_from_neighbours, paint_eyes, plan_eyes, stamped_mask
 from kiripix.ops.geometry import NavigationPolygon, Outline, collision_shapes, contours, navigation_polygon, simplify
@@ -115,6 +116,10 @@ from kiripix.ops.resample import (
 )
 
 __all__ = [
+    "SetReport",
+    "map_set",
+    "set_colours",
+    "set_report",
     "scroll",
     "scroll_period",
     "shimmer",

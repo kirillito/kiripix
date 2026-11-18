@@ -11,3 +11,7 @@ hash.
 - `failed` can't be derived, so it lives in that same cache. A fresh checkout shows todo or stale, never an old failure.
 - History moves out of `asset.toml` into an append-only `history.jsonl` per Asset, committed with `merge=union`, so both
   branches' lines survive a merge. `asset.toml` holds only the Kind and parameters.
+- A Stage's `version` (an int, default 1, declared in its `StageSpec`) is one of its inputs: a change to what the Stage
+  writes bumps it, and the Stage and every Stage below it go stale on every Asset. A parameter that holds its default
+  stays out of the hash, so adding a parameter is no rebuild. A hash recorded before versions existed reads as version 1
+  (core works the older form out too and accepts a match), so landing this changed no Stage's status.

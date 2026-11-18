@@ -3,6 +3,8 @@
 import json
 import shutil
 
+import pytest
+
 from conftest import Kiripix, make_demo, stage_status
 
 ALL_DONE = {"copy": "done", "concat": "done", "hold": "done", "fail": "done", "choose": "done"}
@@ -333,3 +335,53 @@ def test_an_interrupted_rebuild_leaves_the_old_output_byte_equal(project: Kiripi
     process.wait()
 
     assert _tree(folder / "work" / "hold") == before
+
+
+def test_bumping_a_stages_version_makes_it_and_the_stages_below_stale(
+        project: Kiripix, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_demo(project)
+    project.json("run", "demo.a")
+
+    monkeypatch.setenv("KIRIPIX_TEST_CONCAT_VERSION", "2")
+
+    assert stage_status(project, "demo.a") == {"copy": "done", "concat": "stale", "hold": "stale", "fail": "stale",
+                                                    "choose": "done"}
+    stages = {s["stage"]: s for s in next(a for a in project.json("status")["data"]["assets"]
+                                          if a["asset"] == "demo.a")["stages"]}
+    assert "Kiripix's `concat` changed: version 1 → 2" in stages["concat"]["reason"]
+    assert "Kiripix's `concat` changed" in stages["hold"]["reason"]
+    assert "Kiripix's `concat` changed: version 1 → 2" in stages["fail"]["reason"]  # two levels below
+    project.json("run", "demo.a", "concat")  # concat rebuilt, hold and fail still built on version 1
+    stages = {s["stage"]: s for s in next(a for a in project.json("status")["data"]["assets"]
+                                          if a["asset"] == "demo.a")["stages"]}
+    assert stages["concat"]["status"] == "done"
+    assert "Kiripix's `concat` changed: version 1 → 2" in stages["fail"]["reason"]
+    project.json("run", "demo.a")
+    assert stage_status(project, "demo.a") == ALL_DONE
+    monkeypatch.setenv("KIRIPIX_TEST_CONCAT_VERSION", "3")
+    stages = {s["stage"]: s for s in next(a for a in project.json("status")["data"]["assets"]
+                                          if a["asset"] == "demo.a")["stages"]}
+    assert "version 2 → 3" in stages["concat"]["reason"]
+
+
+def test_a_hash_recorded_without_a_version_reads_as_version_1(project: Kiripix) -> None:
+    folder = make_demo(project)
+    project.json("run", "demo.a")
+    stamps = list((folder / "work").rglob(".stage.json"))
+    assert stamps
+    for path in stamps:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.pop("version")
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert stage_status(project, "demo.a") == ALL_DONE
+
+
+def test_a_parameter_set_to_its_default_is_not_an_input(project: Kiripix) -> None:
+    folder = make_demo(project)
+    project.json("run", "demo.a")
+
+    asset_toml = folder / "asset.toml"
+    asset_toml.write_text(asset_toml.read_text(encoding="utf-8") + '\n[stages.concat]\nsep = "+"\n', encoding="utf-8")
+
+    assert stage_status(project, "demo.a") == ALL_DONE

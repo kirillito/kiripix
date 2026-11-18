@@ -8,20 +8,22 @@ from conftest import Kiripix
 from test_fit import ROOM, art, room_from, upscaled
 
 # brief, source, fit and palette as built before the move, from `art(48, 32)` imported at 2x, `fit scale=2`.
+# Re-pinned for ticket 0278's hash form (a parameter at its default left out, the Stage's `version` in): a stamp in
+# the old form still reads as current through `legacy_input_hash`, so the Owner's rooms don't go stale.
 HASHES = {
     "brief": (
-        "dac8482ae1544a39d75ea3b9856247459f8c4743fd14f9c9c196917c385e53cc"
+        "c294ea790a4de3efd147f64a8b65a8b930e2ae25eb0b95117342fec069dc98e4"
     ),
     "source": (
-        "191a517da8a0a2780c72ce966c6e04c650dd9f10e0f1280789ec0f2d0d381056"
+        "823e484d44671d25562d656b67f0d6fbbf3ff39c5bafb8ffc55588f381f8a173"
     ),
     "fit": (
-        "3f6bbcade137c4ca931606bad20184b1c720cf32f04199c848182daab9014515"
+        "7859d88010ea4b9930ea2840c0b955279abdff1ee1cda9113eed83f3828362fd"
     ),
     # Changed on purpose through its upstream `layers`: its inputs and `grow` (0043), then `difference` (0044), then
     # `min_piece` (0087).
     "palette": (
-        "66f29b74117828e484bd0c782fcb2a1be5afcaba1e8f718e4e1562e048a40ad1"
+        "83a6116736fe45e416bc3b718ef5bc596e52cb74539a520068bc015e4c712f46"
     ),
 }
 

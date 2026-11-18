@@ -32,7 +32,26 @@ interface Frame {
   color: Source;
   normal: Source | null;
   pivot: [number, number];
+  points: NamedPoint[];
 }
+
+// A named point (ticket 0237) at a pixel of the frame, as the game will draw it; `hidden` is behind the body.
+interface NamedPoint {
+  name: string;
+  x: number;
+  y: number;
+  hidden: boolean;
+}
+
+type RecordedPoints = Record<string, { x: number; y: number; hidden: boolean }>;
+
+// Display-only math, here and nowhere else: neither `render.json` (sub-pixel places in the frame's pixels) nor `sheet.json` (whole
+// pixels from the pivot) records the pixel in the picture shown, so `place` finds it. No Command, and nothing is stored.
+const pointsOf = (found: RecordedPoints | undefined, place: (x: number, y: number) => [number, number]): NamedPoint[] =>
+  Object.entries(found ?? {}).map(([name, point]) => {
+    const [x, y] = place(point.x, point.y);
+    return { name, x, y, hidden: !!point.hidden };
+  });
 
 interface ClipView {
   name: string;
@@ -58,7 +77,7 @@ interface RenderDocument {
     fps: number;
     loop: boolean;
     stationary: boolean;
-    directions: Record<string, { index: number; files: { color: string; normal?: string }; pivot?: [number, number] }[]>;
+    directions: Record<string, { index: number; files: { color: string; normal?: string }; pivot?: [number, number]; points?: RecordedPoints }[]>;
   }[];
 }
 
@@ -72,7 +91,7 @@ interface SheetDocument {
     fps: number;
     loop: boolean;
     stationary: boolean;
-    directions: Record<string, { index: number; rect: { x: number; y: number; width: number; height: number } }[]>;
+    directions: Record<string, { index: number; rect: { x: number; y: number; width: number; height: number }; points?: RecordedPoints }[]>;
   }[];
 }
 
@@ -99,6 +118,8 @@ function fromRender(document: RenderDocument, base: string, normalBase: string |
             color: { path: `${base}/${frame.files.color}` },
             normal: normalBase && frame.files.normal ? { path: `${normalBase}/${frame.files.normal}` } : null,
             pivot: frame.pivot ?? document.pivot,
+            // `render` records sub-pixel places in the frame's own pixels: the pixel that holds the point.
+            points: pointsOf(frame.points, (x, y) => [Math.floor(x), Math.floor(y)]),
           })),
         ]),
       ),
@@ -126,6 +147,8 @@ function fromSheet(document: SheetDocument, base: string): FrameSet | null {
             color: { path: `${base}/${document.files.color}`, rect: frame.rect },
             normal: { path: `${base}/${document.files.normal}`, rect: frame.rect },
             pivot,
+            // `sheet` records whole pixels from the pivot's pixel edge, as Godot draws them.
+            points: pointsOf(frame.points, (x, y) => [pivot[0] + x, pivot[1] + y]),
           })),
         ]),
       ),
@@ -203,6 +226,7 @@ function FrameCanvas(props: {
   testid?: string;
   pivot?: [number, number] | null;
   cross?: boolean;
+  points?: NamedPoint[];
   onPick?: (x: number, y: number, event: MouseEvent) => void;
 }) {
   const { width, height, zoom, layers, get } = props;
@@ -243,6 +267,18 @@ function FrameCanvas(props: {
         height={height}
         style={{ width: width * zoom, height: height * zoom }}
       />
+      {props.points?.map((point) => (
+        <i
+          key={point.name}
+          className={point.hidden ? "point-mark point-hollow" : "point-mark"}
+          data-testid={props.testid ? `${props.testid}-point-${point.name}` : undefined}
+          data-x={point.x}
+          data-y={point.y}
+          data-hidden={point.hidden}
+          title={point.hidden ? `${point.name} (behind the body)` : point.name}
+          style={{ left: point.x * zoom, top: point.y * zoom, width: zoom, height: zoom }}
+        />
+      ))}
       {props.pivot && (
         <i
           className={props.cross ? "pivot-mark pivot-cross" : "pivot-mark"}
@@ -261,12 +297,13 @@ interface View {
   onion: boolean;
   normal: boolean;
   pivot: boolean;
+  points: boolean;
   zoom: number;
 }
 
 // What the Owner chose stays while they go from one picture Stage to the next.
 const views = new Map<string, View>();
-const START: View = { clip: null, direction: null, position: 0, onion: false, normal: false, pivot: true, zoom: 4 };
+const START: View = { clip: null, direction: null, position: 0, onion: false, normal: false, pivot: true, points: true, zoom: 4 };
 
 export function FrameScreen(props: {
   stage: string;
@@ -383,6 +420,7 @@ export function FrameScreen(props: {
         if (event.target instanceof HTMLElement && event.target.closest("button, a, summary")) return;
         play();
       } else if (event.code === "KeyO") change({ onion: !view.onion });
+      else if (event.code === "KeyH") change({ points: !view.points });
       else if (event.code === "KeyN") change({ normal: !view.normal });
       else if (event.code === "KeyZ") change({ zoom: ZOOMS[(ZOOMS.indexOf(view.zoom) + 1) % ZOOMS.length] ?? 4 });
       else return;
@@ -476,6 +514,7 @@ export function FrameScreen(props: {
             get={get}
             testid="frame-canvas"
             pivot={view.pivot ? current.pivot : null}
+            points={view.points ? current.points : undefined}
             cross={!!props.pivotTool}
             onPick={
               props.pivotTool && fitRecord && direction && fitRecord.pivots[direction] && !props.pivotTool.disabled
@@ -536,6 +575,12 @@ export function FrameScreen(props: {
             Click sets the pivot for {direction}; Shift-click sets it for every Direction. Ctrl+Z undoes it.
           </span>
         )}
+        {frames.some((item) => item.points.length > 0) && (
+          <label className="toggle">
+            <input type="checkbox" data-testid="points-view" checked={view.points} onChange={(event) => change({ points: event.target.checked })} />
+            Points <kbd>H</kbd>
+          </label>
+        )}
         <label className="toggle">
           <input type="checkbox" data-testid="pivot-view" checked={view.pivot} onChange={(event) => change({ pivot: event.target.checked })} />
           Pivot
@@ -561,7 +606,15 @@ export function FrameScreen(props: {
               change({ position: index });
             }}
           >
-            <FrameCanvas width={frameSet.width} height={frameSet.height} zoom={1} layers={layerOf(item, 1)} get={get} />
+            <FrameCanvas
+              width={frameSet.width}
+              height={frameSet.height}
+              zoom={1}
+              layers={layerOf(item, 1)}
+              get={get}
+              testid={`thumb-${item.index}`}
+              points={view.points ? item.points : undefined}
+            />
             <small>{item.index}</small>
           </button>
         ))}

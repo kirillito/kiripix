@@ -15,6 +15,7 @@ It also replaces SAM 2 with a fake Runner (at the end), so that no test ever dow
 import hashlib
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -136,6 +137,7 @@ register_kind(
             StageSpec(
                 name="concat",
                 description="Join the copy, the extra file and the palette's first line.",
+                version=int(os.environ.get("KIRIPIX_TEST_CONCAT_VERSION", "1")),  # a test bumps it (ticket 0278)
                 inputs=StageInputs(files=["src/extra.txt"], settings=["palette"]),
                 params=(ParamSpec(name="sep", type="str", description="Separator.", default="+"),),
                 run=_concat,
@@ -637,6 +639,7 @@ if Path("inpainter-b").exists():
 # - blender-materials: JSON list of the Model's material names, for a render's material pass (default skin, cloth);
 # - blender-material-split: while it exists, the material pass is 1 on the left half of a frame and 2 on the right (else all 1);
 # - blender-material-frames: JSON {"clip/dir/index" | "clip/dir" | "*": [material indexes]}, what each frame's material pass holds;
+# - blender-depth-step: an integer; the depth pass is 16 bit, with the right half of a frame that many units farther (ticket 0247);
 # - hold-blender: while it exists, a call marks `blender-holding` and waits in chunks, checking the cancel token.
 # It writes what each script would write, with fixed contents, so a test sees a Stage's own work apart from Blender's.
 
@@ -801,6 +804,12 @@ class FakeBlender:
                         path = Path(args["output"]) / name / clip["name"] / direction["name"] / f"{index:03d}.png"
                         path.parent.mkdir(parents=True, exist_ok=True)
                         image = Image.new(mode, (width, height), colour)
+                        if name == "depth" and Path("blender-depth-step").exists():  # 16 bit, the right half this much farther
+                            import numpy as np
+
+                            raw = np.full((height, width), 1000, dtype=np.uint16)  # (`paste` of an int into I;16 scales it)
+                            raw[:, width // 2:] += int(Path("blender-depth-step").read_text("utf-8"))
+                            image = Image.fromarray(raw)
                         if name == "material":
                             bands = FakeBlender._material_bands(clip["name"], direction["name"], index)
                             for band, value in enumerate(bands):  # one vertical band per material present (ticket 0159)

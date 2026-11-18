@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: core-engineer
 type: ticket
@@ -23,6 +23,23 @@ Part of [0255](0255-m5-traversal-links.md). `reach` through a Link is [0266](026
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a Link between two walkable spots is recorded and shown. An end on `solid` raises `link.not_walkable`, and an
+- [x] CLI seam: a Link between two walkable spots is recorded and shown. An end on `solid` raises `link.not_walkable`, and an
       end past the room's edge raises `link.outside`.
-- [ ] Contract sample for the Decision. Spec §6.1 (`place`) lists Links.
+- [x] Contract sample for the Decision. Spec §6.1 (`place`) lists Links.
+
+## Result
+
+- `place` has a `link` Decision (`id`, `from`, `to`, `kind` in snake_case, `two_way` default true). A Link with the same ID moves
+  it; undo takes it back. Other Markers have no `remove` or `rename` Decision either, so none was added (needs a decision if wanted).
+- Code in `kiripix/recipes/room.py`: `_link_decision`, `_current_links`, `_markers_and_links` (the Stage's `markers` hook: `show`
+  and the freeze see a Link as a Marker of type `link`, with `from`/`to` and no `x`/`y`), `_check_links`, `_read_links`.
+  Checks `link.outside`, `link.not_walkable` (each names the end) and `link.same_place` (warning, ends under `project.tile`
+  apart by distance). A Link sharing a Marker's ID raises `marker.duplicate_id`.
+- `markers.json` (the ticket's `place.json`) is `schema_version` 2 with a `links` list (`{id, from, to, kind, two_way}`). A Stage's
+  rebuilt output is refused when old: a 1 fails with a finding whose fix is `kiripix run <room> place` (`_read_markers_file`).
+  The `place` Stage's `version` is bumped to 2, so every room's `place` turns stale and `status` shows the version reason; the
+  Owner's rooms rebuild `place` and the Stages below it (`reach`, `export`). `reach` reads `markers.json` only after `place` has run.
+- For 0279: `_place` writes `links`; the ends need `walkable.png` (top view only). `reach` doesn't use Links yet (0266). The
+  freeze ignores a Link until 0267 adds `link` to `EXPORTED_MARKER_TYPES`.
+- Tests: `tests/cli/test_place.py` (Links section, 6 tests) and `test_the_link_decision_validates` in `test_contract.py`.
+  Glossary: Link. Spec: a paragraph under §6.1 place.

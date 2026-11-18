@@ -20,7 +20,7 @@ else:
     Image = lazy_module("PIL.Image")
 
 from kiripix.checks import Finding, Position, check_alpha, check_conformance, check_chroma_cutout
-from kiripix.ops import Outline, add_outline, chroma_key, collision_shapes, conformance
+from kiripix.ops import Grid, Outline, add_outline, chroma_key, collision_shapes, conformance
 from kiripix.recipes.base import (
     FIT_PARAMS,
     PALETTE_PARAMS,
@@ -53,10 +53,21 @@ from kiripix.recipes.prop_states import (
     DECISIONS as STATE_DECISIONS,
     DEFAULT_STATE,
     STATE_ID,
+    STATE_OFFSET,
+    STATE_RECORD,
     STATES_DIR,
+    STATES_OUT,
+    about_state,
     apply_edits as apply_state_edits,
+    check_each_state,
+    each_state,
+    state_ids,
     state_needs_input,
+    state_offsets,
+    state_size,
+    state_view,
     top_files,
+    write_state_sources,
 )
 from kiripix.runners import MATTER
 
@@ -107,10 +118,12 @@ def _check_brief(run: StageRun) -> list[Finding]:
 
 
 # source: the default state's Source, from `src/<hash>.png`; a state's Variants (`src/states/`) are read by `state_needs_input`.
+# From here every Stage runs for the default state, and then for each other state under `states/<id>/` of its output (0259).
 
 
 def _source(run: StageRun) -> None:
     run_source(top_files(run))
+    write_state_sources(run)  # each declared state's Source, under `states/<id>/`
 
 
 def _source_needs_input(run: StageRun) -> NeedsInput | None:
@@ -131,13 +144,23 @@ def _key(run: StageRun) -> tuple[int, int, int]:
 
 
 def _cutout_calls(run: StageRun) -> list[RunnerCall]:
-    source = run.upstream["source"] / "source.png"
-    if run.params["method"] != "matting" or not source.is_file():
+    """One call for the default state's Source and one for each other state's, with matting."""
+    if run.params["method"] != "matting":
         return []
-    return [RunnerCall(runner=MATTER, image=source, params={"max_size": _RUNNER_MAX_SIZE}, decisions=[])]
+    folder = run.upstream["source"]
+    images = [folder / "source.png", *(folder / STATES_OUT / s / "source.png" for s in state_ids(folder))]
+    return [RunnerCall(runner=MATTER, image=image, params={"max_size": _RUNNER_MAX_SIZE}, decisions=[])
+            for image in images if image.is_file()]
 
 
 def _cutout(run: StageRun) -> None:
+    each_state(run, "source", _cutout_one)
+
+
+def _cutout_one(run: StageRun) -> None:
+    record = run.upstream["source"] / STATE_RECORD  # a state's size goes on to `fit`
+    if record.is_file():
+        shutil.copyfile(record, run.output_dir / STATE_RECORD)
     source = read_rgba(run.upstream["source"] / "source.png")
     if run.params["method"] == "chroma":
         write_rgba(run.output_dir / "cutout.png", chroma_key(source, _key(run)))
@@ -156,6 +179,10 @@ def _cutout(run: StageRun) -> None:
 
 
 def _check_cutout(run: StageRun) -> list[Finding]:
+    return check_each_state(run, _check_cutout_one)
+
+
+def _check_cutout_one(run: StageRun) -> list[Finding]:
     if run.params["method"] != "chroma":
         return []
     try:
@@ -174,15 +201,35 @@ def _check_cutout(run: StageRun) -> list[Finding]:
 
 
 def _fit(run: StageRun) -> None:
+    """The default state first; every other state is fitted at the default's scale, into its own size."""
     run_fit(run, run.upstream["cutout"] / "cutout.png", vote_alpha=True)
+    grid = Grid.from_json(json.loads((run.output_dir / "grid.json").read_text(encoding="utf-8")))
+    for state in state_ids(run.upstream["cutout"]):
+        run.check_cancel()
+        view = state_view(run, state)
+        run_fit(view, view.upstream["cutout"] / "cutout.png", vote_alpha=True,
+                size=state_size(run.upstream["cutout"], state), scale=(grid.scale_x, grid.scale_y), state=state, offsets=state_offsets(run, state))
 
 
-def _check_fit(run: StageRun) -> list[Finding]:
+def _check_fit_of(run: StageRun, state: str | None = None, size: tuple[int, int] | None = None) -> list[Finding]:
     report = conformance(read_rgba(run.output_dir / "fit.png"), np.zeros((0, 3), dtype=np.uint8))
-    findings = check_alpha(report, "fit.png") + check_fit(run)
+    findings = check_alpha(report, "fit.png") + check_fit(run, state, size)
     for finding in findings:
         if finding.position is not None:
             finding.position.asset, finding.position.stage = run.asset_id, "fit"
+    return findings
+
+
+def _check_fit(run: StageRun) -> list[Finding]:
+    findings = _check_fit_of(run)
+    for state in state_ids(run.output_dir):
+        view = state_view(run, state)
+        try:
+            size = state_size(run.upstream["cutout"], state)
+        except FileNotFoundError:
+            continue  # `cutout` was built again without the state: `fit` is stale, and says so
+        found = _check_fit_of(view, state, size)
+        findings += about_state(found, state)
     return findings
 
 
@@ -190,13 +237,21 @@ def _check_fit(run: StageRun) -> list[Finding]:
 
 
 def _palette(run: StageRun) -> None:
-    run_palette(run, run.upstream["fit"] / "fit.png", "fit image")
+    each_state(run, "fit", lambda one: run_palette(one, one.upstream["fit"] / "fit.png", "fit image"))
+
+
+def _check_palette(run: StageRun) -> list[Finding]:
+    return check_each_state(run, check_palette)
 
 
 # finish: the palette image, with an optional 1 px outline in a palette colour. Transparent pixels stay transparent.
 
 
 def _finish(run: StageRun) -> None:
+    each_state(run, "palette", _finish_one)
+
+
+def _finish_one(run: StageRun) -> None:
     rgba = read_rgba(run.upstream["palette"] / "palette.png")
     if run.params["outline"]:
         palette = palette_rgb(run)
@@ -211,6 +266,10 @@ def _finish(run: StageRun) -> None:
 
 
 def _check_finish(run: StageRun) -> list[Finding]:
+    return check_each_state(run, _check_finish_one)
+
+
+def _check_finish_one(run: StageRun) -> list[Finding]:
     try:
         palette = palette_rgb(run)
     except StageFailure:
@@ -223,29 +282,50 @@ def _check_finish(run: StageRun) -> list[Finding]:
     return findings
 
 
-# footprint: the Owner's collision polygon and y-sort origin, in target pixels. The latest Decision is the one that counts.
+# footprint: the Owner's collision polygon and y-sort origin, in target pixels, for each state (a `state` field on the
+# Decision; absent means the default state). The latest Decision of a state is the one that counts.
 
 
-def _footprint_decision(run: StageRun) -> dict[str, Any] | None:
-    found = [d for d in run.decisions if d.name == "footprint"]
-    return dict(found[-1].data) if found else None
+def _footprint_decision(run: StageRun, state: str | None = None) -> dict[str, Any] | None:
+    found = [d for d in run.decisions if d.name == "footprint" and d.data.get("state") == state]
+    return {k: v for k, v in found[-1].data.items() if k != "state"} if found else None
 
 
-_FOOTPRINT_EXAMPLE = json.dumps({"decision": "footprint", "data": {"polygon": [[2, 28], [29, 28], [29, 31], [2, 31]],
-                                                                     "origin": [16, 31]}})
+def _footprint_example(state: str | None = None) -> str:
+    data: dict[str, Any] = {"polygon": [[2, 28], [29, 28], [29, 31], [2, 31]], "origin": [16, 31]}
+    if state is not None:
+        data["state"] = state
+    return json.dumps({"decision": "footprint", "data": data})
+
+
+_FOOTPRINT_EXAMPLE = _footprint_example()
 
 
 def _footprint_needs_input(run: StageRun) -> NeedsInput | None:
-    if _footprint_decision(run) is not None:
-        return None
-    return NeedsInput(
-        "no footprint or origin is set",
-        owner_action=f"Draw the footprint and the origin, in target pixels (an empty polygon means no collision): "
-                     f"kiripix decide {run.asset_id} footprint --decision '{_FOOTPRINT_EXAMPLE}'")
+    if _footprint_decision(run) is None:
+        return NeedsInput(
+            "no footprint or origin is set",
+            owner_action=f"Draw the footprint and the origin, in target pixels (an empty polygon means no collision): "
+                         f"kiripix decide {run.asset_id} footprint --decision '{_FOOTPRINT_EXAMPLE}'")
+    for state in state_ids(run.upstream["finish"]):
+        if _footprint_decision(run, state) is None:
+            return NeedsInput(
+                f"no footprint or origin is set for the state {state}", code="footprint.no_origin",
+                owner_action=f"Draw the state's footprint and origin, in target pixels (an empty polygon means no "
+                             f"collision): kiripix decide {run.asset_id} footprint --decision "
+                             f"'{_footprint_example(state)}'")
+    return None
 
 
 def _footprint(run: StageRun) -> None:
-    decision = _footprint_decision(run)
+    _footprint_of(run, None)
+    for state in state_ids(run.upstream["finish"]):
+        run.check_cancel()
+        _footprint_of(state_view(run, state), state)
+
+
+def _footprint_of(run: StageRun, state: str | None) -> None:
+    decision = _footprint_decision(run, state)
     assert decision is not None  # `_footprint_needs_input` holds the Stage back until there is one
     shutil.copyfile(run.upstream["finish"] / "finish.png", run.output_dir / "sprite.png")
     record = {"polygon": decision["polygon"], "origin": decision["origin"]}
@@ -253,10 +333,28 @@ def _footprint(run: StageRun) -> None:
 
 
 def _check_footprint(run: StageRun) -> list[Finding]:
+    findings = _check_footprint_of(run, None)
+    states = state_ids(run.output_dir)
+    for state in states:
+        findings += about_state(_check_footprint_of(state_view(run, state), state), state)
+    for named in sorted({str(d.data["state"]) for d in run.decisions if d.name == "footprint" and "state" in d.data}
+                        - set(states)):
+        findings.append(Finding(
+            code="prop.state_unknown", message=f"a footprint is drawn for the state {named}, which the Prop doesn't have",
+            position=Position(asset=run.asset_id, stage="footprint"),
+            owner_action=f"Declare the state first, or draw the footprint again without it: "
+                         f"kiripix decide {run.asset_id} footprint --decision '{_FOOTPRINT_EXAMPLE}'"))
+    return findings
+
+
+def _check_footprint_of(run: StageRun, state: str | None) -> list[Finding]:
     position = Position(asset=run.asset_id, stage="footprint")
-    decision = _footprint_decision(run)
-    redo = (f"Draw it again: kiripix decide {run.asset_id} footprint --decision '{_FOOTPRINT_EXAMPLE}'")
+    decision = _footprint_decision(run, state)
+    redo = f"Draw it again: kiripix decide {run.asset_id} footprint --decision '{_footprint_example(state)}'"
     if decision is None:
+        if state is not None:
+            return [Finding(code="footprint.no_origin", message="it has no origin, so Godot can't y-sort it",
+                            position=position, owner_action=redo)]
         return [Finding(code="prop.no_origin", message="the prop has no origin, so Godot can't y-sort it",
                         position=position, owner_action=redo)]
     findings: list[Finding] = []
@@ -379,7 +477,7 @@ PROP = KindSpec(
         ),
         StageSpec(
             name="cutout",
-            description="Chroma key or matting on the full-size Source.",
+            description="Chroma key or matting on the full-size Source, for each state.",
             params=(
                 ParamSpec(
                     name="method",
@@ -407,9 +505,11 @@ PROP = KindSpec(
                         "than the brief is padded right and bottom with transparent pixels (`fit.padded`).",
             inputs=StageInputs(upstream=["cutout", "brief"]),
             params=FIT_PARAMS,
+            decisions=(STATE_OFFSET,),
             checks=(
                 CheckSpec(code="fit.size_mismatch", description="The output has the brief's exact size."),
                 CheckSpec(code="fit.padded", description="The grid output was padded up to the brief (info)."),
+                CheckSpec(code="fit.scale_differs", description="Every state's grid has the default state's scale."),
                 CheckSpec(code="image.partial_alpha", description="Alpha is binary."),
             ),
             available_from="M2",
@@ -429,7 +529,7 @@ PROP = KindSpec(
             available_from="M2",
             image="palette.png",
             run=_palette,
-            check=check_palette,
+            check=_check_palette,
         ),
         StageSpec(
             name="finish",
@@ -451,13 +551,15 @@ PROP = KindSpec(
             decisions=(
                 DecisionSpec(
                     name="footprint",
-                    description="The collision polygon and the origin, in target pixels.",
+                    description="The collision polygon and the origin, in target pixels. `state` names the Prop's other state it "
+                                "is for; without it, it is the default state's.",
                     entry_schema={
                         "type": "object",
                         "properties": {
                             "polygon": {"type": "array", "items": {"type": "array", "items": {"type": "integer"},
                                                                    "minItems": 2, "maxItems": 2}},
                             "origin": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+                            "state": {"type": "string", "pattern": STATE_ID},
                         },
                         "required": ["polygon", "origin"],
                         "additionalProperties": False,
@@ -468,6 +570,8 @@ PROP = KindSpec(
                 CheckSpec(code="prop.no_origin", description="An origin is set."),
                 CheckSpec(code="prop.origin_outside", description="The origin is inside the image."),
                 CheckSpec(code="prop.footprint_too_small", description="The polygon has 0 or 3 or more points."),
+                CheckSpec(code="footprint.no_origin", description="Every other state has an origin (needs-input)."),
+                CheckSpec(code="prop.state_unknown", description="A footprint names only a state the Prop has."),
             ),
             owner_input="Draws the footprint and the origin.",
             available_from="M2",

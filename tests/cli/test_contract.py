@@ -36,6 +36,13 @@ def _proposal(project: Kiripix) -> None:
     shutil.copy(project.cwd / made, project.cwd / ".kiripix" / "palette-proposals" / "in-proposal.json")
 
 
+def _settle_ready(project: Kiripix) -> None:
+    """A room with an area of cells, one of them half covered by `solid`."""
+    from test_area_settle import _three_cells
+    _three_cells(project)
+    project("run", "room.alley", "--json")
+
+
 def _built_hero(project: Kiripix) -> None:
     from test_ramp_table import hero  # imported here: test_ramp_table reaches test_serve, which imports SAMPLES
 
@@ -151,6 +158,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
     "ramps-add": lambda p: (_built_hero(p), ["ramps-add", "character.hero", "--parts", "skin"])[1],
     "clips-add": lambda p: (_built_hero(p), ["clips-add", "character.hero", "--clips", "idle"])[1],
+    "area-settle": lambda p: (_settle_ready(p), ["area-settle", "room.alley", "battle.yard"])[1],
     "runners list": lambda p: ["runners", "list"],
     "runners pull": lambda p: ["runners", "pull", "sam2.1-small"],
     "runners rm": lambda p: ["runners", "rm", "sam2.1-small"],
@@ -330,6 +338,19 @@ def test_the_decisions_that_rename_and_remove_a_loop_validate(project: Kiripix, 
     kind = next(k for k in project.json("describe", "room")["data"]["kinds"] if k["name"] == "room")
     stage = next(s for s in kind["stages"] if s["name"] == "loops")
     assert decision in [d["name"] for d in stage["decisions"]]
+
+
+def test_the_link_decision_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The `place` Stage's `link` Decision (ticket 0265): recorded, and `describe room` lists it."""
+    _imported(project)
+    data = {"id": "hop.down", "from": [1, 2], "to": [30, 40], "kind": "hop", "two_way": False}
+
+    result = project.json("decide", "room.alley", "place", "--decision", json.dumps({"decision": "link", "data": data}))
+
+    jsonschema.validate(result, schemas["decide"]["output"])
+    kind = next(k for k in project.json("describe", "room")["data"]["kinds"] if k["name"] == "room")
+    stage = next(s for s in kind["stages"] if s["name"] == "place")
+    assert "link" in [d["name"] for d in stage["decisions"]]
 
 
 def test_a_bad_decision_of_a_look_is_refused(project: Kiripix) -> None:

@@ -236,6 +236,7 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "extend": lambda a: {"asset": a[1], "action": a[2], "side": a[4]},
     "ramps-add": lambda a: {"character": a[1], "parts": a[3]},
     "clips-add": lambda a: {"character": a[1], "clips": a[3]},
+    "area-settle": lambda a: {"asset": a[1], "area": a[2]},
     "op quantize": lambda a: {"input": a[2], "output": a[3]},
     "op conformance": lambda a: {"image": a[2]},
     "op palette-suggest": lambda a: {"image": a[2], "add": int(a[4]), "scale": float(a[6])},

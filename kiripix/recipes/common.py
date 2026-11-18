@@ -116,31 +116,49 @@ def read_grid(run: StageRun) -> tuple[Grid, dict[str, Any]] | None:
     return Grid.from_json(record), record
 
 
-def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False) -> None:
+def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False, size: tuple[int, int] | None = None,
+            scale: tuple[Fraction, Fraction] | None = None, state: str | None = None,
+            offsets: tuple[int, int] | None = None) -> None:
     """Fit `image` to the brief's size. In `downscale` mode the scale is the same on both axes and the rest of the Source
     is cropped (`offset_x` and `offset_y` place the crop). With `vote_alpha`, alpha goes to the target grid by majority
-    vote in either mode (a prop's matte has partial alpha); a room's alpha is the centre pixel's in grid mode."""
+    vote in either mode (a prop's matte has partial alpha); a room's alpha is the centre pixel's in grid mode.
+
+    A prop's other state (`state`) is fitted to its own `size` at the default state's `scale` (the Grid's scale on x and
+    y): `downscale` crops at that scale, and `grid` must find it (`fit.scale_differs`). `offsets` are the state's own
+    (x, y); without them the Stage's parameters count."""
     source = read_rgba(image)
     height, width = source.shape[:2]
-    target_width, target_height = brief_size(run)
+    target_width, target_height = brief_size(run) if size is None else size
     mode = str(run.params["mode"])
-    scale = int(run.params["scale"])
+    cells = int(run.params["scale"])
+    named = "" if state is None else f"the state {state}: "
+    offset_x, offset_y = offsets if offsets is not None else (int(run.params["offset_x"]), int(run.params["offset_y"]))
     if mode == "downscale":
         try:
-            grid = Grid.cover(width, height, target_width, target_height, int(run.params["offset_x"]),
-                              int(run.params["offset_y"]))
+            if scale is None:
+                grid = Grid.cover(width, height, target_width, target_height, offset_x, offset_y)
+            else:
+                grid = _cover_at(scale, width, height, target_width, target_height, offset_x, offset_y)
         except ValueError as error:
             if "largest" in str(error):
-                raise StageFailure(str(error)) from None
-            raise StageFailure(f"can't downscale the {width}x{height} Source to the brief's "
+                raise StageFailure(named + str(error)) from None
+            raise StageFailure(f"{named}can't downscale the {width}x{height} Source to the "
+                               f"{'brief' if state is None else 'state'}'s "
                                f"{target_width}x{target_height}: the Source is smaller") from None
         fitted = downscale(source, grid)
     else:
         try:
-            grid = (Grid.uniform(scale, int(run.params["offset_x"]), int(run.params["offset_y"]), width, height)
-                    if scale > 0 else detect_grid(source))
+            grid = (Grid.uniform(cells, offset_x, offset_y, width, height)
+                    if cells > 0 else detect_grid(source))
         except ValueError as error:
-            raise StageFailure(str(error)) from None
+            raise StageFailure(named + str(error)) from None
+        if scale is not None and (grid.scale_x, grid.scale_y) != scale:
+            raise StageFailure(
+                f"{named}the Source's pixel grid is {_show(grid.scale_x)} x {_show(grid.scale_y)} Source pixels per "
+                f"target pixel, the default state's is {_show(scale[0])} x {_show(scale[1])}; a Prop has one scale",
+                code="fit.scale_differs",
+                owner_action=f"Redraw the state's image at the default's scale, or import another Variant: "
+                             f"kiripix import {run.asset_id} <file> --state {state}")
         if grid.width < target_width or grid.height < target_height:  # pad right and bottom, so no coordinate moves
             grid = grid.padded_to(max(grid.width, target_width), max(grid.height, target_height))
         fitted = sample_nearest(source, grid)
@@ -151,10 +169,35 @@ def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False) -> None:
     (run.output_dir / "grid.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
+def _show(scale: Fraction) -> str:
+    return str(scale.numerator) if scale.denominator == 1 else f"{scale.numerator}/{scale.denominator}"
+
+
+def _cover_at(scale: tuple[Fraction, Fraction], source_width: int, source_height: int, width: int, height: int,
+              offset_x: int, offset_y: int) -> Grid:
+    """The grid of width x height cells at a given scale (as `Grid.cover`, with the scale given, not worked out)."""
+    grid = Grid(scale[0], scale[1], 0, 0, width, height)
+    largest_x = source_width - int(grid.edges_x()[-1])
+    largest_y = source_height - int(grid.edges_y()[-1])
+    if largest_x < 0 or largest_y < 0:
+        raise ValueError("the Source is smaller")
+    for axis, offset, largest in (("offset_x", offset_x, largest_x), ("offset_y", offset_y, largest_y)):
+        if offset > largest:
+            raise ValueError(f"{axis} {offset} leaves less than the {width}x{height} the state asks for: "
+                             f"the largest {axis} is {largest}")
+    return Grid(scale[0], scale[1], offset_x, offset_y, width, height)
+
+
 CROP_NOTICE = 4  # Source pixels cropped on an axis from which `fit.cropped` is said
 
 
-def _cropped(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
+def state_offset_command(asset: str, state: str, offset_x: int, offset_y: int) -> str:
+    """The `decide` that gives a Prop's state its own crop offsets in `downscale` mode."""
+    entry = json.dumps({"decision": "state_offset", "data": {"state": state, "offset_x": offset_x, "offset_y": offset_y}})
+    return f"kiripix decide {asset} fit --decision '{entry}'"
+
+
+def _cropped(run: StageRun, grid: dict[str, Any], state: str | None = None) -> list[Finding]:
     """An info finding when `downscale` crops more than a few Source pixels off an axis, with the `set` that centres it."""
     source_width, source_height = grid["source"]
     record = Grid.from_json(grid)
@@ -166,6 +209,11 @@ def _cropped(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
     if not axes:
         return []
     centred = " ".join(f"offset_{name}={dropped // 2}" for name, dropped in axes)
+    if state is not None:
+        middle = {name: dropped // 2 for name, dropped in axes}
+        fix = state_offset_command(run.asset_id, state, middle.get("x", record.offset_x), middle.get("y", record.offset_y))
+    else:
+        fix = f"kiripix set {run.asset_id} fit {centred}"
     said = " and ".join(f"{dropped} Source pixels across {name}" for name, dropped in axes)
     return [
         Finding(
@@ -174,7 +222,7 @@ def _cropped(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
             message=f"fit crops {said} to keep one scale on both axes; offset_x={record.offset_x} offset_y="
                     f"{record.offset_y} place the crop from the top left",
             position=Position(asset=run.asset_id, stage="fit", field="stages.fit.offset_x"),
-            fix=f"kiripix set {run.asset_id} fit {centred}",
+            fix=fix,
         )
     ]
 
@@ -184,7 +232,7 @@ def whole_tiles(size: int, tile: int) -> int:
     return -(-size // tile) * tile
 
 
-def _padded(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
+def _padded(run: StageRun, grid: dict[str, Any], state: str | None = None) -> list[Finding]:
     """An info finding when `fit` padded the grid output up to the brief (grid mode only)."""
     right, bottom = int(grid.get("pad_right", 0)), int(grid.get("pad_bottom", 0))
     if not (right or bottom):
@@ -195,22 +243,34 @@ def _padded(run: StageRun, grid: dict[str, Any]) -> list[Finding]:
             code="fit.padded",
             severity="info",
             message=f"fit padded the {int(grid['width']) - right}x{int(grid['height']) - bottom} grid output up to the "
-                    f"brief's {grid['width']}x{grid['height']} with transparent pixels, {said}",
+                    f"{'brief' if state is None else 'state'}'s {grid['width']}x{grid['height']} with transparent pixels, "
+                    f"{said}",
             position=Position(asset=run.asset_id, stage="fit", field="stages.fit.offset_x"),
             owner_action="Nothing is needed for the room to work. If the strip shouldn't be there, widen the Source or "
-                         f"move the offset: kiripix set {run.asset_id} fit offset_x=<smaller> offset_y=<smaller>.",
+                         + ("move the offset: " + f"kiripix set {run.asset_id} fit offset_x=<smaller> offset_y=<smaller>."
+                            if state is None else
+                            f"move the state's offsets: kiripix decide {run.asset_id} fit --decision with a state_offset."),
         )
     ]
 
 
-def check_fit(run: StageRun) -> list[Finding]:
+def check_fit(run: StageRun, state: str | None = None, state_size: tuple[int, int] | None = None) -> list[Finding]:
+    """The Checks on `fit.png`. For a Prop's other `state` they are against its own declared size, and say the state
+    where they would say the brief."""
     grid = json.loads((run.output_dir / "grid.json").read_text(encoding="utf-8"))
     width, height = int(grid["width"]), int(grid["height"])
-    target_width, target_height = brief_size(run)
+    target_width, target_height = brief_size(run) if state_size is None else state_size
     if (width, height) == (target_width, target_height):
-        return _cropped(run, grid) if grid["mode"] == "downscale" else _padded(run, grid)
+        return _cropped(run, grid, state) if grid["mode"] == "downscale" else _padded(run, grid, state)
     source_width, source_height = grid["source"]
     asset = run.asset_id
+    if state is not None:  # its size is the `state` Decision's, which the brief's fixes don't touch
+        return [Finding(
+            code="fit.size_mismatch",
+            message=f"the fit image is {width}x{height}, the state asks for {target_width}x{target_height}",
+            position=Position(asset=asset, stage="fit", field="stages.fit.scale"),
+            owner_action=f"Make the state's image fit its declared size, or import another Variant: "
+                         f"kiripix import {asset} <file> --state {state}")]
     ratio = source_width // target_width if target_width else 0
     detected = int(run.params["scale"]) == 0
     extra = ""
@@ -330,7 +390,13 @@ def check_mapping(run: StageRun, source: np.ndarray, mapped: np.ndarray, fit_ima
         shown = fit_image.relative_to(run.asset_dir.parent.parent.parent).as_posix()
     except ValueError:
         shown = fit_image.as_posix()
-    fix = f"kiripix op palette-suggest {shown} --add 16 --scale 1"
+    kind = run.asset_dir.parent.name  # assets/<kind>/<name>
+    # a room's or a prop's default state: the `fit` Grid transform gives the scale (0280). A Prop's other state has its own
+    # Source, which `--asset` doesn't read, so it gets the image path.
+    if kind in ("room", "prop") and fit_image.parent.parent.name != "states":
+        fix = f"kiripix op palette-suggest --asset {run.asset_id} --add 16"
+    else:
+        fix = f"kiripix op palette-suggest {shown} --add 16 --scale 1"
     findings = check_mapping_error(mapping_error(source, mapped), "palette.png", fix=fix)
     for finding in findings:
         assert finding.position is not None

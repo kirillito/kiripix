@@ -700,6 +700,50 @@ def _current_markers(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, A
     return list(markers.values())
 
 
+_LINK_KIND = "^[a-z][a-z0-9_]*$"
+
+
+def _link_decision() -> DecisionSpec:
+    end = {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 0}}
+    return DecisionSpec(
+        name="link",
+        description="Place a Link: a Marker with two ends on this Room, where an actor crosses by a scripted move. `from` "
+                    "and `to` are points [x, y] in target pixels. `kind` is free text in snake_case, such as hop, climb "
+                    "or jump; Kiripix reads no meaning into it (the game does). `two_way` (default true) says the move "
+                    "can be made from `to` back to `from`; false makes it one way, from `from` to `to`. The ID is "
+                    "unique among the room's Markers, and a Link with the same ID moves it. Each end must be inside "
+                    "the room and on walkable ground (`link.outside`, `link.not_walkable`).",
+        entry_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "pattern": _MARKER_ID},
+                "from": end,
+                "to": end,
+                "kind": {"type": "string", "pattern": _LINK_KIND},
+                "two_way": {"type": "boolean"},
+            },
+            "required": ["id", "from", "to", "kind"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def _current_links(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
+    """The Links the `link` Decisions place, `two_way` written out so a reader needs no default."""
+    links: dict[str, dict[str, Any]] = {}
+    for decision in decisions:
+        if decision.name == "link":
+            data = decision.data
+            links[str(data["id"])] = {"id": data["id"], "from": list(data["from"]), "to": list(data["to"]),
+                                      "kind": data["kind"], "two_way": bool(data.get("two_way", True))}
+    return list(links.values())
+
+
+def _markers_and_links(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
+    """For `show` and the freeze: the Markers, then each Link as a Marker of type `link`."""
+    return [*_current_markers(decisions), *({"type": "link", **link} for link in _current_links(decisions))]
+
+
 def _above_decision() -> DecisionSpec:
     return DecisionSpec(
         name="above",
@@ -765,23 +809,37 @@ def _removed_layers(run: StageRun) -> list[str]:
 
 
 MARKERS_FILE = "markers.json"
-MARKERS_SCHEMA_VERSION = 1  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046)
+MARKERS_SCHEMA_VERSION = 2  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046); 2: `links` (0265)
+
+
+def _read_markers_file(place_dir: Path, asset: str) -> dict[str, Any]:
+    """A built `markers.json`. An older file is refused, naming the rebuild."""
+    built: dict[str, Any] = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))
+    version = built.get("schema_version")
+    if version != MARKERS_SCHEMA_VERSION:
+        raise StageFailure(f"{MARKERS_FILE} has schema_version {version}; this Kiripix reads "
+                           f"{MARKERS_SCHEMA_VERSION}. Rebuild it: kiripix run {asset} place")
+    return built
+
+
+def _read_placed(place_dir: Path, asset: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[SortPosition]]:
+    """The Markers, Links and sort positions a built `markers.json` holds."""
+    built = _read_markers_file(place_dir, asset)
+    markers: list[dict[str, Any]] = built["markers"]
+    links: list[dict[str, Any]] = built["links"]
+    return markers, links, [SortPosition.model_validate(entry) for entry in built["sort"]]
 
 
 def _read_markers(place_dir: Path, asset: str) -> tuple[list[dict[str, Any]], list[SortPosition]]:
-    """The Markers and sort positions a built `markers.json` holds. An older file is refused, naming the rebuild."""
-    built = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))
-    if built.get("schema_version") != MARKERS_SCHEMA_VERSION:
-        raise StageFailure(f"{MARKERS_FILE} has schema_version {built.get('schema_version')}; this Kiripix reads "
-                           f"{MARKERS_SCHEMA_VERSION}. Rebuild it: kiripix run {asset} place --force")
-    markers: list[dict[str, Any]] = built["markers"]
-    return markers, [SortPosition.model_validate(entry) for entry in built["sort"]]
+    """The Markers and sort positions a built `markers.json` holds."""
+    markers, _, sort = _read_placed(place_dir, asset)
+    return markers, sort
 
 
 def _place(run: StageRun) -> None:
     sort = _sort_positions(run.decisions, _built_layers(run), _removed_layers(run))
     built = {"schema_version": MARKERS_SCHEMA_VERSION, "markers": _current_markers(run.decisions),
-             "sort": [position.model_dump() for position in sort]}
+             "links": _current_links(run.decisions), "sort": [position.model_dump() for position in sort]}
     (run.output_dir / MARKERS_FILE).write_text(json.dumps(built, indent=2) + "\n", encoding="utf-8")
     if "walkable" not in _view_masks(run).derived:
         return  # the side view's reachability is over platforms (not planned yet)
@@ -858,7 +916,7 @@ def _check_sort(run: StageRun, markers: list[dict[str, Any]], sort: list[SortPos
 
 
 def _check_place(run: StageRun) -> list[Finding]:
-    markers, sort = _read_markers(run.output_dir, run.asset_id)
+    markers, links, sort = _read_placed(run.output_dir, run.asset_id)
     asset = run.asset_id
     findings = _check_sort(run, markers, sort)
     seen: dict[str, str] = {}
@@ -897,7 +955,64 @@ def _check_place(run: StageRun) -> list[Finding]:
                     )
                 )
     findings += _check_emitters(run, [m for m in markers if m["type"] == "emitter"])
+    for link in links:
+        if str(link["id"]) in seen:
+            x, y = link["from"]
+            findings.append(Finding(
+                code="marker.duplicate_id",
+                message=f"the link '{link['id']}' has the same ID as the {seen[str(link['id'])]} '{link['id']}'",
+                position=Position(asset=asset, stage="place", x=int(x), y=int(y)),
+                owner_action=f"Keep one Marker with the ID {link['id']}: undo the other "
+                             f"(kiripix undo {asset} place) and place it under a new ID.",
+            ))
+    findings += _check_links(run, links)
     return findings + _check_areas(run, [m for m in markers if m["type"] == "area"])
+
+
+def _check_links(run: StageRun, links: list[dict[str, Any]]) -> list[Finding]:
+    """`link.outside`, `link.not_walkable` (each end named) and `link.same_place` (ends under a tile apart)."""
+    if not links:
+        return []
+    asset = run.asset_id
+    size = _room_size(run)
+    path = run.output_dir / "walkable.png"
+    ground = _read_mask(path) if path.is_file() else None
+    tile = float(run.settings["project.tile"])
+    findings = []
+    for link in links:
+        name = str(link["id"])
+        ends = {"from": (int(link["from"][0]), int(link["from"][1])), "to": (int(link["to"][0]), int(link["to"][1]))}
+        for end, (x, y) in ends.items():
+            at = Position(asset=asset, stage="place", x=x, y=y)
+            if size is not None and (x >= size[0] or y >= size[1]):
+                findings.append(Finding(
+                    code="link.outside",
+                    message=f"the `{end}` end of the link '{name}' at ({x}, {y}) is outside the {size[0]}x{size[1]} room",
+                    position=at,
+                    owner_action=f"Place {name} again with its `{end}` end within (0, 0) to ({size[0] - 1}, "
+                                 f"{size[1] - 1}): a link Decision of the same ID.",
+                ))
+            elif ground is not None and (y >= ground.shape[0] or x >= ground.shape[1] or not ground[y, x]):
+                findings.append(Finding(
+                    code="link.not_walkable",
+                    message=f"the `{end}` end of the link '{name}' at ({x}, {y}) is not on walkable ground: the Body's "
+                            "footprint doesn't fit there",
+                    position=at,
+                    owner_action=f"Move the `{end}` end of {name} onto walkable ground with a link Decision of the same "
+                                 "ID, or edit the solid Mask under it.",
+                ))
+        (fx, fy), (tx, ty) = ends["from"], ends["to"]
+        if ((fx - tx) ** 2 + (fy - ty) ** 2) ** 0.5 < tile:
+            findings.append(Finding(
+                code="link.same_place",
+                severity="warning",
+                message=f"the ends of the link '{name}', ({fx}, {fy}) and ({tx}, {ty}), are closer than one tile "
+                        f"({tile:g} px), so it crosses nothing",
+                position=Position(asset=asset, stage="place", x=fx, y=fy),
+                owner_action=f"Move an end of {name} at least a tile away with a link Decision of the same ID, or "
+                             "leave it.",
+            ))
+    return findings
 
 
 def _emitter_points(emitter: dict[str, Any]) -> list[tuple[int, int]]:
@@ -1025,7 +1140,7 @@ def _check_areas(run: StageRun, areas: list[dict[str, Any]]) -> list[Finding]:
                              "out `walkable` (place it again with walkable false) if the area isn't for standing in.",
             ))
         if cell is not None and blocked is not None:
-            ambiguous = _ambiguous_cells(blocked, (x0, y0, x1, y1), int(cell))
+            ambiguous = ambiguous_cells(blocked, (x0, y0, x1, y1), int(cell))
             if ambiguous:
                 listed = ", ".join(f"({x}, {y})" for x, y in ambiguous[:_LISTED_CELLS])
                 more = f" and {len(ambiguous) - _LISTED_CELLS} more" if len(ambiguous) > _LISTED_CELLS else ""
@@ -1036,14 +1151,12 @@ def _check_areas(run: StageRun, areas: list[dict[str, Any]]) -> list[Finding]:
                             f"covered by solid or pit, with their top-left pixels at {listed}{more}",
                     position=at.model_copy(update={"field": f"area.{name}"}),  # the area's ID, for the place screen
                     points=ambiguous,
-                    owner_action="Make the Mask decide those cells: paint them fully solid or pit, or fully open "
-                                 f"(kiripix decide {asset} {MASKS_STAGE} --help). Kiripix doesn't choose which cells "
-                                 "are open; the game does.",
+                    fix=f"kiripix area-settle {asset} {name}",  # the Owner's standing rule: majority (0134)
                 ))
     return findings
 
 
-def _ambiguous_cells(blocked: np.ndarray, box: tuple[int, int, int, int], cell: int) -> list[tuple[int, int]]:
+def ambiguous_cells(blocked: np.ndarray, box: tuple[int, int, int, int], cell: int) -> list[tuple[int, int]]:
     """The top-left pixel of each cell of `box` (whole cells, clipped to the room) that `blocked` covers by a share of
     AMBIGUOUS_FROM to AMBIGUOUS_TO."""
     x0, y0, x1, y1 = box
@@ -1055,6 +1168,14 @@ def _ambiguous_cells(blocked: np.ndarray, box: tuple[int, int, int, int], cell: 
             if AMBIGUOUS_FROM <= share <= AMBIGUOUS_TO:
                 found.append((x, y))
     return found
+
+
+def current_area(decisions: tuple[CurrentDecision, ...], area_id: str) -> dict[str, Any] | None:
+    """The current `area` Marker of that ID, its box snapped to its cell; `None` when there is none."""
+    for marker in _current_markers(decisions):
+        if marker["type"] == "area" and marker["id"] == area_id:
+            return marker
+    return None
 
 
 # reach: the Body's flood over walkable from each Spawn and Exit (top view; the side view's platforms are not planned yet).
@@ -1747,11 +1868,12 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="place",
-            description="Places Markers: Exits, Spawns, lights, emitters, areas (boxes) and y-sort lines, one for each "
-                        "foreground Layer unless it is always above.",
+            version=2,  # 2: markers.json has `links` (ticket 0265)
+            description="Places Markers: Exits, Spawns, lights, emitters, areas (boxes), Links (two ends, for a hop, a "
+                        "climb or a jump) and y-sort lines, one for each foreground Layer unless it is always above.",
             inputs=StageInputs(upstream=["palette", "layers", MASKS_STAGE],
                                settings=["body", "masks", "project.tile", "palette"]),
-            decisions=(_marker_decision(), _above_decision()),
+            decisions=(_marker_decision(), _link_decision(), _above_decision()),
             checks=(
                 CheckSpec(code="marker.duplicate_id", description="Marker IDs are unique."),
                 CheckSpec(code="marker.not_walkable", description="Exits and Spawns stand on walkable ground."),
@@ -1767,6 +1889,9 @@ ROOM = KindSpec(
                                                                          "the room (warning)."),
                 CheckSpec(code="place.emitter_shape_invalid", description="An emitter's shape has a size: a polygon "
                                                                           "three points, a line a length."),
+                CheckSpec(code="link.outside", description="Both ends of a Link lie within the room."),
+                CheckSpec(code="link.not_walkable", description="Both ends of a Link stand on walkable ground."),
+                CheckSpec(code="link.same_place", description="A Link's ends are at least a tile apart (warning)."),
                 CheckSpec(code="area.outside_room", description="Every area lies within the room."),
                 CheckSpec(code="area.no_walkable", description="An area marked walkable holds a walkable pixel."),
                 CheckSpec(code="area.ambiguous_cells", description="No cell of an area with a `cell` is half covered by "
@@ -1776,7 +1901,7 @@ ROOM = KindSpec(
             available_from="M1",
             run=_place,
             check=_check_place,
-            markers=_current_markers,
+            markers=_markers_and_links,
             sort=_sort_positions,
         ),
         StageSpec(

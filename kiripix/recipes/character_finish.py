@@ -69,7 +69,7 @@ from kiripix.recipes.base import CheckFunction, ParamSpec, StageFailure, StageFu
 from kiripix.recipes.character_palette import RENDER_FILE, _colour_files
 from kiripix.recipes.common import palette_rgb, read_rgba, write_rgba
 
-FINISH_SCHEMA_VERSION = 2
+FINISH_SCHEMA_VERSION = 3
 FINISH_FILE = "finish.json"
 FLAT = (128, 128, 255, 255)  # a normal facing the camera, as `encode_normals` writes it
 
@@ -340,6 +340,13 @@ class _InnerLines:
             (str(e["name"]), d, int(f["index"])): {k: str(v) for k, v in f["files"].items()}
             for e in document["clips"] for d, listed in e["directions"].items() for f in listed}
         self.names = {i: n for n, i in by_name.items()}
+        # `line_depth` px of the render's scale, in the depth pass's 16 bit unit: px / px_per_unit is world units, and the pass
+        # spans `depth_range` over 65535 (ticket 0247).
+        self.line_depth = float(run.params.get("line_depth", 0.0))
+        self.depth_step: float | None = None
+        if self.line_depth > 0:
+            near, far = (float(v) for v in document["depth_range"])
+            self.depth_step = self.line_depth / float(document["px_per_unit"]) / max(far - near, 1e-9) * 65535.0
         self.outline: tuple[int, tuple[int, int, int]] | None = None
         self.colours: dict[int, tuple[int, tuple[int, int, int]]] = {}
         if self.mode == "outline":
@@ -399,7 +406,7 @@ class _InnerLines:
                                f"run {self.source} again") from None
         if labels.shape != colour.shape[:2] or depth.shape != labels.shape or inside.shape != labels.shape:
             return colour  # not the colour frame's size: `normal.size_mismatch` says so
-        line = inner_lines(labels, depth, self.skip) & inside
+        line = inner_lines(labels, depth, self.skip, self.depth_step) & inside
         if eyed is not None:
             line &= ~eyed
         out = colour.copy()
@@ -411,7 +418,7 @@ class _InnerLines:
         return out
 
     def drawn(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"mode": self.mode, "skip": self.skip_text}
+        out: dict[str, Any] = {"mode": self.mode, "skip": self.skip_text, "line_depth": self.line_depth}
         if self.outline is not None:
             out["colour"] = {"colour": self.outline[0], "rgb": list(self.outline[1])}
         else:
