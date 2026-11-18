@@ -15,6 +15,7 @@ from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project, find_project
 from kiripix.export import export_command
 from kiripix.recipes.base import Scalar, SortPosition, StageSpec
+from kiripix.recipes.prop_states import STATES_OUT
 
 ParamOrigin = Literal["asset", "generated", "base", "default"]
 
@@ -47,12 +48,21 @@ class LookOut(BaseModel):
     picked: str | None = Field(description="The edit the `looks` Stage cuts the Look from; null without a Pick.")
 
 
+class StateImageOut(BaseModel):
+    stage: str
+    image: str | None = Field(description="The Stage's built image for this state, relative to the Project.")
+    input_image: str | None = Field(description="The built image of this state that the Stage is made from.")
+
+
 class StateOut(BaseModel):
     state: str = Field(description="The state's ID.")
     width: int = Field(description="The size declared for the state, in px.")
     height: int
     variants: list[VariantOut] = Field(description="The state's imported images, named by hash.")
     picked: str | None = Field(description="The Variant the state is cut from; null without a Pick.")
+    images: list[StateImageOut] = Field(
+        [], description="Per Stage that has an image, the state's built image and input image, as `stages` gives the "
+                        "default's. A Stage's findings about this state carry it as `position.state`.")
 
 
 class StageDetail(BaseModel):
@@ -173,6 +183,22 @@ def _outputs(project: Project, folder: Path) -> list[str]:
     return [project.relative(path) for path in sorted(folder.iterdir()) if path.is_file() and path.name != STAMP_FILE]
 
 
+def _state_images(project: Project, graph: AssetGraph, state: str) -> list[StateImageOut]:
+    """A Prop's state's images: each Stage writes them under `states/<id>/` of its output folder (ticket 0259)."""
+    found: list[StateImageOut] = []
+    for spec in graph.kind.stages:
+        if spec.image is None:
+            continue
+        image = graph.output_dir(spec) / STATES_OUT / state / spec.image
+        source = graph.input_image(spec)
+        before = source[1].parent / STATES_OUT / state / source[1].name if source is not None else None
+        if image.is_file() or (before is not None and before.is_file()):
+            found.append(StateImageOut(stage=spec.name, image=project.relative(image) if image.is_file() else None,
+                                       input_image=project.relative(before)
+                                       if before is not None and before.is_file() else None))
+    return found
+
+
 @command(
     "show",
     summary="Show one Asset: its Variants and Pick, and each Stage's status, parameters, Decisions and images.",
@@ -234,7 +260,8 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         default_state=sources.default_state(graph) if asset.kind == "prop" else None,
         states=[StateOut(state=state.id, width=state.width, height=state.height, picked=state_picks.get(state.id),
                          variants=[_variant(project, asset, names, name, path)
-                                   for name, path in sources.state_variants(asset, state).items()])
+                                   for name, path in sources.state_variants(asset, state).items()],
+                         images=_state_images(project, graph, state.id))
                 for state in sources.declared_states(graph).values()],
         clip_sources=_clip_sources(project, graph, names),
         rigged=_variant(project, asset, names, rigged_path.stem, rigged_path)

@@ -1,92 +1,30 @@
 """The server adapter: `serve` and `ui` start the REST API and the web UI (spec §10.6, §11).
 
-Uses only `kiripix.commands`. The entry point (`kiripix.launch`) passes `LAUNCHERS` to the CLI. All it decides itself is
-the socket: where to listen, and whether the port is free.
+Uses only `kiripix.commands`. The entry point (`kiripix.launch`) passes the Launchers to the CLI. All the adapter decides
+itself is the socket: where to listen, and whether the port is free.
 
-Importing this package must stay cheap: FastAPI and uvicorn load only when `serve` or `ui` runs, so every other CLI call
-skips them (ticket 0067).
+Importing this package must stay cheap, and import nothing: the CLI lists `serve` and `ui` in `--help` from
+`LAUNCHER_LISTING`, and the code behind them (`kiripix.server.launchers`, with pydantic) loads only when one of them
+runs, through `load_launchers`. FastAPI and uvicorn load later still (tickets 0067, 0277).
 """
 
-import json
-import socket
-import sys
-import webbrowser
-from pathlib import Path
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+if TYPE_CHECKING:
+    from kiripix.commands import Launcher
 
-from kiripix.commands import (
-    DEFAULT_WARM_IDLE, ExitCode, Finding, KiripixError, Launcher, Session, built_web, error_envelope,
+# (name, summary) of each Launcher, for the help. `tests/cli/test_command_index.py` checks they match the Launchers.
+LAUNCHER_LISTING = (
+    ("serve", "Serve the REST API and the web UI for this Project; prints one JSON ready line."),
+    ("ui", "Serve, and open the browser with the session token (needed for the Owner's Commands)."),
 )
 
-DEFAULT_PORT = 8765
+
+def load_launchers() -> Sequence["Launcher"]:
+    from kiripix.server.launchers import LAUNCHERS
+
+    return LAUNCHERS
 
 
-class ServeInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    host: str = Field("127.0.0.1", description="The address to listen on. Keep it local: there is no login.")
-    port: int = Field(DEFAULT_PORT, ge=0, le=65535, description="The port; 0 picks a free one.")
-    web: Path | None = Field(None, description="The built web app to serve. Default: web/dist in the Project, else the one shipped with Kiripix.")
-    print_token: bool = Field(False, description="Include the session token in the ready line (for another UI).")
-    warm_idle: float = Field(DEFAULT_WARM_IDLE, gt=0, description="Unload a warm Runner after this many seconds unused.")
-
-
-def _emit(line: str) -> None:
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
-
-
-def _report(findings: list[Finding]) -> ExitCode:
-    """The one place an error envelope is written."""
-    _emit(error_envelope(findings).model_dump_json())
-    return ExitCode.ERROR
-
-
-def _serve(arguments: ServeInput, cwd: Path, open_browser: bool) -> ExitCode:
-    try:
-        session = Session.open(cwd, arguments.warm_idle)
-    except KiripixError as error:
-        return _report(error.findings)
-    import uvicorn  # deferred: see the module docstring
-
-    from kiripix.server.app import create_app
-
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    if sys.platform != "win32":  # on Windows SO_REUSEADDR would let a second server share the port
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        listener.bind((arguments.host, arguments.port))
-    except OSError as error:
-        listener.close()
-        return _report([Finding(code="serve.port_unavailable",
-                                message=f"can't listen on {arguments.host}:{arguments.port}: {error}",
-                                fix="kiripix serve --port 0")])
-    listener.listen(128)
-    port = int(listener.getsockname()[1])
-    url = f"http://{arguments.host}:{port}"
-    web = built_web(session.root, arguments.web)
-    _emit(json.dumps(session.ready(url, port, web, with_token=arguments.print_token), separators=(",", ":")))
-    if open_browser:
-        webbrowser.open(session.browser_url(url))
-    config = uvicorn.Config(create_app(session, web), log_level="warning", timeout_graceful_shutdown=2)
-    uvicorn.Server(config).run(sockets=[listener])
-    return ExitCode.OK
-
-
-def _run_serve(arguments: ServeInput, cwd: Path) -> ExitCode:
-    return _serve(arguments, cwd, open_browser=False)
-
-
-def _run_ui(arguments: ServeInput, cwd: Path) -> ExitCode:
-    return _serve(arguments, cwd, open_browser=True)
-
-
-LAUNCHERS = (
-    Launcher("serve", "Serve the REST API and the web UI for this Project; prints one JSON ready line.",
-             ServeInput, _run_serve),
-    Launcher("ui", "Serve, and open the browser with the session token (needed for the Owner's Commands).",
-             ServeInput, _run_ui),
-)
-
-__all__ = ["LAUNCHERS", "ServeInput"]
+__all__ = ["LAUNCHER_LISTING", "load_launchers"]

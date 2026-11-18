@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from kiripix.ops import Gap, Island, narrowest_gaps, reachable, walkable, walkable_islands
+from kiripix.ops import Gap, Island, Link, narrowest_gaps, reachable, reachable_via, walkable, walkable_islands
 
 EXPECTED = Path(__file__).parent / "expected"
 
@@ -308,3 +308,68 @@ def test_at_most_the_limit_of_gaps_is_reported() -> None:
         solid[10:10 + (left // 10 + 6), left:left + 4] = False
 
     assert [g.width for g in narrowest_gaps(solid, BODY, limit=2)] == [7, 9]
+
+
+# Links
+
+def split_by_a_wall() -> tuple[np.ndarray, np.ndarray]:
+    """48 x 32, a solid wall at x 20 to 23 across the whole room: two areas, and the walkable ground for a 4 x 4 Body."""
+    solid = np.zeros((32, 48), dtype=np.bool_)
+    solid[:, 20:24] = True
+    return solid, walkable(solid, (4, 4))
+
+
+LEFT_END, RIGHT_END = (10, 16), (36, 16)
+
+
+def test_a_two_way_link_joins_two_areas_split_by_solid(request: pytest.FixtureRequest) -> None:
+    solid, ground = split_by_a_wall()
+    without = reachable(ground, [LEFT_END], (4, 4))
+    assert not without[16, 36]
+
+    joined, crossed = reachable_via(ground, [LEFT_END], (4, 4), links=[(LEFT_END, RIGHT_END, True)])
+
+    assert_golden(request, as_image(joined), "reach_link_two_way.png")
+    assert (joined == ground).all() and crossed == (0,)
+    back, _ = reachable_via(ground, [RIGHT_END], (4, 4), links=[(LEFT_END, RIGHT_END, True)])
+    assert (back == joined).all()
+
+
+def test_a_one_way_link_is_crossed_forward_only() -> None:
+    _, ground = split_by_a_wall()
+    link: Link = (LEFT_END, RIGHT_END, False)
+
+    forward, crossed = reachable_via(ground, [LEFT_END], (4, 4), links=[link])
+    back, back_crossed = reachable_via(ground, [RIGHT_END], (4, 4), links=[link])
+
+    assert (forward == ground).all() and crossed == (0,)
+    assert back[16, 36] and not back[16, 10] and back_crossed == ()
+    assert (back == reachable(ground, [RIGHT_END], (4, 4))).all()
+
+
+def test_links_chain_in_either_listed_order() -> None:
+    solid = np.zeros((16, 90), dtype=np.bool_)
+    solid[:, 20:24] = solid[:, 50:54] = True
+    ground = walkable(solid, (4, 4))
+    first, second = ((10, 8), (36, 8), True), ((36, 8), (70, 8), True)
+
+    for links in ([first, second], [second, first]):
+        mask, crossed = reachable_via(ground, [(10, 8)], (4, 4), links=links)
+        assert mask[8, 70] and crossed == (0, 1)
+
+
+def test_a_link_from_ground_nothing_reaches_crosses_nothing_and_a_dead_end_is_fine() -> None:
+    _, ground = split_by_a_wall()
+    nowhere = reachable_via(ground, [LEFT_END], (4, 4), links=[((30, 5), (40, 5), True)])
+    assert (nowhere[0] == reachable(ground, [LEFT_END], (4, 4))).all() and nowhere[1] == ()
+
+    onto_solid = reachable_via(ground, [LEFT_END], (4, 4), links=[(LEFT_END, (21, 16), False), (LEFT_END, (99, 9), True)])
+    assert (onto_solid[0] == reachable(ground, [LEFT_END], (4, 4))).all() and onto_solid[1] == ()
+
+
+def test_a_link_to_ground_already_reached_is_not_a_crossing_and_a_longer_step_still_crosses() -> None:
+    _, ground = split_by_a_wall()
+    assert reachable_via(ground, [LEFT_END], (4, 4), links=[(LEFT_END, (12, 16), True)])[1] == ()
+
+    stepped, crossed = reachable_via(ground, [LEFT_END], (4, 4), step=3, links=[(LEFT_END, RIGHT_END, True)])
+    assert stepped[16, 36] and crossed == (0,)

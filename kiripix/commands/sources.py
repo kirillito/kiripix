@@ -66,8 +66,9 @@ class ImportInput(_AssetInput):
                                                 "(`prop.state_unknown` gives the command). Not the default state's ID: that "
                                                 "is the Source. Pick it with `kiripix pick <asset> <variant> --state <state>`.")
     of: str | None = Field(None, description="With --look, or --loop with --frame: the edit was made on a piece or a crop "
-                                             "of the room, not on its whole Source. `crop`: the crop `kiripix extend "
-                                             "<room> crop --box ...` wrote; or a piece's name (the start of its hash in "
+                                             "of the room, not on its whole Source. A crop `kiripix extend "
+                                             "<room> crop --box ...` wrote (its name, the start of its hash in "
+                                             "`extend/crops/`; `crop` is the latest); or a piece's name (the start of its hash in "
                                              "`extend/pieces/`) or a Variant's. Kiripix finds where it lies in the "
                                              "Source, registers the edit there, and stores an edit of the whole "
                                              "Source: the Source's own pixels outside the edit. Without it, the edit is "

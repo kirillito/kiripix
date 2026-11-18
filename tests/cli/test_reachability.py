@@ -8,7 +8,7 @@ import numpy as np
 from conftest import Kiripix, stage_status
 from PIL import Image
 from test_masks import ROOM, built_room, decide
-from test_place import findings, place, walled_room
+from test_place import findings, link, place, walled_room
 
 # With the left wall flooded into `solid`, walkable is x 22 to 42, y 4 to 28 (see test_place). A second wall across the
 # room at x 30 to 34 blocks the spots x 25 to 40, which leaves x 22 to 24 on its left and x 41 to 42 on its right.
@@ -202,6 +202,55 @@ def test_walkable_ground_nothing_reaches_is_a_warning_with_its_bounding_box(proj
     assert [f["code"] for f in advice["findings"] if f["code"] not in ("masks.open_edge", "palette.mapping_error")] == ["reach.unreachable_island"]
 
 
+# Links
+
+def test_a_link_joins_the_island_and_the_report_names_it(project: Kiripix) -> None:
+    folder = split_room(project)
+    place(project, "spawn.main", "spawn", LEFT)
+    project.json("run", ROOM, expect=3)
+    assert findings(project.json("check", ROOM), "reach.unreachable_island") != []
+
+    link(project, "hop.wall", LEFT, RIGHT, kind="hop")
+    project.json("run", ROOM, expect=3)
+
+    checked = project.json("check", ROOM)
+    assert findings(checked, "reach.unreachable_island") == []
+    [joined] = findings(checked, "reach.link_joins")
+    assert joined["severity"] == "info" and "hop.wall" in joined["message"] and joined["owner_action"]
+    assert report(folder)["links"] == [{"id": "hop.wall", "kind": "hop", "two_way": True, "from": list(LEFT),
+                                         "to": list(RIGHT), "joins": True, "reached": True}]
+    assert read_reachable(folder)[16, 41] and read_reachable(folder)[16, 23]
+
+
+def test_a_one_way_link_is_crossed_forward_only(project: Kiripix) -> None:
+    folder = split_room(project)
+    link(project, "drop", RIGHT, LEFT, two_way=False)  # from the right side to the left
+
+    place(project, "spawn.main", "spawn", LEFT)
+    project.json("run", ROOM, expect=2)
+    assert findings(project.json("check", ROOM, expect=2), "reach.unreachable_island") != []  # from the left, the drop isn't open
+    [unreached] = findings(project.json("check", ROOM, expect=2), "reach.unreachable_link")
+    assert "drop" in unreached["message"] and unreached["owner_action"]
+    assert not read_reachable(folder)[16, 41]
+
+    place(project, "spawn.main", "spawn", RIGHT)  # from the right, the left side is reached and is no island
+    project.json("run", ROOM, expect=3)
+    checked = project.json("check", ROOM)
+    assert findings(checked, "reach.unreachable_island") == [] and findings(checked, "reach.unreachable_link") == []
+    assert read_reachable(folder)[16, 23]
+
+
+def test_a_link_in_cut_off_ground_is_reported_with_the_unreachable_markers(project: Kiripix) -> None:
+    split_room(project)
+    place(project, "spawn.main", "spawn", LEFT)
+    link(project, "far.hop", (41, 8), (41, 24))
+
+    project.json("run", ROOM, expect=2)
+
+    [cut] = findings(project.json("check", ROOM, expect=2), "reach.unreachable_link")
+    assert "far.hop" in cut["message"]
+
+
 # reach.narrow_gap
 
 
@@ -303,7 +352,7 @@ def test_describe_says_reach_is_implemented_with_its_checks(kpx: Kiripix) -> Non
     assert stage["implemented"]
     assert stage["params"][0]["name"] == "step" and stage["params"][0]["default"] == 1
     assert {c["code"] for c in stage["checks"]} == {"reach.unreachable_marker", "reach.unreachable_island",
-                                                    "reach.narrow_gap", "area.not_reached"}
+                                                    "reach.narrow_gap", "area.not_reached", "reach.unreachable_link", "reach.link_joins"}
 
 
 def test_a_view_that_stops_deriving_walkable_fails_reach_and_check_still_answers(project: Kiripix) -> None:

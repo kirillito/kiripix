@@ -46,7 +46,7 @@ def test_the_stage_leaves_the_sprite_and_prop_json_in_out_export(project: Kiripi
     out = folder / "out" / "export"
     prop = json.loads((out / "prop.json").read_text("utf-8"))
 
-    assert prop == {"schema_version": 1, "asset": PROP, "size": [8, 8], "origin": ORIGIN,
+    assert prop == {"schema_version": 2, "asset": PROP, "size": [8, 8], "origin": ORIGIN,
                     "collision": [[[1, 5], [6, 5], [6, 7], [1, 7]]]}
     assert (out / "sprite.png").read_bytes() == work(folder, "finish", "finish.png").read_bytes()
     assert sorted(path.name for path in out.iterdir() if path.name != ".stage.json") == ["prop.json", "sprite.png"]

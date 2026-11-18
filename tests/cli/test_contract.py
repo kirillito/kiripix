@@ -249,6 +249,8 @@ def test_a_props_states_validate(project: Kiripix, schemas: dict[str, dict[str, 
     jsonschema.validate(imported, schemas["import"]["output"])
     jsonschema.validate(picked, schemas["pick"]["output"])
     jsonschema.validate(shown, schemas["show"]["output"])
+    assert "images" in shown["data"]["states"][0]
+    assert "state" in schemas["show"]["output"]["$defs"]["Position"]["properties"]  # type: ignore[index]
     for name in ("import", "pick"):
         assert "state" in schemas[name]["input"]["properties"]  # type: ignore[index]
     kind = next(k for k in project.json("describe", "prop")["data"]["kinds"] if k["name"] == "prop")
@@ -351,6 +353,20 @@ def test_the_link_decision_validates(project: Kiripix, schemas: dict[str, dict[s
     kind = next(k for k in project.json("describe", "room")["data"]["kinds"] if k["name"] == "room")
     stage = next(s for s in kind["stages"] if s["name"] == "place")
     assert "link" in [d["name"] for d in stage["decisions"]]
+
+
+def test_an_icon_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The `icon` Kind (ticket 0262): `new`, `describe` and `show` answer in their shapes."""
+    made = project.json("new", "icon", "key")
+    described = project.json("describe", "icon")
+    shown = project.json("show", "icon.key")
+
+    jsonschema.validate(made, schemas["new"]["output"])
+    jsonschema.validate(described, schemas["describe"]["output"])
+    jsonschema.validate(shown, schemas["show"]["output"])
+    kind = next(k for k in described["data"]["kinds"] if k["name"] == "icon")
+    assert [s["name"] for s in kind["stages"]][:6] == ["brief", "source", "cutout", "fit", "palette", "finish"]
+    assert "icon.size" in {c["code"] for s in kind["stages"] for c in s["checks"]}
 
 
 def test_a_bad_decision_of_a_look_is_refused(project: Kiripix) -> None:

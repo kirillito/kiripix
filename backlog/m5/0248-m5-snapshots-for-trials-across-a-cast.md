@@ -68,7 +68,7 @@ built so it can be compared.
   `cast.not_snapshotted` (an Asset a label lacks: left out of that row), `cast.snapshot_stale`; an unknown label is
   `snapshot.unknown_label`. Without `--snapshots` the sheet is as before.
 - Work in `kiripix/core/snapshots.py`, `kiripix/core/cast.py`, `kiripix/core/editing.py`, `kiripix/commands/decisions.py`,
-  `kiripix/commands/probes.py`, `kiripix/commands/registry.py`, `kiripix/commands/invoke.py`. Tests:
+  `kiripix/commands/probes.py`, `kiripix/commands/registry.py`, `kiripix/commands/calling.py`. Tests:
   `tests/cli/test_snapshots.py` (18) and a contract sample for `snapshot`. Spec §10's command list updated.
 
 ### The Owner's choices (2026-11-17)

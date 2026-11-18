@@ -659,8 +659,34 @@ kbd {
   text-align: left;
 }
 
-.clip-form .param input:not([type="checkbox"]) {
+.clip-form .param input:not([type="checkbox"]),
+.clip-form .param select {
   width: 14em;
+}
+
+/* A clip's frame strip: one button per game frame, marked for the closed-eye frames (ticket 0282). */
+.clip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.clip-frame {
+  min-width: 2.4em;
+  padding: 2px 4px;
+  text-align: center;
+}
+
+.clip-frame small {
+  display: block;
+  font-size: 0.7em;
+  min-height: 1em;
+}
+
+.clip-frame.marked {
+  background: #3a5f8a;
+  color: #fff;
 }
 
 /* The frame screen of a character's picture Stages (ticket 0115). Canvases are scaled by whole numbers only. */
@@ -969,3 +995,23 @@ kbd {
   border: 1px solid #00e5ff;
   box-sizing: border-box;
 }
+
+/* A Prop's states (ticket 0261) */
+.state-strip { margin-bottom: 12px; }
+.state-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.state-card { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; min-width: 72px; }
+.state-card[aria-pressed="true"] { outline: 2px solid #4a9eff; }
+.state-card[data-findings="error"] { border-color: #e0525e; }
+.state-card[data-findings="warning"] { border-color: #d9a441; }
+.state-thumb { image-rendering: pixelated; display: block; min-width: 8px; min-height: 8px; }
+.state-declare { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; margin: 6px 0; }
+.state-declare label { display: flex; flex-direction: column; font-size: 12px; }
+.state-declare input { width: 6em; }
+.side-by-side { padding: 12px; overflow: auto; }
+.side-row { position: relative; display: flex; align-items: flex-start; gap: 24px; padding: 8px 8px 24px; min-height: 120px; }
+.side-ground { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed #888; pointer-events: none; margin-top: 8px; }
+.side-state { margin: 0; }
+.side-state figcaption { font-size: 12px; }
+.side-sprite { position: relative; }
+.side-sprite img { image-rendering: pixelated; }
+.side-origin { position: absolute; width: 5px; height: 5px; margin: -2px 0 0 -2px; background: #e0525e; border-radius: 50%; pointer-events: none; }

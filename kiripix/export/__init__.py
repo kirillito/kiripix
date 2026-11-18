@@ -36,7 +36,8 @@ from kiripix.export.checks import (
 )
 from kiripix.export.character import COLOR_FILE, NORMAL_FILE, RAMPS_FILE, ramp_rows, ramps_png, read_character
 from kiripix.export.godot import (
-    character_frames, character_ids, character_scene, character_texture, prop_ids, prop_scene, room_ids, room_scene,
+    character_frames, character_ids, character_scene, character_texture, prop_ids, prop_scene, prop_state_files,
+    room_ids, room_scene,
 )
 from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
@@ -116,10 +117,13 @@ def _prop_files(graph: AssetGraph, target: GodotTarget) -> tuple[dict[str, bytes
     name = graph.asset.id.split(".", 1)[1]
     folder = f"{target.root}/{graph.kind.name}/{name}"
     sprite = f"{folder}/{SPRITE_FILE}"
+    states = {state: f"{folder}/{file}" for state, file in prop_state_files(prop).items()}
     files = {
-        f"{folder}/{name}.tscn": prop_scene(prop, name, sprite).encode("utf-8"),
+        f"{folder}/{name}.tscn": prop_scene(prop, name, sprite, states).encode("utf-8"),
         sprite: (built_dir(graph) / SPRITE_FILE).read_bytes(),
     }
+    for state, file in prop_state_files(prop).items():
+        files[f"{folder}/{file}"] = (built_dir(graph) / file).read_bytes()
     return files, prop_ids(prop)
 
 

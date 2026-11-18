@@ -73,14 +73,26 @@ def test_speed_plays_the_action_faster_so_the_clip_has_fewer_frames(project: Kir
     assert entry["frames"] == [0, 5, 10, 15, 20] and entry["speed"] == 2  # every 5th frame of 30 a second, at 12 a second
 
 
-def test_a_blink_past_the_clips_last_frame_fails_with_a_fix(project: Kiripix) -> None:
+def test_a_blink_past_a_still_clips_last_frame_is_refused_when_decided(project: Kiripix) -> None:
     rigged_hero(project)
-    clip(project, {**STILL, "blink": [6]})
+
+    refused = clip(project, {**STILL, "blink": [2], "wink_left": [6]}, expect=1)
+
+    [finding] = refused["findings"]
+    assert finding["code"] == "decision.invalid"
+    assert "0 to 5" in finding["message"] and "wink_left names 6" in finding["message"]
+    clip(project, {**STILL, "blink": [5]})  # the last frame is one
+
+
+def test_a_blink_past_the_clips_last_frame_fails_with_a_fix(project: Kiripix) -> None:
+    """Without `still` the frame count depends on the source's frame rate, which only the Stage reads."""
+    rigged_hero(project)
+    clip(project, {**IDLE, "blink": [99]})
 
     result = project.json("run", HERO, "clips", expect=1)
 
     [finding] = [f for f in result["findings"] if f["code"] == "clips.blink_range"]
-    assert "0 to 5" in finding["message"] and finding["fix"] == f"kiripix undo {HERO} clips"
+    assert "blink names 99" in finding["message"] and finding["fix"] == f"kiripix undo {HERO} clips"
 
 
 # render --------------------------------------------------------------------------------------------------------------

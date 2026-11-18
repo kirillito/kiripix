@@ -26,7 +26,8 @@ class ExtendInput(BaseModel):
         description="canvas: write the canvas for the next piece. add: join a piece onto the image. undo: drop the "
                     "last piece. done: import the joined image as a Variant. crop: write a crop of the picked Source "
                     "at the image model's size, for a Look's or a Loop's edit that no single piece holds whole "
-                    "(`import --look <look> --of crop`).")
+                    "(`import --look <look> --of <crop>`). A crop is named by its PNG's hash and the room keeps them all; "
+                    "`--of crop` means the latest.")
     piece: Path | None = Field(None, description="With add: the piece's PNG, made from the canvas.")
     side: str | None = Field(
         None, description="With canvas: the side to extend, east, south, west or north, or a corner of two such as "
@@ -50,6 +51,8 @@ class ExtendData(BaseModel):
     canvas_size: tuple[int, int] | None = None
     crop: str | None = Field(None, description="With crop: the path of the crop PNG to paste into the image model.")
     origin: tuple[int, int] | None = Field(None, description="With crop: where the crop starts in the Source.")
+    crops: list[str] | None = Field(None, description="With crop: the names of the room's crops, oldest first, the last "
+                                                      "the latest; `import --of <name>` takes one, `--of crop` the latest.")
     sides: list[str] = []
     keep: tuple[int, int] | None = None
     fill: str | None = Field(None, description="With canvas: the flat fill the image model paints over, #RRGGBB: the "
@@ -81,7 +84,8 @@ class ExtendData(BaseModel):
             w, h = self.canvas_size or (0, 0)
             return (f"{self.asset}: wrote {self.crop} ({w}x{h}, from {self.origin[0] if self.origin else 0},"
                     f"{self.origin[1] if self.origin else 0} of the Source); edit it in the image model, then "
-                    f"kiripix import {self.asset} <png> --look <look> --of crop")
+                    f"kiripix import {self.asset} <png> --look <look> --of {(self.crops or ['crop'])[-1]} "
+                    f"(`--of crop` is the latest); {len(self.crops or [])} crops: {', '.join(self.crops or [])}")
         if self.action == "add":
             return (f"{self.asset}: joined {self.piece} ({'+'.join(self.sides)}): {self.width}x{self.height}, residual "
                     f"{self.residual:.2f} px, gain {self.gain[0]:.3f} to {self.gain[1]:.3f}, seam "  # type: ignore[index]
@@ -103,7 +107,7 @@ def _asset_lock(arguments: ExtendInput) -> str | None:
     "extend",
     summary="Grow a room's Source past its edge, one piece at a time: canvas (write the canvas for the next piece), "
             "add <png> (join a piece onto the image), undo (drop the last piece), done (import the joined image as "
-            "a Variant), crop (write a crop of the Source at the image model's size, for a Look's edit).",
+            "a Variant), crop (write a crop of the Source at the image model's size, named by its hash, for a Look's edit; `import --of crop` is the latest).",
     input=ExtendInput,
     output=ExtendData,
     kind="writing",
@@ -123,7 +127,7 @@ def extend_command(arguments: ExtendInput, context: Context) -> Outcome[ExtendDa
             raise fail("extend.box_needed", "crop needs the area it must hold", fix=f"{example} --box 100,100,500,400")
         size = editof.parse_size(arguments.size, project.settings.extend.canvas, example)
         path, data.origin = editof.write_crop(project, asset, editof.parse_box(arguments.box, example), size, example)
-        data.crop, data.canvas_size = project.relative(path), size
+        data.crop, data.canvas_size, data.crops = project.relative(path), size, editof.crop_names(asset)
         return Outcome(data)
     if arguments.action == "canvas":
         if sides is None:

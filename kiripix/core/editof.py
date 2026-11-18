@@ -11,12 +11,13 @@ does. So `looks`, its region and its drift are unchanged. The caller holds the A
 
 from __future__ import annotations
 
+import json
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from kiripix.ops.lazy import lazy_module
 
@@ -34,6 +35,7 @@ from kiripix.core.graph import AssetGraph
 from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.images import load_rgba, png_bytes, read_as_png
 from kiripix.core.project import Project
+from kiripix.core.settings import CROP_SCHEMA_VERSION, migrate_crop_record
 from kiripix.ops import register, resample_piece
 from kiripix.ops.colour import U8
 from kiripix.ops.join import Registration
@@ -42,7 +44,7 @@ from kiripix.ops.looks import Alignment
 CROP = "crop"
 CROP_PNG = "crop.png"
 CROP_JSON = "crop.json"
-SCHEMA_VERSION = 1
+CROPS = "crops"
 COARSE = 4  # the factor the piece is first looked for at
 TRIM = 8  # px of the piece's border left out of the coarse match: the join may have cut it
 MIN_MATCH = 0.5  # the coarse match's normalised correlation below which the piece isn't in the Source
@@ -51,7 +53,7 @@ PASSES = 3
 
 
 class CropRecord(BaseModel):
-    """`extend/crop.json`: where the crop lies in the Source, for `import --of crop` to place the edit."""
+    """`extend/crops/<name>.json`: where the crop lies in the Source, for `import --of <crop>` to place the edit."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -59,7 +61,8 @@ class CropRecord(BaseModel):
     source: str  # the Source Variant it was cut from
     origin: tuple[int, int]  # the crop's first pixel in the Source
     size: tuple[int, int]
-    png: str  # the hash of `crop.png`: two files can't be swapped in together, so a crop and a record that don't match are refused
+    png: str  # the hash of the crop's PNG: two files can't be swapped in together, so a crop and a record that don't match are refused
+    number: int  # the order the crops were written (a rewritten crop takes the next): `--of crop` is the highest
 
 
 @dataclass
@@ -97,10 +100,69 @@ def parse_size(text: str | None, default: tuple[int, int], example: str) -> tupl
     return int(parts[0]), int(parts[1])
 
 
+def _crops_folder(asset: Asset) -> Path:
+    return extend.folder(asset) / CROPS
+
+
+def _read_record(asset: Asset, path: Path) -> CropRecord:
+    shown = f"{asset.id}/extend/{path.parent.name}/{path.name}" if path.parent.name == CROPS else f"{asset.id}/extend/{path.name}"
+    try:
+        document = migrate_crop_record(json.loads(path.read_text(encoding="utf-8")), shown)
+        return CropRecord.model_validate(document)
+    except (ValidationError, ValueError, AttributeError) as error:
+        detail = error.errors()[0]["msg"] if isinstance(error, ValidationError) else "not JSON"
+        raise fail("extend.record_invalid", f"{shown} is not valid: {detail}",
+                   owner_action=f"Remove {shown} and its PNG, and write the crop again.") from None
+
+
+def _legacy(asset: Asset) -> tuple[Path, Path] | None:
+    """The pre-0287 single crop, `extend/crop.png` and `crop.json`, if there is one."""
+    png, record = extend.folder(asset) / CROP_PNG, extend.folder(asset) / CROP_JSON
+    return (png, record) if record.is_file() else None
+
+
+def _crops(asset: Asset) -> list[tuple[str, Path, Path]]:
+    """Every crop of the room, oldest first: its name, PNG and record. The pre-0287 single crop counts, named by its
+    PNG's hash."""
+    found: list[tuple[int, str, Path, Path]] = []
+    for record_path in sorted(_crops_folder(asset).glob("*.json")):
+        found.append((_read_record(asset, record_path).number, record_path.stem, record_path.with_suffix(".png"), record_path))
+    legacy = _legacy(asset)
+    if legacy is not None:
+        record = _read_record(asset, legacy[1])
+        found.append((record.number, record.png[:extend.HASH_LENGTH], legacy[0], legacy[1]))
+    found.sort(key=lambda item: (item[0], item[1]))
+    return [(name, png, record) for _, name, png, record in found]
+
+
+def crop_names(asset: Asset) -> list[str]:
+    """The names of the room's crops, oldest first."""
+    return [name for name, _, _ in _crops(asset)]
+
+
+def _move_legacy(asset: Asset) -> None:
+    """The writing side of the migration: the pre-0287 single crop moves into `crops/` (the PNG first, then the record;
+    a stop between them leaves the old crop readable)."""
+    legacy = _legacy(asset)
+    if legacy is None:
+        return
+    png, record_path = legacy
+    record = _read_record(asset, record_path)
+    name = record.png[:extend.HASH_LENGTH]
+    if png.is_file():
+        target = _crops_folder(asset) / f"{name}.png"
+        if not target.exists():
+            atomic.write_bytes(target, png.read_bytes())
+        atomic.write_json(target.with_suffix(".json"), record.model_dump(mode="json"))
+        png.unlink()
+    record_path.unlink()
+
+
 def write_crop(project: Project, asset: Asset, box: tuple[int, int, int, int], size: tuple[int, int],
                example: str) -> tuple[Path, tuple[int, int]]:
-    """Write the Source's crop of `size` around `box` (the window moved in, if it would leave the Source). Returns its
-    path and where it starts in the Source."""
+    """Write the Source's crop of `size` around `box` (the window moved in, if it would leave the Source) as
+    `extend/crops/<hash>.png` with its record. Returns its path and where it starts in the Source. The same crop again
+    is the same file, and the latest."""
     name, source = extend.picked_source(project, asset)
     height, width = (int(v) for v in source.shape[:2])
     cw, ch = size
@@ -113,29 +175,29 @@ def write_crop(project: Project, asset: Asset, box: tuple[int, int, int, int], s
                    fix=f"{example} --size {max(cw, x1 - x0)}x{max(ch, y1 - y0)}")
     ox = min(max((x0 + x1 - cw) // 2, 0), width - cw)
     oy = min(max((y0 + y1 - ch) // 2, 0), height - ch)
-    path = extend.folder(asset) / CROP_PNG
+    _move_legacy(asset)
     data = png_bytes(np.ascontiguousarray(source[oy:oy + ch, ox:ox + cw]))
+    digest = hash_bytes(data)
+    path = _crops_folder(asset) / f"{digest[:extend.HASH_LENGTH]}.png"
+    number = max((_read_record(asset, r).number for _, _, r in _crops(asset)), default=0) + 1
     atomic.write_bytes(path, data)
-    record = CropRecord(schema_version=SCHEMA_VERSION, source=name, origin=(ox, oy), size=(cw, ch), png=hash_bytes(data))
-    atomic.write_json(extend.folder(asset) / CROP_JSON, record.model_dump(mode="json"))
+    record = CropRecord(schema_version=CROP_SCHEMA_VERSION, source=name, origin=(ox, oy), size=(cw, ch), png=digest, number=number)
+    atomic.write_json(path.with_suffix(".json"), record.model_dump(mode="json"))
     return path, (ox, oy)
 
 
-def _crop_record(asset: Asset, source: str) -> CropRecord:
-    path = extend.folder(asset) / CROP_JSON
-    if not path.is_file():
+def _crop_record(asset: Asset, source: str, of: str) -> CropRecord:
+    """The record of the crop `of` names (`crop`: the latest), refused if the Source or the PNG isn't the one it records."""
+    crops = _crops(asset)
+    if not crops:
         raise fail("import.crop_needed", f"{asset.id} has no crop written", fix=f"kiripix extend {asset.id} crop --box 0,0,400,300")
-    try:
-        record = CropRecord.model_validate_json(path.read_text(encoding="utf-8"))
-    except ValidationError as error:
-        raise fail("extend.record_invalid", f"{asset.id}/extend/{CROP_JSON} is not valid: {error.errors()[0]['msg']}",
-                   owner_action=f"Remove {asset.id}/extend/{CROP_JSON} and write the crop again.") from None
+    _, png, record_path = crops[-1] if of == CROP else next(c for c in crops if c[0].startswith(of))
+    record = _read_record(asset, record_path)
     if record.source != source:
         raise fail("import.crop_stale", "the Source has changed since the crop was written",
                    fix=f"kiripix extend {asset.id} crop --box 0,0,400,300")
-    png = extend.folder(asset) / CROP_PNG
     if not png.is_file() or hash_bytes(png.read_bytes()) != record.png:
-        raise fail("import.crop_stale", f"{asset.id}/extend/{CROP_PNG} isn't the crop {CROP_JSON} records (a crop was "
+        raise fail("import.crop_stale", f"{asset.id}/extend/{png.name} isn't the crop its record names (a crop was "
                    "stopped half-written)", fix=f"kiripix extend {asset.id} crop --box 0,0,400,300")
     return record
 
@@ -158,7 +220,7 @@ def find_reference(asset: Asset, name: str, shown: str) -> Path:
                    owner_action="Give more of the hash.", position=Position(asset=asset.id, file=shown))
     raise fail("import.of_unknown", f"{asset.id} has no piece or Variant '{name}'; "
                + (f"its pieces and Variants are {', '.join(known)}" if known else "it has none"),
-               owner_action=f"Name a piece of `extend/pieces/` or a Variant, or `crop` (kiripix extend {asset.id} crop --box ...).",
+               owner_action=f"Name a piece of `extend/pieces/`, a Variant or a crop (kiripix extend {asset.id} crop --box ...), or `crop` for the latest.",
                position=Position(asset=asset.id, file=shown))
 
 
@@ -290,8 +352,12 @@ def placed_edit(project: Project, asset: Asset, file: Path, shown: str, of: str)
     name, source = extend.picked_source(project, asset)
     _, edit = read_as_png(file, shown)
     eh, ew = (int(v) for v in edit.shape[:2])
-    if of == CROP:
-        record = _crop_record(asset, name)
+    named = [n for n in crop_names(asset) if n.startswith(of)] if of != CROP else []
+    if of == CROP or named:
+        if len(named) > 1:
+            raise fail("import.of_ambiguous", f"'{of}' names more than one crop: {', '.join(named)}",
+                       owner_action="Give more of the hash.", position=Position(asset=asset.id, file=shown))
+        record = _crop_record(asset, name, CROP if of == CROP else named[0])
         cw, ch = record.size
         return place(source, edit, (cw / ew, ch / eh), record.origin, shown, asset, True)
     reference = find_reference(asset, of, shown)
@@ -321,4 +387,4 @@ def placed_file(project: Project, asset: Asset, file: Path, shown: str, of: str)
         yield path, placed
 
 
-__all__ = ["CROP", "Placed", "parse_box", "parse_size", "placed_edit", "placed_file", "write_crop"]
+__all__ = ["CROP", "crop_names", "Placed", "parse_box", "parse_size", "placed_edit", "placed_file", "write_crop"]

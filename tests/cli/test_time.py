@@ -166,7 +166,7 @@ def test_an_interactive_command_counts_the_time_since_the_previous_one(project: 
     project.json("new", "room", "alley", "--view", "top")
     folder = project.cwd / "assets" / "room" / "alley"
     clock = iter([1000.0, 1001.0, 1060.0, 1061.0, 1400.0, 1401.0, 1500.0, 1501.0])
-    monkeypatch.setattr(sys.modules["kiripix.commands.invoke"], "time", SimpleNamespace(time=lambda: next(clock)))
+    monkeypatch.setattr(sys.modules["kiripix.commands.calling"], "time", SimpleNamespace(time=lambda: next(clock)))
 
     def run(interactive: bool, width: int) -> None:
         context = Context(cwd=project.cwd, command_line="kiripix set", interactive=interactive)

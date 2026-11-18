@@ -13,6 +13,7 @@ export const CLIPS_STAGE = "clips";
 export const CHARACTER_SCREENS = [MODEL_STAGE, RIG_STAGE, CLIPS_STAGE];
 export const BONE_DECISION = "bone";
 export const CLIP_DECISION = "clip";
+export const TRANSITION_DECISION = "transition";
 
 export type ImportRole = "variant" | "clip-source" | "rigged" | "sheet" | "parameters";
 export const MODEL_FILES = ".glb,.fbx,.blend";
@@ -501,6 +502,40 @@ interface ClipData {
   fps: number;
   loop: boolean;
   stationary?: boolean;
+  speed?: number;
+  still?: number;
+  blink?: number[];
+  wink_left?: number[];
+  wink_right?: number[];
+}
+
+interface TransitionData {
+  name: string;
+  from: { clip: string; frame?: number };
+  to: { clip: string; frame?: number };
+  length?: number;
+  fps?: number;
+}
+
+const EYELIDS = [
+  { key: "blink", label: "Blink", mark: "B" },
+  { key: "wink_left", label: "Wink left", mark: "L" },
+  { key: "wink_right", label: "Wink right", mark: "R" },
+] as const;
+type Eyelid = (typeof EYELIDS)[number]["key"];
+type Marks = Record<Eyelid, number[]>;
+const NO_MARKS: Marks = { blink: [], wink_left: [], wink_right: [] };
+
+// A clip's timing, said short: what the row shows beside its range.
+function timing(clip: ClipData): string {
+  const parts: string[] = [];
+  if (clip.still) parts.push(`still ${clip.still}`);
+  if (clip.speed && clip.speed !== 1) parts.push(`speed ${clip.speed}`);
+  for (const lid of EYELIDS) {
+    const frames = clip[lid.key];
+    if (frames && frames.length > 0) parts.push(`${lid.key.replace("_", " ")} ${frames.join(", ")}`);
+  }
+  return parts.join("; ");
 }
 
 // How many frames a clip's range gives at its frame rate: `sample_frames` in kiripix/recipes/clips.py, which a render samples. A
@@ -514,10 +549,192 @@ function roundHalfEven(value: number): number {
   return floor % 2 === 0 ? floor : floor + 1;
 }
 
-export function sampleCount(start: number, end: number, sourceFps: number, fps: number, loop: boolean): number {
-  const step = sourceFps / fps;
+export function sampleCount(start: number, end: number, sourceFps: number, fps: number, loop: boolean, speed = 1): number {
+  const step = (sourceFps * speed) / fps;
   const span = end - start;
   return loop ? Math.max(1, roundHalfEven(span / step)) : Math.floor(span / step + 1e-9) + 1;
+}
+
+// The transitions (ticket 0218) and the form that decides one. A transition is a clip of its own between two poses, so it is
+// listed beside the clips; the Decision's own Checks say when a frame is out of range or a clip is missing.
+function TransitionsPanel(props: {
+  transitions: (TransitionData & { fromBase: boolean })[];
+  clips: string[];
+  frames: Record<string, number>; // a built clip's frame count, once `clips` has run
+  pattern: RegExp | null;
+  disabled: boolean;
+  decide: (name: string, data: Record<string, unknown>, label: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [fromClip, setFromClip] = useState("");
+  const [fromFrame, setFromFrame] = useState("");
+  const [toClip, setToClip] = useState("");
+  const [toFrame, setToFrame] = useState("");
+  const [length, setLength] = useState("3");
+  const [fps, setFps] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const whole = (text: string) => /^\d+$/.test(text.trim());
+
+  function stop() {
+    setEditing(null);
+    setName("");
+    setFromClip("");
+    setFromFrame("");
+    setToClip("");
+    setToFrame("");
+    setLength("3");
+    setFps("");
+  }
+
+  function edit(entry: TransitionData) {
+    setEditing(entry.name);
+    setName(entry.name);
+    setFromClip(entry.from.clip);
+    setFromFrame(entry.from.frame === undefined ? "" : String(entry.from.frame));
+    setToClip(entry.to.clip);
+    setToFrame(entry.to.frame === undefined ? "" : String(entry.to.frame));
+    setLength(String(entry.length ?? 3));
+    setFps(entry.fps === undefined ? "" : String(entry.fps));
+  }
+
+  const problem = !name
+    ? "Name the transition."
+    : props.pattern && !props.pattern.test(name)
+      ? "A transition's name is lower-case letters, digits and underscores, and doesn't end in a direction."
+      : !fromClip || !toClip
+        ? "Choose the clip it starts from and the clip it ends on."
+        : (fromFrame.trim() && !whole(fromFrame)) || (toFrame.trim() && !whole(toFrame))
+          ? "A frame is a whole number, from 0, or empty."
+          : !whole(length) || Number(length) < 1
+            ? "The length is a whole number of frames, 1 or more."
+            : fps.trim() && (!whole(fps) || Number(fps) < 1)
+              ? "The frame rate is a whole number, 1 or more, or empty."
+              : null;
+  const range = (clip: string) => (props.frames[clip] ? ` (frames 0 to ${props.frames[clip] - 1})` : "");
+
+  function send() {
+    const data: Record<string, unknown> = {
+      name,
+      from: { clip: fromClip, ...(fromFrame.trim() ? { frame: Number(fromFrame) } : {}) },
+      to: { clip: toClip, ...(toFrame.trim() ? { frame: Number(toFrame) } : {}) },
+      length: Number(length),
+    };
+    if (fps.trim()) data.fps = Number(fps);
+    props.decide(TRANSITION_DECISION, data, editing ? `Changing the transition ${name}` : `Adding the transition ${name}`);
+    stop();
+  }
+
+  const end = (value: { clip: string; frame?: number }, fallback: string) => `${value.clip}, frame ${value.frame ?? fallback}`;
+
+  return (
+    <div data-testid="transitions">
+      <h2>Transitions</h2>
+      {props.transitions.length === 0 ? (
+        <p className="hint" data-testid="transitions-empty">No transitions yet. A transition is a clip that blends one clip's pose into another's.</p>
+      ) : (
+        <table className="table" data-testid="transitions-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Length</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.transitions.map((entry) => (
+              <tr key={entry.name} data-testid={`transition-row-${entry.name}`} data-from-base={entry.fromBase}>
+                <td>
+                  {entry.name}
+                  {entry.fromBase && (
+                    <>
+                      {" "}
+                      <small className="from-base" title="Read-only: the base's transition">
+                        the base's
+                      </small>
+                    </>
+                  )}
+                </td>
+                <td>{end(entry.from, "last")}</td>
+                <td>{end(entry.to, "0")}</td>
+                <td>{entry.length ?? 3}</td>
+                <td>
+                  <button data-testid={`transition-edit-${entry.name}`} disabled={props.disabled} onClick={() => edit(entry)}>
+                    {entry.fromBase ? "Change on this character" : "Edit"}
+                  </button>
+                  <button
+                    data-testid={`transition-remove-${entry.name}`}
+                    disabled={props.disabled}
+                    onClick={() => props.decide(REMOVE_DECISION, { name: entry.name }, `Removing the transition ${entry.name}${entry.fromBase ? " here" : ""}`)}
+                  >
+                    {entry.fromBase ? "Remove here" : "Remove"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <fieldset disabled={props.disabled} className="clip-form">
+        <h2>{editing ? `Change the transition ${editing}` : "New transition"}</h2>
+        <div className="param">
+          <label htmlFor="transition-name">Name</label>
+          <input id="transition-name" data-testid="transition-name" value={name} readOnly={editing !== null} placeholder="idle_to_walk" onChange={(event) => setName(event.target.value)} />
+        </div>
+        <div className="param">
+          <label htmlFor="transition-from">From clip</label>
+          <select id="transition-from" data-testid="transition-from" value={fromClip} onChange={(event) => setFromClip(event.target.value)}>
+            <option value="">Choose a clip</option>
+            {props.clips.map((clip) => (
+              <option key={clip} value={clip}>
+                {clip}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="param">
+          <label htmlFor="transition-from-frame">From frame</label>
+          <input id="transition-from-frame" data-testid="transition-from-frame" type="number" min={0} placeholder="the last" value={fromFrame} onChange={(event) => setFromFrame(event.target.value)} />
+          {fromClip && <small className="hint">{range(fromClip)}</small>}
+        </div>
+        <div className="param">
+          <label htmlFor="transition-to">To clip</label>
+          <select id="transition-to" data-testid="transition-to" value={toClip} onChange={(event) => setToClip(event.target.value)}>
+            <option value="">Choose a clip</option>
+            {props.clips.map((clip) => (
+              <option key={clip} value={clip}>
+                {clip}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="param">
+          <label htmlFor="transition-to-frame">To frame</label>
+          <input id="transition-to-frame" data-testid="transition-to-frame" type="number" min={0} placeholder="0" value={toFrame} onChange={(event) => setToFrame(event.target.value)} />
+          {toClip && <small className="hint">{range(toClip)}</small>}
+        </div>
+        <div className="param">
+          <label htmlFor="transition-length">Length</label>
+          <input id="transition-length" data-testid="transition-length" type="number" min={1} value={length} onChange={(event) => setLength(event.target.value)} />
+          <small className="hint">The frames between the two poses, not including them.</small>
+        </div>
+        <div className="param">
+          <label htmlFor="transition-fps">Frame rate</label>
+          <input id="transition-fps" data-testid="transition-fps" type="number" min={1} placeholder="the from clip's" value={fps} onChange={(event) => setFps(event.target.value)} />
+        </div>
+        {problem && name && <p className="hint" data-testid="transition-problem">{problem}</p>}
+        <button data-testid="transition-add" disabled={problem !== null} onClick={send}>
+          {editing ? "Change transition" : "Add transition"}
+        </button>
+        {editing && (
+          <button data-testid="transition-cancel" onClick={stop}>
+            Cancel
+          </button>
+        )}
+      </fieldset>
+    </div>
+  );
 }
 
 function ClipsScreen(props: {
@@ -593,6 +810,10 @@ function ClipsScreen(props: {
   const [fps, setFps] = useState("12");
   const [loop, setLoop] = useState(true);
   const [stationary, setStationary] = useState(false);
+  const [speed, setSpeed] = useState("1");
+  const [still, setStill] = useState("");
+  const [marks, setMarks] = useState<Marks>(NO_MARKS);
+  const [eyelid, setEyelid] = useState<Eyelid>("blink");
   const [editing, setEditing] = useState<string | null>(null); // the name of the clip the form changes, or null when it adds
   const [chosenFps, setChosenFps] = useState<number | null>(null);
   const sourceFps = known.find((entry) => entry.value === source.trim())?.fps ?? chosenFps; // the source file's: the clip's is the game's
@@ -618,12 +839,30 @@ function ClipsScreen(props: {
     setFps(String(clip.fps));
     setLoop(clip.loop);
     setStationary(clip.stationary ?? false);
+    setSpeed(String(clip.speed ?? 1));
+    setStill(clip.still ? String(clip.still) : "");
+    setMarks({ blink: clip.blink ?? [], wink_left: clip.wink_left ?? [], wink_right: clip.wink_right ?? [] });
   }
 
   function stopEditing() {
     setEditing(null);
     setName("");
+    setSpeed("1");
+    setStill("");
+    setMarks(NO_MARKS);
   }
+
+  function toggleFrame(frame: number) {
+    const has = marks[eyelid].includes(frame);
+    setMarks({ ...marks, [eyelid]: (has ? marks[eyelid].filter((entry) => entry !== frame) : [...marks[eyelid], frame]).sort((a, b) => a - b) });
+  }
+
+  // The transitions as the Stage reads them, and which go with a clip if it is removed (`remove` takes them too).
+  const transitions = detail.decisions_as_read
+    .filter((decision) => decision.name === TRANSITION_DECISION)
+    .map((decision) => ({ ...(decision.data as unknown as TransitionData), fromBase: decision.from_base === true }));
+  const goWith = (clipName: string) =>
+    transitions.filter((entry) => entry.from.clip === clipName || entry.to.clip === clipName).map((entry) => entry.name);
 
   const whole = (text: string) => /^\d+$/.test(text.trim());
   const problem = !name
@@ -637,6 +876,30 @@ function ClipsScreen(props: {
           : Number(start) > Number(end)
             ? "The clip starts after it ends."
             : null;
+  const speedValue = Number(speed);
+  const timingProblem =
+    !speed.trim() || !(speedValue > 0)
+      ? "The speed is a number above 0."
+      : still.trim() && !(whole(still) && Number(still) >= 1)
+        ? "Still is a whole number of frames, 1 or more, or empty."
+        : null;
+  const rangeOk = whole(start) && whole(end) && whole(fps) && Number(fps) >= 1 && Number(start) <= Number(end);
+  const frameCount =
+    still.trim() && whole(still) && Number(still) >= 1
+      ? Number(still)
+      : sourceFps !== null && rangeOk && speedValue > 0
+        ? sampleCount(Number(start), Number(end), sourceFps, Number(fps), loop, speedValue)
+        : null;
+  const lateMarks =
+    frameCount === null ? [] : EYELIDS.flatMap((lid) => marks[lid.key].filter((frame) => frame >= frameCount).map((frame) => `${lid.key.replace("_", " ")} ${frame}`));
+
+  function clipData(): Record<string, unknown> {
+    const data: Record<string, unknown> = { name, source: source.trim(), start: Number(start), end: Number(end), fps: Number(fps), loop, stationary };
+    if (speedValue !== 1) data.speed = speedValue;
+    if (still.trim()) data.still = Number(still);
+    for (const lid of EYELIDS) if (marks[lid.key].length > 0) data[lid.key] = marks[lid.key];
+    return data;
+  }
 
   return (
     <div className="character-screen" data-testid="clips-screen">
@@ -677,6 +940,12 @@ function ClipsScreen(props: {
                   <td>{clip.source}</td>
                   <td>
                     {clip.start}–{clip.end}
+                    {timing(clip) && (
+                      <small className="hint" data-testid={`clip-timing-${clip.name}`}>
+                        {" "}
+                        {timing(clip)}
+                      </small>
+                    )}
                   </td>
                   <td>{clip.fps}</td>
                   <td>{clip.loop ? "loop" : "once"}</td>
@@ -684,16 +953,20 @@ function ClipsScreen(props: {
                   <td>{made ? `${made.frames.length}${made.root_motion ? " (root moves)" : ""}` : ""}</td>
                   <td>
                     <button data-testid={`clip-edit-${clip.name}`} disabled={props.disabled} onClick={() => edit(clip)}>
-                      {clip.fromBase ? "Change here" : "Edit"}
+                      {clip.fromBase ? "Change on this character" : "Edit"}
                     </button>
-                    {clip.fromBase && (
-                      <button
-                        data-testid={`clip-remove-${clip.name}`}
-                        disabled={props.disabled}
-                        onClick={() => props.decide(REMOVE_DECISION, { name: clip.name }, `Removing the clip ${clip.name} here`)}
-                      >
-                        Remove here
-                      </button>
+                    <button
+                      data-testid={`clip-remove-${clip.name}`}
+                      disabled={props.disabled}
+                      onClick={() => props.decide(REMOVE_DECISION, { name: clip.name }, `Removing the clip ${clip.name}${clip.fromBase ? " here" : ""}`)}
+                    >
+                      {clip.fromBase ? "Remove here" : "Remove"}
+                    </button>
+                    {goWith(clip.name).length > 0 && (
+                      <small className="hint" data-testid={`clip-remove-takes-${clip.name}`}>
+                        {" "}
+                        Removing it also removes the transitions {goWith(clip.name).join(", ")}.
+                      </small>
                     )}
                   </td>
                 </tr>
@@ -752,19 +1025,67 @@ function ClipsScreen(props: {
           <input type="checkbox" data-testid="clip-stationary" checked={stationary} onChange={(event) => setStationary(event.target.checked)} />
           Stationary (the feet must not move)
         </label>
-        {sourceFps !== null && whole(start) && whole(end) && whole(fps) && Number(fps) >= 1 && Number(start) <= Number(end) ? (
+        <div className="param">
+          <label htmlFor="clip-speed">Speed</label>
+          <input id="clip-speed" data-testid="clip-speed" type="number" min={0} step="any" value={speed} onChange={(event) => setSpeed(event.target.value)} />
+          <small className="hint">The action plays this many times faster, so the clip has fewer frames.</small>
+        </div>
+        <div className="param">
+          <label htmlFor="clip-still">Still</label>
+          <input id="clip-still" data-testid="clip-still" type="number" min={1} value={still} onChange={(event) => setStill(event.target.value)} />
+          <small className="hint">Holds the pose at the start frame for this many frames. Empty: the clip plays.</small>
+        </div>
+        {frameCount !== null ? (
           <p className="hint" data-testid="clip-frame-count">
-            {sampleCount(Number(start), Number(end), sourceFps, Number(fps), loop)} frames
+            {frameCount} frames
           </p>
         ) : null}
+        {frameCount !== null && (
+          <div className="param" data-testid="clip-strip-box">
+            <label htmlFor="clip-eyelid">Eyes closed on</label>
+            <select id="clip-eyelid" data-testid="clip-eyelid" value={eyelid} onChange={(event) => setEyelid(event.target.value as Eyelid)}>
+              {EYELIDS.map((lid) => (
+                <option key={lid.key} value={lid.key}>
+                  {lid.label}
+                </option>
+              ))}
+            </select>
+            <div className="clip-strip" data-testid="clip-strip">
+              {Array.from({ length: frameCount }, (_, frame) => {
+                const on = EYELIDS.filter((lid) => marks[lid.key].includes(frame));
+                return (
+                  <button
+                    key={frame}
+                    type="button"
+                    className={`clip-frame${marks[eyelid].includes(frame) ? " marked" : ""}`}
+                    data-testid={`clip-frame-${frame}`}
+                    data-marks={on.map((lid) => lid.key).join(" ")}
+                    aria-pressed={marks[eyelid].includes(frame)}
+                    title={`Frame ${frame}: click to toggle ${eyelid.replace("_", " ")}`}
+                    onClick={() => toggleFrame(frame)}
+                  >
+                    {frame}
+                    <small>{on.map((lid) => lid.mark).join("")}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {lateMarks.length > 0 && (
+          <p className="hint" data-testid="clip-late-marks">
+            Past the last frame ({frameCount} frames, 0 to {(frameCount ?? 1) - 1}): {lateMarks.join(", ")}. Toggle them off: a still clip refuses them when saved, and another fails its run.
+          </p>
+        )}
+        {timingProblem && <p className="hint" data-testid="clip-timing-problem">{timingProblem}</p>}
         {problem && name && <p className="hint" data-testid="clip-problem">{problem}</p>}
         <button
           data-testid="clip-add"
-          disabled={problem !== null}
+          disabled={problem !== null || timingProblem !== null}
           onClick={() => {
             props.decide(
               CLIP_DECISION,
-              { name, source: source.trim(), start: Number(start), end: Number(end), fps: Number(fps), loop, stationary },
+              clipData(),
               editing ? `Changing the clip ${name}` : `Adding the clip ${name}`,
             );
             stopEditing();
@@ -778,6 +1099,15 @@ function ClipsScreen(props: {
           </button>
         )}
       </fieldset>
+
+      <TransitionsPanel
+        transitions={transitions}
+        clips={clips.map((clip) => clip.name)}
+        frames={Object.fromEntries((built?.clips ?? []).map((entry) => [entry.name, entry.frames.length]))}
+        pattern={namePattern}
+        disabled={props.disabled}
+        decide={props.decide}
+      />
 
       <h2>Animation files</h2>
       {show.clip_sources.length > 0 && (

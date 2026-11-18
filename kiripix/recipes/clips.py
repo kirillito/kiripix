@@ -51,7 +51,7 @@ CLIP = DecisionSpec(
                 "faster, so the clip has fewer frames at the same `fps`. `still` makes the clip the one pose at `start`, "
                 "held for that many frames (`end` is not read): a standing idle. `blink` lists the clip's frames, from 0, "
                 "that `finish` draws with the eyes closed when it stamps them; `wink_left` and `wink_right` list the "
-                "frames with only the Model's left or right eye closed. Deciding a clip again under a name it "
+                "frames with only the Model's left or right eye closed; on a `still` clip one past its last frame is refused when decided, and on another the run fails clips.blink_range. Deciding a clip again under a name it "
                 "already has changes that clip, keeping its name and so its IDs in the game; `undo` brings the old frames "
                 "back.",
     entry_schema={
@@ -73,7 +73,19 @@ CLIP = DecisionSpec(
         "required": ["name", "source", "start", "end", "fps", "loop"],
         "additionalProperties": False,
     },
+    problem=lambda data: _eyelid_problem(data),
 )
+
+
+def _eyelid_problem(data: dict[str, Any]) -> str | None:
+    """A blink or wink past the clip's last frame, where the entry alone gives the frame count: a `still` clip. Otherwise
+    the count depends on the source's frame rate, which only the Stage reads, and its run fails clips.blink_range."""
+    still = data.get("still")
+    if still is None:
+        return None
+    late = [f"{key} names {max(data[key])}" for key in EYELIDS if data.get(key) and max(data[key]) >= int(still)]
+    return f"the clip has {still} frames (0 to {int(still) - 1}) and {' and '.join(late)}" if late else None
+
 
 _END = {
     "type": "object",

@@ -13,7 +13,7 @@ One thing in the game, with a Kind and a stable ID, such as `room.queen_west_all
 _Avoid_: item, resource
 
 **Kind**:
-An Asset's type, which fixes its Recipe: room, prop, character, sprite.
+An Asset's type, which fixes its Recipe: room, prop, icon, character, sprite.
 _Avoid_: type, category
 
 **Recipe**:

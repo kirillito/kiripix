@@ -44,10 +44,12 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
     again. A room's Masks and Layers come from the built export when there is one, and otherwise are taken as unchanged.
     A prop exports no Marker, Layer or Mask ID to freeze. A character's clip animations come from its `clip` Decisions."""
     markers: set[str] = set()
+    links: set[str] = set()
     for spec in graph.kind.stages:
         if spec.markers is not None:
-            markers.update(str(marker["id"]) for marker in spec.markers(graph.replay(spec.name).current)
-                           if marker["type"] in EXPORTED_MARKER_TYPES)
+            placed = spec.markers(graph.replay(spec.name).current)
+            markers.update(str(marker["id"]) for marker in placed if marker["type"] in EXPORTED_MARKER_TYPES)
+            links.update(str(marker["id"]) for marker in placed if marker["type"] == "link")
     layers, masks, looks, loops = manifest.ids.layers, manifest.ids.masks, manifest.ids.looks, manifest.ids.loops
     if graph.asset.kind == "room":
         # a Look's ID is its `pick`'s, so one taken away fails before anything is run again
@@ -74,9 +76,12 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
         clips = _sprite_animations(graph, clips)
     states = manifest.ids.states
     if graph.asset.kind == "prop":  # a state's ID is its `state` Decision's: one taken away fails before anything is run
-        states = sorted(declared_states(graph.decisions(graph.spec(SOURCE_STAGE))))
+        declared = declared_states(graph.decisions(graph.spec(SOURCE_STAGE)))
+        # the default state's node is named by the brief's `state`, so its ID is frozen with the others (ticket 0260)
+        default = [str(graph.params(graph.spec(BRIEF_STAGE))["state"])] if declared else []
+        states = sorted({*declared, *default})
     return ExportedIds(markers=sorted(markers), layers=layers, masks=masks, clips=clips, looks=looks, loops=loops,
-                       states=states)
+                       states=states, links=sorted(links))
 
 
 def _sprite_animations(graph: AssetGraph, unchanged: list[str]) -> list[str]:
@@ -105,7 +110,7 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     found: list[Finding] = []
     for noun, was, is_now in (("Marker", manifest.ids.markers, now.markers), ("Layer", manifest.ids.layers, now.layers),
                               ("Mask", manifest.ids.masks, now.masks), ("Look", manifest.ids.looks, now.looks), ("Loop", manifest.ids.loops, now.loops),
-                              ("state", manifest.ids.states, now.states), ("clip animation", manifest.ids.clips, now.clips)):
+                              ("Link", manifest.ids.links, now.links), ("state", manifest.ids.states, now.states), ("clip animation", manifest.ids.clips, now.clips)):
         for gone in sorted(set(was) - set(is_now)):
             found.append(Finding(
                 code="export.id_frozen",

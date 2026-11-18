@@ -1,6 +1,7 @@
 """`import --look <look> --of <piece|crop>` and `extend <room> crop` (ticket 0232): an edit made on one piece, or on a crop
 of the Source at the image model's size, is placed on the Source and stored as an edit of the whole Source."""
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -58,7 +59,8 @@ def test_a_crop_is_written_at_the_asked_size_and_its_edit_comes_back_to_the_same
 
     path = project.cwd / written["crop"]
     # Centred on the box, moved in: x would be 260 but the Source ends at 700; y would be -19.
-    assert written["canvas_size"] == [480, 288] and written["origin"] == [220, 0] and written["crop"].endswith("crop.png")
+    assert written["canvas_size"] == [480, 288] and written["origin"] == [220, 0]
+    assert "/extend/crops/" in written["crop"] and written["crop"].endswith(".png")
     crop = np.asarray(Image.open(path).convert("RGB"))
     assert (crop == source[0:288, 220:700]).all()
 
@@ -175,3 +177,86 @@ def test_a_crop_whose_png_isnt_the_one_its_record_names_is_refused(project: Kiri
     stale = project.json("import", ROOM, "edit.png", "--look", LOOK, "--of", "crop", expect=1)["findings"][0]
 
     assert stale["code"] == "import.crop_stale" and "extend" in stale["fix"]
+
+
+def test_two_crops_each_edit_comes_back_to_its_own_crop(project: Kiripix) -> None:
+    full = scene()
+    source = full[:400, :700]
+    room(project, source)
+    first = project.json("extend", ROOM, "crop", "--box", "20,20,120,120")["data"]
+    second = project.json("extend", ROOM, "crop", "--box", "600,300,690,390")["data"]
+
+    assert first["origin"] == [0, 0] and second["origin"] == [220, 112]
+    assert first["crop"] != second["crop"] and (project.cwd / first["crop"]).is_file() and (project.cwd / second["crop"]).is_file()
+    assert second["crops"] == [Path(first["crop"]).stem, Path(second["crop"]).stem]
+    first_name, second_name = second["crops"]
+
+    first_edit = painted(source[0:288, 0:480], (50, 50, 90, 90))
+    one = project.json("import", ROOM, save(project, "one.png", first_edit), "--look", LOOK, "--of", first_name[:8])["data"]
+    second_edit = painted(source[112:400, 220:700], (100, 100, 140, 140))
+    two = project.json("import", ROOM, save(project, "two.png", second_edit), "--look", "lamp_on", "--of", second_name)["data"]
+
+    assert one["placed_at"] == [0, 0] and two["placed_at"] == [220, 112]
+    assert (stored(project, one)[50:90, 50:90] == PAINT).all()
+    assert (stored(project, two)[212:252, 320:360] == PAINT).all()
+
+
+def test_of_crop_is_the_latest_crop(project: Kiripix) -> None:
+    full = scene()
+    source = full[:400, :700]
+    room(project, source)
+    project.json("extend", ROOM, "crop", "--box", "20,20,120,120")
+    project.json("extend", ROOM, "crop", "--box", "600,300,690,390")
+    project.json("extend", ROOM, "crop", "--box", "20,20,120,120")  # the first again: now the latest
+
+    data = project.json("import", ROOM, save(project, "e.png", painted(source[0:288, 0:480], (50, 50, 90, 90))),
+                        "--look", LOOK, "--of", "crop")["data"]
+
+    assert data["placed_at"] == [0, 0]
+    listed = project.json("extend", ROOM, "crop", "--box", "20,20,120,120")["data"]["crops"]
+    assert len(listed) == 2, "the same crop is one crop"
+
+
+def test_a_crop_of_a_source_no_longer_picked_is_refused_by_name(project: Kiripix) -> None:
+    full = scene()
+    room(project, full[:400, :700])
+    name = Path(project.json("extend", ROOM, "crop", "--box", "20,20,120,120")["data"]["crop"]).stem
+    other = project.json("import", ROOM, save(project, "other.png", full[:400, 100:800]))["data"]["variant"]
+    project.json("pick", ROOM, other)
+    save(project, "e.png", full[0:288, 0:480])
+
+    named = project.json("import", ROOM, "e.png", "--look", LOOK, "--of", name, expect=1)["findings"][0]
+    latest = project.json("import", ROOM, "e.png", "--look", LOOK, "--of", "crop", expect=1)["findings"][0]
+
+    assert named["code"] == latest["code"] == "import.crop_stale" and named["fix"]
+
+
+def test_a_project_with_the_old_single_crop_keeps_working(project: Kiripix) -> None:
+    """Before 0287 a crop was `extend/crop.png` and `crop.json` (schema_version 1): still read, and moved into `crops/`
+    by the next `extend crop`."""
+    import json
+
+    full = scene()
+    source = full[:400, :700]
+    room(project, source)
+    written = project.json("extend", ROOM, "crop", "--box", "20,20,120,120")["data"]
+    folder = project.cwd / "assets" / "room" / "alley" / "extend"
+    crop_png = project.cwd / written["crop"]
+    record = json.loads(crop_png.with_suffix(".json").read_text(encoding="utf-8"))
+    del record["number"]
+    record["schema_version"] = 1
+    (folder / "crop.png").write_bytes(crop_png.read_bytes())
+    (folder / "crop.json").write_text(json.dumps(record), encoding="utf-8")
+    for path in (folder / "crops").iterdir():
+        path.unlink()
+    (folder / "crops").rmdir()
+
+    old = project.json("import", ROOM, save(project, "e.png", painted(source[0:288, 0:480], (50, 50, 90, 90))),
+                       "--look", LOOK, "--of", "crop")["data"]
+    assert old["placed_at"] == [0, 0]
+
+    new = project.json("extend", ROOM, "crop", "--box", "600,300,690,390")["data"]
+
+    assert len(new["crops"]) == 2 and not (folder / "crop.png").exists() and not (folder / "crop.json").exists()
+    again = project.json("import", ROOM, "e.png", "--look", "lamp_on", "--of", Path(written["crop"]).stem)["data"]
+    assert again["placed_at"] == [0, 0]

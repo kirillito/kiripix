@@ -7,7 +7,7 @@ x - width // 2 up to x + (width - 1) // 2 and likewise in y, so with an even siz
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
 from typing import TYPE_CHECKING
@@ -52,9 +52,26 @@ def walkable(solid: BoolMask, footprint: tuple[int, int]) -> BoolMask:
     return result
 
 
+Link = tuple[tuple[int, int], tuple[int, int], bool]
+"""A Link for the flood: its `from` spot, its `to` spot (both x, y) and whether it is two-way."""
+
+
 def reachable(ground: BoolMask, seeds: Iterable[tuple[int, int]], footprint: tuple[int, int], step: int = 1,
-              dash: int = 0, solid: BoolMask | None = None) -> BoolMask:
-    """The spots of walkable `ground` the Body can get to from any of the `seeds` (x, y), moving along the axes.
+              dash: int = 0, solid: BoolMask | None = None, links: Sequence[Link] = ()) -> BoolMask:
+    """The spots of walkable `ground` the Body can get to from any of the `seeds` (x, y), moving along the axes, and across
+    `links`. See `reachable_via`, which also says which Links the flood crossed."""
+    return reachable_via(ground, seeds, footprint, step, dash, solid, links)[0]
+
+
+def reachable_via(ground: BoolMask, seeds: Iterable[tuple[int, int]], footprint: tuple[int, int], step: int = 1,
+                  dash: int = 0, solid: BoolMask | None = None,
+                  links: Sequence[Link] = ()) -> tuple[BoolMask, tuple[int, ...]]:
+    """The spots of walkable `ground` the Body can get to from any of the `seeds` (x, y), moving along the axes, and the
+    indexes (ascending) of the `links` that took it somewhere new.
+
+    A Link is crossed when the flood has reached one end's spot: the other end is then seeded, and for a two-way Link the
+    reverse as well, until nothing new is reached. A Link end off walkable ground, or outside the room, seeds nothing. A
+    Link counts as crossing only when it reaches a spot the flood hadn't reached.
 
     A move goes `step` px, every spot on the way must be walkable, and a wall stops it short, where it lands against the
     wall. Step 1 is exact. A longer step visits fewer spots, so it can miss a gap the Body fits only at one exact offset;
@@ -85,28 +102,60 @@ def reachable(ground: BoolMask, seeds: Iterable[tuple[int, int]], footprint: tup
             queue.append((x, y))
     width, height = footprint
     moves = ((-1, 0, width), (1, 0, width), (0, -1, height), (0, 1, height))
-    while queue:
-        x, y = queue.popleft()
-        for dx, dy, across in moves:
-            nx, ny, moved = x, y, 0
-            while moved < step:
-                tx, ty = nx + dx, ny + dy
-                if not (0 <= tx < columns and 0 <= ty < rows and free[ty * columns + tx]):
-                    break
-                nx, ny, moved = tx, ty, moved + 1
-                swept[ny * columns + nx] = 1
-            if not moved and dash:
-                for distance in range(1, dash + across + 1):
-                    tx, ty = x + dx * distance, y + dy * distance
-                    if not (0 <= tx < columns and 0 <= ty < rows and clear[ty * columns + tx]):
+    # Each direction a Link can be crossed in, as (index, from spot, to spot), taken in the order the Links come.
+    crossings = [(index, start, end) for index, (start, end, _) in enumerate(links)]
+    crossings += [(index, end, start) for index, (start, end, two_way) in enumerate(links) if two_way]
+    crossings.sort(key=lambda crossing: crossing[0])  # stable: a Link's forward direction before its reverse
+    crossed: set[int] = set()
+    while True:
+        while queue:
+            x, y = queue.popleft()
+            for dx, dy, across in moves:
+                nx, ny, moved = x, y, 0
+                while moved < step:
+                    tx, ty = nx + dx, ny + dy
+                    if not (0 <= tx < columns and 0 <= ty < rows and free[ty * columns + tx]):
                         break
-                    if free[ty * columns + tx]:
-                        nx, ny, moved = tx, ty, distance
-                        swept[ny * columns + nx] = 1
-                        break
-            if moved and not landed[ny * columns + nx]:
-                landed[ny * columns + nx] = 1
-                queue.append((nx, ny))
+                    nx, ny, moved = tx, ty, moved + 1
+                    swept[ny * columns + nx] = 1
+                if not moved and dash:
+                    for distance in range(1, dash + across + 1):
+                        tx, ty = x + dx * distance, y + dy * distance
+                        if not (0 <= tx < columns and 0 <= ty < rows and clear[ty * columns + tx]):
+                            break
+                        if free[ty * columns + tx]:
+                            nx, ny, moved = tx, ty, distance
+                            swept[ny * columns + nx] = 1
+                            break
+                if moved and not landed[ny * columns + nx]:
+                    landed[ny * columns + nx] = 1
+                    queue.append((nx, ny))
+        if not crossings:
+            break
+        flooded = _filled(swept, ground, step) if step > 1 else None
+        later = []
+        for index, (sx, sy), (ex, ey) in crossings:
+            if not (0 <= sx < columns and 0 <= sy < rows):
+                continue  # an end outside the room never floods
+            if not (flooded[sy, sx] if flooded is not None else swept[sy * columns + sx]):
+                later.append((index, (sx, sy), (ex, ey)))
+                continue
+            if 0 <= ex < columns and 0 <= ey < rows and free[ey * columns + ex]:
+                if not (flooded[ey, ex] if flooded is not None else swept[ey * columns + ex]):
+                    crossed.add(index)
+                if not landed[ey * columns + ex]:
+                    landed[ey * columns + ex] = swept[ey * columns + ex] = 1
+                    queue.append((ex, ey))
+        if not queue:
+            break  # nothing new was seeded, so no Link still waiting can be reached
+        crossings = later
+    result: BoolMask = _filled(swept, ground, step)
+    return result, tuple(sorted(crossed))
+
+
+def _filled(swept: bytearray, ground: BoolMask, step: int) -> BoolMask:
+    """The spots a flood visited, with those between its longer moves filled in, never beyond `ground`."""
+    rows, columns = ground.shape
     result: BoolMask = np.frombuffer(bytes(swept), dtype=np.bool_).reshape(rows, columns).copy()
     for _ in range(step - 1):
         grown = result.copy()

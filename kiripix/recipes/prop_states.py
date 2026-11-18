@@ -313,11 +313,16 @@ def each_state(run: StageRun, main: str, function: Callable[[StageRun], None]) -
 
 
 def about_state(findings: list[Finding], state: str) -> list[Finding]:
-    """A state's findings, saying which state they are about, and in which of the Stage's files."""
+    """A state's findings, saying which state they are about (in the message and as `position.state`), and in which of
+    the Stage's files."""
     for finding in findings:
         finding.message = f"the state {state}: {finding.message}"
-        if finding.position is not None and finding.position.file is not None:
-            finding.position.file = f"{STATES_OUT}/{state}/{finding.position.file}"
+        if finding.position is None:
+            finding.position = Position(state=state)
+        else:
+            finding.position.state = state
+            if finding.position.file is not None:
+                finding.position.file = f"{STATES_OUT}/{state}/{finding.position.file}"
     return findings
 
 

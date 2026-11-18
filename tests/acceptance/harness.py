@@ -373,6 +373,7 @@ class StandInOwner:
         self.asset: str = data["asset"]  # the one an entry belongs to unless it has its own `asset`
         self.entries: list[dict[str, Any]] = data["decisions"]
         self.applied: set[int] = set()
+        self.stopped = False  # the agent has stopped at least once (see `step`)
 
     def step(self, state: NextState, only_this_stage: bool = False) -> list[str] | None:
         """What the owner does now, or None when the fixture has nothing for this.
@@ -380,23 +381,39 @@ class StandInOwner:
         `only_this_stage` is for an agent's own report, when `next` isn't waiting on the owner: the owner answers an
         entry tagged for this Stage and doesn't volunteer the others."""
         env, project, asset = owner_env(), self.setup.project, state.asset
+        did: list[str] = []
+        if not self.stopped:
+            # The owner reviews the room at the agent's first stop, whatever the Stage: the agent may have run the room to
+            # export and stopped at the character (M4 gate run, 2026-11-16). Its room entries land then, so the agent
+            # has to rebuild and re-export the room after "Done, carry on." Entries tagged `when_stage` still wait.
+            self.stopped = True
+            for index, entry in enumerate(self.entries):
+                if index in self.applied or "when_stage" in entry or entry.get("asset", self.asset) != self.asset:
+                    continue
+                self.applied.add(index)
+                if "pick" in entry:
+                    did.append(self._pick(self.asset))
+                else:
+                    did.append(self._decide(self.asset, entry))
         if state.status == "needs-review" and state.stage:
             call = kiripix(project, env, "accept", asset, state.stage, expect=None)
-            return [f"accept {asset} {state.stage}: exit {call.code}"]
-        did: list[str] = []
+            return did + [f"accept {asset} {state.stage}: exit {call.code}"]
         pending = [(i, e) for i, e in enumerate(self.entries)
                    if i not in self.applied and e.get("asset", self.asset) == asset]
         for index, entry in ([p for p in pending if p[1].get("when_stage") == state.stage]
                              or [p for p in pending if "when_stage" not in p[1] and not only_this_stage]):
             self.applied.add(index)
-            if "pick" in entry:
-                call = kiripix(project, env, "pick", asset, self.setup.variant, expect=None)
-                did.append(f"pick {asset} {self.setup.variant}: exit {call.code}")
-                continue
-            decision = json.dumps({"decision": entry["decision"], "data": entry["data"]})
-            call = kiripix(project, env, "decide", asset, entry["stage"], "--decision", decision, expect=None)
-            did.append(f"decide {asset} {entry['stage']} {entry['decision']}: exit {call.code}")
+            did.append(self._pick(asset) if "pick" in entry else self._decide(asset, entry))
         return did or None
+
+    def _pick(self, asset: str) -> str:
+        call = kiripix(self.setup.project, owner_env(), "pick", asset, self.setup.variant, expect=None)
+        return f"pick {asset} {self.setup.variant}: exit {call.code}"
+
+    def _decide(self, asset: str, entry: dict[str, Any]) -> str:
+        decision = json.dumps({"decision": entry["decision"], "data": entry["data"]})
+        call = kiripix(self.setup.project, owner_env(), "decide", asset, entry["stage"], "--decision", decision, expect=None)
+        return f"decide {asset} {entry['stage']} {entry['decision']}: exit {call.code}"
 
 
 # The result

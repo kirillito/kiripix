@@ -32,6 +32,21 @@ Found at the M4 gate ([0142](../m4/0142-m4-gate.md)): the real run of 2026-11-16
 
 ## Acceptance criteria
 
-- [ ] The harness's choice above, with its tests (`uv run pytest tests/acceptance`) and the dry run passing.
-- [ ] `status` names the command for a `todo` Stage whose inputs are all there.
+- [x] The harness's choice above, with its tests (`uv run pytest tests/acceptance`) and the dry run passing.
+- [x] `status` names the command for a `todo` Stage whose inputs are all there.
 - [ ] A real run passes, its tokens recorded.
+
+## Result
+
+- **Harness (first option, workable):** `StandInOwner.step` in `tests/acceptance/harness.py` now does all of its untagged
+  room entries (masks brush, layer click, the Markers with the first, wrong `battle.test`) at the agent's first stop,
+  whatever the Stage and whatever `only_this_stage` says, once. Entries tagged `when_stage` (the area's move onto the floor,
+  the character's clips) still wait for their Stage. If the agent has already exported the room, the room is stale after
+  "Done, carry on." and the agent must rebuild and re-export. Tests in `tests/acceptance/test_harness.py`: the first stop at the
+  character's `clips` brings the room entries once; two older tests adjusted to the new rule. The dry run is unchanged
+  (the scripted agent's first stop is at the room, as before).
+- **`status`:** human output marks the first not-done Stage when it is `todo` as `copy       todo (ready: kiripix run demo.a)`
+  (`StatusData.text` in `kiripix/commands/project.py`); JSON unchanged. Test: `tests/cli/test_status_ready.py`.
+- **Not done (the Owner):** the real run (`--milestone m4` or `m5`), recorded against 19,079 fresh tokens. The last criterion
+  stays unticked; the ticket stays `todo`. Note that no dry run exercises the change-after-export path (the scripted
+  agent stops at the room first), only the real agent does.

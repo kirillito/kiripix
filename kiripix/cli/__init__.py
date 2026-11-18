@@ -4,21 +4,28 @@ It parses arguments into the Command's input, calls `invoke`, and renders the re
 exactly one JSON object on stdout. The exit code comes from the result. Uses only `kiripix.commands`.
 """
 
+from __future__ import annotations
+
 import inspect
 import shlex
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import NoneType, UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
 import typer
-from pydantic.fields import FieldInfo
 
-from kiripix.commands import (
-    REGISTRY, CliMeta, Command, Context, Envelope, ExitCode, Finding, Launcher, ProgressEvent, invoke,
-)
+from kiripix.commands import INDEX
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
+
+    from kiripix.commands import CliMeta, Command, Context, Envelope, Launcher, ProgressEvent
+
+# Nothing else of `kiripix.commands` loads at import: `--help` and the root's and a group's listing need only the
+# static index, so they skip pydantic and the stage graph. What runs imports what it needs (ticket 0277).
 
 _JSON = "kpx_json"
 _PROGRESS = "kpx_progress"
@@ -26,7 +33,7 @@ _WAIT = "kpx_wait"
 
 
 class _State:
-    exit_code = int(ExitCode.OK)
+    exit_code = 0
 
 
 def _command_line() -> str:
@@ -117,6 +124,8 @@ def _callback(command: Command[Any, Any]) -> Any:
         as_json = values.pop(_JSON)
         progress = values.pop(_PROGRESS)
         wait = values.pop(_WAIT, 0.0)
+        from kiripix.commands import Context
+
         context = Context(cwd=Path.cwd(), command_line=_command_line(), wait=wait, progress=_progress_sink(progress),
                           interactive=_stdin_is_terminal())
         envelope, exit_code = _invoke_cancellable(command, values, context)
@@ -137,6 +146,8 @@ def _invoke_cancellable(command: Command[Any, Any], values: dict[str, Any], cont
         context.cancel.cancel()
         raise KeyboardInterrupt
 
+    from kiripix.commands import invoke
+
     previous = signal.signal(signal.SIGINT, interrupted)
     try:
         return invoke(command, values, context)
@@ -145,6 +156,8 @@ def _invoke_cancellable(command: Command[Any, Any], values: dict[str, Any], cont
 
 
 def _launcher_callback(launcher: Launcher) -> Any:
+    from kiripix.commands import CliMeta
+
     parameters = [_parameter(name, field, CliMeta()) for name, field in launcher.input.model_fields.items()]
 
     def callback(**values: Any) -> None:
@@ -157,27 +170,67 @@ def _launcher_callback(launcher: Launcher) -> Any:
     return callback
 
 
-def build_app(launchers: Sequence[Launcher] = ()) -> typer.Typer:
+def _stub() -> Any:
+    """A Command's place in the help, without its parameters: `--help` of the root or of a group shows only names and
+    summaries, so the Command's module isn't imported for it (ticket 0277)."""
+
+    def callback() -> None:
+        raise RuntimeError("a Command that was not loaded was called")
+
+    return callback
+
+
+def called_command(argv: Sequence[str]) -> Command[Any, Any] | None:
+    """The Command the arguments name (`status`, `op quantize`), loading only its module, or None for the root's or a
+    group's help, a Launcher or a typo, which the stub app answers."""
+    words = [word for word in argv[:2] if not word.startswith("-")] if argv and not argv[0].startswith("-") else []
+    for name in (" ".join(words), words[0] if words else ""):
+        if name in INDEX:
+            from kiripix.commands import REGISTRY
+
+            return REGISTRY[name]
+    return None
+
+
+def build_app(listing: Sequence[tuple[str, str]], launchers: Callable[[], Sequence[Launcher]], *,
+              only: Command[Any, Any] | None = None, launcher: str | None = None,
+              all_commands: bool = False) -> typer.Typer:
+    """The Typer app. Every Command and Launcher is listed from static data; only `only` (the Command that runs), the
+    Launcher named `launcher`, or with `all_commands` every one gets its real parameters, because only what runs needs
+    them."""
     app = typer.Typer(name="kiripix", help="Kiripix: a local pixel asset studio for Godot games.",
                       no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False,
                       rich_markup_mode=None)  # plain help: agents read it, and CI must not get colour codes
     groups: dict[str, typer.Typer] = {}
-    for command in REGISTRY.values():
+    for name, entry in INDEX.items():
+        path = tuple(name.split())
         target = app
-        if len(command.path) == 2:
-            group = command.path[0]
+        if len(path) == 2:
+            group = path[0]
             if group not in groups:
-                groups[group] = typer.Typer(help=command.group_summary, no_args_is_help=True,
-                                            rich_markup_mode=None)
+                groups[group] = typer.Typer(help=entry.group_summary, no_args_is_help=True, rich_markup_mode=None)
                 app.add_typer(groups[group], name=group)
             target = groups[group]
-        target.command(name=command.path[-1], help=command.summary)(_callback(command))
-    for launcher in launchers:
-        app.command(name=launcher.name, help=launcher.summary)(_launcher_callback(launcher))
+        if all_commands or (only is not None and only.name == name):
+            from kiripix.commands import REGISTRY
+
+            command = REGISTRY[name]
+            target.command(name=path[-1], help=command.summary)(_callback(command))
+        else:
+            target.command(name=path[-1], help=entry.summary)(_stub())
+    wanted = all_commands or launcher in {name for name, _ in listing}
+    loaded = {item.name: item for item in launchers()} if wanted else {}
+    for name, summary in listing:
+        if name in loaded and (all_commands or name == launcher):
+            app.command(name=name, help=summary)(_launcher_callback(loaded[name]))
+        else:
+            app.command(name=name, help=summary)(_stub())
     return app
 
 
 def _usage_error(error: typer.TyperException) -> int:
+    from kiripix.commands import Envelope, ExitCode, Finding
+
     context = getattr(error, "ctx", None)
     command = context.command_path if context else "kiripix"
     finding = Finding(code="input.invalid", message=error.format_message(), fix=f"{command} --help")
@@ -186,16 +239,18 @@ def _usage_error(error: typer.TyperException) -> int:
     return int(ExitCode.ERROR)
 
 
-def main(launchers: Sequence[Launcher] = ()) -> None:
+def main(listing: Sequence[tuple[str, str]] = (),
+         launchers: Callable[[], Sequence[Launcher]] = lambda: ()) -> None:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure:
             reconfigure(encoding="utf-8")
-    app = build_app(launchers)
+    argv = sys.argv[1:]
+    app = build_app(listing, launchers, only=called_command(argv), launcher=argv[0] if argv else None)
     try:
         result = app(prog_name="kiripix", standalone_mode=False)
     except typer.Abort:
-        sys.exit(int(ExitCode.ERROR))
+        sys.exit(1)
     except typer.TyperException as error:
         context = getattr(error, "ctx", None)
         if type(error).__name__ == "NoArgsIsHelpError" and context is not None:

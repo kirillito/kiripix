@@ -4,8 +4,8 @@ It sits outside the layers, so it may import both adapters; each adapter itself 
 """
 
 from kiripix.cli import main as cli_main
-from kiripix.server import LAUNCHERS
+from kiripix.server import LAUNCHER_LISTING, load_launchers
 
 
 def main() -> None:
-    cli_main(LAUNCHERS)
+    cli_main(LAUNCHER_LISTING, load_launchers)

@@ -50,7 +50,7 @@ def test_a_migration_written_by_ramps_add_keeps_every_comment(project: Kiripix) 
     hero(project)
     path = project.cwd / "kiripix.toml"
     text = annotate(path)
-    old = text.replace("schema_version = 7", "schema_version = 2")
+    old = text.replace("schema_version = 8", "schema_version = 2")
     for key in ("light_angle", "light_tilt"):
         old = "\n".join(line for line in old.splitlines() if not line.startswith(key)) + "\n"
     assert old != text
@@ -60,7 +60,7 @@ def test_a_migration_written_by_ramps_add_keeps_every_comment(project: Kiripix) 
     project.json("ramps-add", HERO, "--parts", "cloth", owner=True)
 
     after = path.read_text(encoding="utf-8")
-    assert "schema_version = 7  # keep this" in after
+    assert "schema_version = 8  # keep this" in after
     kept = [c for c in comments(old) if not c.startswith(("# the key on line",)) or "light_" not in c]
     assert set(comments(old)) - set(comments(after)) <= {c for c in comments(old) if "light" in c} | {
         c for c in comments(old) if c.startswith("# the key on line")}

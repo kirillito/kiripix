@@ -278,9 +278,12 @@ class StatusData(BaseModel):
         lines = [self.project]
         for asset in self.assets:
             lines.append(f"  {asset.asset}")
+            first_open = next((s.stage for s in asset.stages if s.status != "done"), None)
             for stage in asset.stages:
                 reason = f"  ({stage.reason})" if stage.reason else ""
-                lines.append(f"    {stage.stage:<10} {stage.status}{reason}")
+                # the first Stage that isn't done, when it is `todo`: its inputs are all there, so it is work, not a question
+                ready = f" (ready: kiripix run {asset.asset})" if stage.stage == first_open and stage.status == "todo" else ""
+                lines.append(f"    {stage.stage:<10} {stage.status}{ready}{reason}")
             if asset.export_command:
                 lines.append(f"    built, but not in the game yet: {asset.export_command}")
         return "\n".join(lines)

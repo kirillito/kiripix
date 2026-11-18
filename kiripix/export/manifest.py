@@ -34,12 +34,13 @@ class ExportedIds(BaseModel):
     loops: list[str] = Field(default_factory=list)  # a room's Loop IDs (ticket 0190); left out of the file when empty
 
     states: list[str] = Field(default_factory=list)  # a Prop's state IDs (ticket 0258); left out of the file when empty
+    links: list[str] = Field(default_factory=list)  # a room's Link IDs (ticket 0267); left out of the file when empty
 
     @model_serializer(mode="wrap")
     def _without_empty_looks(self, handler: Any) -> dict[str, Any]:
-        """A Manifest of an Asset with no Looks, Loops or states is the file it was before they existed: byte for byte."""
+        """A Manifest of an Asset with no Looks, Loops, states or Links is the file it was before they existed: byte for byte."""
         data: dict[str, Any] = handler(self)
-        for noun in ("looks", "loops", "states"):
+        for noun in ("looks", "loops", "states", "links"):
             if not data.get(noun):
                 data.pop(noun, None)
         return data

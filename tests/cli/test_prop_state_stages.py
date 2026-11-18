@@ -109,6 +109,22 @@ def test_a_state_origin_outside_its_own_sprite_is_a_finding_naming_the_state(pro
     found = [f for f in ran["findings"] if f["code"] == "prop.origin_outside"]
 
     assert len(found) == 1 and "toppled" in found[0]["message"] and "12x6" in found[0]["message"]
+    assert found[0]["position"]["state"] == "toppled", "the UI tells a state's findings by `position.state`"
+    assert all("state" not in (f.get("position") or {}) for f in ran["findings"] if f is not found[0]),         "a finding about the default has no `state`"
+
+
+def test_show_lists_each_states_built_images_beside_the_defaults(project: Kiripix) -> None:
+    to_finish(project, {"toppled": (12, 6)})
+
+    shown = project.json("show", PROP)["data"]
+
+    images = {entry["stage"]: entry for entry in shown["states"][0]["images"]}
+    stages = {entry["stage"]: entry for entry in shown["stages"]}
+    for stage in ("cutout", "fit", "palette", "finish"):
+        default = stages[stage]["image"]
+        assert images[stage]["image"] == default.rsplit("/", 1)[0] + "/states/toppled/" + default.rsplit("/", 1)[1]
+        assert (project.cwd / images[stage]["image"]).is_file()
+    assert images["fit"]["input_image"] == images["cutout"]["image"], "a state's Stage is made from its own image"
 
 
 def test_a_grid_state_whose_scale_differs_fails_fit_with_scale_differs(project: Kiripix) -> None:

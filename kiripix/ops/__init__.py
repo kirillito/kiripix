@@ -101,7 +101,7 @@ from kiripix.ops.palette import (
 )
 from kiripix.ops.sheet import Rect, default_cell_pivot, pack_atlas
 from kiripix.ops.sprite import feet_point, height_from_alpha, normals_from_height, slice_grid
-from kiripix.ops.reach import Gap, Island, narrowest_gaps, reachable, walkable, walkable_islands
+from kiripix.ops.reach import Gap, Island, Link, narrowest_gaps, reachable, reachable_via, walkable, walkable_islands
 from kiripix.ops.resample import (
     Grid,
     alpha_by_vote,
@@ -150,6 +150,7 @@ __all__ = [
     "Gap",
     "Grid",
     "Island",
+    "Link",
     "JOIN_SIDES",
     "JoinError",
     "NavigationPolygon",
@@ -225,6 +226,7 @@ __all__ = [
     "quantise_normals",
     "quantize",
     "reachable",
+    "reachable_via",
     "recompose",
     "remove_orphans",
     "remove_small_pieces",

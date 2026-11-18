@@ -272,3 +272,84 @@ test("a clip name that ends in a direction is stopped,an animation file is dropp
   studio.kiripix("decide", HERO, "clips", "--decision", JSON.stringify({ decision: "clip", data }));
   await expect(page.getByTestId("clip-row-hit")).toContainText("once");
 });
+
+// Ticket 0282: speed, still, blink and transitions on the clips screen, all through the `clip` and `transition` Decisions.
+function clipsWithMix(studio: Studio): void {
+  rigged(studio);
+  const actions = [{ name: "Armature|mix", start: 0, end: 25, travel: 0 }];
+  studio.kiripix("import", HERO, studio.write("mix.fbx", Buffer.from(JSON.stringify({ actions, fps: 24 }))), "--role", "clip-source");
+  const clip = (name: string, end: number) =>
+    studio.kiripix("decide", HERO, "clips", "--decision", JSON.stringify({ decision: "clip", data: { name, source: "mix", start: 0, end, fps: 12, loop: true } }));
+  clip("idle", 24);
+  clip("walk", 12);
+}
+
+test("speed halves the frame count, and two blink frames are recorded with the clip's one Decision", async ({ page, segmentingStudio: studio }) => {
+  clipsWithMix(studio);
+  await open(page, studio, "clips");
+  const before = decisions(studio, "clips").length;
+
+  await page.getByTestId("clip-edit-idle").click();
+  await expect(page.getByTestId("clip-frame-count")).toHaveText("12 frames");
+  await page.getByTestId("clip-speed").fill("2");
+  await expect(page.getByTestId("clip-frame-count")).toHaveText("6 frames");
+  await expect(page.getByTestId("clip-strip").locator("button")).toHaveCount(6);
+  await page.getByTestId("clip-frame-1").click();
+  await page.getByTestId("clip-frame-3").click();
+  await page.getByTestId("clip-frame-3").click(); // toggled off
+  await page.getByTestId("clip-frame-4").click();
+  await expect(page.getByTestId("clip-frame-1")).toHaveAttribute("data-marks", "blink");
+  await page.getByTestId("clip-eyelid").selectOption("wink_left");
+  await page.getByTestId("clip-frame-2").click();
+  await page.screenshot({ path: "shots/clip-controls-form.png" });
+  await page.getByTestId("clip-add").click();
+
+  await expect(page.getByTestId("clip-timing-idle")).toContainText("speed 2");
+  const all = decisions(studio, "clips");
+  expect(all.length).toBe(before + 1);
+  expect(all[all.length - 1]).toMatchObject({ name: "idle", speed: 2, blink: [1, 4], wink_left: [2] });
+  await page.getByTestId("run").click();
+  await expect(stage(page, "clips")).toHaveAttribute("data-status", "done");
+  const frames = await page.getByTestId("clips-table").locator("tbody tr").evaluateAll((rows) => rows.map((row) => [row.children[0].textContent, row.children[6].textContent]));
+  expect(frames).toEqual([["idle", "6"], ["walk", "6"]]);
+
+  // Still holds one pose for that many frames; a blink past the last frame is refused by the Decision's own check.
+  await page.getByTestId("clip-edit-idle").click();
+  await page.getByTestId("clip-still").fill("4");
+  await expect(page.getByTestId("clip-frame-count")).toHaveText("4 frames");
+  await expect(page.getByTestId("clip-late-marks")).toContainText("blink 4");
+  await page.getByTestId("clip-add").click();
+  await expect(page.getByTestId("finding-decision.invalid")).toContainText("blink names 4");
+  expect(decisions(studio, "clips").length).toBe(before + 1);
+  await expect(page.getByTestId("clip-timing-idle")).not.toContainText("still");
+});
+
+test("a transition made in the form is in show, and removing a clip lists the transitions that go with it", async ({ page, segmentingStudio: studio }) => {
+  clipsWithMix(studio);
+  await open(page, studio, "clips");
+  await expect(page.getByTestId("transitions-empty")).toBeVisible();
+  await page.getByTestId("transition-name").fill("idle_to_walk");
+  await page.getByTestId("transition-from").selectOption("idle");
+  await page.getByTestId("transition-to").selectOption("walk");
+  await page.getByTestId("transition-length").fill("4");
+  await page.getByTestId("transition-add").click();
+
+  await expect(page.getByTestId("transition-row-idle_to_walk")).toContainText("idle, frame last");
+  const shown = (studio.json("show", HERO).data as { stages: { stage: string; decisions: { name: string; data: Record<string, unknown> }[] }[] }).stages
+    .find((entry) => entry.stage === "clips")!.decisions.filter((entry) => entry.name === "transition");
+  expect(shown.map((entry) => entry.data)).toEqual([{ name: "idle_to_walk", from: { clip: "idle" }, to: { clip: "walk" }, length: 4 }]);
+  await expect(page.getByTestId("clip-remove-takes-walk")).toContainText("idle_to_walk");
+  await page.screenshot({ path: "shots/clip-controls-transitions.png" });
+
+  // Changing it is the same Decision under its name.
+  await page.getByTestId("transition-edit-idle_to_walk").click();
+  await expect(page.getByTestId("transition-name")).toHaveAttribute("readonly", "");
+  await page.getByTestId("transition-length").fill("5");
+  await page.getByTestId("transition-add").click();
+  await expect(page.getByTestId("transition-row-idle_to_walk")).toContainText("5");
+  await expect(page.getByTestId("transition-row-idle_to_walk")).toHaveCount(1);
+
+  await page.getByTestId("clip-remove-walk").click();
+  await expect(page.getByTestId("clip-row-walk")).toHaveCount(0);
+  await expect(page.getByTestId("transitions-empty")).toBeVisible();
+});

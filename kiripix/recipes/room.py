@@ -55,7 +55,7 @@ from kiripix.ops import (
     navigation_polygon,
     paint_stroke,
     parse_hex,
-    reachable,
+    reachable_via,
     simplify,
     snap_cell,
     srgb_to_oklab,
@@ -65,6 +65,7 @@ from kiripix.ops import (
     wall_off,
 )
 from kiripix.ops.masks import RGB, SIDES
+from kiripix.ops.reach import Link
 from kiripix.recipes.common import (
     box_of,
     box_params,
@@ -1192,13 +1193,18 @@ def _with_areas(markers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return flood + areas if flood else []
 
 
+def _with_links(targets: list[dict[str, Any]], links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`targets` and then the room's Links, each as an entry of type `link`; the flood crosses them, and none without one."""
+    return targets + [{"type": "link", **link} for link in links] if targets else []
+
+
 def _flood_targets(place_dir: Path) -> list[dict[str, Any]]:
-    markers: list[dict[str, Any]] = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))["markers"]
-    return _with_areas(markers)
+    built: dict[str, Any] = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))
+    return _with_links(_with_areas(built["markers"]), built.get("links", []))
 
 
 def _flood_targets_of(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
-    return _with_areas(_current_markers(decisions))
+    return _with_links(_with_areas(_current_markers(decisions)), _current_links(decisions))
 
 
 def _reach_needs_input(run: StageRun) -> NeedsInput | None:
@@ -1246,21 +1252,35 @@ def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarr
     `reach` Stage writes both; the `reach` Probe answers with the report. The walkable areas among `targets` are
     reported on, not flooded from."""
     areas = [marker for marker in targets if marker["type"] == "area"]
-    targets = [marker for marker in targets if marker["type"] != "area"]
+    placed = [marker for marker in targets if marker["type"] == "link"]
+    links: list[Link] = [((int(link["from"][0]), int(link["from"][1])), (int(link["to"][0]), int(link["to"][1])),
+                          bool(link["two_way"])) for link in placed]
+    targets = [marker for marker in targets if marker["type"] not in ("area", "link")]
     width, height = run.settings["body"]["size"]
     footprint = (int(width), int(height))
     step, dash = int(run.params["step"]), int(run.settings["body"]["dash"])
     solid = _read_mask(run.upstream[MASKS_STAGE] / "solid.png")
     regions: list[np.ndarray] = []
+    crossed: list[tuple[int, ...]] = []
+    # At step 1 every move can be made both ways, and so can a two-way Link, so a Marker another flood reached has that
+    # flood's region. A one-way Link breaks that.
+    symmetric = step == 1 and all(link[2] for link in links)
     for marker in targets:
         run.check_cancel()
-        # At step 1 every move can be made both ways, so a Marker another flood reached has that flood's region.
-        known = next((region for region in regions if _spot_in(region, marker)), None) if step == 1 else None
-        regions.append(known if known is not None else
-                       reachable(ground, [(int(marker["x"]), int(marker["y"]))], footprint, step, dash, solid))
+        known = (next((index for index, region in enumerate(regions) if _spot_in(region, marker)), None)
+                 if symmetric else None)
+        if known is not None:
+            regions.append(regions[known])
+            crossed.append(crossed[known])
+            continue
+        region, via = reachable_via(ground, [(int(marker["x"]), int(marker["y"]))], footprint, step, dash, solid, links)
+        regions.append(region)
+        crossed.append(via)
     reached = np.logical_or.reduce(regions)
     run.check_cancel()
     main = _main_group(targets, regions)
+    main_reached = np.logical_or.reduce([regions[index] for index in main]) if main else np.zeros_like(ground)
+    main_crossed = {index for member in main for index in crossed[member]}
     report = {
         "markers": [{"id": marker["id"], "type": marker["type"], "x": marker["x"], "y": marker["y"],
                      "on_ground": _spot_in(ground, marker), "reached": index in main}
@@ -1269,6 +1289,11 @@ def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarr
         "islands": [vars(island) for island in walkable_islands(ground, reached)],
         "gaps": [vars(gap) for gap in narrowest_gaps(_no_walking(run), footprint)],
         "areas": [],
+        "links": [{"id": link["id"], "kind": link["kind"], "two_way": link["two_way"], "from": link["from"],
+                   "to": link["to"], "joins": index in main_crossed,
+                   "reached": _spot_in(main_reached, {"x": link["from"][0], "y": link["from"][1]})
+                   or (bool(link["two_way"]) and _spot_in(main_reached, {"x": link["to"][0], "y": link["to"][1]}))}
+                  for index, link in enumerate(placed)],
     }
     for area in areas:
         x0, y0, x1, y1 = _box_of_area(area)
@@ -1326,6 +1351,30 @@ def _check_reach(run: StageRun) -> list[Finding]:
                              "Decision of the same ID.",
             )
         )
+    for link in report.get("links", []):
+        (x, y), (to_x, to_y) = link["from"], link["to"]
+        if not link["reached"]:
+            findings.append(
+                Finding(
+                    code="reach.unreachable_link",
+                    message=f"the link '{link['id']}' ({link['kind']}) from ({x}, {y}) to ({to_x}, {to_y}) can't be "
+                            f"reached from {', '.join(report['main'])}",
+                    position=Position(asset=asset, stage="reach", x=int(x), y=int(y)),
+                    owner_action=f"Open a way to the link '{link['id']}' in the solid Mask: {erase}. Or move it with a "
+                                 "new link Decision of the same ID.",
+                )
+            )
+        elif link["joins"]:
+            findings.append(
+                Finding(
+                    code="reach.link_joins",
+                    severity="info",
+                    message=f"the link '{link['id']}' ({link['kind']}) joins the ground at ({x}, {y}) and at "
+                            f"({to_x}, {to_y}); the Body can't walk between them",
+                    position=Position(asset=asset, stage="reach", x=int(x), y=int(y)),
+                    owner_action="Nothing: the game moves the actor across a link by script.",
+                )
+            )
     for island in report["islands"]:
         x, y, width, height = int(island["x"]), int(island["y"]), int(island["width"]), int(island["height"])
         findings.append(
@@ -1370,7 +1419,7 @@ def _check_reach(run: StageRun) -> list[Finding]:
 # export: what the game gets, with nothing of Godot in it: the mapped Plate, the collision Masks and `room.json` with the collision shapes, the
 # navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
 
-ROOM_SCHEMA_VERSION = 10 # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
+ROOM_SCHEMA_VERSION = 11 # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
 #                          3: `area` Markers, with `walkable` and a snapped box (ticket 0137)
 #                          4: an emitter's `shape`, `direction` and `colours`, `null` when unset (ticket 0185)
 #                          5: `masks`, the collision Masks' PNG files, by name (ticket 0140)
@@ -1379,6 +1428,7 @@ ROOM_SCHEMA_VERSION = 10 # 2: `layers`, the foreground Layers with their files a
 #                          8: a Loop's `source` and `moves_layer` (ticket 0195)
 #                          9: a Layer's `remainder`, its file with the frame Loops' regions cleared, or None (ticket 0211)
 #                          10: a Loop's `rest`, true when frame 0 is the room's and `sequence` never plays it (ticket 0222)
+#                          11: `links`, each Link's ID, kind, ends and `two_way`, ordered by ID (ticket 0267)
 STRIP_LIMIT = 4096  # px: a Loop's strip wraps into rows at this width, and none may be taller (a texture's safe size)
 MASKS_DIR = "masks"  # in `out/export/`, and beside the scene in the game: the game builds its grid from `masks/solid.png`
 _COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
@@ -1539,7 +1589,7 @@ def _export_loops(run: StageRun) -> tuple[list[dict[str, Any]], dict[str, str]]:
 def _export(run: StageRun) -> None:
     palette = run.upstream["palette"]
     shutil.copyfile(palette / "plate.png", run.output_dir / "plate.png")  # the mapped Plate, not the composite
-    markers, sort = _read_markers(run.upstream["place"], run.asset_id)
+    markers, links, sort = _read_placed(run.upstream["place"], run.asset_id)
     sorts = {position.layer: position for position in sort}
     layers = []
     for entry in read_layers(palette, run.asset_id):
@@ -1575,6 +1625,8 @@ def _export(run: StageRun) -> None:
         "navigation": {"vertices": navigation.vertices, "polygons": navigation.polygons,
                        "outlines": navigation.outlines},
         "markers": markers,
+        "links": [{"id": link["id"], "kind": link["kind"], "from": link["from"], "to": link["to"],
+                   "two_way": link["two_way"]} for link in sorted(links, key=lambda each: str(each["id"]))],
         "layers": layers,
         "masks": mask_files,
         "looks": looks,
@@ -1906,12 +1958,17 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="reach",
+            version=2,  # 2: the flood crosses Links, and the report lists them (ticket 0266)
             description="Reachability of every Marker for the Body's footprint.",
             inputs=StageInputs(upstream=["place", MASKS_STAGE], settings=["body"]),
             params=(ParamSpec(name="step", type="int", description="Flood step in px. 1 is exact; a longer one can "
                               "miss a gap the Body fits only at one exact offset.", default=1, minimum=1),),
             checks=(
                 CheckSpec(code="reach.unreachable_marker", description="Every Spawn and Exit is reachable."),
+                CheckSpec(code="reach.unreachable_link", description="Every Link can be reached (one end, or the "
+                          "`from` end of a one-way Link)."),
+                CheckSpec(code="reach.link_joins", description="The Links that join ground the Body can't walk "
+                          "between (info)."),
                 CheckSpec(code="reach.unreachable_island", description="All walkable ground is reachable (warning)."),
                 CheckSpec(code="area.not_reached", description="A walkable area has walkable ground the Body can reach "
                                                                "(warning)."),
@@ -1926,6 +1983,7 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="export",
+            version=2,  # 2: room.json schema 11, with `links` (ticket 0267)
             description="Builds what the game gets: the mapped Plate, collision shapes, navigation polygon and Markers. "
                         "`kiripix export` then writes them into the Godot project.",
             inputs=StageInputs(upstream=["reach", "place", "palette", MASKS_STAGE, LOOKS_STAGE, LOOPS_STAGE],

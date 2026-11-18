@@ -100,6 +100,13 @@ class ExtendSection(_Strict):
         return self
 
 
+class IconSettings(_Strict):
+    """`[icon]`: the square an icon is fitted to, the same for every icon in the Project unless its own `size` says otherwise
+    (ticket 0262)."""
+
+    size: Literal[16, 24, 32] = Field(24, description="The icon's side in px: 16, 24 or 32.")
+
+
 class Providers(_Strict):
     default: str = "import"
     budget_usd_month: float = Field(20, ge=0)
@@ -218,14 +225,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 7
+PROJECT_SCHEMA_VERSION = 8
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -233,6 +240,7 @@ class ProjectSettings(_Strict):
     providers: Providers = Providers()
     character: CharacterSettings = Field(default_factory=CharacterSettings)
     extend: ExtendSection = Field(default_factory=ExtendSection)
+    icon: IconSettings = Field(default_factory=IconSettings)
 
 
 class AssetSettings(_Strict):
@@ -289,10 +297,31 @@ def _add_clip_table(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "character": character, "schema_version": 7}
 
 
+def _add_icon_section(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 7 had no `[icon]`; version 8 adds it (ticket 0262), its size defaulting to 24."""
+    return {**document, "schema_version": 8}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
-    4: _add_extend_section, 5: _add_generators, 6: _add_clip_table}
+    4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
+
+
+def _add_crop_number(document: dict[str, Any]) -> dict[str, Any]:
+    """A crop record (`extend/crop.json`, `extend/crops/<name>.json`): version 1 was the single `extend/crop.json` slot;
+    version 2 adds `number`, the order the crops were written (ticket 0287). The old slot is 0, older than every crop of
+    `crops/`."""
+    return {**document, "schema_version": 2, "number": 0}
+
+
+CROP_SCHEMA_VERSION = 2
+CROP_MIGRATIONS: dict[int, Migration] = {1: _add_crop_number}
+
+
+def migrate_crop_record(document: dict[str, Any], file: str) -> dict[str, Any]:
+    """Pure: a crop record of any older schema_version as one of CROP_SCHEMA_VERSION; a newer one is refused."""
+    return _migrate(document, file, CROP_SCHEMA_VERSION, CROP_MIGRATIONS)
 
 
 def _field_path(location: tuple[int | str, ...]) -> str:

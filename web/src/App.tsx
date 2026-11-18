@@ -35,7 +35,16 @@ import { LOOKS_DECISION, LOOKS_STAGE, LooksPanel, roomImageOf } from "./lookScre
 import { LOOPS_DECISION, LOOPS_STAGE, LoopsPanel } from "./loopScreen";
 import { ambiguousCells } from "./markerTool";
 import { ABOVE_DECISION, PLACE_DECISION, PlacePanel, REACH_STAGE, ReachPanel } from "./roomScreens";
-import { FOOTPRINT_DECISION, FootprintPanel } from "./propScreens";
+import {
+  FOOTPRINT_DECISION,
+  FootprintPanel,
+  SideBySide,
+  STATE_DECISION,
+  STATE_OFFSET_DECISION,
+  StateOffsetPanel,
+  StateStrip,
+  stateImage,
+} from "./propScreens";
 import { LAYERS_DECISION, LAYERS_STAGE, LayersPanel } from "./layerScreen";
 import { layerIdOf } from "./sortView";
 import { CHARACTER_KIND, CHARACTER_SCREENS, CharacterScreen, type ImportRole } from "./characterScreens";
@@ -115,6 +124,8 @@ export function App() {
   const [focusLayer, setFocusLayer] = useState<{ layer: string; count: number } | null>(null); // a `layer.no_ysort` jump
   const [focusFrame, setFocusFrame] = useState<FrameFocus | null>(null); // a frame finding's jump
   const [, setRefocus] = useState(0); // one more render, to run the focus effect when a finding is on this Stage
+  const [selectedState, setSelectedState] = useState<string | null>(null); // a Prop's state; null: the default state
+  const [sideBySide, setSideBySide] = useState(false);
   const canvas = useRef<PixelCanvas>(null);
 
   // One refresh at a time, in order, and one more if something changed meanwhile: what shows is never older than a change.
@@ -183,6 +194,9 @@ export function App() {
 
   const show = data.show?.asset === asset ? data.show : null;
   const kind = show?.kind;
+  const isProp = kind === "prop";
+  const stateShown = isProp ? show?.states?.find((entry) => entry.state === selectedState) : undefined;
+  const activeState = stateShown ? stateShown.state : null; // a state that was removed falls back to the default
   useEffect(() => {
     if (!kind || recipes[kind]) return;
     call<DescribeData>("describe", { target: kind })
@@ -291,10 +305,29 @@ export function App() {
   );
   const decideFootprint = useCallback(
     (footprint: Record<string, unknown>) => {
-      const decision = JSON.stringify({ decision: FOOTPRINT_DECISION, data: footprint });
-      void perform(() => call("decide", { asset, stage: current, decision }), "Setting the footprint");
+      const decision = JSON.stringify({ decision: FOOTPRINT_DECISION, data: { ...footprint, ...(activeState ? { state: activeState } : {}) } });
+      void perform(() => call("decide", { asset, stage: current, decision }), activeState ? `Setting the footprint of ${activeState}` : "Setting the footprint");
     },
-    [asset, current, perform],
+    [activeState, asset, current, perform],
+  );
+  // A state is declared on `source`, whatever Stage is open: one `decide`.
+  const declareState = useCallback(
+    (id: string, width: number, height: number) => {
+      const decision = JSON.stringify({ decision: STATE_DECISION, data: { id, width, height } });
+      void perform(async () => {
+        const result = await call("decide", { asset, stage: "source", decision });
+        if (result.ok) setSelectedState(id);
+        return result;
+      }, `Declaring the state ${id}`);
+    },
+    [asset, perform],
+  );
+  const decideStateOffset = useCallback(
+    (offsetX: number, offsetY: number) => {
+      const decision = JSON.stringify({ decision: STATE_OFFSET_DECISION, data: { state: activeState, offset_x: offsetX, offset_y: offsetY } });
+      void perform(() => call("decide", { asset, stage: current, decision }), `Setting the crop of ${activeState}`);
+    },
+    [activeState, asset, current, perform],
   );
   // A Mask edit shows once the Stage has run again, so with "rebuild" on the same action runs it, as a refresh would.
   // Only a `click` asks for a Runner's result, hence `rerun` for it alone: no other edit may re-run a pinned call (ADR 0002).
@@ -435,13 +468,18 @@ export function App() {
   );
   const pick = useCallback(
     (variant: string) => {
-      if (!busy) void perform(() => call("pick", { asset, variant }), "Picking a Variant");
+      if (!busy)
+        void perform(
+          () => call("pick", { asset, variant, ...(activeState ? { state: activeState } : {}) }),
+          activeState ? `Picking a Variant of ${activeState}` : "Picking a Variant",
+        );
     },
-    [asset, busy, perform],
+    [activeState, asset, busy, perform],
   );
   const importFiles = async (files: File[], role: ImportRole = "variant") => {
     for (const file of files) {
-      await perform(() => callWithFile("import", { asset, role }, "file", file), `Importing ${file.name}`);
+      const input = activeState && role === "variant" ? { asset, state: activeState } : { asset, role };
+      await perform(() => callWithFile("import", input, "file", file), `Importing ${file.name}`);
     }
   };
   // `new` for a character: one Command, and the new Asset opens when it was made. A parameter file goes with it.
@@ -512,7 +550,8 @@ export function App() {
   const names = show?.stages.map((entry) => entry.stage) ?? [];
   const following = current ? names[names.indexOf(current) + 1] : undefined;
 
-  const variants = show?.variants;
+  const variants = stateShown ? stateShown.variants : show?.variants;
+  const gridShow = show && stateShown ? { ...show, variants: stateShown.variants, picked: stateShown.picked } : show;
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (isTyping(event.target)) return;
@@ -542,6 +581,8 @@ export function App() {
     setNotice([]);
     setFocusLayer(null);
     setFocusFrame(null);
+    setSelectedState(null);
+    setSideBySide(false);
   }
 
   // Children's effects run first, so the canvas has already started on the new Stage's image when this one focuses it.
@@ -587,9 +628,15 @@ export function App() {
         : asking?.owner_action;
   // Reach has no image of its own, and the Body walks on the mapped room that `place` is made on.
   const reachImage = isReach ? show?.stages.find((entry) => entry.stage === "place")?.input_image : null;
-  const image = ((isLooks || isLoops) && show ? roomImageOf(show) : null) ?? detail?.image ?? detail?.input_image ?? reachImage ?? null;
+  const image =
+    ((isLooks || isLoops) && show ? roomImageOf(show) : null) ??
+    stateImage(show, detail?.stage, activeState, "image") ??
+    stateImage(show, detail?.stage, activeState, "input_image") ??
+    reachImage ??
+    null;
   const after = image ? fileUrl(image, imageVersion) : null;
-  const before = detail?.image && detail.input_image ? fileUrl(detail.input_image, imageVersion) : null;
+  const beforeImage = stateImage(show, detail?.stage, activeState, "input_image");
+  const before = stateImage(show, detail?.stage, activeState, "image") && beforeImage ? fileUrl(beforeImage, imageVersion) : null;
 
   // The strip: the action at the front of the queue, else the read in flight. The rest of the queue is the waiting count.
   const front = works.find((work) => work.since !== null) ?? works[0];
@@ -685,15 +732,17 @@ export function App() {
             focus={focusFrame}
             pivotTool={isPivot ? { disabled: busy, decide: decidePivot } : undefined}
           />
+        ) : isProp && sideBySide ? (
+          <SideBySide show={show} imageVersion={imageVersion} />
         ) : isSource ? (
-          <VariantGrid show={show} onPick={pick} onImport={(files) => void importFiles(files)} />
+          <VariantGrid show={gridShow ?? show} onPick={pick} onImport={(files) => void importFiles(files)} />
         ) : (
           <CanvasView
             canvas={canvas}
             after={after}
             before={before}
             frame={gameFrame ? show.resolution : null}
-            fitKey={`${asset}/${current}`}
+            fitKey={`${asset}/${current}/${activeState ?? ""}`}
           />
         )}
       </main>
@@ -718,6 +767,20 @@ export function App() {
                 )}
               </div>
             )}
+            {isProp && (
+              <StateStrip
+                show={show}
+                state={activeState}
+                findings={data.checks}
+                imageVersion={imageVersion}
+                disabled={busy}
+                sideBySide={sideBySide}
+                onSelect={setSelectedState}
+                onSideBySide={setSideBySide}
+                declare={declareState}
+                importFiles={(files) => void importFiles(files)}
+              />
+            )}
             {isPlace && (
               <PlacePanel
                 key={asset}
@@ -735,12 +798,16 @@ export function App() {
             )}
             {isFootprint && (
               <FootprintPanel
-                key={asset}
+                key={`${asset}/${activeState ?? ""}`}
                 canvas={canvas}
                 detail={detail}
+                state={activeState}
                 decide={decideFootprint}
                 disabled={busy}
               />
+            )}
+            {activeState && description.decisions.some((decision) => decision.name === STATE_OFFSET_DECISION) && (
+              <StateOffsetPanel detail={detail} state={activeState} disabled={busy} decide={decideStateOffset} />
             )}
             {isMasks && (
               <MasksPanel

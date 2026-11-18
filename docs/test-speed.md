@@ -15,6 +15,10 @@ The full suite runs once at the end of a batch of tickets, and single test files
    on first use, so every CLI call pays less. What is left is pydantic and typer, which the contract needs; the 0.3 s goal
    for `kiripix --help` would need a different path for them, and is left for a follow-up if still wanted. The M4 gate
    records `kiripix --help`'s and the full suite's times on the Owner's laptop.
+3. **Import a Command's module only when it runs** (ticket 0277, M5): a static index of the Commands
+   (`kiripix/commands/index.py`) and a CLI that builds Typer's parameters only for the called Command. `kiripix --help`
+   went from 0.47 s to 0.14 s, `kiripix status --json` from 0.48 s to 0.40 s (pydantic, typer and the stage graph are
+   what is left).
 
 ## Still open
 

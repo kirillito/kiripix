@@ -26,6 +26,25 @@ tickets are written from the accepted ADR, not before it.
 
 ## Acceptance criteria
 
-- [ ] The ADR drafted as `proposed`, with the spec's stale sentences fixed.
+- [x] The ADR drafted as `proposed`, with the spec's stale sentences fixed.
 - [ ] The Owner's acceptance recorded in the ADR (the Owner's, not the agent's).
 - [ ] The work tickets filed from the accepted ADR, and listed in 0254 and 0236.
+
+## Result (2026-11-17)
+
+Drafted [ADR 0013](../../docs/adr/0013-a-look-has-its-own-markers-collision-and-reach.md), `proposed`. Spec fixed: §6.1's
+Looks `solid` Decision and the `looks` row's Owner input (a Look's `erase` takes collision away), §16 decision 8 (that part
+settled, the rest pointing at ADR 0013), and §9's Room row, which told the game to enable a Look's polygons while leaving the
+room's `solid` body on, so an `erase` never took effect in the game.
+
+For the Owner, before accepting:
+- **Two Looks at once:** the "AND what each clears, OR what each adds" rule works on the Mask PNGs but not on
+  `CollisionPolygon2D`s, so the draft has export split the bodies (the room's minus every cleared pixel, plus a cleared body
+  per set of Looks). Navigation and `reach` can't be split that way: two `solid`-changing Looks shown together get neither.
+  Declared combinations are under "We considered" if that matters.
+- **The Manifest:** `ids.look_markers` is added without a `schema_version` bump, as `looks`, `loops` and `states` were.
+  CLAUDE.md's rule would bump it with a migration; the Owner's call.
+- This ticket's file names were wrong: `place` writes `markers.json` (not `place.json`), and `reach` writes `report.json`
+  (not `reach.json`), which has no `schema_version` yet. The ADR uses the real names.
+
+Left: the Owner's acceptance, then the work tickets.

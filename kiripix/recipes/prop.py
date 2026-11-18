@@ -60,6 +60,7 @@ from kiripix.recipes.prop_states import (
     about_state,
     apply_edits as apply_state_edits,
     check_each_state,
+    default_state,
     each_state,
     state_ids,
     state_needs_input,
@@ -73,7 +74,8 @@ from kiripix.runners import MATTER
 
 _RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
 _CHROMA = re.compile("^#[0-9A-Fa-f]{6}$")
-PROP_SCHEMA_VERSION = 1  # 1: `size`, `origin` and the footprint's convex `collision` shapes (ticket 0052)
+PROP_SCHEMA_VERSION = 2  # 1: `size`, `origin` and the footprint's convex `collision` shapes (ticket 0052)
+# 2: a Prop with states adds `default` and `states` (ticket 0260); a Prop without them differs only in the number
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
 
@@ -410,13 +412,27 @@ def _export(run: StageRun) -> None:
     shutil.copyfile(folder / "sprite.png", run.output_dir / "sprite.png")
     with Image.open(folder / "sprite.png") as sprite:
         width, height = sprite.size
-    prop = {
+    prop: dict[str, Any] = {
         "schema_version": PROP_SCHEMA_VERSION,
         "asset": run.asset_id,
         "size": [width, height],
         "origin": record["origin"],
         "collision": _footprint_shapes(record["polygon"], run.asset_id),
     }
+    ids = state_ids(folder)
+    if ids:  # the other states' sprites go beside the default's, under `states/`
+        prop["default"] = default_state(run)
+        prop["states"] = []
+        (run.output_dir / "states").mkdir()
+        for state in ids:
+            run.check_cancel()
+            there = folder / "states" / state
+            shape = json.loads((there / "footprint.json").read_text(encoding="utf-8"))
+            shutil.copyfile(there / "sprite.png", run.output_dir / "states" / f"{state}.png")
+            with Image.open(there / "sprite.png") as sprite:
+                size = [sprite.size[0], sprite.size[1]]
+            prop["states"].append({"id": state, "file": f"states/{state}.png", "size": size, "origin": shape["origin"],
+                                   "collision": _footprint_shapes(shape["polygon"], run.asset_id)})
     (run.output_dir / "prop.json").write_text(json.dumps(prop, indent=2) + "\n", encoding="utf-8")
 
 
@@ -584,7 +600,7 @@ PROP = KindSpec(
             name="export",
             description="Builds what the game gets: the sprite, its origin and collision shapes. `kiripix export` then "
                         "writes them into the Godot project as a Sprite2D scene.",
-            inputs=StageInputs(upstream=["footprint"], settings=["export.godot"]),
+            inputs=StageInputs(upstream=["footprint", "brief"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),),
             output_root="out",
             available_from="M2",

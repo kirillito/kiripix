@@ -8,7 +8,7 @@ Severity = Literal["error", "warning", "info"]
 
 
 class Position(BaseModel):
-    """Where a finding is: any of an Asset, a Stage, a file, a pixel, a box from that pixel or a field path."""
+    """Where a finding is: any of an Asset, a Stage, a file, a pixel, a box from that pixel, a field path or a Prop's state."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -21,6 +21,15 @@ class Position(BaseModel):
     width: int | None = None
     height: int | None = None
     field: str | None = None
+    state: str | None = None
+    """A Prop's state the finding is about (ticket 0259), when not the default. Left out of the JSON when null."""
+
+    @model_serializer(mode="wrap")
+    def _omit_no_state(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("state") is None:
+            data.pop("state", None)
+        return data
 
 
 class Finding(BaseModel):

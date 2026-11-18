@@ -18,6 +18,7 @@ LOOKS = "Looks"  # the hidden Plate pieces of the room's Looks, one Sprite2D eac
 LOOPS = "Loops"  # the Plate pieces of the room's Loops, one Sprite2D each, drawn with the Plate (ticket 0190)
 LOOP_UNSHADED = "loop_unshaded"  # the CanvasItemMaterial every Loop's Sprite2D shares: a Loop's frames aren't darkened by the room
 LOOK_SOLIDS = "LookSolids"  # the Looks' own `solid` bodies, one StaticBody2D each, their shapes disabled
+LINKS = "Links"  # a Node2D per Link, with `from` and `to` Marker2D ends
 FOREGROUND = "Foreground"  # the y-sorted parent of the foreground Layers
 ABOVE = "Above"  # the Layers that are always above the actors
 ABOVE_Z = 100  # above any z_index an actor is likely to have; Godot draws a higher z_index over every lower one
@@ -44,7 +45,8 @@ def room_ids(room: dict[str, Any]) -> ExportedIds:
     layers = [PLATE.lower(), *sorted(str(layer["id"]) for layer in room["layers"])]
     return ExportedIds(markers=sorted(str(marker["id"]) for marker in exported_markers(room)), layers=layers,
                        masks=sorted(room["collision"]), looks=sorted(str(look["id"]) for look in room["looks"]),
-                       loops=sorted(str(loop["id"]) for loop in room["loops"]))
+                       loops=sorted(str(loop["id"]) for loop in room["loops"]),
+                       links=sorted(str(each["id"]) for each in room["links"]))
 
 
 def _text(value: str) -> str:
@@ -123,6 +125,17 @@ def _area_nodes(marker: dict[str, Any], parent: str, shape_id: str) -> list[str]
         properties.append(f"metadata/cell = {int(marker['cell'])}")
     return [_node(name, "Area2D", parent, *properties),
             _node(AREA_SHAPE, "CollisionShape2D", f"{parent}/{name}", f'shape = SubResource("{shape_id}")')]
+
+
+def _link_nodes(link: dict[str, Any]) -> list[str]:
+    """A Link: a `Node2D` named by its ID, at the room's origin, with its two ends as `Marker2D`s in room pixels."""
+    name = _node_name(str(link["id"]))
+    parent = f"{LINKS}/{name}"
+    return [_node(name, "Node2D", LINKS, f"metadata/kiripix_id = {_text(str(link['id']))}",
+                  'metadata/kiripix_type = "link"', f"metadata/kind = {_text(str(link['kind']))}",
+                  f"metadata/two_way = {'true' if link['two_way'] else 'false'}"),
+            _node("from", "Marker2D", parent, f"position = Vector2({link['from'][0]}, {link['from'][1]})"),
+            _node("to", "Marker2D", parent, f"position = Vector2({link['to'][0]}, {link['to'][1]})")]
 
 
 def _marker_properties(marker: dict[str, Any], light: int | None) -> list[str]:
@@ -424,6 +437,11 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str, room_path: str)
                 light = lights.index(marker) if marker["type"] == "light" else None
                 nodes.append(_node(_node_name(str(marker["id"])), _MARKER_NODE[marker["type"]], parent,
                                    *_marker_properties(marker, light)))
+    links = sorted(room["links"], key=lambda each: str(each["id"]))
+    if links:
+        nodes.append(_node(LINKS, "Node2D", "."))
+        for each in links:
+            nodes += _link_nodes(each)
     header = f'[gd_scene load_steps={len(resources) + len(layer_resources) + len(look_resources) + len(loop_resources) + 2} format=3]'
     plate = f'[ext_resource type="Texture2D" path="{plate_path}" id="plate"]\n'
     return GENERATED + "\n" + "\n".join([header + "\n", plate, *layer_resources, *look_resources, *loop_resources, *resources, *nodes])
@@ -433,28 +451,59 @@ FOOTPRINT = "Footprint"  # a prop's body: its place is stable, because the game 
 
 
 def prop_ids(prop: dict[str, Any]) -> ExportedIds:
-    """Every ID a prop's export carries into the game. The Footprint isn't frozen: the polygon can be emptied."""
-    return ExportedIds(markers=[], layers=[], masks=[])
+    """Every ID a prop's export carries into the game: its state IDs, the default's too, since each is a node's name. The
+    Footprint isn't frozen: the polygon can be emptied."""
+    states = sorted([str(prop["default"]), *(str(state["id"]) for state in prop["states"])]) if prop.get("states") else []
+    return ExportedIds(markers=[], layers=[], masks=[], states=states)
 
 
-def prop_scene(prop: dict[str, Any], name: str, sprite_path: str) -> str:
+def prop_state_files(prop: dict[str, Any]) -> dict[str, str]:
+    """Each state's sprite file by the state's ID: the default's is `sprite.png`, the others' are in `prop.json`."""
+    return {str(state["id"]): str(state["file"]) for state in prop.get("states", [])}
+
+
+def _prop_body(parent: str, shapes: list[list[list[int]]], origin: list[int], *, disabled: bool) -> list[str]:
+    ox, oy = origin
+    if not shapes:
+        return []
+    return [_node(FOOTPRINT, "StaticBody2D", parent, f"collision_layer = {COLLISION_LAYERS['solid']}", "collision_mask = 0"),
+            *[_node(f"polygon_{index}", "CollisionPolygon2D", FOOTPRINT if parent == "." else f"{parent}/{FOOTPRINT}",
+                    *(["disabled = true"] if disabled else []),
+                    f"polygon = {_vectors([(x - ox, y - oy) for x, y in shape])}")
+              for index, shape in enumerate(shapes)]]
+
+
+def prop_scene(prop: dict[str, Any], name: str, sprite_path: str, state_paths: dict[str, str] | None = None) -> str:
     """The scene's text. The root sits at the prop's origin, so the game y-sorts it by its position, and its Sprite2D is
-    drawn offset so that the origin pixel is the root's own place. `name` is the root node's."""
+    drawn offset so that the origin pixel is the root's own place. `name` is the root node's. A prop with states has one
+    Node2D per state, named by its ID, at the root's place, each with its own Sprite2D and Footprint: the default shown,
+    the others hidden with their polygons disabled. `state_paths` gives each other state's `res://` sprite path."""
     ox, oy = prop["origin"]
-    shapes = prop["collision"]
-    nodes = [
-        _node(name, "Node2D", None, f"metadata/kiripix_id = {_text(str(prop['asset']))}"),
-        _node("Sprite", "Sprite2D", ".", 'texture = ExtResource("sprite")', "centered = false",
-              f"offset = Vector2({-ox}, {-oy})"),
-    ]
-    if shapes:
-        nodes.append(_node(FOOTPRINT, "StaticBody2D", ".", f"collision_layer = {COLLISION_LAYERS['solid']}",
-                           "collision_mask = 0"))
-        nodes += [_node(f"polygon_{index}", "CollisionPolygon2D", FOOTPRINT,
-                        f"polygon = {_vectors([(x - ox, y - oy) for x, y in shape])}")
-                  for index, shape in enumerate(shapes)]
-    sprite = f'[ext_resource type="Texture2D" path="{sprite_path}" id="sprite"]\n'
-    return GENERATED + "\n" + "\n".join(["[gd_scene load_steps=2 format=3]\n", sprite, *nodes])
+    root = _node(name, "Node2D", None, f"metadata/kiripix_id = {_text(str(prop['asset']))}")
+    if not prop.get("states"):
+        nodes = [root, _node("Sprite", "Sprite2D", ".", 'texture = ExtResource("sprite")', "centered = false",
+                             f"offset = Vector2({-ox}, {-oy})"),
+                 *_prop_body(".", prop["collision"], prop["origin"], disabled=False)]
+        sprite = f'[ext_resource type="Texture2D" path="{sprite_path}" id="sprite"]\n'
+        return GENERATED + "\n" + "\n".join(["[gd_scene load_steps=2 format=3]\n", sprite, *nodes])
+    paths = state_paths or {}
+    default = str(prop["default"])
+    entries = [(default, sprite_path, prop["origin"], prop["collision"])] + [
+        (str(state["id"]), paths[str(state["id"])], state["origin"], state["collision"]) for state in prop["states"]]
+    nodes = [root]
+    textures = []
+    for state, path, origin, shapes in entries:
+        shown = state == default
+        resource = f"sprite_{state}"
+        textures.append(f'[ext_resource type="Texture2D" path="{path}" id="{resource}"]\n')
+        nodes.append(_node(state, "Node2D", ".", *([] if shown else ["visible = false"]),
+                           f"metadata/kiripix_id = {_text(str(prop['asset']))}", 'metadata/kiripix_type = "prop_state"',
+                           f"metadata/kiripix_state = {_text(state)}"))
+        nodes.append(_node("Sprite", "Sprite2D", state, f'texture = ExtResource("{resource}")', "centered = false",
+                           f"offset = Vector2({-origin[0]}, {-origin[1]})"))
+        nodes += _prop_body(state, shapes, origin, disabled=not shown)
+    header = f"[gd_scene load_steps={len(entries) + 1} format=3]\n"
+    return GENERATED + "\n" + "\n".join([header, *textures, *nodes])
 
 
 # a character (spec §9): a CanvasTexture of the two atlases, a SpriteFrames over it, and a scene with an AnimatedSprite2D

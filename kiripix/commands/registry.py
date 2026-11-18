@@ -1,12 +1,17 @@
 """The Command registry (ADR 0006). Every operation is declared here once; the adapters are generated from it."""
 
-from collections.abc import Callable
+import importlib
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
 from kiripix.commands.contract import Context, Outcome
+from kiripix.commands.index import INDEX
+
+if TYPE_CHECKING:
+    from _collections_abc import dict_items, dict_keys, dict_values
 
 CommandKind = Literal["writing", "probe", "owner-only"]
 McpExposure = Literal["exposed", "hidden", "owner-only"]  # owner-only: never an MCP tool (spec §10.3)
@@ -53,7 +58,62 @@ class Command(Generic[I, O]):
         return " ".join(self.path)
 
 
-REGISTRY: dict[str, Command[Any, Any]] = {}
+class Registry(dict[str, Command[Any, Any]]):
+    """The registry, filled on demand from the static index (`kiripix.commands.index`, ticket 0277).
+
+    A Command's module is imported when that Command is looked up by name, or all of them when the registry is
+    iterated (`schema`, `describe`, the server). So a call that runs one Command imports one module, not fifty.
+    Registering (`command`) writes with the plain `dict` methods, so it never triggers a load.
+    """
+
+    def load(self, name: str) -> None:
+        """Import the module that declares `name`, if the index knows it and it isn't registered yet."""
+        if not dict.__contains__(self, name) and name in INDEX:
+            importlib.import_module(INDEX[name].module)
+
+    def load_all(self) -> None:
+        if dict.__len__(self) == len(INDEX) and all(dict.__contains__(self, n) for n in INDEX):
+            return
+        for module in dict.fromkeys(entry.module for entry in INDEX.values()):
+            importlib.import_module(module)
+        ordered = {n: dict.__getitem__(self, n) for n in INDEX if dict.__contains__(self, n)}
+        ordered.update((n, c) for n, c in dict.items(self) if n not in ordered)  # not in the index: a test finds it
+        dict.clear(self)
+        dict.update(self, ordered)
+
+    def __getitem__(self, name: str) -> Command[Any, Any]:
+        self.load(name)
+        return dict.__getitem__(self, name)
+
+    def __contains__(self, name: object) -> bool:
+        return dict.__contains__(self, name) or name in INDEX
+
+    def get(self, name: str, default: Any = None) -> Any:
+        self.load(name)
+        return dict.get(self, name, default)
+
+    def __iter__(self) -> Iterator[str]:
+        self.load_all()
+        return dict.__iter__(self)
+
+    def __len__(self) -> int:
+        self.load_all()
+        return dict.__len__(self)
+
+    def keys(self) -> "dict_keys[str, Command[Any, Any]]":
+        self.load_all()
+        return dict.keys(self)
+
+    def values(self) -> "dict_values[str, Command[Any, Any]]":
+        self.load_all()
+        return dict.values(self)
+
+    def items(self) -> "dict_items[str, Command[Any, Any]]":
+        self.load_all()
+        return dict.items(self)
+
+
+REGISTRY = Registry()
 
 
 def command(
@@ -78,7 +138,7 @@ def command(
             raise ValueError(f"Command {cmd.name}: file inputs {sorted(unknown)} aren't input fields")
         if (kind == "owner-only") != (mcp == "owner-only"):
             raise ValueError(f"Command {cmd.name}: an owner-only Command, and only one, has mcp='owner-only'")
-        if cmd.name in REGISTRY:
+        if dict.__contains__(REGISTRY, cmd.name):
             raise ValueError(f"Command {cmd.name} registered twice")
         REGISTRY[cmd.name] = cmd
         return handler

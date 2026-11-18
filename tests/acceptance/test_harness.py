@@ -24,9 +24,11 @@ from .harness import (
     WIDTH,
     AgentTurn,
     CommandRun,
+    NextState,
     Outcome,
     ScriptedAgent,
     Setup,
+    StandInOwner,
     Usage,
     agent_env,
     assert_agent_env_clean,
@@ -208,7 +210,7 @@ class AskingAgent(StoppedAgent):
 
 
 def test_the_owner_answers_what_the_agent_reports_and_the_contradiction_is_recorded(setup: Setup, tmp_path: Path) -> None:
-    fixture = tmp_path / "owner-brief.json"  # one answer for the brief; the others wait until they are asked for
+    fixture = tmp_path / "owner-brief.json"  # one answer for the brief, and one room entry for the owner's first stop
     fixture.write_text(json.dumps({"asset": ASSET, "decisions": [
         {"when_stage": "brief", "stage": "masks", "decision": "brush",
          "data": {"mask": "solid", "erase": False, "radius": 4, "points": [[8, 0], [8, 40]]}},
@@ -220,18 +222,38 @@ def test_the_owner_answers_what_the_agent_reports_and_the_contradiction_is_recor
     assert any("decide room.alley masks brush: exit 0" in i and "the agent asked the owner" in i
                for i in outcome.interventions)
     assert outcome.failure_step and outcome.failure_step.startswith("room.alley brief is todo"), "the owner moved nothing on"
-    assert len(outcome.interventions) == 1, "the Markers wait until they are asked for"
+    assert len(outcome.interventions) == 1 and "decide room.alley place marker: exit 0" in outcome.interventions[0],         "the first stop also brings the owner's untagged room entries, in the same step"
     assert "Still stuck." in render(outcome, "m1", datetime.date(2026, 11, 4)), "the closing message is in the report"
 
 
-def test_the_owner_volunteers_nothing_when_the_agent_asks_at_a_stage_with_no_entry(setup: Setup) -> None:
+def test_the_owner_does_all_its_room_entries_at_the_agents_first_stop_whatever_the_stage_and_only_then(setup: Setup) -> None:
+    owner = StandInOwner(setup)
+    at_clips = NextState("character.hero", False, "clips", "todo", None, "kiripix run character.hero", None)
+
+    first = owner.step(at_clips, only_this_stage=True)  # the agent ran the room to export and stopped at the character
+    second = owner.step(at_clips, only_this_stage=True)
+
+    assert first is not None and all(": exit " in line for line in first)
+    assert [line.split()[:4] for line in first if "room.alley" in line][:2] == [
+        ["decide", "room.alley", "masks", "brush:"], ["decide", "room.alley", "layers", "click:"]]
+    assert sum("room.alley place marker" in line for line in first) == 4, "the room's four markers, the first area included"
+    assert sum("decide character.hero clips clip" in line for line in first) == 3, "and it answers the Stage it stopped at"
+    assert not any("battle.test" in line and "x=40" in line for line in first)
+    assert not second, "the room entries and the clips are done once"
+    place = setup.project / "assets" / "room" / "alley" / "decisions" / "place.jsonl"
+    assert len(place.read_text("utf-8").splitlines()) == 4, "the Markers are in the room's journal"
+
+
+def test_the_owner_volunteers_nothing_after_its_first_stop_when_the_agent_asks_at_a_stage_with_no_entry(
+        setup: Setup) -> None:
     class Asks(StoppedAgent):
         def start(self, task: str, cwd: Path, env: Mapping[str, str], budget_left: int) -> AgentTurn:
             return AgentTurn(final_text="I need the owner.")
 
     outcome = run_acceptance(Asks(), setup, BUDGET, dry_run=True)
 
-    assert not outcome.interventions and outcome.failure_step and outcome.failure_step.startswith("room.alley brief")
+    assert len(outcome.interventions) == 1, "the first stop brings the owner's room entries; a second asks for nothing more"
+    assert outcome.failure_step and outcome.failure_step.startswith("room.alley brief")
 
 
 def test_exceeding_the_token_budget_ends_the_run_as_a_failure(setup: Setup) -> None:

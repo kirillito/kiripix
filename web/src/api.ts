@@ -13,6 +13,7 @@ export interface Position {
   field: string | null;
   width?: number | null; // a box: x, y, width, height
   height?: number | null;
+  state?: string; // a Prop's state the finding is about; absent for the default
 }
 
 export interface Finding {
@@ -101,6 +102,15 @@ export interface ShowData {
   clip_sources: (FileEntry & { from_base: boolean })[]; // a character's animation files, by file stem; from_base: in the base's folder
   rigged: FileEntry | null; // a character's rigged file
   parameters?: FileEntry | null; // a generated character's parameter file, in place of Variants
+  default_state?: string | null; // a Prop's default state: its picked Source's ID
+  states?: {
+    state: string;
+    width: number;
+    height: number;
+    picked: string | null;
+    variants: FileEntry[];
+    images?: { stage: string; image: string | null; input_image: string | null }[]; // per Stage, this state's built images
+  }[]; // a Prop's other states
   looks?: { look: string; variants: FileEntry[]; picked: string | null }[]; // a room's Looks that have a stored edit
   sheets?: (FileEntry & { png_count: number | null })[]; // a sprite's imported sheets, named by hash
   stages: StageDetail[];

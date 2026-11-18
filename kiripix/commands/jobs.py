@@ -17,7 +17,7 @@ from typing import Any
 
 from kiripix.checks import Finding
 from kiripix.commands.contract import Context, Envelope, ExitCode, ProgressEvent
-from kiripix.commands.invoke import invoke
+from kiripix.commands.calling import invoke
 from kiripix.commands.registry import Command
 
 _BACKSTOP_SECONDS = 2.0
