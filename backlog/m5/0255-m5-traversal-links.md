@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 type: spec
 parent: 0236-m5-the-games-next-needs.md
@@ -40,3 +40,9 @@ climb back up, and a gap jump. They're short scripted moves, and collision stays
 
 [0265](0265-m5-link-marker.md) the Marker on `place` (core), [0266](0266-m5-reach-through-links.md) `reach` through Links
 (imaging), [0267](0267-m5-export-links.md) export, [0268](0268-m5-ui-draw-a-link.md) the UI and the walk test.
+
+## Result (2026-11-18)
+
+Closed: its work tickets [0265](0265-m5-link-marker.md), [0266](0266-m5-reach-through-links.md),
+[0267](0267-m5-export-links.md) and [0268](0268-m5-ui-draw-a-link.md) are done. The open question (a Look adding a Link)
+moves to [0254](0254-m5-looks-markers-combining-and-reach.md) and its ADR draft [0269](0269-m5-adr-looks-markers-combining-reach.md).

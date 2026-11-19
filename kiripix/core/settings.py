@@ -349,6 +349,42 @@ def migrate_crop_record(document: dict[str, Any], file: str) -> dict[str, Any]:
     return _migrate(document, file, CROP_SCHEMA_VERSION, CROP_MIGRATIONS)
 
 
+def _same_version(document: dict[str, Any]) -> dict[str, Any]:
+    """`character.json` version 4 had no `points`; version 5 has them where a character has them: the same file otherwise."""
+    return {**document, "schema_version": 5}
+
+
+def _add_clip_cells(document: dict[str, Any]) -> dict[str, Any]:
+    """`character.json` version 5 had one cell and pivot for the character; version 6 gives each clip its own (ticket 0303), which
+    for an older file is the character's."""
+    clips = [{**clip, "cell": dict(document["cell"]), "pivot": dict(document["pivot"])} for clip in document.get("clips", [])]
+    return {**document, "schema_version": 6, "clips": clips}
+
+
+CHARACTER_MIGRATIONS: dict[int, Migration] = {4: _same_version, 5: _add_clip_cells}
+
+
+def migrate_character_record(document: dict[str, Any], file: str = "character.json") -> dict[str, Any]:
+    """Pure: an exported `character.json` of schema_version 4 or later as one of the current version (a clip's `cell` and `pivot`
+    are the character's when the file has none); an older or newer one is refused."""
+    from kiripix.recipes.character_export import CHARACTER_SCHEMA_VERSION
+
+    version = document.get("schema_version")
+    if isinstance(version, int) and not isinstance(version, bool) and version < min(CHARACTER_MIGRATIONS):
+        raise KiripixError(
+            [
+                Finding(
+                    code="config.invalid",
+                    message=f"{file} has schema_version {version}, older than this Kiripix migrates "
+                            f"({min(CHARACTER_MIGRATIONS)})",
+                    position=Position(file=file, field="schema_version"),
+                    owner_action="Export the character again: kiripix run <asset> export --force.",
+                )
+            ]
+        )
+    return _migrate(document, file, CHARACTER_SCHEMA_VERSION, CHARACTER_MIGRATIONS)
+
+
 def _field_path(location: tuple[int | str, ...]) -> str:
     return ".".join(str(part) for part in location if part not in ("function-after",))
 

@@ -56,6 +56,21 @@ eyes are, from the posed Model: `render.json` then has `points` (the entries, as
 map, `{name: {"x", "y", "depth", "hidden"}}` in render px (sub-pixel, y down), the depth the eyes have, and `hidden` when the
 depth pass has the body in front of it. A target that isn't there is `render.point_unknown`, which lists the armature's bones
 and the Model's Empties. Without the parameter nothing is written, and the keys of the clips don't change.
+
+Held things (ticket 0302): a clip of `clips.json` with `attach` shows each held thing, the current Variant of `src/things/<id>/`, at its
+socket bone with its `offset` and `turn` (in the bone's frame, Model units), in that clip's frames only, in every direction. The
+thing is part of the character's render: its pixels are in the colour, normal, depth and mask passes and the clip's measured extent.
+Its materials are numbered in the material pass after the Model's, as `core.things` numbers them (the things in the order they were
+first imported, each one's own materials by name), and `render.json` lists them in `things`: `[{"thing", "file", "materials":
+[{"index", "name"}]}]`, every thing of the Asset when any clip holds one; `materials` stays the Model's own. Each clip entry has its
+`attach`. A socket an attached thing sits on is also a point (named for the bone, `grip_r@grip_r`), unless `points` already has one at
+that bone, so the game's fallback and the real thing agree.
+
+A cell per clip (ticket 0303): the top-level `frame` and `pivot` are the body's cell, fitted to the clips that hold nothing (to
+every clip when all hold something). A clip whose extent fits it keeps it; a clip that doesn't (its held thing, a long attack)
+gets its own, the body's grown until it fits. Each clip entry has its `frame` (`{"width", "height"}`) and `pivot` (`[x, y]`),
+which are the body's for most clips; a stationary clip's frames have that pivot. Blender runs once for each cell size, since the
+frame size and the pivot are the scene's. A clip's key holds its own cell, so one clip's growing renders no other.
 """
 
 import hashlib
@@ -68,7 +83,7 @@ from typing import Any
 
 from kiripix.recipes.base import Scalar, StageFailure, StageRun, computed_setting, param_or_generated
 from kiripix.recipes.blender_launcher import launch
-from kiripix.recipes.clips import DIRECTIONS, EYELIDS, clip_files
+from kiripix.recipes.clips import DIRECTIONS, EYELIDS, THINGS_DIR, clip_files, socket_message, unknown_sockets
 
 # 2: each clip carries its measured `bounds` (0155), a stationary clip one pivot (0154)
 # 3: a material pass, `materials` and `bands` (0148)
@@ -184,6 +199,41 @@ def needed_margin(height: int, bodies: list[list[float]], wearing: list[list[flo
     return None
 
 
+def clip_cells(height: int, clips: list[dict[str, Any]],
+               bounds: dict[str, list[float]]) -> tuple[int, list[float], dict[str, tuple[int, list[float]]]]:
+    """The body's cell and each clip's (ticket 0303), `(side, pivot, {clip: (side, pivot)})`. The body's cell is fitted to the
+    clips that hold nothing (every clip when all hold something). A clip whose extent fits it keeps it; one that doesn't gets
+    its own, the body's grown until that extent fits, so it is never smaller than the body's."""
+    body = [bounds[c["name"]] for c in clips if not c.get("attach")] or [bounds[c["name"]] for c in clips]
+    side, pivot = fit_cell(height, body)
+    cells: dict[str, tuple[int, list[float]]] = {}
+    for clip in clips:
+        own = bounds[clip["name"]]
+        cells[clip["name"]] = (side, pivot) if fits_cell(side, pivot, own) else fit_cell(height, [*body, own])
+    return side, pivot, cells
+
+
+def _launch_cells(run: StageRun, args: dict[str, Any], cells: dict[str, tuple[int, list[float]]]) -> dict[str, Any]:
+    """Blender for `args["clips"]`, once for each cell size they need (the frame and pivot are the scene's). The result is one
+    result: the first's `depth_range` and `materials`, every clip's frames."""
+    groups: dict[tuple[int, tuple[float, ...]], list[dict[str, Any]]] = {}
+    for clip in args["clips"]:
+        side, pivot = cells[clip["name"]]
+        groups.setdefault((side, tuple(pivot)), []).append(clip)
+    merged: dict[str, Any] | None = None
+    for (size, place), group in groups.items():
+        found = launch(run, "render_frames", {**args, "clips": group, "frame": [size, size], "pivot": list(place)})
+        _check_points(run, found)
+        if merged is None:
+            merged = found
+        else:
+            if found["depth_range"] != merged["depth_range"]:
+                raise StageFailure("Blender gave two depth ranges for one character", fix=f"kiripix run {run.asset_id} render --force")
+            merged["frames"] = {**merged["frames"], **found["frames"]}
+    assert merged is not None
+    return merged
+
+
 def _json(path: Path) -> dict[str, Any]:
     document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return document
@@ -211,6 +261,68 @@ def blender_clip(run: StageRun, clip: dict[str, Any]) -> dict[str, Any]:
                   "frame": clip["transition"][end]["action_frame"], "root_motion": bool(clip["transition"][end]["root_motion"])}
             for end in ("from", "to")}
     return {"name": clip["name"], "frames": clip["frames"], "root_motion": False, "transition": ends}
+
+
+def _thing_files(run: StageRun) -> list[dict[str, Any]]:
+    """The Asset's held things in numbering order, each `{"id", "file", "name"}` with the current Variant's path: the order they
+    were first imported (the journal, `imported.jsonl`), a folder laid by hand after those, by ID. The current Variant is the
+    newest import naming a file of the thing's folder, else the last by name. A Stage can't import core, so it reads these."""
+    found: dict[str, dict[str, Path]] = {}
+    for name, path in run.files.items():
+        if name.startswith(THINGS_DIR) and name.count("/") == 3 and name.endswith((".glb", ".blend")):
+            found.setdefault(name[len(THINGS_DIR):].split("/", 1)[0], {})[name] = path
+    order: list[str] = []
+    newest: dict[str, str] = {}
+    try:
+        lines = (run.asset_dir / "imported.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        file = str(entry.get("file", "")) if isinstance(entry, dict) else ""
+        thing = file[len(THINGS_DIR):].split("/", 1)[0]
+        if file.startswith(THINGS_DIR) and thing in found and file in found[thing]:
+            newest[thing] = file
+            if thing not in order:
+                order.append(thing)
+    order += sorted(set(found) - set(order))
+    chosen = {t: newest.get(t) or sorted(found[t])[-1] for t in order}
+    return [{"id": t, "file": found[t][chosen[t]], "name": Path(chosen[t]).name} for t in order]
+
+
+def _socket_points(points: list[dict[str, str]], clips: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """`points` with a point at each socket an `attach` uses that has none: named for the bone (lower case, other characters
+    `_`), unless that name is taken."""
+    found = list(points)
+    for clip in clips:
+        for held in clip.get("attach", []):
+            socket = str(held["socket"])
+            name = re.sub(r"[^a-z0-9]+", "_", socket.lower().split(":")[-1]).strip("_") or "socket"
+            if not POINT_NAME.fullmatch(name):
+                name = "socket_" + name
+            if any(p["target"] == socket or p["name"] == name for p in found):
+                continue
+            found.append({"name": name, "target": socket})
+    return found
+
+
+def _check_held(run: StageRun, clips: list[dict[str, Any]], rig: dict[str, Any], things: list[dict[str, Any]]) -> None:
+    """Each thing a clip holds is on the Asset and each socket is a bone of the rig (`clips` checks it too; this is the guard
+    before Blender starts)."""
+    known = {t["id"] for t in things}
+    bones = list(rig.get("parents", {}))
+    for clip in clips:
+        attach = list(clip.get("attach", []))
+        if lost := sorted({str(a["thing"]) for a in attach} - known):
+            raise StageFailure(f"the clip {clip['name']} holds {', '.join(lost)}, and the Asset has no such thing",
+                               code="clips.unknown_thing",
+                               owner_action=f"Import the thing: kiripix import {run.asset_id} <file> --role thing --thing {lost[0]}")
+        if bones and (wrong := unknown_sockets(attach, bones)):
+            raise StageFailure(f"the clip {clip['name']}: {socket_message(wrong, bones)}", code="clips.unknown_socket",
+                               fix=f"kiripix undo {run.asset_id} clips")
 
 
 def _stamp_hash(folder: Path) -> str:
@@ -275,6 +387,20 @@ def _materials(run: StageRun, result: dict[str, Any], previous: Path | None) -> 
             code="render.too_many_materials",
             owner_action=f"Join materials in the Model until it has {MAX_MATERIALS} or fewer, then run render again.")
     return found
+
+
+def _held_materials(result: dict[str, Any], previous: Path | None, things: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`render.json`'s `things`: each thing of the Asset with its file and the numbers of its materials, from this run's Blender,
+    or from the previous output when every clip was kept."""
+    found = result.get("things")
+    if found is None and previous is not None:
+        try:
+            found = [{"thing": t["thing"], "materials": t["materials"]} for t in _json(previous / "render.json")["things"]]
+        except (OSError, ValueError, KeyError, TypeError):
+            found = None
+    by_id = {str(t["thing"]): t["materials"] for t in found or []}
+    return [{"thing": t["id"], "file": t["name"],
+             "materials": [{"index": int(m["index"]), "name": str(m["name"])} for m in by_id.get(t["id"], [])]} for t in things]
 
 
 def _copy_clip(run: StageRun, previous: Path, name: str) -> None:
@@ -376,14 +502,24 @@ def run_render(run: StageRun) -> None:
     eyes = [name.strip() for name in str(followed or "").split(",") if name.strip()]
     if eyes:
         args["eyes"] = eyes
-    points = parse_points(str(run.params.get("points") or ""), run.asset_id)
+    things = _thing_files(run)
+    _check_held(run, clips, rig, things)
+    for entry, source in zip(args["clips"], clips):
+        if source.get("attach"):
+            entry["attach"] = [dict(a) for a in source["attach"]]
+    held = any(c.get("attach") for c in clips)
+    if held:  # every thing of the Asset, so the material numbers are the same whichever clips hold them
+        args["things"] = [{"id": t["id"], "file": str(t["file"])} for t in things]
+    points = _socket_points(parse_points(str(run.params.get("points") or ""), run.asset_id), clips)
     if points:
         args["points"] = points
     posing: dict[str, Any] = {name: args[name] for name in ("root", "model_height", "elevation", "px_per_unit")}
     posing.update(directions=list(names), rig=_stamp_hash(run.upstream["rig"]), model=_stamp_hash(run.upstream["model"]),
                   blender=str(run.settings.get("blender.version", "")), script=_script_hash(), schema=RENDER_SCHEMA_VERSION)
-    measure_keys = {c["name"]: hashlib.sha256(json.dumps({"clip": c, **posing}, sort_keys=True).encode("utf-8")).hexdigest()
-                    for c in clips}
+    files = {t["id"]: t["name"] for t in things}
+    measure_keys = {c["name"]: hashlib.sha256(json.dumps(
+        {"clip": c, **posing, **({"held": {a["thing"]: files[a["thing"]] for a in c["attach"]}} if c.get("attach") else {})},
+        sort_keys=True).encode("utf-8")).hexdigest() for c in clips}
     bounds = {name: found for name, (measured_under, found) in _previous_bounds(run).items()
               if measure_keys.get(name) == measured_under}
     unmeasured = [c for c in args["clips"] if c["name"] not in bounds]
@@ -397,17 +533,20 @@ def run_render(run: StageRun) -> None:
                 follows_root = not clip["stationary"] and not clip["root_motion"]
                 bounds[clip["name"]] = clip_bounds(measured[clip["name"]], follows_root)
     margin = int(run.params.get("cell_margin", 0))
-    side, pivot = fit_cell(height, [padded(bounds[c["name"]], margin) for c in clips])
+    side, pivot, cells = clip_cells(height, clips, {n: padded(b, margin) for n, b in bounds.items()})
     args.update(frame=[side, side], pivot=pivot)
-    shared: dict[str, Any] = {name: args[name] for name in ("frame", "pivot", "toon")}
+    shared: dict[str, Any] = {"toon": args["toon"]}
     shared.update(posing)
     if eyes:
         shared["eyes"] = eyes
     if points:
         shared["points"] = points
+    if held:
+        shared["things"] = [[t["id"], t["name"]] for t in things]
 
     def key(clip: dict[str, Any], device: str) -> str:
-        return hashlib.sha256(json.dumps({"clip": clip, **shared, "device": device}, sort_keys=True)
+        own = {"frame": [cells[clip["name"]][0]] * 2, "pivot": cells[clip["name"]][1]}  # its own cell (ticket 0303)
+        return hashlib.sha256(json.dumps({"clip": clip, **shared, **own, "device": device}, sort_keys=True)
                               .encode("utf-8")).hexdigest()
 
     keys = {c["name"]: key(c, args["device"]) for c in clips}
@@ -421,13 +560,11 @@ def run_render(run: StageRun) -> None:
     if args["clips"]:
         run.progress(0, 1, "starting Blender" if not kept else
                      f"reused {reused} clip and direction pairs; starting Blender for {len(args['clips'])} of {len(every)} clips")
-        result = launch(run, "render_frames", args)
-        _check_points(run, result)
+        result = _launch_cells(run, args, cells)
         if kept and result["depth_range"] != next(iter(kept.values()))["depth_range"]:
             # the depth scale moved, so the kept frames don't match the new ones. The key should prevent it; render all.
             kept, reused, args["clips"] = {}, 0, every
-            result = launch(run, "render_frames", args)
-            _check_points(run, result)
+            result = _launch_cells(run, args, cells)
         if args["device"] == "gpu" and str(result.get("device", "")).startswith("cpu"):
             # No GPU was found, so Blender rendered on the CPU: the new frames are keyed as CPU frames, as they are.
             keys.update({c["name"]: key(c, "cpu") for c in clips if c["name"] not in kept})
@@ -436,6 +573,7 @@ def run_render(run: StageRun) -> None:
         result = {"depth_range": next(iter(kept.values()), {"depth_range": [0.0, 1.0]})["depth_range"], "frames": {}}
         run.progress(0, 1, f"reused {reused} clip and direction pairs")
     materials = _materials(run, result, previous if kept else None)
+    held_materials = _held_materials(result, previous if kept else None, things) if held else []
     for name in kept:
         assert previous is not None
         _copy_clip(run, previous, name)
@@ -444,11 +582,14 @@ def run_render(run: StageRun) -> None:
 
     entries = []
     for clip in clips:
-        measures = {"measure_key": measure_keys[clip["name"]], "bounds": bounds[clip["name"]]}
+        measures = {"measure_key": measure_keys[clip["name"]], "bounds": bounds[clip["name"]],
+                    **({"attach": clip["attach"]} if clip.get("attach") else {})}
+        side_of, pivot_of = cells[clip["name"]]
+        measures = {**measures, "frame": {"width": side_of, "height": side_of}, "pivot": list(pivot_of)}  # its own cell (0303)
         if clip["name"] in kept:
             entry = {**{k: v for k, v in kept[clip["name"]].items() if k != "depth_range"}, **measures}
             if clip["stationary"]:  # an older render may have kept the swaying root's pivots (ticket 0154)
-                entry["directions"] = {d: [{**f, "pivot": list(pivot)} for f in frames]
+                entry["directions"] = {d: [{**f, "pivot": list(pivot_of)} for f in frames]
                                        for d, frames in entry["directions"].items()}
             entries.append(entry)
             continue
@@ -466,7 +607,7 @@ def run_render(run: StageRun) -> None:
                         f"{', '.join(m['name'] for m in materials) or 'none'}), so its eyes can't be followed",
                         code="render.eyes_unknown", fix=f"kiripix set {run.asset_id} render eyes=")
                 frames.append({"index": index, "source_frame": clip["frames"][index], "files": files,
-                               "pivot": list(pivot) if clip["stationary"] else found["pivot"],
+                               "pivot": list(pivot_of) if clip["stationary"] else found["pivot"],
                                **({"eyes": found["eyes"]} if eyes else {}),
                                **({"points": found["points"]} if points else {})})
             directions[direction] = frames
@@ -484,6 +625,7 @@ def run_render(run: StageRun) -> None:
         "toon": args["toon"],
         "bands": args["toon"]["bands"],
         "materials": materials,
+        **({"things": held_materials} if held else {}),
         **({"eyes": eyes} if eyes else {}),
         **({"points": points} if points else {}),
         **({"generated": made} if made else {}),  # for `palette`, which reads its `parts` (ticket 0224)

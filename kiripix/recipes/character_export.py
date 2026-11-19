@@ -2,12 +2,13 @@
 `sheet`'s `sheet.json` and atlases only, and leaves in `out/export/`:
 
     color.png, normal.png   the two atlases, copied
-    character.json          {"schema_version": 4, "asset": "character.hero",
+    character.json          {"schema_version": 6, "asset": "character.hero",
                              "files": {"color": "color.png", "normal": "normal.png"},
-                             "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # from the cell's top left
+                             "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # the body's; from the cell's top left
                              "atlas": {"width": 858, "height": 936},
                              "directions": ["s", "sw", ...],
                              "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
+                                        "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # this clip's (0303)
                                         "events": {"foot": [0, 5]},   # frames (the same in every direction) where a foot plants
                                         "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78,
                                                                                      "height": 78},
@@ -44,9 +45,10 @@ from kiripix.recipes.character_sheet import COLOR_ATLAS, NORMAL_ATLAS, SHEET_FIL
 # 4: each clip's `events`, from `clips` (ticket 0172)
 # 5: each frame's `points`, from `sheet` (ticket 0237). Written only for a character with points, so a character without them
 #    keeps its version 4 file byte for byte; a reader takes both
-CHARACTER_SCHEMA_VERSION = 4
-CHARACTER_POINTS_SCHEMA_VERSION = 5
-CHARACTER_SCHEMA_VERSIONS = (CHARACTER_SCHEMA_VERSION, CHARACTER_POINTS_SCHEMA_VERSION)
+# 6: each clip's own `cell` and `pivot` (ticket 0303), written always; the top-level `cell` and `pivot` are the body's. Version 4
+#    and 5 files migrate (`kiripix.core.settings.migrate_character_record`: each clip gets the top-level cell and pivot)
+CHARACTER_SCHEMA_VERSION = 6
+CHARACTER_SCHEMA_VERSIONS = (4, 5, 6)
 CHARACTER_FILE = "character.json"
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -95,16 +97,15 @@ def run_character_export(run: StageRun) -> None:
     for name in (COLOR_ATLAS, NORMAL_ATLAS):
         run.check_cancel()
         shutil.copyfile(folder / name, run.output_dir / name)
-    pointed = any("points" in f for c in sheet["clips"] for frames in c["directions"].values() for f in frames)
     character = {
-        "schema_version": CHARACTER_POINTS_SCHEMA_VERSION if pointed else CHARACTER_SCHEMA_VERSION,
+        "schema_version": CHARACTER_SCHEMA_VERSION,
         "asset": run.asset_id,
         "files": {"color": COLOR_ATLAS, "normal": NORMAL_ATLAS},
         "cell": sheet["cell"],
         "pivot": sheet["pivot"],
         "atlas": sheet["atlas"],
         "directions": sheet["directions"],
-        "clips": [{**c, "events": events.get(str(c["name"]), {"foot": []})} for c in sheet["clips"]],
+        "clips": [{**c, "events": events.get(str(c["name"]), {"foot": []})} for c in sheet["clips"]],  # `c` has its cell and pivot
         "parts": [{"name": p["name"], "materials": p["materials"], "row": p["row"], "shared": p["shared"],
                    "indexes": p["indexes"], "rgb": p["rgb"]} for p in sorted(palette["parts"], key=lambda p: int(p["row"]))],
         "rows": _rows(palette),

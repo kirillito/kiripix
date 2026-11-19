@@ -144,10 +144,11 @@ def _frames(asset: Asset, document: dict[str, Any], atlas: np.ndarray, clips: li
             frames: int, findings: list[Finding]) -> list[_Frame]:
     by_name = {clip["name"]: clip for clip in document["clips"]}
     wanted = clips if clips is not None else [document["clips"][0]["name"]] if document["clips"] else []
-    pivot = (int(document["pivot"]["x"]), int(document["pivot"]["y"]))
     made: list[_Frame] = []
     for name in wanted:
         clip = by_name.get(name)
+        own = (clip or {}).get("pivot", document["pivot"])  # a clip's own pivot (ticket 0303), else the character's
+        pivot = (int(own["x"]), int(own["y"]))
         for direction in directions:
             listed = clip["directions"].get(direction, []) if clip is not None else []
             if not listed:

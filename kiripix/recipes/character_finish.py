@@ -66,7 +66,7 @@ from kiripix.ops import (
     stamped_mask,
 )
 from kiripix.recipes.base import CheckFunction, ParamSpec, StageFailure, StageFunction, StageRun
-from kiripix.recipes.character_palette import RENDER_FILE, _colour_files
+from kiripix.recipes.character_palette import RENDER_FILE, _colour_files, material_indexes
 from kiripix.recipes.common import palette_rgb, read_rgba, write_rgba
 
 FINISH_SCHEMA_VERSION = 3
@@ -320,7 +320,8 @@ class _InnerLines:
                                "part recolours its lines too; palette part_lines=true adds it (inner_lines=outline needs "
                                "none)", code="finish.inner_lines_with_parts",
                                fix=f"kiripix set {run.asset_id} palette part_lines=true")
-        by_name = {str(m["name"]): int(m["index"]) for m in document.get("materials", [])}
+        self.indexes = material_indexes(document)  # the Model's materials, and a held thing's after them (ticket 0305)
+        by_name = {n: i[0] for n, i in self.indexes.items()}
         self.skip_text: list[str] = []
         self.skip: list[int | tuple[int, int]] = []
         for token in (t.strip() for t in str(run.params.get("line_skip", "")).split(",")):
@@ -339,7 +340,7 @@ class _InnerLines:
         self.frames: dict[tuple[str, str, int], dict[str, str]] = {
             (str(e["name"]), d, int(f["index"])): {k: str(v) for k, v in f["files"].items()}
             for e in document["clips"] for d, listed in e["directions"].items() for f in listed}
-        self.names = {i: n for n, i in by_name.items()}
+        self.names = {i: n for n, found in self.indexes.items() for i in found}
         # `line_depth` px of the render's scale, in the depth pass's 16 bit unit: px / px_per_unit is world units, and the pass
         # spans `depth_range` over 65535 (ticket 0247).
         self.line_depth = float(run.params.get("line_depth", 0.0))
@@ -357,7 +358,6 @@ class _InnerLines:
     def _choose(self, files: list[tuple[str, str, int, str]], palette: np.ndarray) -> None:
         # With `part_lines` (ticket 0216) a part's line is the first colour of its ramp, the step the frames never use; the
         # materials of no part get a darker colour that is in no ramp, so no swap touches it.
-        by_name = {v: k for k, v in self.names.items()}
         ramp_colours: set[tuple[int, ...]] = set()
         claimed: list[int] = []
         parts = self.described.get("parts", [])
@@ -367,10 +367,10 @@ class _InnerLines:
                              if r.get("rgb") is not None for rgb in r["rgb"]}
             for part in parts:
                 for material in part["materials"]:
-                    if material in by_name:
-                        claimed.append(by_name[material])
+                    for found in self.indexes.get(material, []):
+                        claimed.append(found)
                         r, g, b = (int(v) for v in part["rgb"][0])
-                        self.colours[by_name[material]] = (int(part["indexes"][0]), (r, g, b))
+                        self.colours[found] = (int(part["indexes"][0]), (r, g, b))
         mapped: list[np.ndarray] = []
         labels: list[np.ndarray] = []
         for clip, direction, index, name in files:

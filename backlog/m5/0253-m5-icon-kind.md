@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 type: spec
 parent: 0236-m5-the-games-next-needs.md
@@ -45,3 +45,9 @@ or the Owner overturns a recommendation, update them before they start.
 ## Out of scope
 
 - Animated icons, and icons drawn by hand: those import as a Source like any image.
+
+## Result (2026-11-18)
+
+Closed: its work tickets [0262](0262-m5-icon-kind-and-stages.md), [0263](0263-m5-export-an-icon.md) and
+[0264](0264-m5-ui-icon-screens.md) are done, built on the recommendations above (one Asset per icon, no Project atlas, a Kind).
+If the game's M08 asks for an atlas, that's a new ticket.

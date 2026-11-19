@@ -15,9 +15,12 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "toon": {"bands": 2 to 4, "shadow": 0 to 1, "band_edge": 0 to 1, "band_smooth": px, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
                   toward the camera>}}, "eyes": [<names of the materials that are the eyes; optional>],
          "points": [{"name": <the point's name>, "target": <a bone of the armature or an Empty, by name>}; optional],
+         "things": [{"id": <a held thing's ID>, "file": <its .glb or .blend>}; optional] (every thing of the Asset, in the order their
+                    materials are numbered), and a clip's "attach": [{"thing", "socket": <a bone>, "offset": [x, y, z]?, "turn": [x, y, z]?}],
          "wearable": {"file": <a Wearable's model.blend, on the body's skeleton>, "holdout": <bool, default true>}; optional,
          "output": <folder to write the frames into>}
 result: {"device": <what rendered>, "depth_range": [<near>, <far>], "materials": [{"index": <from 1>, "name"}],
+         "things": [{"thing", "materials": [{"index", "name"}]}] (with `things` in args),
          "frames": {<clip>: {<direction>: [{"pivot": [x, y]}]}}}
 
 With `wearable` (ticket 0291) `rig_file` is the body's file and the Wearable's meshes are brought into it, re-pointed at the
@@ -25,6 +28,12 @@ body's armature by bone name. The scene is set up with the body alone (the camer
 numbers are the body's own, so the passes stack on the body's), then the body is a holdout (it hides what is behind it, is not
 drawn, and is outside the object mask) and the Wearable renders. The Wearable's materials are numbered after the body's, and the
 result's `materials` are the Wearable's own. With `measure` the extents are the Wearable's alone.
+
+With `things` (ticket 0302) each thing's meshes are brought in, hidden, and a clip shows the ones in its `attach`: every frame the
+mesh is put at the pose of the socket bone (its head, its axes, no scale) moved by `offset` (in that frame, Model units) and turned
+by `turn` (degrees about X, Y, Z), so the thing's own origin and axes are the grip. The thing is part of the render: the object mask,
+the depth and the measure pass hold it. Its materials are numbered after the Model's, thing by thing in the order of `things`, each
+thing's own sorted by name. A socket that is not a bone ends the run with an error.
 
 With `eyes`, each frame also has `"eyes"`: one entry per eye, the Model's right one first (ticket 0203), from the posed mesh and
 not from the pixels: `{"x", "y"}`, the eye's centre in px (x right, y down), `"width"` and `"height"`, its extent on screen in
@@ -71,7 +80,7 @@ from pathlib import Path
 import bpy
 import numpy as np
 from bpy_extras.object_utils import world_to_camera_view
-from mathutils import Matrix, Quaternion, Vector
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 ROOT = "model_root"
 DISTANCE = 10.0  # Blender units from the camera to the ground point under the root
@@ -398,6 +407,91 @@ def show_wearable(args: dict, setup: dict, measuring: bool) -> list:
     return [{"index": index, "name": material.name} for index, material in enumerate(ordered, start=first)]
 
 
+_things: dict = {}  # thing ID -> [(mesh object, its matrix in the thing's own space)], brought in by `bring_things`
+
+
+def bring_things(args: dict) -> None:
+    """Brings each held thing's meshes into the scene, hidden from renders until a clip shows them. A mesh is kept in the space
+    of the file it came from (its world matrix there is `local`), with no parent and no armature: `place_things` puts it at the
+    socket. What is not a mesh is dropped."""
+    for spec in args.get("things") or []:
+        path = Path(spec["file"])
+        before = set(bpy.data.objects)
+        if path.suffix.lower() == ".blend":
+            with bpy.data.libraries.load(str(path)) as (source, wanted):
+                wanted.objects = list(source.objects)
+            brought = [o for o in wanted.objects if o is not None]
+            for obj in brought:
+                bpy.context.scene.collection.objects.link(obj)
+        else:
+            import_file(path)
+            brought = sorted(set(bpy.data.objects) - before, key=lambda o: o.name)
+        bpy.context.view_layer.update()
+        meshes = [o for o in brought if o.type == "MESH"]
+        if not meshes:
+            raise ValueError(f"the thing {spec['id']} ({path.name}) has no mesh")
+        kept = []
+        for obj in meshes:
+            local = obj.matrix_world.copy()
+            for modifier in [m for m in obj.modifiers if m.type == "ARMATURE"]:
+                obj.modifiers.remove(modifier)
+            obj.parent = None
+            obj.matrix_world = local
+            obj.hide_render = True
+            obj.pass_index = 1
+            kept.append((obj, local))
+        for obj in brought:
+            if obj.type != "MESH":
+                bpy.data.objects.remove(obj, do_unlink=True)
+        _things[spec["id"]] = kept
+    bpy.context.view_layer.update()
+
+
+def number_things(args: dict, setup: dict) -> list:
+    """Numbers the things' materials after the Model's: thing by thing in the order of `things`, each thing's own by name (a
+    material's `.001` is how Blender keeps two of one name apart; the name reported has none). [{"thing", "materials"}]."""
+    found = []
+    first = len(setup["materials"]) + 1
+    for spec in args.get("things") or []:
+        used = {slot.material for obj, _ in _things[spec["id"]] for slot in obj.material_slots if slot.material is not None}
+        ordered = sorted(used, key=lambda m: (_SUFFIX.sub("", m.name), m.name))
+        if first - 1 + len(ordered) > MAX_MATERIALS:
+            raise ValueError(f"the Model and its things have {first - 1 + len(ordered)} materials; the material pass holds at most {MAX_MATERIALS}")
+        for index, material in enumerate(ordered, start=first):
+            material.pass_index = index
+        found.append({"thing": spec["id"], "materials": [{"index": index, "name": _SUFFIX.sub("", material.name)}
+                                                         for index, material in enumerate(ordered, start=first)]})
+        first += len(ordered)
+    return found
+
+
+def show_things(clip: dict) -> None:
+    """The things this clip holds render; the others don't."""
+    held = {a["thing"] for a in clip.get("attach") or []}
+    for thing, meshes in _things.items():
+        for obj, _ in meshes:
+            obj.hide_render = thing not in held
+
+
+def place_things(armature, clip: dict) -> None:
+    """Puts each held thing at its socket bone in the current pose: the bone's head and axes (no scale, so the thing keeps the
+    Model's units), then `offset` and `turn`."""
+    held = clip.get("attach") or []
+    if not held:
+        return
+    for item in held:
+        bone = armature.pose.bones.get(item["socket"])
+        if bone is None:
+            raise ValueError(f"the rig has no bone {item['socket']} for the thing {item['thing']}")
+        location, rotation, _ = (armature.matrix_world @ bone.matrix).decompose()
+        grip = Matrix.LocRotScale(location, rotation, None)
+        turn = Euler([math.radians(float(v)) for v in item.get("turn", [0, 0, 0])], "XYZ").to_matrix().to_4x4()
+        adjust = Matrix.Translation(Vector(item.get("offset", [0, 0, 0]))) @ turn
+        for obj, local in _things[item["thing"]]:
+            obj.matrix_world = grip @ adjust @ local
+    bpy.context.view_layer.update()
+
+
 def set_up_scene(args: dict, armature, root_bone: str) -> dict:
     scene = bpy.context.scene
     width, height = args["frame"]
@@ -624,7 +718,8 @@ def capture_end(armature, end: dict, root_bone: str, ground: Vector) -> dict:
 
 def begin_clip(armature, clip: dict, root_bone: str, ground: Vector):
     """Ready the rig for a clip: its action assigned, or for a transition both ends' poses captured. The result is what
-    `pose_clip` needs."""
+    `pose_clip` needs. The things the clip holds show, the others don't."""
+    show_things(clip)
     if "transition" not in clip:
         assign(armature, action_for(clip))
         return None
@@ -651,6 +746,7 @@ def pose_clip(armature, clip: dict, state, frame) -> None:
         pose(armature, frame)
     else:
         blend_pose(armature, state, float(frame))
+    place_things(armature, clip)
 
 
 def end_clip(armature, state) -> None:
@@ -830,10 +926,12 @@ def measure_poses(args: dict) -> dict:
     `render` reports is the cell's pivot plus `under`. The camera is the render's own, so these are the frames' pixels."""
     armature, root_bone = open_posable(args)
     bring_wearable(args, armature)
+    bring_things(args)
     unknown = points_unknown(args, armature)
     if unknown:
         return unknown
     setup = set_up_scene(args, armature, root_bone)
+    number_things(args, setup)
     show_wearable(args, setup, measuring=True)
     ground, turntable, camera = setup["ground"], setup["turntable"], setup["camera"]
     scale = float(args["px_per_unit"])
@@ -874,6 +972,7 @@ def render(args: dict) -> dict:
         return measure_poses(args)
     armature, root_bone = open_posable(args)
     bring_wearable(args, armature)
+    bring_things(args)
     unknown = points_unknown(args, armature)
     if unknown:
         return unknown
@@ -885,6 +984,7 @@ def render(args: dict) -> dict:
     scene = bpy.context.scene
     device = choose_device(args["device"])
     setup = set_up_scene(args, armature, root_bone)
+    held_materials = number_things(args, setup)
     scene.render.filepath = str(exr)
     materials = show_wearable(args, setup, measuring=False)
     ground, turntable, camera = setup["ground"], setup["turntable"], setup["camera"]
@@ -926,7 +1026,7 @@ def render(args: dict) -> dict:
     shutil.rmtree(scratch, ignore_errors=True)
     progress(total, total, "done")
     return {"device": device, "depth_range": [round(depth_range[0], 4), round(depth_range[1], 4)],
-            "materials": materials, "frames": pivots}
+            "materials": materials, "frames": pivots, **({"things": held_materials} if args.get("things") else {})}
 
 
 def main() -> None:

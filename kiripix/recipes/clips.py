@@ -33,6 +33,10 @@ CLIPS_SCHEMA_VERSION = 3
 PLANT_HEIGHT = 0.03  # a foot within this fraction of the rig's height of the clip's lowest foot point is on the ground
 PLANT_SPEED = 0.25  # with root motion, a planted foot moves less than this many rig heights a second
 CLIP_SOURCES = "src/clips/"
+THINGS_DIR = "src/things/"  # a held thing's files: `src/things/<id>/<file>` (ticket 0301 imports them; 0300 only reads that they exist)
+THINGS_PATTERN = "src/things/*/*"  # the `clips` Stage's file input: a thing added or removed makes it stale, as it may fail
+THING_ID = r"^[a-z0-9_]+$"
+DEFAULT_SOCKET = "grip_r"  # the bone a held thing sits on (ticket 0238)
 EYELIDS = ("blink", "wink_left", "wink_right")  # a clip's frames with closed eyes: both, the Model's left, its right
 ROOT_MOTION_RATIO = 0.1  # the root travels more than this fraction of the rig's height: root motion
 HASH_LENGTH = 16  # hex digits of the SHA-256, as a Variant's name
@@ -69,12 +73,63 @@ CLIP = DecisionSpec(
             "blink": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": True},
             "wink_left": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": True},
             "wink_right": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": True},
+            "attach": {
+                "type": "array",
+                "description": "The things the clip holds, each at a socket bone of the Model.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "thing": {"type": "string", "pattern": THING_ID,
+                                  "description": "A held thing's ID: imported on the Asset with `--role thing --thing <id>`."},
+                        "socket": {"type": "string", "minLength": 1, "default": DEFAULT_SOCKET,
+                                   "description": "A bone of the rigged Model the thing is parented to."},
+                        "offset": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                                   "description": "x, y, z in the socket's frame, in Model units (default 0, 0, 0)."},
+                        "turn": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                                 "description": "Degrees about each axis of the socket's frame (default 0, 0, 0)."},
+                    },
+                    "required": ["thing"],
+                    "additionalProperties": False,
+                },
+            },
         },
         "required": ["name", "source", "start", "end", "fps", "loop"],
         "additionalProperties": False,
     },
-    problem=lambda data: _eyelid_problem(data),
+    problem=lambda data: _eyelid_problem(data) or attach_problem(data),
 )
+
+
+def attach_problem(data: dict[str, Any]) -> str | None:
+    """A thing named twice in one clip's `attach`: the entry alone says it."""
+    things = [str(a["thing"]) for a in data.get("attach", [])]
+    twice = sorted({t for t in things if things.count(t) > 1})
+    return f"`attach` names {', '.join(twice)} more than once; a thing is held once in a clip" if twice else None
+
+
+def held_things(attach: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A clip's `attach` as `clips.json` records it: the socket filled in, `offset` and `turn` only when given."""
+    return [{"thing": str(a["thing"]), "socket": str(a.get("socket", DEFAULT_SOCKET)),
+             **{key: [float(v) for v in a[key]] for key in ("offset", "turn") if key in a}} for a in attach]
+
+
+def thing_ids(files: Any) -> set[str]:
+    """The IDs of the things on an Asset, from its file names: `src/things/<id>/<file>`."""
+    return {name[len(THINGS_DIR):].split("/", 1)[0] for name in files
+            if name.startswith(THINGS_DIR) and name.count("/") >= 3}
+
+
+def unknown_things(attach: list[dict[str, Any]], known: set[str]) -> list[str]:
+    return sorted({str(a["thing"]) for a in attach if str(a["thing"]) not in known})
+
+
+def unknown_sockets(attach: list[dict[str, Any]], bones: Any) -> list[str]:
+    return sorted({str(a.get("socket", DEFAULT_SOCKET)) for a in attach if str(a.get("socket", DEFAULT_SOCKET)) not in bones})
+
+
+def socket_message(sockets: list[str], bones: list[str]) -> str:
+    shown = ", ".join(bones[:30]) + ("..." if len(bones) > 30 else "")
+    return f"no bone {', '.join(sockets)} in the rig (its bones are {shown})"
 
 
 def _eyelid_problem(data: dict[str, Any]) -> str | None:
@@ -323,6 +378,7 @@ def run_clips(run: StageRun) -> None:
     root = ["root", str(rig["mapping"].get("hips", "hips"))]
     mapping = rig["mapping"]
     feet = {side: str(mapping[key]) for side, key in (("left", "left_foot"), ("right", "right_foot")) if key in mapping}
+    _check_attach(run, decisions, rig)
     files = clip_files(run)
     cache: dict[Path, dict[str, Any]] = {}
     missing: list[str] = []
@@ -364,6 +420,7 @@ def run_clips(run: StageRun) -> None:
             continue
         # a key only when it is set, so a clip decided without them is the entry it always was (and `render` keeps its frames)
         extras: dict[str, Any] = {**({"speed": speed} if speed != 1 else {}), **({"still": int(still)} if still is not None else {}),
+                                  **({"attach": held_things(data["attach"])} if data.get("attach") else {}),
                                   **{key: listed for key, listed in eyelids.items() if listed}}
         clips.append({
             "name": name,
@@ -401,6 +458,27 @@ def run_clips(run: StageRun) -> None:
     clips.sort(key=lambda c: str(c["name"]))
     document = {"schema_version": CLIPS_SCHEMA_VERSION, "clips": clips}
     (run.output_dir / "clips.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+
+def _check_attach(run: StageRun, decisions: list[CurrentDecision], rig: dict[str, Any]) -> None:
+    """Every thing a clip holds is on the Asset, at a bone of the rig, and held once: `decide` refuses these when it can, and
+    a thing taken away or a rig changed since fails here."""
+    known = thing_ids(run.files)
+    bones = list(rig.get("parents", {}))
+    undo = f"kiripix undo {run.asset_id} clips"
+    for decision in decisions:
+        attach = list(decision.data.get("attach", []))
+        name = decision.data["name"]
+        if problem := attach_problem(decision.data):
+            raise StageFailure(f"{name}: {problem}", code="clips.thing_twice", fix=undo)
+        if lost := unknown_things(attach, known):
+            raise StageFailure(f"the clip {name} holds {', '.join(lost)}, and the Asset has no such thing "
+                               f"(its things are {', '.join(sorted(known)) or 'none'})", code="clips.unknown_thing",
+                               owner_action=f"Import the thing: kiripix import {run.asset_id} <file> --role thing --thing "
+                                            f"{lost[0]}; or decide the clip again without it.")
+        if wrong := unknown_sockets(attach, bones):
+            raise StageFailure(f"the clip {name}: {socket_message(wrong, bones)}", code="clips.unknown_socket",
+                               fix=undo)  # then decide the clip again with a bone of the rig as `socket`
 
 
 def _resolve_transitions(run: StageRun, clips: list[dict[str, Any]], clip_names: list[str]) -> list[dict[str, Any]]:
@@ -457,6 +535,7 @@ def _resolve_transitions(run: StageRun, clips: list[dict[str, Any]], clip_names:
             "root_motion": False,
             "frames": [round((i + 1) / (length + 1), 6) for i in range(length)],
             "events": {"foot": []},
+            **({"attach": first["attach"]} if first.get("attach") else {}),  # it holds what its `from` clip holds
         })
     if outside:
         raise StageFailure("a transition names a frame its clip doesn't have: " + "; ".join(outside),

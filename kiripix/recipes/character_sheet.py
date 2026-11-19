@@ -1,8 +1,11 @@
 """The character's `sheet` Stage (spec §6.3, ticket 0112).
 
 Packs `finish`'s colour frames into one atlas and its normal frames into a second atlas with the same layout (`pack_atlas`).
-Every cell is the render's frame size, and each frame's pivot (the feet) lands on the render's pivot in the cell, so the pivot
-is the same pixel in every cell of every clip and direction. Nothing reads `render`'s files after this: `sheet.json` is what
+Every cell is its clip's frame size (ticket 0303: the render's `frame` and `pivot` per clip, the character's when the clip has
+none), and each frame's pivot (the feet) lands on the clip's pivot in the cell, so the pivot is the same pixel in every cell of a
+clip and direction. Most clips have the body's cell, which is the top-level `cell` and `pivot`. The atlas is laid out in blocks, one
+for each distinct cell: the body's first, as one grid of `columns` columns, then each other cell size below it, a grid of its own.
+`rect` gives every frame's place; a reader never computes it. Each clip has its `cell` and `pivot`. Nothing reads `render`'s files after this: `sheet.json` is what
 the exporter and the UI read.
 
 Output in `work/sheet/`: `color.png`, `normal.png` and `sheet.json`:
@@ -15,6 +18,7 @@ Output in `work/sheet/`: `color.png`, `normal.png` and `sheet.json`:
      "atlas": {"width": 858, "height": 936},
      "directions": ["s", "se", ...],
      "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
+                "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # this clip's; the body's for most
                 "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78, "height": 78}}, ...]}}]}
 
 With named points (ticket 0237, `render`'s `points`), each frame also has `"points": {"hand_r": {"x": 12, "y": -20, "hidden":
@@ -47,6 +51,7 @@ from kiripix.checks import (
     check_pivot_drift,
 )
 from kiripix.ops import pack_atlas
+from kiripix.ops.sheet import Rect
 from kiripix.recipes.base import CheckFunction, StageFailure, StageFunction, StageRun
 from kiripix.recipes.character_palette import RENDER_FILE
 from kiripix.recipes.common import read_rgba, write_rgba
@@ -72,6 +77,48 @@ def _json(path: Any, what: str, stage: str) -> dict[str, Any]:
 def _cell(document: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
     frame, pivot = document["frame"], document["pivot"]
     return (int(frame["width"]), int(frame["height"])), (_round(pivot[0]), _round(pivot[1]))
+
+
+def _clip_cell(document: dict[str, Any], entry: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
+    """A clip's cell and pivot (ticket 0303): its own `frame` and `pivot` in `render.json`, else the character's."""
+    if "frame" in entry and "pivot" in entry:
+        return _cell(entry)
+    return _cell(document)
+
+
+Cell = tuple[tuple[int, int], tuple[int, int]]  # (width, height), (pivot x, pivot y)
+
+
+def pack_by_cell(images: list[Any], pivots: list[tuple[int, int]], cells: list[Cell], first: Cell) -> tuple[Any, list[Rect], int]:
+    """Packs frames into one atlas, a block of rows for each distinct cell (size and pivot): the block of cell `first` (the
+    body's) on top, the others in the order their first frame appears, each a grid of its own cells, `ceil(sqrt(count))`
+    columns, left aligned. A character whose frames share one cell is one block, the same layout as ever. Returns the atlas,
+    each frame's rect in the order given, and the first block's column count."""
+    order: list[Cell] = [first] if first in cells else []
+    for cell in cells:
+        if cell not in order:
+            order.append(cell)
+    blocks: list[tuple[Any, list[Rect], int]] = []
+    members: dict[Cell, list[int]] = {cell: [i for i, c in enumerate(cells) if c == cell] for cell in order}
+    for cell in order:
+        mine = members[cell]
+        columns = max(1, math.ceil(math.sqrt(len(mine))))
+        block, rects = pack_atlas([images[i] for i in mine], [pivots[i] for i in mine], cell[0], columns, cell[1])
+        blocks.append((block, rects, columns))
+    width = max(block.shape[1] for block, _, _ in blocks)
+    atlas = np.zeros((sum(block.shape[0] for block, _, _ in blocks), width, 4), dtype=np.uint8)
+    found: list[Rect | None] = [None] * len(images)
+    top = 0
+    for cell, (block, rects, _) in zip(order, blocks, strict=True):
+        atlas[top:top + block.shape[0], :block.shape[1]] = block
+        for i, (x, y, w, h) in zip(members[cell], rects, strict=True):
+            found[i] = (x, y + top, w, h)
+        top += block.shape[0]
+    placed: list[Rect] = []
+    for rect in found:
+        assert rect is not None
+        placed.append(rect)
+    return atlas, placed, blocks[0][2]
 
 
 def _points(frame: dict[str, Any]) -> dict[str, Any]:
@@ -120,17 +167,18 @@ def _run_sheet(run: StageRun, source: str) -> None:
         raise StageFailure(f"{source} has no frames to pack; run it again", fix=f"kiripix run {run.asset_id} {source} --force")
     run.progress(0, 2, "packing the colour atlas")
     pivots = [f.pivot for f in frames]
-    columns = max(1, math.ceil(math.sqrt(len(frames))))
-    colour, rects = pack_atlas([f.image for f in frames], pivots, cell, columns, cell_pivot)
+    own = {str(e["name"]): _clip_cell(document, e) for e in document["clips"]}
+    cells = [own[f.clip] for f in frames]
+    colour, rects, columns = pack_by_cell([f.image for f in frames], pivots, cells, (cell, cell_pivot))
     run.check_cancel()
     run.progress(1, 2, "packing the normal atlas")
     normal_frames: list[np.ndarray] = []
     for f in frames:
         assert f.normal is not None
         normal_frames.append(f.normal)
-    normal, normal_rects = pack_atlas(normal_frames, pivots, cell, columns, cell_pivot)
+    normal, normal_rects, _ = pack_by_cell(normal_frames, pivots, cells, (cell, cell_pivot))
     if normal_rects != rects:
-        raise StageFailure("the two atlases don't share a layout")  # can't happen: one cell, one count
+        raise StageFailure("the two atlases don't share a layout")  # can't happen: one cell list, one count
     write_rgba(run.output_dir / COLOR_ATLAS, colour)
     write_rgba(run.output_dir / NORMAL_ATLAS, normal)
 
@@ -145,8 +193,11 @@ def _run_sheet(run: StageRun, source: str) -> None:
                                   strict=True)),
                  **_points(frame)}
                 for frame in listed if (entry["name"], direction, int(frame["index"])) in found]
+        (own_width, own_height), own_pivot = own[str(entry["name"])]
         clips.append({"name": entry["name"], "fps": int(entry["fps"]), "loop": bool(entry["loop"]),
-                      "stationary": bool(entry["stationary"]), "directions": directions})
+                      "stationary": bool(entry["stationary"]),
+                      "cell": {"width": own_width, "height": own_height}, "pivot": {"x": own_pivot[0], "y": own_pivot[1]},
+                      "directions": directions})
     sheet = {
         "schema_version": SHEET_SCHEMA_VERSION,
         "files": {"color": COLOR_ATLAS, "normal": NORMAL_ATLAS},
@@ -184,7 +235,13 @@ def _check_sheet(run: StageRun, source: str) -> list[Finding]:
         drift = f"kiripix set {run.asset_id} fit align_feet=true"
     frames, names = _frames(run, source, document, normals=False)
     stationary = {str(c["name"]) for c in document["clips"] if c["stationary"]}
-    findings = (check_pivot_drift(frames, stationary, drift) + check_frame_overflow(frames, cell, rerender, cell_pivot)
+    # Each clip is checked against its own cell (ticket 0303): the overflow of a frame in a clip with a larger cell, and a drift
+    # in a stationary clip, are that clip's.
+    overflow: list[Finding] = []
+    for entry in document["clips"]:
+        clip_cell, clip_pivot = _clip_cell(document, entry)
+        overflow += check_frame_overflow([f for f in frames if f.clip == entry["name"]], clip_cell, rerender, clip_pivot)
+    findings = (check_pivot_drift(frames, stationary, drift) + overflow
                 + check_frame_count(frames, expected, fix, list(document["directions"])) + check_empty_frame(frames, fix))
     for finding in findings:
         if finding.position is None:
@@ -231,8 +288,6 @@ def add_depth_atlas(run: StageRun, order: int | None) -> None:
     too when given, a Wearable's)."""
     from PIL import Image
 
-    from kiripix.ops import pack_atlas
-
     sheet: dict[str, Any] = json.loads((run.output_dir / SHEET_FILE).read_text(encoding="utf-8"))
     document: dict[str, Any] = json.loads((run.upstream["render"] / RENDER_FILE).read_text(encoding="utf-8"))
     frames = {(c["name"], d, int(f["index"])): f for c in document["clips"] for d, listed in c["directions"].items()
@@ -241,7 +296,10 @@ def add_depth_atlas(run: StageRun, order: int | None) -> None:
     cell_pivot = (int(sheet["pivot"]["x"]), int(sheet["pivot"]["y"]))
     encoded: list[Any] = []
     pivots: list[tuple[int, int]] = []
+    cells: list[Cell] = []
     for clip in sheet["clips"]:
+        own: Cell = (((int(clip["cell"]["width"]), int(clip["cell"]["height"])), (int(clip["pivot"]["x"]), int(clip["pivot"]["y"])))
+                     if "cell" in clip else (cell, cell_pivot))
         for direction, listed in clip["directions"].items():
             for entry in listed:
                 run.check_cancel()
@@ -251,7 +309,8 @@ def add_depth_atlas(run: StageRun, order: int | None) -> None:
                 rgba[..., 0], rgba[..., 1], rgba[..., 3] = depth >> 8, depth & 255, 255
                 encoded.append(rgba)
                 pivots.append((int(np.floor(found["pivot"][0] + 0.5)), int(np.floor(found["pivot"][1] + 0.5))))
-    atlas, rects = pack_atlas(encoded, pivots, cell, int(sheet["columns"]), cell_pivot)
+                cells.append(own)
+    atlas, rects, _ = pack_by_cell(encoded, pivots, cells, (cell, cell_pivot))
     expected = [(e["rect"]["x"], e["rect"]["y"], e["rect"]["width"], e["rect"]["height"])
                 for c in sheet["clips"] for listed in c["directions"].values() for e in listed]
     if rects != expected:

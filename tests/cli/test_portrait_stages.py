@@ -297,3 +297,32 @@ def test_a_face_region_makes_register_and_what_follows_stale(project: Kiripix) -
     statuses = stage_statuses(project)
     assert [statuses[f"portrait.sanjay/{s}"] for s in ("cutout", "register", "fit", "palette", "finish")] == [
         "done", "stale", "stale", "stale", "stale"]
+
+
+def test_a_face_edit_makes_register_stale_and_not_needs_review(project: Kiripix) -> None:
+    """The Owner's rule (2026-11-18, ticket 0298): a `face` change is stale only, for the UI reruns `register` each stroke."""
+    make_set(project, {"happy": with_face(neutral(), 11)})
+    build(project, "register")
+    assert stage_statuses(project)["portrait.sanjay/register"] == "done"
+
+    entry = json.dumps({"decision": "face", "data": {"points": FACE_POLYGON, "radius": 6}})
+    project.json("decide", PORTRAIT, "register", "--decision", entry)
+
+    shown = project.json("show", PORTRAIT)["data"]["stages"]
+    register = next(s for s in shown if s["stage"] == "register")
+    assert register["status"] == "stale" and register["status"] != "needs-review"
+
+
+def test_show_lists_each_emotions_built_images_per_stage(project: Kiripix) -> None:
+    make_set(project, {"happy": with_face(neutral(), 11)})
+    before = project.json("show", PORTRAIT)["data"]["emotions"][0]["images"]
+    # drawing the face built `source` and `cutout`; `register` is not built, so it lists only the input it will use
+    assert [(i["stage"], i["image"] is None) for i in before] == [("source", False), ("cutout", False), ("register", True)]
+
+    build(project, "register")
+    images = {i["stage"]: i for i in project.json("show", PORTRAIT)["data"]["emotions"][0]["images"]}
+    assert images["cutout"]["image"].endswith("work/cutout/emotions/happy.png")
+    assert images["register"]["image"].endswith("work/register/emotions/happy.png")
+    assert images["register"]["input_image"] == images["cutout"]["image"]
+    assert images["fit"]["image"] is None  # not built yet: only its input is listed
+    assert (project.cwd / images["register"]["image"]).is_file()

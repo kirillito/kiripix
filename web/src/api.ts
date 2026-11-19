@@ -91,6 +91,15 @@ export interface FileEntry {
   size?: number;
 }
 
+export interface HeldThing {
+  thing: string;
+  variants: FileEntry[];
+  current: FileEntry | string | null;
+  materials: { name: string; number: number; index: number | null }[] | null;
+  materials_known: boolean;
+  attached_by: string[];
+}
+
 export interface ShowData {
   asset: string;
   kind: string;
@@ -112,11 +121,19 @@ export interface ShowData {
     variants: FileEntry[];
     images?: { stage: string; image: string | null; input_image: string | null }[]; // per Stage, this state's built images
   }[]; // a Prop's other states
-  emotions?: { emotion: string; picked: string | null; made_on: string | null; current: boolean; variants: FileEntry[] }[]; // a portrait's emotions
+  emotions?: {
+    emotion: string;
+    picked: string | null;
+    made_on: string | null;
+    current: boolean;
+    variants: FileEntry[];
+    images?: { stage: string; image: string | null; input_image: string | null }[]; // per Stage, this emotion's built images
+  }[]; // a portrait's emotions
   looks?: { look: string; variants: FileEntry[]; picked: string | null }[]; // a room's Looks that have a stored edit
   sheets?: (FileEntry & { png_count: number | null })[]; // a sprite's imported sheets, named by hash
   tile?: number; // the Project's tile, px (`project.tile`)
   wearables?: { asset: string; order: number }[]; // a body's Wearables, by `order`
+  things?: HeldThing[]; // a character's held things (ticket 0301)
   stages: StageDetail[];
 }
 

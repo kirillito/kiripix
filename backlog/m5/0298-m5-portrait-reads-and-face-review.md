@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: core-engineer
 type: ticket
@@ -20,6 +20,19 @@ Left by the 2026-11-18 batch review of [0243](0243-m5-portrait-recipe.md) and [0
 
 ## Acceptance criteria
 
-- [ ] CLI seam: `show` of a built portrait lists each emotion's image per Stage; contract sample updated.
-- [ ] The `face` rule decided and tested at the CLI seam.
-- [ ] `uv run lint-imports` and `uv run mypy` pass.
+- [x] CLI seam: `show` of a built portrait lists each emotion's image per Stage; contract sample updated.
+- [x] The `face` rule decided and tested at the CLI seam.
+- [x] `uv run lint-imports` and `uv run mypy` pass.
+
+## Result
+
+- **`show` per-emotion images:** each entry of `data.emotions` has `images`: a list of `{stage, image, input_image}` (the same
+  shape as a Prop state's `StateOut.images`), one per Stage that has an image and that has the emotion's file
+  (`<stage>/emotions/<id>.png`) as its own output (`image`) or as the input it is made from (`input_image`). Either may be null;
+  a Stage with neither isn't listed. `kiripix/commands/show.py` (`_emotion_images`). No Stage `version` bump.
+- **The `face` rule (Owner's decision, 2026-11-18): stale only.** A `face` edit makes `register` and what follows stale, and does
+  not put `register` in needs-review: the UI reruns `register` after each stroke, and the portrait is being redesigned around
+  whole-body emotions (0241). 0243's line was changed to say so. Pinned by
+  `test_a_face_edit_makes_register_stale_and_not_needs_review` in `tests/cli/test_portrait_stages.py`.
+- Tests: `test_show_lists_each_emotions_built_images_per_stage` (same file); the contract sample in
+  `tests/cli/test_contract.py` (`test_a_portraits_emotions_validate`) checks `images` is present.

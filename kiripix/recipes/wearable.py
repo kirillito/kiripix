@@ -105,7 +105,7 @@ WEARABLE = KindSpec(
             name="sheet",
             description="Packs the frames into colour, normal and depth atlases on the body's cell, pivot and frame layout, so "
                         "that a Wearable lies pixel for pixel on the body, and records its default stacking order.",
-            version=2,  # the first sheet that builds anything (ticket 0293)
+            version=3,  # each clip's `cell` and `pivot` in sheet.json (ticket 0303); 2: the first sheet that builds anything (0293)
             inputs=StageInputs(upstream=["finish", "render"]),
             params=(ORDER,),
             checks=_SHEET.checks,
@@ -115,7 +115,7 @@ WEARABLE = KindSpec(
             name="export",
             description="The Wearable's three atlases and wearable.json (its body, stacking order, parts and ramps), then a "
                         "SpriteFrames, a CanvasTexture and a scene for the game.",
-            version=2,  # the first export that builds anything (ticket 0293)
+            version=3,  # wearable.json's clips carry `cell` and `pivot` (ticket 0303); 2: the first export that builds anything (0293)
             inputs=StageInputs(upstream=["sheet", "palette"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),
                     CheckSpec(code="wearable.body_not_exported",

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 type: spec
 parent: 0236-m5-the-games-next-needs.md
@@ -48,3 +48,9 @@ Decision is exported exactly as now: no state nodes, and `prop.json` is unchange
 
 - Frames between states (the bin falling): animation authoring is out (spec §1). The game tweens.
 - A state that's a Loop (a flickering sign): a frame Loop is a room's. "A Prop with frames" stays out (0183).
+
+## Result (2026-11-18)
+
+Closed: its work tickets [0258](0258-m5-prop-state-decision-and-import.md), [0259](0259-m5-prop-stages-per-state.md),
+[0260](0260-m5-export-prop-states.md), [0261](0261-m5-ui-prop-states.md) and the follow-up
+[0288](0288-m5-a-prop-state-rebuilds-alone.md) are done.

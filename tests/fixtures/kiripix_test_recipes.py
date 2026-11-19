@@ -640,6 +640,7 @@ if Path("inpainter-b").exists():
 # - blender-material-split: while it exists, the material pass is 1 on the left half of a frame and 2 on the right (else all 1);
 # - blender-material-frames: JSON {"clip/dir/index" | "clip/dir" | "*": [material indexes]}, what each frame's material pass holds;
 # - blender-wearable-reach: JSON {<clip>: [left, top, right, bottom]}, how far a Wearable's frames reach (ticket 0291; else inside the cell);
+# - blender-thing-materials: JSON {thing id: material name} for a held thing's one material (default `metal`);
 # - blender-wearable-materials: JSON list of the Wearable's material names (default hat), numbered after the body's;
 # - blender-depth-step: an integer; the depth pass is 16 bit, with the right half of a frame that many units farther (ticket 0247);
 # - hold-blender: while it exists, a call marks `blender-holding` and waits in chunks, checking the cancel token.
@@ -843,7 +844,13 @@ class FakeBlender:
         if args.get("wearable"):  # the Wearable's own materials, numbered after the body's (ticket 0291)
             worn = json.loads(Path("blender-wearable-materials").read_text("utf-8")) if Path("blender-wearable-materials").exists() else ["hat"]
             materials = [{"index": i, "name": n} for i, n in enumerate(sorted(worn), start=len(names) + 1)]
-        return {"device": device, "depth_range": [8.0, 12.0], "materials": materials, "frames": frames}
+        found: dict[str, Any] = {"device": device, "depth_range": [8.0, 12.0], "materials": materials, "frames": frames}
+        if args.get("things"):  # each held thing has the one material `metal`, numbered after the body's (ticket 0302)
+            # or, with `blender-thing-materials` (JSON {thing: material name}), the name given there (ticket 0305)
+            named = json.loads(Path("blender-thing-materials").read_text("utf-8")) if Path("blender-thing-materials").exists() else {}
+            found["things"] = [{"thing": t["id"], "materials": [{"index": len(names) + n, "name": named.get(t["id"], "metal")}]}
+                               for n, t in enumerate(args["things"], start=1)]
+        return found
 
     @staticmethod
     def _read_actions(path: Path) -> dict[str, Any]:

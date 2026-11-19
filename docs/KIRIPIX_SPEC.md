@@ -1,8 +1,8 @@
 # Kiripix — Pixel Asset Studio
 
 Spec v0.5, 2026-11-08. Status: reviewed with the owner; M0 to M3 are done, every M4 ticket is done and M4 waits for its gate
-([0142](../backlog/m4/0142-m4-gate.md)), and M5 and M6 are split into tickets in `backlog/m5/` and `backlog/m6/` (M5 re-planned
-on 2026-11-16 from the game's list, [0236](../backlog/m5/0236-m5-the-games-next-needs.md)).
+([0142](../backlog/m4/0142-m4-gate.md)), and M5 is split into tickets in `backlog/m5/` (re-planned on 2026-11-16 from the game's list,
+[0236](../backlog/m5/0236-m5-the-games-next-needs.md)). M6 was re-planned on 2026-11-18 and isn't split yet (§14).
 
 The vocabulary is defined in [GLOSSARY.md](../GLOSSARY.md), and the decisions behind this spec are recorded in
 [docs/adr/](adr/). Where they disagree with this spec, fix the spec.
@@ -340,7 +340,7 @@ because it must share the room's Grid transform, palette mapping and Layers exac
 
 **Making one.**
 - A `look` Decision gives the Look an ID and, optionally, a Condition.
-- Its edit is added with `kiripix import <id> <png> --look <look>`. From M6, `gen <id> --look <look>` makes one with an
+- Its edit is added with `kiripix import <id> <png> --look <look>`. Once generation lands (deferred from M6, §14), `gen <id> --look <look>` makes one with an
   edit prompt ("Edit this image. Keep everything exactly the same except: …"). An edit can also be painted by hand on a
   copy of the Source.
 - **Which edits are accepted** (M5, [0232](../backlog/m5/0232-m5-look-edit-of-a-piece-or-crop.md)): an edit of the room's
@@ -628,7 +628,7 @@ review, so a swap can never change an exported asset silently.
 | Background matting | BiRefNet | Chroma key |
 | Depth (parallax, normals) | Depth Anything V2 (the small model; check licences of larger ones) | Manual depth planes |
 | Inpainting (plate holes) | LaMa | OpenCV Telea or PatchMatch for small holes (OpenCV isn't a dependency yet); an edit API for large ones |
-| Image-to-3D (optional) | Decide at M6, after testing which fit 8 GB, beside Providers (deferred from M3) | Bought or hand-made models |
+| Image-to-3D (optional) | Decide with Providers (deferred from M3, then from M6), after testing which fit 8 GB | Bought or hand-made models |
 
 ONNX Runtime with CUDA is preferred to keep installs small, with PyTorch where a model needs it. The core works with
 no GPU: Runners run on CPU, slower. Because results are pinned, the device that produced one doesn't matter.
@@ -975,7 +975,7 @@ DEC-048): rooms grow past one screen in both directions, and a battle area in th
 - A trial of a room extended in both directions, taken to export
   ([0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md)): the corner join, SAM 2 at that size, the collision piece count.
 - `extend`, a preprocessing tool before `source`: Kiripix writes the canvas for the next piece, the Owner makes the piece in the
-  image model's own UI (the budget is $0), and Kiripix joins it. No Provider is needed; from M6 `gen` may drive it. The trial
+  image model's own UI (the budget is $0), and Kiripix joins it. No Provider is needed; once generation lands (deferred from M6), `gen` may drive it. The trial
   [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md) found that the join needs three steps. Register: the model redraws
   the kept strip and scales the whole piece by up to about 1 %, so a plain shift leaves a step. Tone: the redrawn strip's
   brightness differs, so match it row by row. Seam: take the least-difference path through the overlap, with a short blend. A
@@ -1056,19 +1056,48 @@ The two bodies are base Models built by Claude in headless Blender
 ([0164](../backlog/m4/0164-m4-claude-built-base-models-trial.md)), and a character made from a base shares its rig and clips,
 so it needs no Mixamo round trip of its own ([0165](../backlog/m4/0165-m4-characters-share-a-base.md), built in M4; §6.3).
 
-**M6: generation and agents.** Moved from M4 on 2026-11-08, and from M5 on 2026-11-11.
-- Providers (one API provider plus PixelLab), prompt templates, the style bible, the cost ledger and budget.
-- The MCP adapter, with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
-  ([0062](../backlog/m2/0062-m2-claude-first-pass-trial.md)).
-- `gen --look` ([0143](../backlog/m6/0143-m6-gen-a-look-edit.md)), and `gen` driving `extend`: the Owner's aim (2026-11-16,
-  after [0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md)) is that Kiripix writes the prompt, generates the base
-  image, writes a canvas per side, has the image API paint each, repeats, and joins, with the Owner approving intermediate
-  results.
-- The image-to-3D trial ([0144](../backlog/m6/0144-m6-image-to-3d-trial.md)).
+**M6: rooms at chapter scale, style that holds, NPCs from bases.** Re-planned by the Owner on 2026-11-18, before its
+tickets are split. The game's top risk is room throughput: its M15–M16 needs about 30 Chapter 1 rooms at final art, at about
+one room per game milestone today, and its M17 needs the chapter's NPCs. M6 serves those needs. Generation and agents move
+out (below). Not split into tickets yet; the Owner's notes, for planning:
+- **Rooms at chapter scale.** Three parts:
+  - **A review queue:** every `needs-review` Decision and failed Check across all Assets, in one keyboard flow, so the Owner
+    can approve many rooms' first passes in one sitting.
+  - **First passes without the Owner:** the room first-pass workflow
+    ([0249](../backlog/m5/0249-m5-room-first-pass-workflow.md)), run over a list of rooms. Each room stops where it needs the
+    Owner, and the review queue collects those stops.
+  - **The batch view for whole districts**, moved here from Later: a chapter's rooms are coming in.
+- **A style match Check across Kinds.** The game's high risk is that 3D characters, painted rooms and imported sprites don't
+  match. The Check scores an Asset against reference Assets the Owner picks: palette use, the range of value and saturation,
+  outline density, pixel scale and light direction. It uses deterministic Ops. Principle 3 ("enforced by checks, not by
+  memory"), and needed before generation makes Assets in bulk.
+- **NPC variants from a base:** a background NPC made from a base character ([0165](../backlog/m4/0165-m4-characters-share-a-base.md)),
+  its layers ([0152](../backlog/m5/0152-m5-character-layers.md)) and its ramp swaps, with no new render. It waits for
+  character layers to land.
+- **Maybe the tileset recipe** (estimated below), decided when the tileset trial
+  ([0251](../backlog/m5/0251-m5-tileset-trial.md)) reports. If the image model can paint matching tiles, the game's M10 test
+  of tiles against painting needs the recipe before its M10.
+
+**Generation and agents, deferred** (moved out of M6 by the Owner on 2026-11-18; moved from M4 on 2026-11-08 and from M5 on
+2026-11-11). Not in a milestone yet. Each part, with the Owner's view:
+- **The MCP adapter** (§10.6), with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
+  ([0062](../backlog/m2/0062-m2-claude-first-pass-trial.md)). Its value next to the CLI is unproven: agents already drive
+  Kiripix through the CLI and `describe`.
+- **PixelLab:** delayed, because its sprite generation has been unsatisfactory so far.
+- **An image API Provider** (Nano Banana is the candidate) with prompt templates, the style bible, the cost ledger and the
+  budget: nice to have, not urgent. It brings `gen --look` ([0143](../backlog/m6/0143-m6-gen-a-look-edit.md)), `gen` for a
+  portrait's emotions and a Prop's states, and `gen` driving `extend`. The Owner's aim for `extend` (2026-11-16, after
+  [0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md)) is that Kiripix writes the prompt, generates the base image,
+  writes a canvas per side, has the image API paint each, repeats, and joins, with the Owner approving intermediate results.
+- **The image-to-3D trial** ([0144](../backlog/m6/0144-m6-image-to-3d-trial.md)), which compares local Runners with a
+  Provider, so it goes with the Provider.
+- **A trial of local generation** (inpainting and outpainting for rooms, portraits) as a Runner, to keep `gen` at $0. The
+  Owner doubts it gives good results on this machine, and expects it to need at least 16 GB of VRAM (the machine has 8 GB).
+  Worth a trial once higher priorities are done, not before.
 
 **Later:** side view (side-view Masks: one-way, ladder; the parallax split with depth; platform reachability; the lowest
-priority, moved here from M7 on 2026-11-11), tileset recipe (autotile rules; see below; its trial is in M5), VFX sheets, a batch view for
-whole districts (the status board lists every Asset by Stage already; revisit when a chapter's rooms are in), normal maps for
+priority, moved here from M7 on 2026-11-11), tileset recipe if M6 doesn't take it (autotile rules; see below; its trial is in
+M5), VFX sheets (the game's battle skills and its M18), normal maps for
 painted backgrounds (a trial in M5), "promote to Prop" for a room's foreground Layer, renaming exported
 IDs with aliases, custom named Masks (`cover`, `high`, `water`…) painted like `solid` and exported as images beside it, with
 no meaning in Kiripix (as areas have none), for terrain the game reads on its grid (filed when a room needs one). (Battle backgrounds were dropped on 2026-11-08: the game fights in the room, and its DEC-048 rejects
@@ -1108,8 +1137,8 @@ answers that first, before the game's M09.
    are sized in scene units and break up at 52 px. Trial [0106](../backlog/m3/0106-m3-outline-method-trial.md) confirmed it on a
    real character (`character.mc02`, 2026-11-11): the silhouette is kept and inner lines are out. On the idle it has no
    flicker on still parts; inner lines would add a third more line pixels.
-4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (M6, deferred from M3).
-5. Which API provider comes first (M6).
+4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (with Providers; deferred from M3, then from M6).
+5. Which API provider comes first (with Providers, deferred from M6). Nano Banana is the candidate (the Owner, 2026-11-18).
 6. Licence for Kiripix itself, if it's ever published.
 7. ~~How a multi-screen room is made~~: decided 2026-11-06 by the owner, after the trial
    [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects
@@ -1206,6 +1235,9 @@ answers that first, before the game's M09.
 
 ## Changes since v0.4
 
+- M6 re-planned, 2026-11-18, by the Owner: rooms at chapter scale (a review queue, first passes without the Owner, the batch
+  view), a style match Check across Kinds, NPC variants from a base, and maybe the tileset recipe. Generation and agents (MCP,
+  PixelLab, an image API Provider, image-to-3D, a local generation trial) move out of M6 and wait without a milestone.
 - M4, 2026-11-14: a character can be made from a base character (ADR 0012, 0165), and a Model can be built from a parameter
   file by a generator of the Project's own (0224); both in §6.3. `kiripix.toml` is at schema version 6
   (`[character.generators]`), `rig.json` at 2 (each bone's parent, and the rig's height).

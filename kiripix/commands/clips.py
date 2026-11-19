@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from kiripix.checks import Finding, Position
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import clipcopy
+from kiripix.core import clipcopy, held
 from kiripix.core.assets import is_asset_id, load_asset
 from kiripix.core.project import find_project
 
@@ -77,6 +77,16 @@ def clips_copy(arguments: CopyInput, context: Context) -> Outcome[CopyData]:
                         fix=f"kiripix clips copy {asset.id} --from {other.id} --clip {name} --replace",
                         position=Position(asset=asset.id, stage=clipcopy.CLIPS_STAGE))
                 for name in result.skipped]
+    have = held.asset_things(asset)
+    for thing in sorted({str(a["thing"]) for d in result.decisions for a in d.data.get("attach", [])} - have):
+        clips_with = sorted(str(d.data["name"]) for d in result.decisions
+                            if any(a["thing"] == thing for a in d.data.get("attach", [])))
+        findings.append(Finding(
+            code="clips.copy_thing_missing", severity="warning",
+            message=f"the copied clip {', '.join(clips_with)} holds the thing {thing}, which {asset.id} doesn't have, so "
+                    f"`clips` fails clips.unknown_thing until it does",
+            owner_action=f"Import the thing: kiripix import {asset.id} <file> --role thing --thing {thing}",
+            position=Position(asset=asset.id, stage=clipcopy.CLIPS_STAGE)))
     return Outcome(CopyData(asset=asset.id, source_asset=other.id, dry_run=arguments.dry_run, copied=result.copied,
                             replaced=result.replaced, skipped=result.skipped,
                             files=[project.relative(path) for path in files]), findings)

@@ -208,6 +208,9 @@ export function App() {
   const isPortrait = kind === PORTRAIT_KIND;
   const emotionShown = isPortrait ? show?.emotions?.find((entry) => entry.emotion === selectedEmotion) : undefined;
   const activeEmotion = emotionShown ? emotionShown.emotion : null; // an emotion that was removed falls back to the neutral
+  // The emotion or state the screen is on, whose Variants and Pick are its own (null: the Asset's); one helper for each use.
+  const ownShown = emotionShown ?? stateShown;
+  const ownTarget: { emotion?: string; state?: string } = activeEmotion ? { emotion: activeEmotion } : activeState ? { state: activeState } : {};
   useEffect(() => {
     if (!kind || recipes[kind]) return;
     call<DescribeData>("describe", { target: kind })
@@ -352,10 +355,17 @@ export function App() {
   // A Mask edit shows once the Stage has run again, so with "rebuild" on the same action runs it, as a refresh would.
   // Only a `click` asks for a Runner's result, hence `rerun` for it alone: no other edit may re-run a pinned call (ADR 0002).
   // It can be cancelled, but it doesn't make the screen busy: the queue keeps quick strokes in order, and none is dropped.
+  const rebuildOn = [
+    [isMasks, rebuild],
+    [isLooks, looksRebuild],
+    [isLoops, loopsRebuild],
+    [isFace, faceRebuild],
+    [isLayers, layersRebuild],
+  ].find(([screen]) => screen)?.[1] ?? false;
   const rebuilt = useCallback(
     async <T,>(result: Envelope<T>, rerun = false, force = false): Promise<Envelope<unknown>> => {
       // `force`: a removed Layer is taken out by a plain `run layers`, with no rerun and no accept (ticket 0091).
-      if (!(force || (isMasks ? rebuild : isLooks ? looksRebuild : isLoops ? loopsRebuild : isFace ? faceRebuild : isLayers && layersRebuild)) || !result.ok) return result;
+      if (!(force || rebuildOn) || !result.ok) return result;
       const id = crypto.randomUUID();
       setRebuilding(id);
       try {
@@ -366,7 +376,7 @@ export function App() {
         setProgress(null);
       }
     },
-    [asset, current, isMasks, isLayers, isLooks, isLoops, isFace, faceRebuild, rebuild, layersRebuild, looksRebuild, loopsRebuild],
+    [asset, current, rebuildOn],
   );
   const decideMask = useCallback(
     (name: string, data: Record<string, unknown>, settled?: () => void) => {
@@ -491,20 +501,15 @@ export function App() {
     (variant: string) => {
       if (!busy)
         void perform(
-          () => call("pick", { asset, variant, ...(activeState ? { state: activeState } : {}), ...(activeEmotion ? { emotion: activeEmotion } : {}) }),
+          () => call("pick", { asset, variant, ...ownTarget }),
           activeEmotion ? `Picking an image of ${activeEmotion}` : activeState ? `Picking a Variant of ${activeState}` : "Picking a Variant",
         );
     },
-    [activeEmotion, activeState, asset, busy, perform],
+    [activeEmotion, activeState, asset, busy, perform, ownTarget.emotion, ownTarget.state],
   );
-  const importFiles = async (files: File[], role: ImportRole = "variant") => {
+  const importFiles = async (files: File[], role: ImportRole = "variant", extra: object = {}) => {
     for (const file of files) {
-      const input =
-        activeEmotion && role === "variant"
-          ? { asset, emotion: activeEmotion }
-          : activeState && role === "variant"
-            ? { asset, state: activeState }
-            : { asset, role };
+      const input = role === "variant" && ownShown ? { asset, ...ownTarget } : { asset, role, ...extra };
       await perform(() => callWithFile("import", input, "file", file), `Importing ${file.name}`);
     }
   };
@@ -599,13 +604,8 @@ export function App() {
   const names = show?.stages.map((entry) => entry.stage) ?? [];
   const following = current ? names[names.indexOf(current) + 1] : undefined;
 
-  const variants = emotionShown ? emotionShown.variants : stateShown ? stateShown.variants : show?.variants;
-  const gridShow =
-    show && emotionShown
-      ? { ...show, variants: emotionShown.variants, picked: emotionShown.picked }
-      : show && stateShown
-        ? { ...show, variants: stateShown.variants, picked: stateShown.picked }
-        : show;
+  const variants = ownShown ? ownShown.variants : show?.variants;
+  const gridShow = show && ownShown ? { ...show, variants: ownShown.variants, picked: ownShown.picked } : show;
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (isTyping(event.target)) return;
@@ -767,7 +767,8 @@ export function App() {
             refreshes={data.refreshes}
             disabled={busy}
             onPick={pick}
-            onImport={(files, role) => void importFiles(files, role)}
+            onImport={(files, role, extra) => void importFiles(files, role, extra)}
+            onRemoveThing={(thing) => void perform(() => call("thing-remove", { asset, thing }), `Removing the thing ${thing}`)}
             decide={decideCharacter}
             onOpen={(id) => open(id, null)}
           />

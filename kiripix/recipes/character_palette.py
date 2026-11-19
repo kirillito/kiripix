@@ -80,6 +80,32 @@ def palette_generated_params(frames: str) -> Callable[[StageRun], dict[str, Scal
     return read
 
 
+def material_indexes(document: dict[str, Any]) -> dict[str, list[int]]:
+    """Every material name of `render.json` and its indexes in the material pass: the Model's own first, then the held things'
+    (ticket 0305). A name is one entry: a thing's material named as one of the Model's, or of another thing, joins it."""
+    found: dict[str, list[int]] = {}
+    for entry in document.get("materials", []):
+        found.setdefault(str(entry["name"]), []).append(int(entry["index"]))
+    for thing in document.get("things", []):
+        for entry in thing.get("materials", []):
+            index = int(entry["index"])
+            if index not in found.setdefault(str(entry["name"]), []):
+                found[str(entry["name"])].append(index)
+    return found
+
+
+def _thing_indexes(document: dict[str, Any]) -> list[int]:
+    return sorted(int(m["index"]) for thing in document.get("things", []) for m in thing.get("materials", []))
+
+
+def _only(frame: np.ndarray, label: np.ndarray, indexes: list[int], keep: bool) -> np.ndarray:
+    """The frame with only the pixels of `indexes` (`keep`) or all but them left opaque; the others are (0, 0, 0, 0)."""
+    out = frame.copy()
+    gone = ~np.isin(label, np.array(indexes, dtype=np.int64)) if keep else np.isin(label, np.array(indexes, dtype=np.int64))
+    out[gone] = 0
+    return out
+
+
 def _colour_files(document: dict[str, Any]) -> list[tuple[str, str, int, str]]:
     """Every colour frame, as (clip, direction, index, file relative to the pass folder's parent)."""
     found = []
@@ -223,7 +249,7 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
     files = _colour_files(document)
     palette = palette_rgb(run)
     count = int(run.params["colors"])
-    materials = {str(m["name"]): int(m["index"]) for m in document.get("materials", [])}
+    materials = material_indexes(document)
     table = _table(run)
     written = str(param_or_generated(run, "parts", _generated(document)) or "")
     specs = parse_parts(written, list(materials), int(document.get("bands", 3)), run.asset_id, table)
@@ -238,7 +264,7 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
             raise StageFailure(f"part_lines needs a ramp of at least 2 colours (one for the lines), and the Project's ramp "
                                f"table has {short[0]!r} with fewer", code="palette.parts_invalid",
                                fix=f"kiripix set {run.asset_id} palette part_lines=false")
-    parts = {s.name: [materials[m] for m in s.materials] for s in specs}
+    parts = {s.name: sorted({i for m in s.materials for i in materials[m]}) for s in specs}
     fitted = [s for s in specs if s.rgb is None]
     shared = [s for s in specs if s.rgb is not None]
     reserved = _reserved(table) if specs else np.zeros((0, 3), dtype=np.uint8)
@@ -247,14 +273,18 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
     free = ~(palette[:, None, :] == reserved[None, :, :]).all(axis=2).any(axis=1) if len(reserved) else np.ones(len(palette),
                                                                                                                 bool)
     claimed = sorted(i for indexes in parts.values() for i in indexes)
+    # A held thing's materials (ticket 0305) that no part names take colours of their own, apart from the body's: the body's
+    # fixed colours are chosen from the body's pixels alone, so a thing added later never moves them.
+    thing_fixed = [i for i in _thing_indexes(document) if i not in claimed]
+    layered = bool(specs) or bool(thing_fixed)
     frames: list[np.ndarray] = []
     labels: list[np.ndarray] = []
-    label_files = _material_files(document) if specs else []
+    label_files = _material_files(document) if layered else []
     for number, (_clip, _direction, _index, name) in enumerate(files):
         run.check_cancel()
         run.progress(number, len(files) * 2, "reading frames")
         frames.append(read_rgba(render / name))
-        if specs:
+        if layered:
             try:
                 labels.append(read_labels(render / label_files[number]))
             except OSError:
@@ -263,7 +293,7 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
     run.check_cancel()
     try:
         if specs:
-            counted = [_fixed_only(f, lab, claimed) for f, lab in zip(frames, labels, strict=True)]
+            counted = [_fixed_only(f, lab, claimed + thing_fixed) for f, lab in zip(frames, labels, strict=True)]
             has_fixed = any(bool((c[..., 3] == 255).any()) for c in counted)
             # `colors` is a ceiling: the ramps take their colours out of the same palette, so the fixed ones leave them room
             available = palette[free]
@@ -278,7 +308,8 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
         else:
             allowed = palette if exclude is None or not len(exclude) else palette[
                 ~(palette[:, None, :] == exclude[None, :, :]).all(axis=2).any(axis=1)]
-            subset = palette_subset(frames, allowed, count)
+            body = [_only(f, lab, thing_fixed, False) for f, lab in zip(frames, labels, strict=True)] if thing_fixed else frames
+            subset = palette_subset(body, allowed, count)
     except ValueError as error:
         raise StageFailure(f"can't choose the character's colours: {error}") from None
     ramps: dict[str, np.ndarray] = {s.name: np.array(s.rgb, dtype=np.uint8).reshape(-1, 3) for s in shared}
@@ -291,6 +322,23 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
                                code="palette.ramp_unavailable",
                                fix=f"kiripix set {run.asset_id} palette colors={max(1, count - 1)}") from None
     ramps = {s.name: ramps[s.name] for s in specs}  # in the order of `parts`
+    thing_subset = np.zeros((0, 3), dtype=np.uint8)
+    thing_shares = False
+    if thing_fixed and any(bool(np.isin(lab, np.array(thing_fixed)).any()) for lab in labels):
+        # after the body's colours and the ramps, from what no other colour of the character or the table uses
+        taken_rgb = np.concatenate([subset, reserved, *ramps.values()]).reshape(-1, 3).astype(np.uint8)
+        left = palette[~(palette[:, None, :] == taken_rgb[None, :, :]).all(axis=2).any(axis=1)] if len(taken_rgb) else palette
+        if len(left) and exclude is not None and len(exclude):
+            left = left[~(left[:, None, :] == exclude[None, :, :]).all(axis=2).any(axis=1)]
+        try:
+            if len(left):
+                only = [_only(f, lab, thing_fixed, True) for f, lab in zip(frames, labels, strict=True)]
+                thing_subset = palette_subset(only, left, min(count, len(left)))
+            else:  # no colour is left: the thing shares the body's fixed colours, and `check` says so
+                thing_shares = True
+                thing_subset = subset if len(subset) else palette[free]
+        except ValueError as error:
+            raise StageFailure(f"can't choose the held things' colours: {error}") from None
     # the frames are mapped onto each ramp without its first colour, which only the inner lines use
     used = {name: ramp[line:] for name, ramp in ramps.items()}
     breaks = {s.name: lightness_breaks(frames, labels, parts[s.name], s.steps - line) for s in shared}
@@ -299,11 +347,17 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
         run.check_cancel()
         run.progress(len(files) + number, len(files) * 2, f"mapping {clip}/{direction}/{index:03d}")
         try:
+            held = _only(frame, labels[number], thing_fixed, True) if thing_fixed else None
+            if held is not None:
+                frame = _only(frame, labels[number], thing_fixed, False)
             if specs:
                 mapped = quantize_by_part(frame, labels[number], parts, used, subset, dither, strength, breaks=breaks)
                 cleaned = remove_orphans_by_part(mapped, labels[number], parts, orphans)
             else:
                 cleaned = remove_orphans(quantize(frame, subset, dither, strength), orphans)
+            if held is not None and bool((held[..., 3] == 255).any()):
+                layer = remove_orphans(quantize(held, thing_subset, dither, strength), orphans)
+                cleaned[layer[..., 3] == 255] = layer[layer[..., 3] == 255]
         except ValueError as error:
             raise StageFailure(f"{clip}/{direction} frame {index} can't be mapped: {error}") from None
         target = run.output_dir / name
@@ -317,10 +371,15 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
                   "shared": s.rgb is not None, "indexes": _indexes(ramps[s.name], palette, taken),
                   "rgb": [[int(c) for c in rgb] for rgb in ramps[s.name]], "hex": [_hex(rgb) for rgb in ramps[s.name]]}
                  for place, s in enumerate(specs)]
-    (run.output_dir / PALETTE_FILE).write_text(
-        json.dumps({"schema_version": PALETTE_SCHEMA_VERSION, "colors": colours, "parts": described, "part_lines": lines,
-                    "table": table},
-                   indent=2) + "\n", encoding="utf-8")
+    record: dict[str, Any] = {"schema_version": PALETTE_SCHEMA_VERSION, "colors": colours, "parts": described,
+                              "part_lines": lines, "table": table}
+    if len(thing_subset):  # additive keys, present only when a held thing has colours outside every part (ticket 0305)
+        record["thing_colors"] = [] if thing_shares else [
+            {"index": i, "rgb": [int(c) for c in rgb], "hex": _hex(rgb)}
+            for i, rgb in zip(_indexes(thing_subset, palette, taken), thing_subset, strict=True)]
+        record["thing_shares_body"] = thing_shares
+        record["thing_materials"] = thing_fixed
+    (run.output_dir / PALETTE_FILE).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
 def _check_palette(run: StageRun, source: str) -> list[Finding]:
@@ -335,10 +394,11 @@ def _check_palette(run: StageRun, source: str) -> list[Finding]:
         render = json.loads((out / RENDER_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError):
         return []  # nothing built to check
-    colours = [c["rgb"] for c in chosen] + [rgb for part in described for rgb in part["rgb"]]  # what may be in a frame
+    colours = ([c["rgb"] for c in chosen] + [rgb for part in described for rgb in part["rgb"]]
+               + [c["rgb"] for c in document.get("thing_colors", [])])  # what may be in a frame
     subset = np.array(colours, dtype=np.uint8).reshape(-1, 3)
-    materials = {str(m["name"]): int(m["index"]) for m in render.get("materials", [])}
-    parts = {p["name"]: [materials[m] for m in p["materials"] if m in materials] for p in described}
+    materials = material_indexes(render)
+    parts = {p["name"]: sorted({i for m in p["materials"] for i in materials.get(m, [])}) for p in described}
     ramps = {p["name"]: np.array(p["rgb"], dtype=np.uint8).reshape(-1, 3) for p in described}
     if described:  # the table's colours of parts the character lacks are reserved all the same
         ramps.update({str(r["name"]): np.array(r["rgb"], dtype=np.uint8).reshape(-1, 3) for r in document.get("table", [])
@@ -346,6 +406,14 @@ def _check_palette(run: StageRun, source: str) -> list[Finding]:
     label_files = _material_files(render)
     fix = f"kiripix run {run.asset_id} palette --force"
     findings = []
+    if document.get("thing_shares_body"):
+        findings.append(Finding(
+            code="palette.thing_colors_shared", severity="warning",
+            message="the held things' pixels outside every part have no palette colour of their own left, so they use the body's "
+                    "fixed colours; a thing added later may change which colours the body keeps",
+            position=Position(asset=run.asset_id, stage="palette", file=PALETTE_FILE),
+            owner_action="Add colours to the Project palette, or give the thing a row of the Project's ramp table "
+                         "(palette parts=<row>=<thing material>+...)."))
     shared: set[str] = set()
     for number, (clip, direction, index, name) in enumerate(_colour_files(render)):
         path = out / name

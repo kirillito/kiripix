@@ -49,7 +49,7 @@ def test_the_stage_declares_parts_with_an_example(project: Kiripix) -> None:
     assert by_name["parts"]["type"] == "str" and by_name["parts"]["default"] == ""
     assert "skin,hair,jacket+hood,jeans,boots" in by_name["parts"]["description"]
     assert "skin:4" in by_name["parts"]["description"]
-    assert [c["code"] for c in stage["checks"]] == ["palette.off_palette", "palette.ramp_shared"]
+    assert [c["code"] for c in stage["checks"]] == ["palette.off_palette", "palette.ramp_shared", "palette.thing_colors_shared"]
 
 
 def test_each_part_gets_a_ramp_of_its_own_and_no_colour_is_in_two(project: Kiripix) -> None:

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: ui-engineer
 type: ticket
@@ -24,4 +24,13 @@ Left by the batch review of [0245](0245-m5-ui-portrait-screens.md), [0296](0296-
 
 ## Acceptance criteria
 
-- [ ] `npm run build`, `web/e2e/portrait.spec.ts` and `web/e2e/wearables.spec.ts` pass.
+- [x] `npm run build`, `web/e2e/portrait.spec.ts` and `web/e2e/wearables.spec.ts` pass.
+
+## Result
+
+- `useWearables` reads each body's Wearables and `order` from the body's `show` (`wearables`); the Wearable's own `show` is still read for its `sheet.json` and `render.json` paths (the cost and the preview).
+- `emotionImage(show, stage, id)` reads `show.emotions[].images` (0298); the path building is gone, and `ShowData.emotions[].images` is typed in `web/src/api.ts`.
+- The strip shows, for each emotion, each Stage that holds an image of it, with the Stage's status (`emotion-<id>-stages`).
+- `App.tsx`: `ownShown` and `ownTarget` replace the emotion/state cascades in `pick`, `importFiles`, `variants` and `gridShow`; `rebuildOn` replaces the rebuild cascade.
+- `IMAGE_STAGES` is gone: the thumbnail reads `show.stages` in reverse.
+- `npm run build` and both specs pass (run with `--workers=1` under load: with parallel workers on a busy machine three wearables tests timed out waiting for the Stage buttons, and passed alone).

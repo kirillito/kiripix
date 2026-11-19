@@ -1,0 +1,300 @@
+{
+ "mc03_male": {
+  "cells": 928,
+  "unique": 813,
+  "duplicates": 115,
+  "clips": {
+   "attack": {
+    "frames": 19,
+    "cells": 152,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle": {
+    "frames": 16,
+    "cells": 128,
+    "duplicate_within_clip_direction": 115,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle_to_phone_in": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone": {
+    "frames": 27,
+    "cells": 216,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in": {
+    "frames": 13,
+    "cells": 104,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in_to_phone": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out": {
+    "frames": 17,
+    "cells": 136,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out_to_idle": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_to_phone_out": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "run": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "walk": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   }
+  }
+ },
+ "mc03_female": {
+  "cells": 928,
+  "unique": 810,
+  "duplicates": 118,
+  "clips": {
+   "attack": {
+    "frames": 19,
+    "cells": 152,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle": {
+    "frames": 16,
+    "cells": 128,
+    "duplicate_within_clip_direction": 118,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle_to_phone_in": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone": {
+    "frames": 27,
+    "cells": 216,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in": {
+    "frames": 13,
+    "cells": 104,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in_to_phone": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out": {
+    "frames": 17,
+    "cells": 136,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out_to_idle": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_to_phone_out": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "run": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "walk": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   }
+  }
+ },
+ "mc03_male_clothes01": {
+  "cells": 952,
+  "unique": 837,
+  "duplicates": 115,
+  "clips": {
+   "attack": {
+    "frames": 19,
+    "cells": 152,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle": {
+    "frames": 16,
+    "cells": 128,
+    "duplicate_within_clip_direction": 115,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle_to_attack": {
+    "frames": 3,
+    "cells": 24,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle_to_phone_in": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone": {
+    "frames": 27,
+    "cells": 216,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in": {
+    "frames": 13,
+    "cells": 104,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in_to_phone": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out": {
+    "frames": 17,
+    "cells": 136,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out_to_idle": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_to_phone_out": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "run": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "walk": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   }
+  }
+ },
+ "mc03_female_clothes01": {
+  "cells": 928,
+  "unique": 813,
+  "duplicates": 115,
+  "clips": {
+   "attack": {
+    "frames": 19,
+    "cells": 152,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle": {
+    "frames": 16,
+    "cells": 128,
+    "duplicate_within_clip_direction": 115,
+    "also_in_an_earlier_clip": 0
+   },
+   "idle_to_phone_in": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone": {
+    "frames": 27,
+    "cells": 216,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in": {
+    "frames": 13,
+    "cells": 104,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_in_to_phone": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out": {
+    "frames": 17,
+    "cells": 136,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_out_to_idle": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "phone_to_phone_out": {
+    "frames": 2,
+    "cells": 16,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "run": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   },
+   "walk": {
+    "frames": 8,
+    "cells": 64,
+    "duplicate_within_clip_direction": 0,
+    "also_in_an_earlier_clip": 0
+   }
+  }
+ }
+}

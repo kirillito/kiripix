@@ -100,6 +100,13 @@ def _cast_ready(project: Kiripix) -> None:
     built_sprite(project)
 
 
+def _a_thing(project: Kiripix) -> None:
+    """character.hero with a held thing, phone, imported."""
+    _character_files(project)
+    (project.cwd / "phone.glb").write_bytes(b"glb")
+    project.json("import", "character.hero", "phone.glb", "--role", "thing", "--thing", "phone")
+
+
 def _clips_to_copy(project: Kiripix) -> None:
     """character.hero with a clip, and character.twin without."""
     _character_files(project)
@@ -133,6 +140,7 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "override": lambda p: (sketched(p), ["override", "sketch.a", "draw", "fix.png"])[1],
     "accept": lambda p: (in_review(p), ["accept", "sketch.a", "draw"])[1],
     "import": lambda p: (_character_files(p), ["import", "character.hero", "rigged.fbx", "--role", "clip-source"])[1],
+    "thing-remove": lambda p: (_a_thing(p), ["thing-remove", "character.hero", "phone"])[1],
     "clips copy": lambda p: (_clips_to_copy(p), ["clips", "copy", "character.twin", "--from", "character.hero"])[1],
     "mask-import": lambda p: (_room_image(p), ["mask-import", "room.alley", "in.png"])[1],
     "plate-import": lambda p: (_room_image(p), ["plate-import", "room.alley", "in.png"])[1],
@@ -219,6 +227,21 @@ def test_import_and_show_of_a_sprite_sheet_validate(project: Kiripix, schemas: d
     assert imported["data"]["sheet"] and shown["data"]["sheets"][0]["name"] == imported["data"]["sheet"]
 
 
+def test_import_and_show_of_a_held_thing_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The shapes of `import --role thing` and `show`'s `things` (ticket 0301)."""
+    _a_thing(project)
+    (project.cwd / "phone.glb").write_bytes(b"glb2")
+
+    imported = project.json("import", "character.hero", "phone.glb", "--role", "thing", "--thing", "phone")
+    shown = project.json("show", "character.hero")
+
+    jsonschema.validate(imported, schemas["import"]["output"])
+    jsonschema.validate(shown, schemas["show"]["output"])
+    assert imported["data"]["thing"] == "phone" and len(imported["data"]["thing_variants"]) == 2
+    assert [t["thing"] for t in shown["data"]["things"]] == ["phone"]
+    assert "thing" in schemas["import"]["input"]["properties"]  # type: ignore[index]
+
+
 def test_import_and_pick_of_a_look_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
     """The Look shapes of `import --look` and `pick --look` (ticket 0129)."""
     variant = _imported(project)
@@ -277,6 +300,7 @@ def test_a_portraits_emotions_validate(project: Kiripix, schemas: dict[str, dict
     jsonschema.validate(shown, schemas["show"]["output"])
     assert imported["data"]["emotion"] == "happy" and picked["data"]["emotion"] == "happy" and picked["data"]["stage"] == "source"
     assert shown["data"]["emotions"][0]["current"] is True
+    assert shown["data"]["emotions"][0]["images"] == []  # nothing built yet; `images` is the per-Stage list (ticket 0298)
     for name in ("import", "pick"):
         assert "emotion" in schemas[name]["input"]["properties"]  # type: ignore[index]
     kind = next(k for k in project.json("describe", "portrait")["data"]["kinds"] if k["name"] == "portrait")

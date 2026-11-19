@@ -8,13 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.decisions import DecisionOut, current_decisions
 from kiripix.commands.registry import CliMeta, command
-from kiripix.core import emotions, sheets, sources
+from kiripix.core import emotions, sheets, sources, things
 from kiripix.core.assets import Asset, load_asset, wearables_of
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project, find_project
 from kiripix.export import export_command
 from kiripix.recipes.base import Scalar, SortPosition, StageSpec
+from kiripix.recipes.portrait_set import EMOTIONS_OUT
 from kiripix.recipes.prop_states import STATES_OUT
 
 ParamOrigin = Literal["asset", "generated", "base", "default"]
@@ -48,6 +49,29 @@ class LookOut(BaseModel):
     picked: str | None = Field(description="The edit the `looks` Stage cuts the Look from; null without a Pick.")
 
 
+class ThingMaterialOut(BaseModel):
+    name: str
+    number: int = Field(description="The material's place among the things' materials, from 1, in numbering order (the "
+                                    "things in the order they were first imported, a thing's own materials sorted by name).")
+    index: int | None = Field(description="Its number in the material pass: the Model's material count plus `number`; "
+                                          "null while `render` hasn't built (the Model's count isn't known yet).")
+
+
+class ThingOut(BaseModel):
+    thing: str = Field(description="The thing's ID.")
+    variants: list[VariantOut] = Field(description="The thing's stored meshes, named by hash.")
+    current: str = Field(description="The Variant a render holds: the newest imported.")
+    materials: list[ThingMaterialOut] = Field(description="The current Variant's materials, numbered after the Model's.")
+    materials_known: bool = Field(description="False for a .blend made without Blender: the render reads its materials.")
+    attached_by: list[str] = Field(description="The clips whose `attach` holds the thing; it can't be removed while any does.")
+
+
+class StateImageOut(BaseModel):
+    stage: str
+    image: str | None = Field(description="The Stage's built image for this state, relative to the Project.")
+    input_image: str | None = Field(description="The built image of this state that the Stage is made from.")
+
+
 class EmotionOut(BaseModel):
     emotion: str = Field(description="The emotion's ID.")
     variants: list[VariantOut] = Field(description="The emotion's stored images, named by hash.")
@@ -55,12 +79,10 @@ class EmotionOut(BaseModel):
     made_on: str | None = Field(description="The neutral Source (Variant name) the picked image was made on; null without a Pick.")
     current: bool = Field(description="The picked image was made on the portrait's current neutral Source. False: the emotion "
                                       "is in needs-input until it is made again from the new Source.")
-
-
-class StateImageOut(BaseModel):
-    stage: str
-    image: str | None = Field(description="The Stage's built image for this state, relative to the Project.")
-    input_image: str | None = Field(description="The built image of this state that the Stage is made from.")
+    images: list[StateImageOut] = Field(
+        [], description="Per Stage that has an image, the emotion's built image (`<stage>/emotions/<id>.png`) and the "
+                        "built image of the same emotion that the Stage is made from, as `stages` gives the neutral's. "
+                        "A Stage that hasn't built the emotion isn't listed.")
 
 
 class StateOut(BaseModel):
@@ -137,6 +159,9 @@ class ShowData(BaseModel):
     emotions: list[EmotionOut] = Field([], description="A portrait's emotions, as declared (`emotion` Decision on `source`): "
                                                        "each with its Variants and Pick. The neutral image is `picked`. Empty "
                                                        "for a portrait with none and for another Kind.")
+    things: list[ThingOut] = Field([], description="A character's held things (`import --role thing`), in numbering order: "
+                                                   "each with its Variants, current Variant, materials and the clips that "
+                                                   "attach it. Empty without any.")
     clip_sources: list[ClipSourceOut] = Field(description="A character's animation files, named by file stem; for one made "
                                                        "from a base, also the base's, which stay in the base's folder.")
     rigged: VariantOut | None = Field(description="A character's rigged file.")
@@ -159,6 +184,11 @@ class ShowData(BaseModel):
                          + ("" if emotion.current or emotion.picked is None else " (made on another Source)"))
             lines += [f"    variant {v.name}{' (picked)' if v.name == emotion.picked else ''}" for v in emotion.variants]
         lines += [f"  parameters {self.parameters.file}"] if self.parameters is not None else []
+        for t in self.things:
+            lines.append(f"  thing {t.thing}, current {t.current}" + (f", held by {', '.join(t.attached_by)}" if t.attached_by else ""))
+            lines += [f"    material {m.number} {m.name}" + (f" (pass {m.index})" if m.index is not None else "")
+                      for m in t.materials]
+            lines += [] if t.materials_known else ["    materials: read at the first render"]
         lines += [f"  clip source {c.name}" for c in self.clip_sources]
         lines += [f"  rigged {self.rigged.file}"] if self.rigged is not None else []
         lines += [f"  sheet {s.name} ({s.imported_as or s.file}, {s.size} bytes"
@@ -184,6 +214,23 @@ def _wearables(project: Project, asset: Asset, cache: HashCache) -> list[Wearabl
         theirs = AssetGraph(project, load_asset(project, wearable), cache)
         found.append(WearableOut(asset=wearable, order=theirs.worn_order()))
     return sorted(found, key=lambda w: (w.order, w.asset))
+
+
+def _things(project: Project, asset: Asset, names: dict[str, str]) -> list[ThingOut]:
+    """A character's things with their materials numbered after the Model's (ticket 0301)."""
+    if asset.kind != "character":
+        return []
+    model = things.model_material_count(asset)
+    found: list[ThingOut] = []
+    for info in things.listed(asset):
+        found.append(ThingOut(
+            thing=info.thing, current=info.path.stem,
+            variants=[_variant(project, asset, names, name, path) for name, path in info.variants.items()],
+            materials=[ThingMaterialOut(name=name, number=info.first + i, index=None if model is None else model + info.first + i)
+                       for i, name in enumerate(info.materials or [])],
+            materials_known=info.materials is not None,
+            attached_by=things.attached_by(project, asset, info.thing)))
+    return found
 
 
 def _clip_sources(project: Project, graph: AssetGraph, names: dict[str, str]) -> list[ClipSourceOut]:
@@ -226,6 +273,23 @@ def _state_images(project: Project, graph: AssetGraph, state: str) -> list[State
         image = graph.output_dir(spec) / STATES_OUT / state / spec.image
         source = graph.input_image(spec)
         before = source[1].parent / STATES_OUT / state / source[1].name if source is not None else None
+        if image.is_file() or (before is not None and before.is_file()):
+            found.append(StateImageOut(stage=spec.name, image=project.relative(image) if image.is_file() else None,
+                                       input_image=project.relative(before)
+                                       if before is not None and before.is_file() else None))
+    return found
+
+
+def _emotion_images(project: Project, graph: AssetGraph, emotion: str) -> list[StateImageOut]:
+    """A portrait emotion's images: each Stage writes them as `emotions/<id>.png` in its output folder (ticket 0243)."""
+    found: list[StateImageOut] = []
+    name = f"{emotion}.png"
+    for spec in graph.kind.stages:
+        if spec.image is None:
+            continue
+        image = graph.output_dir(spec) / EMOTIONS_OUT / name
+        source = graph.input_image(spec)
+        before = source[1].parent / EMOTIONS_OUT / name if source is not None else None
         if image.is_file() or (before is not None and before.is_file()):
             found.append(StateImageOut(stage=spec.name, image=project.relative(image) if image.is_file() else None,
                                        input_image=project.relative(before)
@@ -305,8 +369,10 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
                              made_on=emotion_picks[e.id][1] if e.id in emotion_picks else None,
                              current=e.id in emotion_picks and emotion_picks[e.id][1] == neutral,
                              variants=[_variant(project, asset, names, name, path)
-                                       for name, path in emotions.emotion_variants(asset, e).items()])
+                                       for name, path in emotions.emotion_variants(asset, e).items()],
+                             images=_emotion_images(project, graph, e.id))
                   for e in emotions.declared_emotions(graph).values()],
+        things=_things(project, asset, names),
         clip_sources=_clip_sources(project, graph, names),
         rigged=_variant(project, asset, names, rigged_path.stem, rigged_path)
         if (rigged_path := sources.rigged(asset)) is not None else None,

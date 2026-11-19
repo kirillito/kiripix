@@ -58,7 +58,7 @@ def test_the_stage_declares_the_room_parameters_and_colors(project: Kiripix) -> 
     by_name = {p["name"]: p for p in stage["params"]}
     assert set(by_name) == {"colors", "parts", "part_lines", "dither", "strength", "orphan_size"}
     assert by_name["colors"]["default"] == 16 and by_name["colors"]["minimum"] == 1
-    assert [c["code"] for c in stage["checks"]] == ["palette.off_palette", "palette.ramp_shared"]
+    assert [c["code"] for c in stage["checks"]] == ["palette.off_palette", "palette.ramp_shared", "palette.thing_colors_shared"]
 
 
 def test_run_maps_every_frame_to_one_subset_of_the_palette(project: Kiripix) -> None:

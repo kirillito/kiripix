@@ -119,7 +119,7 @@ def test_the_events_reach_character_json(project: Kiripix) -> None:
 
     character = built(folder)
     clips = {c["name"]: c for c in character["clips"]}
-    assert character["schema_version"] == 4
+    assert character["schema_version"] == 6
     assert clips["step"]["events"] == {"foot": [1, 6]} and clips["idle"]["events"] == {"foot": []}
 
 

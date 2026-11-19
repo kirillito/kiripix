@@ -5,6 +5,7 @@ from typing import Any
 
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
+from kiripix.core.settings import migrate_character_record
 from kiripix.export.room import EXPORT_STAGE, built_dir
 from kiripix.recipes.character_export import CHARACTER_FILE, CHARACTER_SCHEMA_VERSIONS
 
@@ -50,4 +51,4 @@ def read_character(graph: AssetGraph) -> dict[str, Any]:
         raise fail("export.character_invalid", f"{graph.asset.id}'s {CHARACTER_FILE} has schema_version "
                    f"{character.get('schema_version')}; this Kiripix reads {' or '.join(map(str, CHARACTER_SCHEMA_VERSIONS))}",
                    fix=f"kiripix run {graph.asset.id} {EXPORT_STAGE} --force")
-    return character
+    return migrate_character_record(character, CHARACTER_FILE)  # an older file gets each clip's cell and pivot (ticket 0303)

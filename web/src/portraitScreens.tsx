@@ -19,13 +19,9 @@ export const SHIMMER_STAGE = "finish";
 export const EMOTION_DECISION = "emotion";
 const FACE = "face";
 const NEUTRAL = "neutral";
-const IMAGE_STAGES = ["finish", "palette", "fit", "register", "cutout", "source"]; // furthest built first
-
-// A Stage's image of one emotion: `emotions/<id>.png` beside the Stage's own image (the layout ticket 0243 records). `show` doesn't
-// list these files (`outputs` is the folder's top level), so whether it exists is known only when it loads.
-export function emotionImage(detail: StageDetail | undefined, id: string): string | null {
-  const own = detail?.image;
-  return own ? `${own.slice(0, own.lastIndexOf("/"))}/emotions/${id}.png` : null;
+// A Stage's built image of one emotion, as `show` lists it (`emotions[].images`); null where the Stage has not built it.
+export function emotionImage(show: ShowData, stage: string, id: string): string | null {
+  return show.emotions?.find((entry) => entry.emotion === id)?.images?.find((entry) => entry.stage === stage)?.image ?? null;
 }
 
 function aboutEmotion(finding: Finding, id: string): boolean {
@@ -39,10 +35,10 @@ function worst(findings: Finding[]): string {
 
 // What an emotion's thumbnail shows: the furthest built Stage's image of it, else its picked Variant.
 function thumbnailSources(show: ShowData, id: string | null): string[] {
-  const built = IMAGE_STAGES.map((name) => {
-    const stage = show.stages.find((entry) => entry.stage === name);
-    return id === null ? (stage?.image ?? null) : emotionImage(stage, id);
-  }).filter((path): path is string => path !== null);
+  const built = [...show.stages] // the recipe's order, furthest built first
+    .reverse()
+    .map((stage) => (id === null ? stage.image : emotionImage(show, stage.stage, id)))
+    .filter((path): path is string => path !== null);
   const own = id === null ? { variants: show.variants, picked: show.picked } : show.emotions?.find((entry) => entry.emotion === id);
   const picked = own?.variants.find((variant) => variant.name === own.picked)?.file;
   return [...built, ...(picked ? [picked] : [])];
@@ -83,11 +79,23 @@ export function EmotionStrip(props: {
   const { show, emotion, findings, imageVersion, disabled } = props;
   const [id, setId] = useState("");
   const input = useRef<HTMLInputElement>(null);
+  // The Stages that hold an image of the emotion (`show`), each with its own status, in the recipe's order.
+  const stagesOf = (images: { stage: string; image: string | null; input_image: string | null }[] | undefined) =>
+    show.stages
+      .filter((stage) => images?.some((one) => one.stage === stage.stage))
+      .map((stage) => ({ stage: stage.stage, status: stage.status }));
   const entries = [
-    { id: null as string | null, name: NEUTRAL, status: show.picked ? `Source ${show.picked.slice(0, 8)}` : "no Source picked", mine: [] as Finding[] },
+    {
+      id: null as string | null,
+      name: NEUTRAL,
+      status: show.picked ? `Source ${show.picked.slice(0, 8)}` : "no Source picked",
+      mine: [] as Finding[],
+      stages: [] as { stage: string; status: string }[],
+    },
     ...(show.emotions ?? []).map((entry) => ({
       id: entry.emotion as string | null,
       name: entry.emotion,
+      stages: stagesOf(entry.images),
       status: !entry.picked
         ? "no image picked"
         : entry.current
@@ -121,6 +129,11 @@ export function EmotionStrip(props: {
               {entry.status}
               {entry.mine.length > 0 && ` · ${entry.mine.length} finding(s)`}
             </span>
+            {entry.stages.length > 0 && (
+              <span className="hint" data-testid={`emotion-${entry.name}-stages`}>
+                {entry.stages.map((one) => `${one.stage} ${one.status}`).join(" · ")}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -198,7 +211,7 @@ export function PortraitPanel(props: {
   const faceStage = stage === FACE_STAGE;
   const emotions = (show.emotions ?? []).map((entry) => entry.emotion);
   const target = props.emotion ?? emotions[0] ?? null; // the neutral is what is under the flip
-  const file = target ? emotionImage(detail, target) : null;
+  const file = target ? emotionImage(show, stage, target) : null;
   const [flipped, setFlipped] = useState(false);
   const [loaded, setLoaded] = useState<string | null>(null); // the emotion image that loaded on this Stage
   const [tool, setTool] = useState<Tool>("polygon");

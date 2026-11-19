@@ -472,7 +472,7 @@ def test_export_leaves_character_json_in_the_characters_format(project: Kiripix)
 
     character = load(folder / "out" / "export" / "character.json")
     sheet = load(folder / "work" / "sheet" / "sheet.json")
-    assert character == {"schema_version": 4, "asset": SPRITE, "files": {"color": "color.png", "normal": "normal.png"},
+    assert character == {"schema_version": 6, "asset": SPRITE, "files": {"color": "color.png", "normal": "normal.png"},
                          **{key: sheet[key] for key in ("cell", "pivot", "atlas", "directions")},
                          "clips": [{**c, "events": {"foot": []}} for c in sheet["clips"]], "parts": [], "rows": []}
 

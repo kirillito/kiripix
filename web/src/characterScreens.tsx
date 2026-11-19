@@ -4,7 +4,7 @@
 // read-only `inspect` Probe, which lists a file's actions and bones (it starts Blender, so it is shown and can be cancelled).
 
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { call, cancelJob, fileUrl, type Envelope, type FileEntry, type ShowData, type StageDescription, type StageDetail } from "./api";
+import { call, cancelJob, fileUrl, type Envelope, type HeldThing, type FileEntry, type ShowData, type StageDescription, type StageDetail } from "./api";
 
 export const CHARACTER_KIND = "character";
 export const MODEL_STAGE = "model";
@@ -15,7 +15,7 @@ export const BONE_DECISION = "bone";
 export const CLIP_DECISION = "clip";
 export const TRANSITION_DECISION = "transition";
 
-export type ImportRole = "variant" | "clip-source" | "rigged" | "sheet" | "parameters";
+export type ImportRole = "variant" | "clip-source" | "rigged" | "sheet" | "parameters" | "thing";
 export const MODEL_FILES = ".glb,.fbx,.blend";
 export const PARAMETER_FILES = ".toml,.json";
 export const REMOVE_DECISION = "remove";
@@ -507,6 +507,52 @@ interface ClipData {
   blink?: number[];
   wink_left?: number[];
   wink_right?: number[];
+  attach?: Attach[];
+}
+
+// What a clip holds (ticket 0300): the thing, the rig's bone it sits at, and an optional shift and turn from that bone.
+interface Attach {
+  thing: string;
+  socket: string;
+  offset?: number[];
+  turn?: number[];
+}
+
+type Triple = [string, string, string];
+
+// An `attach` row as the form edits it: the three numbers of the offset and of the turn are text until saved.
+interface AttachRow {
+  thing: string;
+  socket: string;
+  offset: Triple;
+  turn: Triple;
+}
+
+const DEFAULT_SOCKET = "grip_r";
+const AXES = ["x", "y", "z"] as const;
+const NO_NUMBERS: Triple = ["", "", ""];
+
+function rowOf(held: Attach): AttachRow {
+  const texts = (values?: number[]): Triple => (values ? [String(values[0]), String(values[1]), String(values[2])] : NO_NUMBERS);
+  return { thing: held.thing, socket: held.socket, offset: texts(held.offset), turn: texts(held.turn) };
+}
+
+// A triple is empty (null, not given), or three numbers (a blank one beside a number is 0); undefined when one isn't a number.
+function triple(texts: Triple): number[] | null | undefined {
+  if (texts.every((text) => !text.trim())) return null;
+  const numbers = texts.map((text) => (text.trim() ? Number(text) : 0));
+  return numbers.every((number) => Number.isFinite(number)) ? numbers : undefined;
+}
+
+function attachOf(rows: AttachRow[]): Attach[] {
+  return rows.map((row) => {
+    const held: Attach = { thing: row.thing, socket: row.socket.trim() || DEFAULT_SOCKET };
+    const offset = triple(row.offset);
+    const turn = triple(row.turn);
+    if (offset) held.offset = offset;
+    if (turn) held.turn = turn;
+    return held;
+  });
 }
 
 interface TransitionData {
@@ -743,7 +789,8 @@ function ClipsScreen(props: {
   description: StageDescription;
   refreshes: number;
   disabled: boolean;
-  onImport: (files: File[], role: ImportRole) => void;
+  onImport: (files: File[], role: ImportRole, extra?: object) => void;
+  onRemoveThing: (thing: string) => void;
   decide: (name: string, data: Record<string, unknown>, label: string) => void;
   onOpen: (asset: string) => void;
 }) {
@@ -815,6 +862,8 @@ function ClipsScreen(props: {
   const [marks, setMarks] = useState<Marks>(NO_MARKS);
   const [eyelid, setEyelid] = useState<Eyelid>("blink");
   const [editing, setEditing] = useState<string | null>(null); // the name of the clip the form changes, or null when it adds
+  const [attach, setAttach] = useState<AttachRow[]>([]); // what the clip holds
+  const [thingId, setThingId] = useState("");
   const [chosenFps, setChosenFps] = useState<number | null>(null);
   const sourceFps = known.find((entry) => entry.value === source.trim())?.fps ?? chosenFps; // the source file's: the clip's is the game's
 
@@ -842,6 +891,7 @@ function ClipsScreen(props: {
     setSpeed(String(clip.speed ?? 1));
     setStill(clip.still ? String(clip.still) : "");
     setMarks({ blink: clip.blink ?? [], wink_left: clip.wink_left ?? [], wink_right: clip.wink_right ?? [] });
+    setAttach((clip.attach ?? []).map(rowOf));
   }
 
   function stopEditing() {
@@ -850,6 +900,11 @@ function ClipsScreen(props: {
     setSpeed("1");
     setStill("");
     setMarks(NO_MARKS);
+    setAttach([]);
+  }
+
+  function changeRow(index: number, change: Partial<AttachRow>) {
+    setAttach(attach.map((row, at) => (at === index ? { ...row, ...change } : row)));
   }
 
   function toggleFrame(frame: number) {
@@ -876,6 +931,14 @@ function ClipsScreen(props: {
           : Number(start) > Number(end)
             ? "The clip starts after it ends."
             : null;
+  const things: HeldThing[] = show.things ?? [];
+  const attachProblem = attach.some((row) => !row.thing)
+    ? "Choose the thing each row holds."
+    : new Set(attach.map((row) => row.thing)).size < attach.length
+      ? "A clip holds a thing once."
+      : attach.some((row) => triple(row.offset) === undefined || triple(row.turn) === undefined)
+        ? "The offset and the turn are numbers."
+        : null;
   const speedValue = Number(speed);
   const timingProblem =
     !speed.trim() || !(speedValue > 0)
@@ -898,6 +961,7 @@ function ClipsScreen(props: {
     if (speedValue !== 1) data.speed = speedValue;
     if (still.trim()) data.still = Number(still);
     for (const lid of EYELIDS) if (marks[lid.key].length > 0) data[lid.key] = marks[lid.key];
+    if (attach.length > 0) data.attach = attachOf(attach);
     return data;
   }
 
@@ -918,6 +982,7 @@ function ClipsScreen(props: {
               <th>Loop</th>
               <th>Stationary</th>
               <th>Frames</th>
+              <th>Holds</th>
               <th></th>
             </tr>
           </thead>
@@ -951,6 +1016,7 @@ function ClipsScreen(props: {
                   <td>{clip.loop ? "loop" : "once"}</td>
                   <td>{clip.stationary ? "yes" : "no"}</td>
                   <td>{made ? `${made.frames.length}${made.root_motion ? " (root moves)" : ""}` : ""}</td>
+                  <td data-testid={`clip-holds-${clip.name}`}>{(clip.attach ?? []).map((held) => `${held.thing} at ${held.socket}`).join(", ")}</td>
                   <td>
                     <button data-testid={`clip-edit-${clip.name}`} disabled={props.disabled} onClick={() => edit(clip)}>
                       {clip.fromBase ? "Change on this character" : "Edit"}
@@ -1077,11 +1143,75 @@ function ClipsScreen(props: {
             Past the last frame ({frameCount} frames, 0 to {(frameCount ?? 1) - 1}): {lateMarks.join(", ")}. Toggle them off: a still clip refuses them when saved, and another fails its run.
           </p>
         )}
+        <h3>Holds</h3>
+        {attach.map((row, index) => (
+          <div className="param attach-row" key={index} data-testid={`clip-attach-${index}`}>
+            <select aria-label="Thing" data-testid={`clip-attach-thing-${index}`} value={row.thing} onChange={(event) => changeRow(index, { thing: event.target.value })}>
+              <option value="">Thing</option>
+              {things.map((one) => (
+                <option key={one.thing} value={one.thing}>
+                  {one.thing}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Socket"
+              data-testid={`clip-attach-socket-${index}`}
+              list="clip-sockets"
+              placeholder={DEFAULT_SOCKET}
+              value={row.socket}
+              onChange={(event) => changeRow(index, { socket: event.target.value })}
+            />
+            {(["offset", "turn"] as const).map((field) =>
+              AXES.map((axis, at) => (
+                <input
+                  key={`${field}-${axis}`}
+                  aria-label={`${field === "offset" ? "Offset" : "Turn"} ${axis}`}
+                  data-testid={`clip-attach-${field}-${axis}-${index}`}
+                  className="attach-number"
+                  type="number"
+                  step="any"
+                  placeholder={`${field} ${axis}`}
+                  value={row[field][at]}
+                  onChange={(event) => {
+                    const next: Triple = [...row[field]];
+                    next[at] = event.target.value;
+                    changeRow(index, { [field]: next });
+                  }}
+                />
+              )),
+            )}
+            <button type="button" data-testid={`clip-attach-remove-${index}`} onClick={() => setAttach(attach.filter((_, at) => at !== index))}>
+              Let go
+            </button>
+          </div>
+        ))}
+        <datalist id="clip-sockets">
+          <option value={DEFAULT_SOCKET} />
+          {(model?.bones ?? []).map((bone) => (
+            <option key={bone} value={bone} />
+          ))}
+        </datalist>
+        <button
+          type="button"
+          data-testid="clip-attach-add"
+          disabled={things.length === 0}
+          title={things.length === 0 ? "Import a thing first (under Held things)" : undefined}
+          onClick={() =>
+            setAttach([
+              ...attach,
+              { thing: things.find((one) => !attach.some((row) => row.thing === one.thing))?.thing ?? "", socket: DEFAULT_SOCKET, offset: NO_NUMBERS, turn: NO_NUMBERS },
+            ])
+          }
+        >
+          Hold a thing
+        </button>
+        {attachProblem && <p className="hint" data-testid="clip-attach-problem">{attachProblem}</p>}
         {timingProblem && <p className="hint" data-testid="clip-timing-problem">{timingProblem}</p>}
         {problem && name && <p className="hint" data-testid="clip-problem">{problem}</p>}
         <button
           data-testid="clip-add"
-          disabled={problem !== null || timingProblem !== null}
+          disabled={problem !== null || timingProblem !== null || attachProblem !== null}
           onClick={() => {
             props.decide(
               CLIP_DECISION,
@@ -1108,6 +1238,54 @@ function ClipsScreen(props: {
         disabled={props.disabled}
         decide={props.decide}
       />
+
+      <h2>Held things</h2>
+      {things.length === 0 ? (
+        <p className="hint" data-testid="things-empty">No held things yet.</p>
+      ) : (
+        <ul data-testid="things">
+          {things.map((one) => (
+            <li key={one.thing} data-testid={`thing-${one.thing}`}>
+              {one.thing} <small>{one.variants.length} {one.variants.length === 1 ? "Variant" : "Variants"}</small>
+              {one.materials && one.materials.length > 0 && (
+                <small className="hint" data-testid={`thing-materials-${one.thing}`}>
+                  {" "}
+                  Materials: {one.materials.map((material) => `${material.number}${material.index !== null ? ` (${material.index})` : ""} ${material.name}`).join(", ")}.
+                </small>
+              )}
+              {!one.materials_known && <small className="hint"> Materials are read at the next render.</small>}
+              {one.attached_by.length > 0 && (
+                <small className="hint" data-testid={`thing-held-by-${one.thing}`}>
+                  {" "}
+                  Held by {one.attached_by.join(", ")}.
+                </small>
+              )}{" "}
+              <button
+                data-testid={`thing-remove-${one.thing}`}
+                disabled={props.disabled || one.attached_by.length > 0}
+                title={one.attached_by.length > 0 ? "A clip holds it: let go first" : undefined}
+                onClick={() => props.onRemoveThing(one.thing)}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="param">
+        <label htmlFor="thing-id">Thing</label>
+        <input id="thing-id" data-testid="thing-id" placeholder="phone" value={thingId} onChange={(event) => setThingId(event.target.value)} />
+      </div>
+      {thingId && !/^[a-z0-9_]+$/.test(thingId) && (
+        <p className="hint" data-testid="thing-id-problem">A thing's name is lower-case letters, digits and underscores.</p>
+      )}
+      {thingId && /^[a-z0-9_]+$/.test(thingId) ? (
+        <FileDrop testid="thing-drop" accept=".glb,.blend" onFiles={(files) => props.onImport(files, "thing", { thing: thingId })}>
+          Drop the thing's mesh (.glb or .blend) here. Its origin and axes are its grip. Dropping it again under the same name adds a Variant. Or
+        </FileDrop>
+      ) : (
+        <p className="hint">Name the thing, then drop its mesh.</p>
+      )}
 
       <h2>Animation files</h2>
       {show.clip_sources.length > 0 && (
@@ -1153,7 +1331,8 @@ export function CharacterScreen(props: {
   refreshes: number;
   disabled: boolean;
   onPick: (variant: string) => void;
-  onImport: (files: File[], role: ImportRole) => void;
+  onImport: (files: File[], role: ImportRole, extra?: object) => void;
+  onRemoveThing: (thing: string) => void;
   decide: (name: string, data: Record<string, unknown>, label: string) => void;
   onOpen: (asset: string) => void;
 }) {

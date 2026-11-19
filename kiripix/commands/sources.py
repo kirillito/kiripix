@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import editof, emotions, loopedits, loopkit, sheets, sources
+from kiripix.core import editof, emotions, loopedits, loopkit, sheets, sources, things
 from kiripix.core.errors import fail
 from kiripix.core.assets import is_asset_id, load_asset
-from kiripix.core.graph import AssetGraph, StageState
+from kiripix.core.graph import AssetGraph, ProgressEvent, StageState
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import find_project
 
@@ -31,15 +31,20 @@ def _asset_lock(arguments: _AssetInput) -> str | None:
 class ImportInput(_AssetInput):
     file: Path = Field(description="A room's or Prop's PNG or JPEG (a JPEG is stored as a PNG); a character's .glb, "
                                    ".fbx or .blend, or its parameter file (.toml or .json); a sprite's PNG or ZIP of PNGs.")
-    role: Literal["variant", "clip-source", "rigged", "parameters", "sheet"] | None = Field(
+    role: Literal["variant", "clip-source", "rigged", "parameters", "sheet", "thing"] | None = Field(
         None, description="What the file is. variant: a Source to pick (the default, except for a sprite). "
                           "clip-source: an animation file (a Mixamo .fbx) that a `clip` Decision's `source` names by "
                           "its file stem. rigged: the rigged file that comes back from Mixamo. parameters: the file the "
                           "Project's generator builds the character's Model from ([character.generators] in "
                           "kiripix.toml), stored under its own name in src/parameters/ in place of any other; it is the "
                           "Source, so nothing is picked, and it replaces importing a Model. These three are for a "
-                          "character. sheet: a sprite's PNG sheet or ZIP of PNGs, stored whole in src/sheets/ (the "
+                          "character. thing: a mesh (.glb or .blend) a clip holds, with --thing <id>. sheet: a sprite's PNG sheet or ZIP of PNGs, stored whole in src/sheets/ (the "
                           "default for a sprite; a ZIP with an unsafe or non-PNG entry is refused whole).")
+    thing: str | None = Field(None, description="With --role thing: the held thing's ID (lower-case letters, digits and "
+                                                "underscores). The mesh is stored in src/things/<id>/ as a Variant; importing "
+                                                "again under the same ID adds a Variant, and the newest is the one rendered. "
+                                                "The file's origin and axes are the grip: a clip's `attach` `offset` and `turn` "
+                                                "adjust them. Its materials are numbered after the Model's.")
     look: str | None = Field(None, description="A room's Look: store the image as an edit Variant of that Look "
                                                "(src/looks/<look>/), made on the room's picked Source, instead of as a "
                                                "Source. The room's source Stage stays done.")
@@ -90,6 +95,12 @@ class ImportData(BaseModel):
     clip_source: str | None = Field(description="With role clip-source: its name, the file stem.")
     rigged: str | None = Field(description="With role rigged: the rigged file's name.")
     parameters: str | None = Field(None, description="With role parameters: the parameter file's name.")
+    thing: str | None = Field(None, description="With role thing: the thing's ID.")
+    thing_variants: list[str] = Field([], description="With role thing: the thing's Variants, by name; the one just "
+                                                      "imported is the current one (`show` says which).")
+    thing_materials: list[str] | None = Field(None, description="With role thing: the imported Variant's material names, "
+                                                                "sorted; null when they aren't known until a render "
+                                                                "(a .blend made without Blender).")
     file: str
     created: bool
     loop: str | None = Field(None, description="With --loop: the Loop whose frames were imported.")
@@ -129,6 +140,10 @@ class ImportData(BaseModel):
         if self.role == "variant":
             return (f"{self.asset}: {added} the Variant {self.variant} ({self.file}); pick it with "
                     f"kiripix pick {self.asset} {self.variant}")
+        if self.role == "thing":
+            known = (f"; materials {', '.join(self.thing_materials) or 'none'}" if self.thing_materials is not None
+                     else "; its materials are read at the first render")
+            return f"{self.asset}: {added} a Variant of the thing {self.thing} ({self.file}), now current{known}"
         if self.role == "parameters":
             return (f"{self.asset}: {added} the parameter file {self.parameters} ({self.file}); the Project's generator "
                     f"builds the Model from it: kiripix run {self.asset}")
@@ -139,7 +154,7 @@ class ImportData(BaseModel):
 @command(
     "import",
     summary="Add a file made elsewhere to an Asset: an image as a Variant (a PNG, named by its hash), for a "
-            "character a Model, an animation file or the rigged file, or for a sprite a PNG sheet or a ZIP of PNGs "
+            "character a Model, an animation file, the rigged file or a held thing, or for a sprite a PNG sheet or a ZIP of PNGs "
             "(--role).",
     input=ImportInput,
     output=ImportData,
@@ -152,6 +167,29 @@ class ImportData(BaseModel):
 def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if arguments.thing is not None or arguments.role == "thing":
+        if arguments.role != "thing" or arguments.thing is None:
+            raise fail("import.thing_needs_role", "--role thing and --thing <id> go together",
+                       fix=f"kiripix import {asset.id} {arguments.file} --role thing --thing "
+                           f"{arguments.thing or '<id>'}")
+        if (arguments.state is not None or arguments.emotion is not None or arguments.look is not None
+                or arguments.loop is not None or arguments.frames or arguments.kit is not None
+                or arguments.frame is not None or arguments.of is not None):
+            raise fail("import.thing_takes_one_file", "a held thing is one mesh file: not with --state, --emotion, --look, "
+                       "--loop, --frame, --kit, --of or more files",
+                       fix=f"kiripix import {asset.id} {arguments.file} --role thing --thing {arguments.thing}")
+
+        def progress(done: int, total: int, message: str) -> None:
+            context.progress(ProgressEvent(event="probe_progress", stage=None, done=done, total=total, message=message))
+
+        name, path, created, names = things.import_thing(
+            project, asset, context.cwd / arguments.file, str(arguments.file), arguments.thing, progress=progress,
+            check_cancel=context.cancel.check)
+        return Outcome(ImportData(
+            asset=asset.id, look=None, role="thing", variant=None, sheet=None, clip_source=None, rigged=None,
+            file=project.relative(path), created=created, thing=arguments.thing,
+            thing_variants=list(things.variants(asset, arguments.thing)), thing_materials=names,
+            variants=list(sources.variants(asset)), clip_sources=list(sources.clip_sources(asset)), sheets=[]))
     if arguments.emotion is not None:
         if (arguments.state is not None or arguments.look is not None or arguments.loop is not None or arguments.frames
                 or arguments.kit is not None or arguments.frame is not None or arguments.of is not None):
@@ -345,3 +383,39 @@ def pick(arguments: PickInput, context: Context) -> Outcome[PickData]:
     return Outcome(PickData(asset=asset.id, look=arguments.look, loop=arguments.loop, frame=arguments.frame,
                             stage=spec.name, variant=arguments.variant,
                             id=entry.id, stages=states))
+
+
+# thing-remove
+
+
+class ThingRemoveInput(_AssetInput):
+    thing: str = Field(description="The held thing's ID, such as phone (`kiripix show <asset>` lists them).")
+
+
+class ThingRemoveData(BaseModel):
+    asset: str
+    thing: str
+    removed: list[str] = Field(description="The thing's stored files that were deleted, relative to the Project.")
+    things: list[str] = Field(description="The Asset's things after the removal, in numbering order.")
+
+    def text(self) -> str:
+        return f"{self.asset}: removed the thing {self.thing} ({len(self.removed)} file(s))"
+
+
+@command(
+    "thing-remove",
+    summary="Remove a held thing and all its Variants from a character. Refused while a clip's `attach` holds it.",
+    input=ThingRemoveInput,
+    output=ThingRemoveData,
+    kind="writing",
+    mcp="hidden",
+    cli=CliMeta(positional=("asset", "thing")),
+    locks=LockNeeds(asset=_asset_lock),
+)
+def thing_remove(arguments: ThingRemoveInput, context: Context) -> Outcome[ThingRemoveData]:
+    """Example: `kiripix thing-remove character.hero phone`; `thing.attached` names the clips that still hold it."""
+    project = find_project(context.cwd)
+    asset = load_asset(project, arguments.asset)
+    removed = things.remove_thing(project, asset, arguments.thing)
+    return Outcome(ThingRemoveData(asset=asset.id, thing=arguments.thing, removed=[project.relative(p) for p in removed],
+                                   things=things.thing_ids(asset)))

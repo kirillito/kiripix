@@ -43,7 +43,9 @@ reference for each step.
   `portrait.shimmer` (info) reports, per emotion, the pixels outside `face` (or all of them, without one) that differ from
   the neutral's, with boxes.
 - **Status:** a new emotion adds work only for that emotion where it can. A refit or a new palette rebuilds all of them. A
-  `face` change puts `register` in needs-review.
+  `face` change makes `register` stale and does not put it in needs-review (the Owner's decision, 2026-11-18: the UI reruns
+  `register` after each stroke and the portrait is being redesigned around whole-body emotions, see 0241; pinned by a CLI test,
+  ticket 0298).
 - Long loops (per image, per emotion) check the cancel token.
 
 ## Acceptance criteria
@@ -101,7 +103,7 @@ keys the per-image reuse in `cutout` and `register`; bump it together with those
   (set, project, off), `n` 32 (1 to 256), `dither` (none), `keep` (hex colours), `outline_colour` (a Project palette index,
   default 0), `orphan_size` 1. `finish`: `outline` true, `placement` edge, `lock_outside_face` true. The `face` Decision is on
   `register`: `points` plus an optional `radius` (a brush) and `erase`, in the neutral cutout's pixels; it is `on_image`, so a new
-  neutral Source puts `register` in needs-review.
+  neutral Source puts `register` in needs-review, while a `face` edit only makes it stale (0298).
 
 ### Decisions I made that the ticket left open
 

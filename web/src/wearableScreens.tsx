@@ -12,7 +12,6 @@ export const WEARABLE_KIND = "wearable";
 export const STACK_CODE = "wearable.stack_differs";
 const ZOOM = 4;
 const FAR = 65535; // a depth where a cell has no pixel (spec §6.3)
-const DEFAULT_ORDER = 10;
 
 interface Rect {
   x: number;
@@ -75,30 +74,39 @@ function stageOf(show: ShowData, name: string): StageDetail | undefined {
   return show.stages.find((entry) => entry.stage === name);
 }
 
-// Each Wearable of the Project: its body, its `order`, and its cost. One `show` and two small files each, read again on every refresh.
+// Each Wearable of the Project: its body and `order` from the body's `show` (`wearables`), and its cost from the Wearable's own `show`
+// and two small files, read again on every refresh.
 export function useWearables(status: StatusData | null, refreshes: number): Record<string, WearableInfo> {
   const [found, setFound] = useState<Record<string, WearableInfo>>({});
-  const ids = (status?.assets ?? []).filter((asset) => asset.kind === WEARABLE_KIND).map((asset) => asset.asset);
-  const key = ids.join("\n");
+  const bodies = (status?.assets ?? []).filter((asset) => asset.kind !== WEARABLE_KIND).map((asset) => asset.asset);
+  const hasWearables = (status?.assets ?? []).some((asset) => asset.kind === WEARABLE_KIND);
+  const key = hasWearables ? bodies.join("\n") : "";
   useEffect(() => {
     let live = true;
     void (async () => {
+      const perBody = await Promise.all(
+        (key ? key.split("\n") : []).map(async (body) => {
+          try {
+            return ((await call<ShowData>("show", { asset: body })).data?.wearables ?? []).map((one) => ({ ...one, body }));
+          } catch {
+            return [];
+          }
+        }),
+      );
       const read = await Promise.all(
-        (key ? key.split("\n") : []).map(async (id): Promise<WearableInfo | null> => {
+        perBody.flat().map(async ({ asset: id, order, body }): Promise<WearableInfo | null> => {
           try {
             const shown = await call<ShowData>("show", { asset: id });
             if (!shown.data) return null;
-            const sheetDetail = stageOf(shown.data, "sheet");
-            const sheetPath = outputOf(sheetDetail, "sheet.json");
+            const sheetPath = outputOf(stageOf(shown.data, "sheet"), "sheet.json");
             const [sheet, render] = await Promise.all([
               readJson<SheetDocument>(sheetPath),
               readJson<RenderDocument>(outputOf(stageOf(shown.data, "render"), "render.json")),
             ]);
-            const asked = Number(sheetDetail?.params.order);
             return {
               id,
-              body: typeof shown.data.params.body === "string" ? shown.data.params.body : null,
-              order: Number.isFinite(asked) && sheetDetail?.params.order !== undefined ? asked : (sheet?.order ?? DEFAULT_ORDER),
+              body,
+              order,
               seconds: typeof render?.seconds?.render === "number" ? render.seconds.render : null,
               atlas: sheet?.atlas ?? null,
               sheetFolder: sheetPath ? folderOf(sheetPath) : null,
