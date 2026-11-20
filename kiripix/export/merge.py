@@ -50,7 +50,8 @@ def merge_manifests(ours: Manifest, theirs: Manifest) -> Manifest:
                       looks=_union(ours.ids.looks, theirs.ids.looks),
                       loops=_union(ours.ids.loops, theirs.ids.loops),
                       states=_union(ours.ids.states, theirs.ids.states),
-                      links=_union(ours.ids.links, theirs.ids.links))
+                      links=_union(ours.ids.links, theirs.ids.links),
+                      look_markers=_union(ours.ids.look_markers, theirs.ids.look_markers))
     return Manifest(kiripix_version=ours.kiripix_version, asset=ours.asset, exported=ours.exported or theirs.exported,
                     counter=max(ours.counter, theirs.counter) + 1, ids=ids, files=files, replacing=replacing or None)
 

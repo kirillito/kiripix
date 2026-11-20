@@ -83,16 +83,16 @@ def test_the_socket_a_clip_holds_at_is_a_point_by_default_and_a_given_point_ther
     assert render_json(folder)["points"] == [{"name": "hand_r", "target": SOCKET}]
 
 
-def test_a_thing_changed_or_added_renders_again_and_one_nobody_holds_changes_no_clip(project: Kiripix) -> None:
+def test_a_thing_changed_renders_again_and_one_nobody_holds_changes_no_clip(project: Kiripix) -> None:
     folder = built(project, "phone")
     count = len(render_calls(project))
     assert stage_status(project, HERO)["render"] == "done"
 
-    add_thing(folder, "stick", b"new")  # a thing no clip holds: the Stage is stale (its input changed) but the clips are reused
+    add_thing(folder, "stick", b"new")  # a thing no clip holds: the Stage is stale (its input changed) but no clip is drawn (0313)
     assert stage_status(project, HERO)["render"] == "stale"
     project.json("run", HERO, "clips")
     project.json("run", HERO, "render")
-    assert len(render_calls(project)) == count + 1  # the numbering reads every thing, so the clips that hold are drawn again
+    assert len(render_calls(project)) == count
 
     (folder / "src" / "things" / "phone" / "model.glb").write_bytes(b"changed")
     assert stage_status(project, HERO)["render"] == "stale"

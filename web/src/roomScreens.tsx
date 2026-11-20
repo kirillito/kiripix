@@ -17,6 +17,7 @@ import {
   type Marker,
 } from "./markerTool";
 import type { CanvasPixel, PixelCanvas } from "./pixelCanvas";
+import { ReachOverlay, type IslandBox } from "./reachOverlay";
 import { LayerHighlight, layerFiles, loadImage } from "./sortView";
 import { CROSS_KEY, LINK_REACH, loadMask, WalkTest, type Crossing, type Crossings, type SortedLayers } from "./walkTest";
 
@@ -49,7 +50,11 @@ interface Fields {
   walkable: boolean;
   kind: string; // a Link's kind, free text in snake_case
   two_way: boolean;
+  look: string; // a light's, emitter's or interactable's Look ID, blank for none
 }
+
+// The Marker types the `marker` Decision lets carry a Look (`marker.look_type` refuses the others).
+const LOOK_TYPES = ["light", "emitter", "interactable"];
 
 const DEFAULTS: Fields = {
   target_room: "",
@@ -62,6 +67,7 @@ const DEFAULTS: Fields = {
   walkable: false,
   kind: "hop",
   two_way: true,
+  look: "",
 };
 
 function cellSize(text: string): number | null {
@@ -91,8 +97,9 @@ const MOST_COLOURS = 16; // an emitter's colours, as the Decision allows
 
 // A Decision leaves out an emitter's unset fields; `show` writes them as null.
 function forDecision(marker: Marker): Record<string, unknown> {
-  if (marker.type !== "emitter") return marker;
   const kept: Marker = { ...marker };
+  if (kept.look === null) delete kept.look; // `show` writes a room Marker's Look as null
+  if (marker.type !== "emitter") return kept;
   for (const key of ["shape", "direction", "colours"]) if (kept[key] === null) delete kept[key];
   return kept;
 }
@@ -104,6 +111,11 @@ function linkDecision(link: Link, change: Partial<Link> = {}): Record<string, un
 }
 
 function ownFields(type: string, fields: Fields, layer: string): Record<string, unknown> {
+  const own = typeFields(type, fields, layer);
+  return LOOK_TYPES.includes(type) && fields.look ? { ...own, look: fields.look } : own;
+}
+
+function typeFields(type: string, fields: Fields, layer: string): Record<string, unknown> {
   if (type === "ysort") return { layer };
   if (type === "exit") return { target_room: fields.target_room, target_exit: fields.target_exit };
   if (type === "light") return { colour: fields.colour, radius: fields.radius, energy: fields.energy };
@@ -136,6 +148,11 @@ export function PlacePanel(props: {
   const [typedId, setTypedId] = useState<string | null>(null);
   const [fields, setFields] = useState(DEFAULTS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The Look whose Markers are drawn with the room's own; a Marker in another Look is hidden (ADR 0013).
+  const [viewLook, setViewLook] = useState("");
+  const lookIds = (show.looks ?? []).map((entry) => entry.look);
+  const shownMarkers = markers.filter((marker) => typeof marker.look !== "string" || marker.look === viewLook);
+  const shownKey = JSON.stringify(shownMarkers);
   const selected = markers.find((marker) => marker.id === selectedId) ?? null;
   const [exits, setExits] = useState<string[]>([]);
   const id = typedId ?? freeId(type, markers);
@@ -221,7 +238,9 @@ export function PlacePanel(props: {
       ...(isLink(marker) ? { kind: marker.kind, two_way: marker.two_way } : (marker as unknown as Partial<Fields>)),
       cell: typeof marker.cell === "number" ? String(marker.cell) : "",
       walkable: marker.walkable === true,
+      look: typeof marker.look === "string" ? marker.look : "",
     }));
+    if (typeof marker.look === "string") setViewLook(marker.look);
     if (typeof marker.layer === "string") setChosenLayer(marker.layer);
   }
 
@@ -342,7 +361,7 @@ export function PlacePanel(props: {
       .map((finding) => ({ x: finding.position!.x, y: finding.position!.y })),
   );
   useEffect(() => {
-    tool.current?.setMarkers(markersOf(detail));
+    tool.current?.setMarkers(JSON.parse(shownKey) as Marker[]);
     tool.current?.setLinking(type === "link");
     tool.current?.setLinkProblems(JSON.parse(linkProblemKey) as CanvasPixel[]);
     tool.current?.setSelected(selectedId);
@@ -350,7 +369,7 @@ export function PlacePanel(props: {
     tool.current?.setEmitter(mode, shapeKind, drawingPolygon);
     tool.current?.setAmbiguous(JSON.parse(ambiguousKey) as typeof ambiguous);
     canvas.current?.redraw();
-  }, [canvas, detail, selectedId, type, drawnCell, ambiguousKey, linkProblemKey, mode, shapeKind, drawingPolygon]);
+  }, [canvas, detail, shownKey, selectedId, type, drawnCell, ambiguousKey, linkProblemKey, mode, shapeKind, drawingPolygon]);
 
   // The room's pixels for the eyedropper, and the Project palette for the swatches: only an emitter needs either.
   const placeImage = detail.image ?? detail.input_image;
@@ -446,6 +465,17 @@ export function PlacePanel(props: {
   return (
     <fieldset disabled={disabled} className="marker-form">
       <h2>Marker</h2>
+      {lookIds.length > 0 && (
+        <div className="param">
+          <label htmlFor="place-look-view">Show Look</label>
+          <select id="place-look-view" data-testid="place-look-view" value={viewLook} onChange={(event) => setViewLook(event.target.value)}>
+            <option value="">none (the room alone)</option>
+            {lookIds.map((name) => (
+              <option key={name}>{name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="param">
         <label htmlFor="marker-type">Type</label>
         <select
@@ -472,6 +502,25 @@ export function PlacePanel(props: {
           onChange={(event) => setTypedId(event.target.value)}
         />
       </div>
+      {LOOK_TYPES.includes(type) && (
+        <div className="param">
+          <label htmlFor="marker-look">Look</label>
+          <select
+            id="marker-look"
+            data-testid="marker-look"
+            value={fields.look}
+            onChange={(event) => {
+              update({ look: event.target.value });
+              setViewLook(event.target.value); // the Marker is drawn only while its Look is chosen
+            }}
+          >
+            <option value="">none (the room's own)</option>
+            {lookIds.map((name) => (
+              <option key={name}>{name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       {type === "ysort" &&
         (layerIds.length === 0 ? (
           <p className="hint" data-testid="no-layers">
@@ -742,10 +791,10 @@ export function PlacePanel(props: {
           Save {selected.id}
         </button>
       )}
-      {TYPES.filter((name) => markers.some((marker) => marker.type === name)).map((name) => (
+      {TYPES.filter((name) => shownMarkers.some((marker) => marker.type === name)).map((name) => (
         <section key={name} data-testid={`markers-${name}`}>
           <h2>{LABELS[name]}</h2>
-          {markers
+          {shownMarkers
             .filter((marker) => marker.type === name)
             .map((marker) => (
               <button
@@ -758,7 +807,7 @@ export function PlacePanel(props: {
                   ? `${marker.id} (${marker.kind}, ${marker.from.join(", ")} ${marker.two_way ? "<->" : "->"} ${marker.to.join(", ")})`
                   : `${marker.id} (${marker.x}, ${marker.y}`}
                 {!isLink(marker) && (<>
-                {marker.x2 !== undefined && marker.type === "area" ? ` to ${marker.x2}, ${marker.y2}` : ""}){typeof marker.layer === "string" ? ` for ${marker.layer}` : ""}</>)}
+                {marker.x2 !== undefined && marker.type === "area" ? ` to ${marker.x2}, ${marker.y2}` : ""}){typeof marker.layer === "string" ? ` for ${marker.layer}` : ""}{typeof marker.look === "string" ? ` in ${marker.look}` : ""}</>)}
               </button>
             ))}
         </section>
@@ -805,9 +854,21 @@ export function PlacePanel(props: {
   );
 }
 
-interface ReachReport {
+interface ReachedEntry {
   markers: { id: string; reached: boolean }[];
+  main: string[];
+  islands: (IslandBox & { spots: number; added?: number; looks?: string[] })[];
+}
+
+// report.json (schema 1): the room's own entry, and `looks`, one entry for each Look with its own `solid`.
+interface ReachReport extends ReachedEntry {
   links?: { id: string; reached: boolean }[];
+  looks?: Record<string, ReachedEntry>;
+}
+
+// A file beside another in the same folder, or in a folder of it: the built files are named, not worked out.
+function sibling(path: string, name: string): string {
+  return `${path.slice(0, path.lastIndexOf("/") + 1)}${name}`;
 }
 
 export function ReachPanel(props: {
@@ -818,14 +879,29 @@ export function ReachPanel(props: {
   onWalking: (walking: boolean) => void;
 }) {
   const { canvas, show, detail, imageVersion, onWalking } = props;
-  const [unreachable, setUnreachable] = useState<string[]>([]);
+  const [read, setRead] = useState<ReachReport | null>(null);
   const [walking, setWalking] = useState(false);
+  const [chosenLook, setChosenLook] = useState("");
   const place = show.stages.find((entry) => entry.stage === PLACE_STAGE);
-  const markers = markersOf(place);
-  const shown = JSON.stringify(markers);
   const report = detail.outputs.find((path) => path.endsWith("/report.json"));
-  const walkable = place?.outputs.find((path) => path.endsWith("/walkable.png"));
-  const clear = place?.outputs.find((path) => path.endsWith("/clear.png"));
+  const roomReachable = detail.outputs.find((path) => path.endsWith("/reachable.png"));
+  const roomWalkable = place?.outputs.find((path) => path.endsWith("/walkable.png"));
+  const roomClear = place?.outputs.find((path) => path.endsWith("/clear.png"));
+  // Only a Look with its own `solid` has an entry in report.json; the others reach what the room does.
+  const lookIds = Object.keys(read?.looks ?? {});
+  const look = lookIds.includes(chosenLook) ? chosenLook : "";
+  const entry: ReachedEntry | null = look ? (read?.looks?.[look] ?? null) : read;
+  const unreachable = JSON.stringify(
+    entry ? [...entry.markers, ...(look ? [] : (read?.links ?? []))].filter((marker) => !marker.reached).map((marker) => marker.id) : [],
+  );
+  // The Look's own walkable and clear, which `place` writes beside the room's; a Marker in another Look is not drawn.
+  const walkable = look && roomWalkable ? sibling(roomWalkable, `looks/${look}/walkable.png`) : roomWalkable;
+  const clear = look && roomClear ? sibling(roomClear, `looks/${look}/clear.png`) : roomClear;
+  const markers = markersOf(place).filter((marker) => typeof marker.look !== "string" || marker.look === look);
+  const shown = JSON.stringify(markers);
+  const overlay = useRef(new ReachOverlay());
+  const overlayFile = look && report ? sibling(report, `looks/${look}/reachable.png`) : roomReachable;
+  const islandsKey = JSON.stringify(entry?.islands ?? []);
   const tool = useRef(new MarkerTool(null));
   const sorted = useRef<SortedLayers>({ layers: [] });
   const crossings = useRef<Crossings>({ links: [], reach: show.tile ?? LINK_REACH });
@@ -863,27 +939,47 @@ export function ReachPanel(props: {
   useEffect(() => {
     let current = true;
     if (!report) {
-      setUnreachable([]);
+      setRead(null);
       return;
     }
     fetch(fileUrl(report, imageVersion))
       .then((response) => response.json() as Promise<ReachReport>)
-      .then((read) => {
-        if (current) setUnreachable([...read.markers, ...(read.links ?? [])].filter((marker) => !marker.reached).map((marker) => marker.id));
+      .then((document) => {
+        if (current) setRead(document);
       })
       .catch(() => {
-        if (current) setUnreachable([]); // Rebuilt while it was read; the next refresh reads it again.
+        if (current) setRead(null); // Rebuilt while it was read; the next refresh reads it again.
       });
     return () => {
       current = false;
     };
   }, [report, imageVersion]);
 
+  // The reachable Mask of the room, or of the chosen Look, with its islands boxed.
+  useEffect(() => {
+    let current = true;
+    const draw = (mask: Awaited<ReturnType<typeof loadMask>> | null) => {
+      if (!current) return;
+      overlay.current.set(mask, JSON.parse(islandsKey) as IslandBox[], look);
+      canvas.current?.redraw();
+    };
+    if (!overlayFile) {
+      draw(null);
+      return;
+    }
+    loadMask(fileUrl(overlayFile, imageVersion))
+      .then(draw)
+      .catch(() => draw(null)); // Rebuilt while it was read; the next refresh reads it again.
+    return () => {
+      current = false;
+    };
+  }, [canvas, overlayFile, islandsKey, look, imageVersion]);
+
   useEffect(() => {
     const all = JSON.parse(shown) as Marker[];
     crossings.current.links = all.filter((marker) => isLink(marker)) as unknown as Crossing[];
     tool.current.setMarkers(all);
-    tool.current.setUnreachable(unreachable);
+    tool.current.setUnreachable(JSON.parse(unreachable) as string[]);
     canvas.current?.redraw();
   }, [canvas, shown, unreachable]);
 
@@ -896,7 +992,7 @@ export function ReachPanel(props: {
   const stopWalking = (): void => {
     walk.current?.test.destroy();
     walk.current = null;
-    canvas.current?.setTools([tool.current]);
+    canvas.current?.setTools([overlay.current, tool.current]);
     if (canvas.current) delete canvas.current.element.dataset.body;
   };
   useEffect(() => {
@@ -921,7 +1017,7 @@ export function ReachPanel(props: {
         const body = { size: [bodyWidth, bodyHeight] as [number, number], dash };
         const test = new WalkTest(ground, open, body, x, y, () => canvas.current?.redraw(), sorted.current, crossings.current);
         walk.current = { from, test };
-        canvas.current?.setTools([tool.current, test]);
+        canvas.current?.setTools([overlay.current, tool.current, test]);
       },
     );
     return () => {
@@ -930,10 +1026,47 @@ export function ReachPanel(props: {
   }, [canvas, walking, walkable, clear, imageVersion, first, bodyWidth, bodyHeight, dash]);
 
   useEffect(() => () => stopWalking(), []);
-  useEffect(() => () => canvas.current?.setTools([]), [canvas]);
+  useEffect(() => {
+    canvas.current?.setTools([overlay.current, tool.current]);
+    return () => canvas.current?.setTools([]);
+  }, [canvas]);
 
   return (
     <div className="walk">
+      {lookIds.length > 0 && (
+        <section data-testid="reach-looks">
+          <h2>Look</h2>
+          <div className="param">
+            <label htmlFor="reach-look">Reach under</label>
+            <select id="reach-look" data-testid="reach-look" value={look} onChange={(event) => setChosenLook(event.target.value)}>
+              <option value="">none (the room alone)</option>
+              {lookIds.map((name) => (
+                <option key={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+        </section>
+      )}
+      {entry && (
+        <section data-testid="reach-islands">
+          <h2>{look ? `Islands under ${look}` : "Islands"}</h2>
+          {entry.islands.length === 0 ? (
+            <p className="hint" data-testid="reach-no-islands">
+              No island: every walkable spot is reached from {entry.main.length > 0 ? entry.main.join(", ") : "a Spawn or Exit"}.
+            </p>
+          ) : (
+            <ul>
+              {entry.islands.map((island) => (
+                <li key={`${island.x},${island.y}`} data-testid="reach-island">
+                  {island.width} x {island.height} at ({island.x}, {island.y}), {island.spots} spots
+                  {look && island.added ? `, ${island.added} the Look makes walkable` : ""}
+                  {!look && island.looks && island.looks.length > 0 ? `; reached under ${island.looks.join(", ")}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       <h2>Walk test</h2>
       {walkable && clear ? (
         <>
@@ -948,7 +1081,7 @@ export function ReachPanel(props: {
             {walking ? "Stop walking" : "Walk the Body"}
           </button>
           <p className="hint">
-            The arrow keys walk the {bodyWidth} x {bodyHeight} Body.
+            The arrow keys walk the {bodyWidth} x {bodyHeight} Body{look ? ` on the ground of ${look}` : ""}.
             {crossings.current.links.length > 0 && ` ${CROSS_KEY.toUpperCase()} crosses a Link when the Body stands near one of its ends.`}
             {dash > 0 && ` Shift and an arrow dashes over a pit of up to ${dash} px.`}
           </p>
@@ -956,9 +1089,9 @@ export function ReachPanel(props: {
       ) : (
         <p className="hint">Build place first: the Body walks on what it derives.</p>
       )}
-      {unreachable.length > 0 && (
+      {JSON.parse(unreachable).length > 0 && (
         <p className="reason" data-testid="unreachable">
-          Unreachable: {unreachable.join(", ")}
+          Unreachable: {(JSON.parse(unreachable) as string[]).join(", ")}
         </p>
       )}
     </div>

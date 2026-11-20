@@ -2,7 +2,7 @@
 
 The character's `sheet` (`character_sheet.py`) on the Wearable's `finish` frames: the body's cell and pivot (they are the
 render's, which is the body's), the same grid and rect for each frame, a colour atlas and a normal atlas. This adds a third
-atlas of the same layout, `depth.png` (`character_sheet.add_depth_atlas`, which the body's `sheet` uses too): the render's
+atlas of the same layout, `depth.png` (`character_sheet.run_sheet_with_depth`, which the body's `sheet` uses too): the render's
 depth pass, 16 bit gray, 0 nearest and 65535 farthest, in the body's depth scale, so that the game can stack the body and its Wearables by depth. Where a cell has no frame pixel the depth is
 65535. `sheet.json` is the character's, with `files.depth` and the default stacking `order` added.
 
@@ -12,7 +12,7 @@ stacked by Asset ID.
 """
 
 from kiripix.recipes.base import ParamSpec, StageRun
-from kiripix.recipes.character_sheet import DEPTH_ATLAS, add_depth_atlas, check_character_sheet, run_character_sheet
+from kiripix.recipes.character_sheet import DEPTH_ATLAS, check_character_sheet, run_sheet_with_depth
 
 DEFAULT_ORDER = 10  # above the body (0)
 
@@ -24,8 +24,7 @@ ORDER = ParamSpec(
 
 
 def run_wearable_sheet(run: StageRun) -> None:
-    run_character_sheet(run)
-    add_depth_atlas(run, int(run.params.get("order", DEFAULT_ORDER)))
+    run_sheet_with_depth(run, int(run.params.get("order", DEFAULT_ORDER)))
 
 
 __all__ = ["DEFAULT_ORDER", "DEPTH_ATLAS", "ORDER", "check_wearable_sheet", "run_wearable_sheet"]

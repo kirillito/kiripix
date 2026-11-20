@@ -39,7 +39,7 @@ def test_an_edit_is_stored_under_the_look_and_the_source_stays_done(project: Kir
 
     status = stage_status(project, ROOM)
     assert status["source"] == "done" and status["looks"] == "stale"
-    assert status["palette"] == "done" and status["place"] == "done"  # nothing above `looks` moves
+    assert status["palette"] == "done" and status["place"] == "stale"  # `place` reads the Looks (ticket 0314)
     assert data["look"] == LOOK and data["created"] and data["variants"] == [data["variant"]]
     assert (folder / "src" / "looks" / LOOK / f"{data['variant']}.png").is_file()
     assert data["file"] == f"assets/room/alley/src/looks/{LOOK}/{data['variant']}.png"

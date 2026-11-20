@@ -111,7 +111,7 @@ class PortraitSettings(_Strict):
     """`[portrait]`: the canvas every portrait set is fitted to, and where its figure stands on it, the same for every portrait
     in the Project unless its own brief says otherwise (ticket 0242)."""
 
-    canvas: tuple[int, int] = Field((160, 224), description="Width and height of a portrait's canvas in px.")
+    canvas: tuple[int, int] = Field((192, 240), description="Width and height of a portrait's canvas in px (the game's, ticket 0323).")
     anchor: tuple[int, int] | None = Field(
         None, description="The canvas pixel the figure stands on: x and y. Unset: the bottom centre, (width // 2, height - 1).")
 
@@ -321,8 +321,8 @@ def _add_icon_section(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _add_portrait_section(document: dict[str, Any]) -> dict[str, Any]:
-    """Version 8 had no `[portrait]`; version 9 adds it (ticket 0242), its canvas defaulting to 160 x 224 and its anchor to the
-    bottom centre."""
+    """Version 8 had no `[portrait]`; version 9 adds it (ticket 0242), its canvas and anchor at `PortraitSettings`'s defaults
+    (written nowhere: the default is read)."""
     return {**document, "schema_version": 9}
 
 
@@ -361,12 +361,23 @@ def _add_clip_cells(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 6, "clips": clips}
 
 
-CHARACTER_MIGRATIONS: dict[int, Migration] = {4: _same_version, 5: _add_clip_cells}
+def _add_frame_offsets(document: dict[str, Any]) -> dict[str, Any]:
+    """`character.json` version 6 had every frame's `rect` the size of its clip's cell; version 7 cuts each frame to its opaque box
+    (ticket 0308) and gives it an `offset` in the cell. An older file's frames have offset 0, 0 and a rect the size of the cell, which
+    is what they already are. The grid's `columns`, which nothing read, is gone from version 7."""
+    clips = [{**clip, "directions": {direction: [{**frame, "offset": {"x": 0, "y": 0}} for frame in frames]
+                                     for direction, frames in clip.get("directions", {}).items()}}
+             for clip in document.get("clips", [])]
+    rest = {key: value for key, value in document.items() if key != "columns"}
+    return {**rest, "schema_version": 7, "clips": clips}
+
+
+CHARACTER_MIGRATIONS: dict[int, Migration] = {4: _same_version, 5: _add_clip_cells, 6: _add_frame_offsets}
 
 
 def migrate_character_record(document: dict[str, Any], file: str = "character.json") -> dict[str, Any]:
     """Pure: an exported `character.json` of schema_version 4 or later as one of the current version (a clip's `cell` and `pivot`
-    are the character's when the file has none); an older or newer one is refused."""
+    are the character's when the file has none, and each frame's `offset` is 0, 0); an older or newer one is refused."""
     from kiripix.recipes.character_export import CHARACTER_SCHEMA_VERSION
 
     version = document.get("schema_version")

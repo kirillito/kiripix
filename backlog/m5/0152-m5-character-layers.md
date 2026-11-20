@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 type: spec
 ---

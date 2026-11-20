@@ -8,15 +8,17 @@ another is named by `fit.grid_differs`. `downscale` is for AI images: one Grid f
 reference frame's opaque height (the first frame of `idle` in `s`, else the first frame) to `height`, with the line-keeping
 downscale. Either way the alpha ends binary, and `chroma` first clears a flat background colour.
 
-The feet of a frame are `feet_point` of its alpha. A direction's pivot is the median of its stationary clips' feet (of all its
-frames when it has no stationary clip), unless a `pivot` Decision says where it is. A frame is placed with its direction's pivot on
+The feet of a frame are `feet_point` of its alpha. A direction's pivot is the ground point a body's would be (ticket 0318): the
+median of its stationary clips' feet (of all its frames when it has no stationary clip), raised by `GROUND_RATIO` (0.08) of the figure's
+height (the median height of those frames over every direction, so the offset is the same in each), unless a `pivot` Decision
+says where it is (the Decision's point is the pivot, with no offset). A frame is placed with its direction's pivot on
 the cell's pivot, so the figure keeps its place on the canvas it came on and a walk's stride doesn't move the body; with
 `align_feet`, a stationary clip's frame is placed by its own feet instead. The cell is the smallest that holds every frame's opaque
 pixels around the pivot with 1 px to spare on each side for `finish`'s outline.
 
 Output in `work/fit/`: `color/<clip>/<dir>/<NNN>.png` (every frame the cell's size), `render.json` (the character's schema: `frame`,
 `pivot`, `directions`, `clips`, each frame's `files.color`, `pivot` (the cell's) and `feet` (measured, in the cell)) and
-`fit.json` (the grid, the pivots, and what the Checks report).
+`fit.json` (the grid, the pivots, `ground` (the ratio, figure height and px offset used), and what the Checks report).
 """
 
 from __future__ import annotations
@@ -50,6 +52,10 @@ GAME_BAND = (46, 58)  # the game's adults are this many px tall (DEC-043)
 GROW_NOTICE = 4  # px a frame must reach past every other frame for `fit.cell_grew`
 _CHROMA = re.compile("^#[0-9A-Fa-f]{6}$")
 OPAQUE_FROM = 128
+# A body's pivot is the ground point under its centre, and in the 30 degree view its shoes reach below it on screen (ticket
+# 0318): measured on the mc03 bodies' built `idle` (56 to 60 px, outline included), 4 to 5 px in `s`, 2 to 6 in the other
+# diagonals. A sprite's pivot sits this share of its figure's height above its measured feet, so both stand on one ground line.
+GROUND_RATIO = 0.08
 
 FIT_PARAMS = (
     ParamSpec(name="mode", type="choice", choices=["grid", "downscale"], default="grid",
@@ -67,8 +73,9 @@ FIT_PARAMS = (
 
 PIVOT = DecisionSpec(
     name="pivot",
-    description="Where the feet are, when the measured ones are wrong (a shadow or a tail at the lowest row): `x` and `y` in the "
-                "frame's target pixels, from its top left, for one `direction` or, with none, for all of them. A later "
+    description="Where the pivot (the ground point under the figure) is, when the measured one is wrong (a shadow or a tail at "
+                "the lowest row): `x` and `y` in the frame's target pixels, from its top left, for one `direction` or, with "
+                "none, for all of them. It is used as it is, with no ground offset above the feet. A later "
                 "Decision wins; `undo` brings the old pivot back.",
     entry_schema={
         "type": "object",
@@ -219,12 +226,17 @@ def run_sprite_fit(run: StageRun) -> None:
 
     wanted = [d for d in DIRECTIONS if d in document["directions"]]
     stationary = {str(c["name"]) for c in document["clips"] if c["stationary"]}
+    measured = [f for f in fitted if f.feet is not None and f.box is not None]
+    standing = [f for f in measured if f.clip in stationary] or measured
+    standing_height = _median([f.box[3] - f.box[1] + 1 for f in standing if f.box]) if standing else 0
+    ground = int(GROUND_RATIO * standing_height + 0.5)  # one offset for every direction, halves round up
     pivots: dict[str, tuple[int, int]] = {}
     for direction in wanted:
         here = [f for f in fitted if f.direction == direction and f.feet is not None]
         chosen = [f for f in here if f.clip in stationary] or here
         if chosen:
-            pivots[direction] = (_median([f.feet[0] for f in chosen if f.feet]), _median([f.feet[1] for f in chosen if f.feet]))
+            pivots[direction] = (_median([f.feet[0] for f in chosen if f.feet]),
+                                 _median([f.feet[1] for f in chosen if f.feet]) - ground)
         else:
             first = next((f for f in fitted if f.direction == direction), None)
             if first is not None:
@@ -239,7 +251,7 @@ def run_sprite_fit(run: StageRun) -> None:
 
     def used(frame: _Frame) -> tuple[int, int]:
         if align and frame.clip in stationary and frame.feet is not None:
-            return frame.feet
+            return frame.feet[0], frame.feet[1] - ground
         return pivots[frame.direction]
 
     needs: dict[str, list[tuple[int, int]]] = {"left": [], "right": [], "top": [], "bottom": []}  # px each frame needs, by index
@@ -311,7 +323,8 @@ def run_sprite_fit(run: StageRun) -> None:
     (run.output_dir / RENDER_FILE).write_text(json.dumps(render, indent=1) + "\n", encoding="utf-8")
     record = {"schema_version": FIT_SCHEMA_VERSION, "mode": mode, **grid_record, "chroma": str(run.params.get("chroma", "")),
               "align_feet": align, "target_height": target, "tallest": tallest, "grid_differs": differs, "grew": grew,
-              "pivots": {d: list(p) for d, p in pivots.items()}, "cell": [cell_width, cell_height]}
+              "pivots": {d: list(p) for d, p in pivots.items()},
+              "ground": {"ratio": GROUND_RATIO, "figure": standing_height, "offset": ground}, "cell": [cell_width, cell_height]}
     (run.output_dir / FIT_FILE).write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
 
 

@@ -112,27 +112,26 @@ def test_sheet_lays_out_each_clip_at_its_own_cell_and_character_json_lists_them(
     clips = by_name(sheet)
     assert clips["idle"]["cell"] == clips["walk"]["cell"] == sheet["cell"] and clips["idle"]["pivot"] == sheet["pivot"]
     assert clips["hit"]["cell"] == {"width": side, "height": side} and clips["hit"]["pivot"] == {"x": side // 2, "y": side - 6}
-    atlas = np.array(Image.open(folder / "work" / "sheet" / "color.png"))
+    atlas = np.array(Image.open(folder / "work" / "sheet" / "color.png").convert("RGBA"))
     assert (atlas.shape[1], atlas.shape[0]) == (sheet["atlas"]["width"], sheet["atlas"]["height"])
     taken = np.zeros(atlas.shape[:2], dtype=bool)
     for name, entry in clips.items():
         want = entry["cell"]
         for direction, listed in entry["directions"].items():
             for frame in listed:
-                r = frame["rect"]
-                assert (r["width"], r["height"]) == (want["width"], want["height"])
+                r, o = frame["rect"], frame["offset"]  # the box is in the clip's own cell (ticket 0308)
+                assert o["x"] + r["width"] <= want["width"] and o["y"] + r["height"] <= want["height"]
                 assert r["x"] + r["width"] <= atlas.shape[1] and r["y"] + r["height"] <= atlas.shape[0]
-                assert not taken[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]].any()  # no two cells overlap
+                assert not taken[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]].any()  # no two frames overlap
                 taken[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]] = True
                 source = np.array(Image.open(folder / "work" / "finish" / "color" / f"{name}/{direction}/{frame['index']:03d}.png"))
-                assert (atlas[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]] == source[:r["height"], :r["width"]]).all()
-    # the body's block is first: its clips' rects are above the held clip's
-    assert max(f["rect"]["y"] for c in (clips["idle"], clips["walk"]) for fs in c["directions"].values() for f in fs) < min(
-        f["rect"]["y"] for fs in clips["hit"]["directions"].values() for f in fs)
+                cell = np.zeros((want["height"], want["width"], 4), dtype=np.uint8)
+                cell[o["y"]:o["y"] + r["height"], o["x"]:o["x"] + r["width"]] = atlas[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]]
+                assert (cell == source[:want["height"], :want["width"]]).all()  # restored from rect + offset
     depth = np.array(Image.open(folder / "work" / "sheet" / "depth.png"))
     assert depth.shape == atlas.shape[:2]
 
-    assert character["schema_version"] == 6
+    assert character["schema_version"] == 7
     assert character["cell"] == sheet["cell"] and character["pivot"] == sheet["pivot"]
     for name, entry in by_name(character).items():
         assert entry["cell"] == clips[name]["cell"] and entry["pivot"] == clips[name]["pivot"]
@@ -142,10 +141,10 @@ def test_sheet_lays_out_each_clip_at_its_own_cell_and_character_json_lists_them(
 def test_a_character_whose_clips_share_the_bodys_cell_keeps_it_in_every_clip(project: Kiripix) -> None:
     folder, sheet, character = exported(project, None)
 
-    assert character["schema_version"] == 6
+    assert character["schema_version"] == 7
     assert {(c["cell"]["width"], c["pivot"]["x"]) for c in character["clips"]} == {(BODY, 39)}
     assert all(c["cell"] == character["cell"] and c["pivot"] == character["pivot"] for c in character["clips"])
-    assert sheet["columns"] * BODY >= sheet["atlas"]["width"] and sheet["atlas"]["height"] % BODY == 0  # one grid, as before
+    assert "columns" not in sheet  # the atlas is packed, not a grid (ticket 0308)
 
 
 def test_sheet_checks_run_per_clip(project: Kiripix) -> None:

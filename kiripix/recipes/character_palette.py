@@ -10,15 +10,23 @@ colours of its own, dark to light, which no other part, fixed material or ramp s
 without touching another. `colors` then counts only the fixed subset, the materials in no part, and every pixel is mapped by
 the material pass onto its own part's ramp. A part's name is its key everywhere, never its position.
 
+A sprite (ticket 0319) has no material pass: its parts are colour regions. `colour_regions` groups the colours of every frame
+by hue and chroma into regions named by hue (`orange`, `blue_2`, `grey`), listed in `palette.json`'s `regions`, and `parts`
+names and joins them as a body's names materials (`skin=orange,top=grey+blue`). With `parts`, the regions are the sprite's
+materials: the Stage writes their pass (`material/<clip>/<dir>/<NNN>.png`) and lists them in its `render.json`, so `finish`
+draws inner lines between them; each part gets a ramp of `shades`, mapped as a body's (nearest; a ramp of the Project's
+table by lightness order).
+
 Output in `work/palette/`: `color/<clip>/<dir>/<NNN>.png` (as in `render`), `palette.json` and `render.json`.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -32,12 +40,14 @@ else:
 
 from kiripix.checks import Finding, Position, check_ramp_shared
 from kiripix.ops import (
+    colour_regions,
     conformance,
     lightness_breaks,
     palette_subset,
     part_ramps,
     quantize,
     quantize_by_part,
+    region_labels,
     remove_orphans,
     remove_orphans_by_part,
 )
@@ -124,6 +134,12 @@ def _material_files(document: dict[str, Any]) -> list[str]:
             for frame in frames:
                 found.append(str(frame["files"].get("material", "")))
     return found
+
+
+def material_path(colour: str) -> str:
+    """A frame's material pass file for its colour file: `color/<clip>/<dir>/<NNN>.png` gives `material/<clip>/<dir>/<NNN>.png`,
+    as `render` lays them out."""
+    return "material/" + colour.partition("/")[2]
 
 
 def _indexes(subset: np.ndarray, palette: np.ndarray, taken: list[int] | None = None) -> list[int]:
@@ -242,17 +258,32 @@ def _reserved(table: list[dict[str, Any]]) -> np.ndarray:
     return np.array(colours, dtype=np.uint8).reshape(-1, 3)
 
 
-def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) -> None:
-    """`exclude` (N, 3): colours no fixed colour or fitted ramp of this run may use, such as a Wearable's body's (ticket 0292)."""
+@dataclass
+class _Prepared:
+    """A frame list the Stage made itself rather than read from `source` (a sprite's, ticket 0319): `document` is the
+    `render.json` it writes, `frames` the colour frames in `_colour_files` order, `labels` their material pass (empty for
+    none), `bands` the parts' ramp length, and `record` keys added to `palette.json`."""
+
+    document: dict[str, Any]
+    frames: list[np.ndarray]
+    labels: list[np.ndarray]
+    bands: int
+    record: dict[str, Any] = field(default_factory=dict)
+
+
+def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None, prepared: _Prepared | None = None) -> None:
+    """`exclude` (N, 3): colours no fixed colour or fitted ramp of this run may use, such as a Wearable's body's (ticket 0292).
+    `prepared`: the frames, material pass and frame list a sprite made (ticket 0319), written here in place of `source`'s."""
     render = run.upstream[source]
-    document = _render(run, source)
+    document = _render(run, source) if prepared is None else prepared.document
     files = _colour_files(document)
     palette = palette_rgb(run)
     count = int(run.params["colors"])
     materials = material_indexes(document)
     table = _table(run)
     written = str(param_or_generated(run, "parts", _generated(document)) or "")
-    specs = parse_parts(written, list(materials), int(document.get("bands", 3)), run.asset_id, table)
+    bands = int(document.get("bands", 3)) if prepared is None else prepared.bands
+    specs = parse_parts(written, list(materials), bands, run.asset_id, table)
     lines = bool(run.params.get("part_lines", False)) and bool(specs)
     line = 1 if lines else 0  # the line step: each ramp's first colour, for the inner lines only
     # A part of the Project's ramp table counts the line step in the table's length (with or without `rgb`); a ramp the
@@ -283,8 +314,10 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
     for number, (_clip, _direction, _index, name) in enumerate(files):
         run.check_cancel()
         run.progress(number, len(files) * 2, "reading frames")
-        frames.append(read_rgba(render / name))
-        if layered:
+        frames.append(read_rgba(render / name) if prepared is None else prepared.frames[number])
+        if layered and prepared is not None:
+            labels.append(prepared.labels[number])
+        elif layered:
             try:
                 labels.append(read_labels(render / label_files[number]))
             except OSError:
@@ -363,7 +396,13 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
         target = run.output_dir / name
         target.parent.mkdir(parents=True, exist_ok=True)
         write_rgba(target, cleaned)
-    shutil.copyfile(render / RENDER_FILE, run.output_dir / RENDER_FILE)
+    if prepared is None:
+        shutil.copyfile(render / RENDER_FILE, run.output_dir / RENDER_FILE)
+    else:
+        for label, material in zip(prepared.labels, _material_files(document)):  # none when the sprite has no parts
+            (run.output_dir / material).parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(label, "L").save(run.output_dir / material)
+        (run.output_dir / RENDER_FILE).write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
     taken: list[int] = []
     colours = [{"index": i, "rgb": [int(c) for c in rgb], "hex": _hex(rgb)}
                for i, rgb in zip(_indexes(subset, palette, taken), subset, strict=True)]
@@ -372,7 +411,7 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
                   "rgb": [[int(c) for c in rgb] for rgb in ramps[s.name]], "hex": [_hex(rgb) for rgb in ramps[s.name]]}
                  for place, s in enumerate(specs)]
     record: dict[str, Any] = {"schema_version": PALETTE_SCHEMA_VERSION, "colors": colours, "parts": described,
-                              "part_lines": lines, "table": table}
+                              "part_lines": lines, "table": table, **(prepared.record if prepared is not None else {})}
     if len(thing_subset):  # additive keys, present only when a held thing has colours outside every part (ticket 0305)
         record["thing_colors"] = [] if thing_shares else [
             {"index": i, "rgb": [int(c) for c in rgb], "hex": _hex(rgb)}
@@ -382,7 +421,7 @@ def _run_palette(run: StageRun, source: str, exclude: np.ndarray | None = None) 
     (run.output_dir / PALETTE_FILE).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
-def _check_palette(run: StageRun, source: str) -> list[Finding]:
+def _check_palette(run: StageRun, source: str, labels_here: bool = False) -> list[Finding]:
     """`palette.off_palette` on every colour frame, against the character's own colours (the fixed subset and every ramp), and
     `palette.ramp_shared` when a ramp's colour is in two ramps or in a pixel of another part, the colours the Project's ramp
     table reserves for parts the character lacks included; a finding names the frame."""
@@ -433,7 +472,7 @@ def _check_palette(run: StageRun, source: str) -> list[Finding]:
         if not ramps:
             continue
         try:
-            label = read_labels(run.upstream[source] / label_files[number])
+            label = read_labels((out if labels_here else run.upstream[source]) / label_files[number])
         except OSError:
             continue  # `render` has nothing to compare with: its own Stage says so
         if label.shape != image.shape[:2]:
@@ -461,3 +500,69 @@ run_character_palette, check_character_palette = palette_stage("render")
 def palette_stage_excluding(exclude: Callable[[StageRun], np.ndarray]) -> StageFunction:
     """`run` of a palette Stage on `render`'s frames that keeps clear of the colours `exclude` gives (a Wearable's, ticket 0292)."""
     return lambda run: _run_palette(run, "render", exclude(run))
+
+
+SPRITE_SHADES = 4  # a sprite part's ramp length, as the Project's `[character] ramps` give a body's
+SPRITE_HUE_GAP = 8.0
+
+
+def _run_sprite_palette(run: StageRun, source: str) -> None:
+    """A sprite's `palette` (ticket 0319): its colour regions proposed, and with `parts` used as its material pass."""
+    document = _render(run, source)
+    frames: list[np.ndarray] = []
+    for _clip, _direction, _index, name in _colour_files(document):
+        run.check_cancel()
+        frames.append(read_rgba(run.upstream[source] / name))
+    try:
+        regions = colour_regions(frames, float(run.params.get("hue_gap", SPRITE_HUE_GAP)))
+    except ValueError as error:
+        raise StageFailure(f"can't group the sprite's colours: {error}",
+                           fix=f"kiripix set {run.asset_id} palette hue_gap={SPRITE_HUE_GAP:g}") from None
+    record = {"regions": [{"name": n, "index": i, "pixels": px}
+                          for i, (n, px) in enumerate(zip(regions.names, regions.pixels, strict=True), start=1)]}
+    written = str(run.params.get("parts") or "")
+    if not written.strip():  # no parts: the frames are mapped as before
+        _run_palette(run, source, prepared=_Prepared(document, frames, [], SPRITE_SHADES, record))
+        return
+    shades = int(run.params.get("shades", SPRITE_SHADES))
+    for spec in parse_parts(written, regions.names, shades, run.asset_id, _table(run)):
+        if spec.name in regions.names and spec.name not in spec.materials:  # it would hide that region's own name in `finish`
+            raise StageFailure(f"part {spec.name!r} is named after another region; a part takes its own region's name or a "
+                               f"name that is no region's", code="palette.parts_invalid",
+                               fix=f"kiripix set {run.asset_id} palette parts=" + ",".join(regions.names))
+    made = copy.deepcopy(document)
+    made["materials"] = [{"name": n, "index": i} for i, n in enumerate(regions.names, start=1)]
+    for entry in made["clips"]:
+        for listed in entry["directions"].values():
+            for frame in listed:
+                frame["files"]["material"] = material_path(str(frame["files"]["color"]))
+    labels = []
+    for frame_image in frames:
+        run.check_cancel()
+        labels.append(region_labels(frame_image, regions))
+    _run_palette(run, source, prepared=_Prepared(made, frames, labels, shades, record))
+
+
+def _check_sprite_palette(run: StageRun, source: str) -> list[Finding]:
+    """The character's palette Checks on the sprite's own material pass, and `palette.sprite_regions` (info) naming the regions
+    while the sprite has no `parts`."""
+    findings = _check_palette(run, source, labels_here=True)
+    try:
+        document = json.loads((run.output_dir / PALETTE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return findings
+    regions = document.get("regions") or []
+    if regions and not document.get("parts"):
+        named = ", ".join(f"{r['name']} ({r['pixels']} px)" for r in regions)
+        findings.append(Finding(
+            code="palette.sprite_regions", severity="info",
+            message=f"the sprite's colours fall into these regions, by hue: {named}; with `parts` each part gets its own ramp",
+            position=Position(asset=run.asset_id, stage="palette", file=PALETTE_FILE, field="regions"),
+            owner_action=f"Name the regions as parts, joining those of one part with `+`, such as kiripix set {run.asset_id} "
+                         f"palette parts=skin={regions[0]['name']}; or leave the sprite without parts."))
+    return findings
+
+
+def sprite_palette_stage(frames: str = "fit") -> tuple[StageFunction, CheckFunction]:
+    """The sprite's `palette` Stage (ticket 0319): the character's, with colour regions for parts."""
+    return (lambda run: _run_sprite_palette(run, frames)), (lambda run: _check_sprite_palette(run, frames))

@@ -344,7 +344,8 @@ def test_a_pivot_decision_moves_the_pivot_and_undo_restores_it(project: Kiripix)
     fit = folder / "work" / "fit"
     measured = load(fit / "fit.json")["pivots"]
     before = read(fit / "color" / "idle" / "s" / "000.png")
-    assert measured["s"] == [7, 14]  # the legs' columns 6 and 8 average to 7; the lowest row of the figure
+    assert measured["s"] == [7, 13]  # the legs' columns 6 and 8 average to 7; the lowest row of the figure (14) less 0.08
+    # of the 13 px figure, 1 px (ticket 0318)
 
     decide(project, "fit", "pivot", {"x": 9, "y": 14, "direction": "s"})
     project.json("run", SPRITE)
@@ -358,6 +359,35 @@ def test_a_pivot_decision_moves_the_pivot_and_undo_restores_it(project: Kiripix)
 
     assert load(fit / "fit.json")["pivots"] == measured
     assert (read(fit / "color" / "idle" / "s" / "000.png") == before).all()
+
+
+def tall_figure(colour: tuple[int, int, int], height: int = 40) -> np.ndarray:
+    """A 16 x 48 frame with a figure `height` px tall (rows 4 to 4 + height - 1) on 1 px legs."""
+    image = np.zeros((48, 16, 4), dtype=np.uint8)
+    image[4:12, 6:9] = (*colour, 255)  # head
+    image[12:4 + height - 8, 5:10] = (colour[0] // 2, colour[1] // 2, 120, 255)  # body
+    image[4 + height - 8:4 + height, 6] = (*colour, 255)  # legs
+    image[4 + height - 8:4 + height, 8] = (*colour, 255)
+    return image
+
+
+def test_the_pivot_sits_the_ground_share_of_the_figure_above_the_feet_in_every_direction(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    sheet = np.concatenate([tall_figure((60 + 50 * n, 90, 200 - 40 * n)) for n in range(4)], axis=0)
+    png_sheet(project, sheet, 1)
+
+    project.json("run", SPRITE)
+
+    fit = folder / "work" / "fit"
+    record = load(fit / "fit.json")
+    assert record["ground"] == {"ratio": 0.08, "figure": 40, "offset": 3}  # 3.2 px, rounded
+    assert record["pivots"] == {d: [7, 40] for d in FOUR}  # the feet at row 43, 3 px up
+    render = load(fit / "render.json")
+    pivot_y = int(render["pivot"][1])
+    for direction in FOUR:
+        ys, _ = np.nonzero(read(fit / "color" / "idle" / direction / "000.png")[..., 3])
+        assert int(ys.max()) == pivot_y + 3  # the lowest opaque row, the rule's 3 px below the pivot
+        assert int(ys.max()) <= render["frame"]["height"] - 2  # the cell still has a pixel to spare below the feet
 
 
 def test_a_pivot_decision_with_no_direction_sets_all_of_them(project: Kiripix) -> None:
@@ -460,8 +490,112 @@ def test_palette_finish_and_sheet_write_what_a_characters_do(project: Kiripix) -
         folder / "work" / "finish" / "normal" / "idle" / "s" / "000.png")
     assert colour.shape == normal.shape and (normal[..., 3] == colour[..., 3]).all()
     sheet = load(folder / "work" / "sheet" / "sheet.json")
-    assert sorted(sheet) == ["atlas", "cell", "clips", "columns", "directions", "files", "pivot", "schema_version"]
-    assert sheet["schema_version"] == 1 and (folder / "work" / "sheet" / "color.png").is_file()
+    assert sorted(sheet) == ["atlas", "cell", "clips", "directions", "files", "pivot", "schema_version"]
+    assert sheet["schema_version"] == 2 and (folder / "work" / "sheet" / "color.png").is_file()
+
+
+def test_palette_proposes_colour_regions_and_parts_give_each_its_own_ramp_of_shades(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    png_sheet(project, sheet_of(FOUR, 2), 2)
+
+    result = project.json("run", SPRITE)
+
+    palette = folder / "work" / "palette"
+    regions = load(palette / "palette.json")["regions"]
+    assert len(regions) >= 2 and all(r["pixels"] > 0 for r in regions)
+    [proposal] = [f for f in result["findings"] if f["code"] == "palette.sprite_regions"]
+    assert proposal["severity"] == "info" and regions[0]["name"] in proposal["message"]
+    assert load(palette / "palette.json")["parts"] == [] and not (palette / "material").exists()
+
+    named = [f"part{n}={r['name']}" for n, r in enumerate(regions)]
+    project.json("set", SPRITE, "palette", f"parts={','.join(named)}", "shades=2")
+    project.json("run", SPRITE, "palette")  # `finish` then refuses an outline in a ramp, as a body's does
+
+    document = load(palette / "palette.json")
+    assert [p["name"] for p in document["parts"]] == [f"part{n}" for n in range(len(regions))]
+    assert all(len(p["rgb"]) == 2 for p in document["parts"])
+    render = load(palette / "render.json")
+    assert [m["name"] for m in render["materials"]] == [r["name"] for r in regions]
+    frame = render["clips"][0]["directions"]["s"][0]
+    colour, labels = read(palette / frame["files"]["color"]), read(palette / frame["files"]["material"])
+    for number, part in enumerate(document["parts"], start=1):
+        used = {tuple(c) for c in colour[labels == number][:, :3].tolist()}
+        assert used <= {tuple(c) for c in part["rgb"]}
+    assert [f for f in project.json("check", SPRITE)["findings"]
+            if f["code"] in ("palette.sprite_regions", "palette.off_palette", "palette.ramp_shared")] == []
+
+
+def test_finish_draws_inner_lines_where_a_sprites_parts_meet(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    one = figure((200, 60, 60))  # a red head and legs on a body of (100, 30, 90), a purple far from the red in hue
+    png_sheet(project, np.concatenate([one] * 4, axis=0), 1)
+    project.json("set", SPRITE, "finish", "inner_lines=outline")
+
+    failed = project.json("run", SPRITE, expect=1)  # no parts, so nothing to draw between
+
+    assert [f["code"] for f in failed["findings"] if f["severity"] == "error"] == ["finish.inner_lines_without_parts"]
+    regions = load(folder / "work" / "palette" / "palette.json")["regions"]
+    assert len(regions) == 2
+    project.json("set", SPRITE, "palette", f"parts=head={regions[0]['name']},body={regions[1]['name']}")
+    refused = project.json("run", SPRITE, expect=1)
+    [fix] = [f["fix"] for f in refused["findings"] if f["code"] == "finish.outline_in_ramp"]
+    project.json(*fix.split()[1:])  # an outline colour in no part's ramp
+    project.json("set", SPRITE, "finish", "inner_lines=off")
+    project.json("run", SPRITE)
+    finish = folder / "work" / "finish"
+    plain = read(finish / "color" / "idle" / "s" / "000.png")
+
+    project.json("set", SPRITE, "finish", "inner_lines=outline")
+    project.json("run", SPRITE)
+
+    lined = read(finish / "color" / "idle" / "s" / "000.png")
+    outline = load(finish / "finish.json")["outline"]["rgb"]
+    changed = np.argwhere((lined != plain).any(axis=2))
+    # the body's top row under the head, 3 px; the legs' borders are lined too, but 1 px legs are all edge, which the outline
+    # (placement=edge) paints over in any case
+    assert len(changed) == 3 and len({int(y) for y, _ in changed}) == 1
+    assert all(lined[y, x, :3].tolist() == outline for y, x in changed)
+    assert load(finish / "finish.json")["inner_lines"]["mode"] == "outline"
+
+    project.json("set", SPRITE, "finish", "line_skip=head")
+    project.json("run", SPRITE)
+
+    assert (read(finish / "color" / "idle" / "s" / "000.png") == plain).all()
+
+
+def two_part_sprite(project: Kiripix) -> list[str]:
+    """A sprite of a red head and legs on a purple body, built through `palette`; its two regions' names."""
+    folder = new_sprite(project)
+    png_sheet(project, np.concatenate([figure((200, 60, 60))] * 4, axis=0), 1)
+    project.json("run", SPRITE)
+    return [str(r["name"]) for r in load(folder / "work" / "palette" / "palette.json")["regions"]]
+
+
+def test_a_sprites_part_joins_the_project_ramp_table_and_then_takes_its_colours(project: Kiripix) -> None:
+    head, body = two_part_sprite(project)
+    project.json("set", SPRITE, "palette", f"parts=head={head}")
+    project.json("run", SPRITE, "palette")
+    built = load(project.cwd / "assets" / "sprite" / "npc" / "work" / "palette" / "palette.json")["parts"][0]
+
+    project.json("ramps-add", SPRITE, "--parts", "head", "--colours", owner=True)
+    project.json("run", SPRITE, "palette", "--force")
+
+    [shared] = load(project.cwd / "assets" / "sprite" / "npc" / "work" / "palette" / "palette.json")["parts"]
+    assert shared["shared"] is True and shared["rgb"] == built["rgb"] and shared["row"] == 0
+    project.json("set", SPRITE, "palette", f"parts=head={head},body={body}")
+    refused = project.json("run", SPRITE, "palette", expect=3)  # the table is the Owner's to extend
+    assert "palette.part_not_in_table" in [f["code"] for f in refused["findings"]]
+
+
+def test_a_part_named_after_another_region_is_refused(project: Kiripix) -> None:
+    head, body = two_part_sprite(project)
+    project.json("set", SPRITE, "palette", f"parts={body}={head}")
+
+    refused = project.json("run", SPRITE, "palette", expect=1)
+
+    [finding] = [f for f in refused["findings"] if f["severity"] == "error"]
+    assert finding["code"] == "palette.parts_invalid" and body in finding["message"]
+    assert finding["fix"] == f"kiripix set {SPRITE} palette parts=" + ",".join([head, body])
 
 
 def test_export_leaves_character_json_in_the_characters_format(project: Kiripix) -> None:
@@ -472,7 +606,7 @@ def test_export_leaves_character_json_in_the_characters_format(project: Kiripix)
 
     character = load(folder / "out" / "export" / "character.json")
     sheet = load(folder / "work" / "sheet" / "sheet.json")
-    assert character == {"schema_version": 6, "asset": SPRITE, "files": {"color": "color.png", "normal": "normal.png"},
+    assert character == {"schema_version": 7, "asset": SPRITE, "files": {"color": "color.png", "normal": "normal.png"},
                          **{key: sheet[key] for key in ("cell", "pivot", "atlas", "directions")},
                          "clips": [{**c, "events": {"foot": []}} for c in sheet["clips"]], "parts": [], "rows": []}
 

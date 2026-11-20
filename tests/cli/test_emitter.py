@@ -11,7 +11,7 @@ from test_masks import FLOOR, ROOM, WALL
 from test_place import built_place, markers, place, walled_room
 
 # walled_room's Plate is 48 x 32.
-NEW = {"shape": None, "direction": None, "colours": None}
+NEW = {"shape": None, "direction": None, "colours": None, "look": None}
 ON = ("#C8BEAA", "#2814C8")  # FLOOR and WALL: added to the palette by `with_palette`
 
 
@@ -191,7 +191,7 @@ def test_a_built_room_exports_the_emitter_fields_in_room_json_schema_4(project: 
     project.json("run", ROOM, expect=2)  # the colour is off the palette; the Stages still build
 
     room = json.loads((folder / "out" / "export" / "room.json").read_text("utf-8"))
-    assert room["schema_version"] == 11
+    assert room["schema_version"] == 12
     by_id = {m["id"]: m for m in room["markers"]}
     assert by_id["plain"]["shape"] is None and by_id["steam"]["colours"] == ["#112233"]
     assert isinstance(folder, Path)

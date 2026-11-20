@@ -47,13 +47,21 @@ def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
     again. A room's Masks and Layers come from the built export when there is one, and otherwise are taken as unchanged.
     A prop exports no Marker, Layer or Mask ID to freeze. A character's clip animations come from its `clip` Decisions."""
     markers: set[str] = set()
+    look_markers: set[str] = set()  # `<look>/<marker>`: moving a Marker into or out of a Look changes its node path
     links: set[str] = set()
     for spec in graph.kind.stages:
         if spec.markers is not None:
             placed = spec.markers(graph.replay(spec.name).current)
-            markers.update(str(marker["id"]) for marker in placed if marker["type"] in EXPORTED_MARKER_TYPES)
+            for marker in placed:
+                if marker["type"] not in EXPORTED_MARKER_TYPES:
+                    continue
+                if marker.get("look") is None:
+                    markers.add(str(marker["id"]))
+                else:
+                    look_markers.add(f"{marker['look']}/{marker['id']}")
             links.update(str(marker["id"]) for marker in placed if marker["type"] == "link")
-    ids = manifest.ids.model_copy(update={"markers": sorted(markers), "links": sorted(links)})
+    ids = manifest.ids.model_copy(update={"markers": sorted(markers), "links": sorted(links),
+                                               "look_markers": sorted(look_markers)})
     own = _IDS_OF_KIND.get(graph.asset.kind)
     return ids.model_copy(update=own(graph, ids)) if own is not None else ids
 
@@ -130,7 +138,7 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
     manifest, shown, where = exported
     now = _current_ids(AssetGraph(project, asset, cache), manifest)
     found: list[Finding] = []
-    for noun, was, is_now in (("Marker", manifest.ids.markers, now.markers), ("Layer", manifest.ids.layers, now.layers),
+    for noun, was, is_now in (("Marker", manifest.ids.markers, now.markers), ("Look Marker", manifest.ids.look_markers, now.look_markers), ("Layer", manifest.ids.layers, now.layers),
                               ("Mask", manifest.ids.masks, now.masks), ("Look", manifest.ids.looks, now.looks), ("Loop", manifest.ids.loops, now.loops),
                               ("Link", manifest.ids.links, now.links), ("state", manifest.ids.states, now.states), ("emotion", manifest.ids.emotions, now.emotions), ("clip animation", manifest.ids.clips, now.clips)):
         for gone in sorted(set(was) - set(is_now)):

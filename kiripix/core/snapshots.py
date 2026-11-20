@@ -206,7 +206,7 @@ def read(project: Project, label: str, asset: str) -> Snapshot | None:
     except (OSError, ValueError, ValidationError) as error:
         raise fail("snapshot.unreadable", f"{shown} can't be read: {error}",
                    fix=f"kiripix snapshot {asset} --label {label} --replace") from None
-    if note.schema_version != SNAPSHOT_SCHEMA_VERSION or document.get("schema_version") != SHEET_SCHEMA_VERSION:
+    if note.schema_version != SNAPSHOT_SCHEMA_VERSION or document.get("schema_version") not in (1, SHEET_SCHEMA_VERSION):  # a version 1 sheet (rect = cell) still draws
         raise fail("snapshot.unreadable", f"{shown} is from another Kiripix version",
                    fix=f"kiripix snapshot {asset} --label {label} --replace")
     return Snapshot(note, document, load_rgba(folder / document["files"]["color"], f"{asset}'s snapshot atlas"))

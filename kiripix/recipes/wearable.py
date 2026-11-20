@@ -67,8 +67,8 @@ WEARABLE = KindSpec(
             name="render",
             description="Renders the Wearable with the body's clips, camera and cell, the body a holdout (it hides what is "
                         "behind it and isn't drawn): colour, normal, depth, mask and material passes, no outline, and the "
-                        "frames stay inside the body's cell. render.json records the render seconds.",
-            version=2,  # the first render that builds anything (ticket 0291)
+                        "frames stay inside the body's cell, clip by clip (a clip that has its own cell is drawn at it). render.json records the render seconds.",
+            version=3,  # each clip drawn at its body's own cell and pivot (ticket 0311); 2: the first render that builds anything (ticket 0291)
             inputs=StageInputs(upstream=["model", "rig"], settings=[BLENDER_VERSION_SETTING, RENDER_FORMAT_SETTING],
                                given=[BLENDER_SETTING], body=BodyInputs(built=BODY_STAGES, wait=True)),
             gpu=True,
@@ -94,7 +94,7 @@ WEARABLE = KindSpec(
             _FINISH,
             description="The normal pass quantised and aligned to the colour frames as the body's; no outline (the game draws "
                         "one on the stack).",
-            version=4,  # 3: the first finish that builds anything (ticket 0292); 4: the body's `normal_levels`
+            version=5,  # 5: `line_skip` skips every material of a name (ticket 0313); 4: the body's `normal_levels`; 3: the first finish that builds anything (ticket 0292)
             inputs=_FINISH.inputs.model_copy(update={"body": BodyInputs(built={"character": ["finish"]}, wait=True)}),
             params=tuple(
                 p.model_copy(update={"choices": ["off", "dark"]}) if p.name == "inner_lines" else p
@@ -105,7 +105,7 @@ WEARABLE = KindSpec(
             name="sheet",
             description="Packs the frames into colour, normal and depth atlases on the body's cell, pivot and frame layout, so "
                         "that a Wearable lies pixel for pixel on the body, and records its default stacking order.",
-            version=3,  # each clip's `cell` and `pivot` in sheet.json (ticket 0303); 2: the first sheet that builds anything (0293)
+            version=5,  # frames cut to their opaque boxes, `rect` plus `offset` (ticket 0308); 4: color.png an indexed PNG when it fits 256 colours (ticket 0310); 3: each clip's `cell` and `pivot` in sheet.json (0303); 2: the first sheet that builds anything (0293)
             inputs=StageInputs(upstream=["finish", "render"]),
             params=(ORDER,),
             checks=_SHEET.checks,
@@ -115,11 +115,11 @@ WEARABLE = KindSpec(
             name="export",
             description="The Wearable's three atlases and wearable.json (its body, stacking order, parts and ramps), then a "
                         "SpriteFrames, a CanvasTexture and a scene for the game.",
-            version=3,  # wearable.json's clips carry `cell` and `pivot` (ticket 0303); 2: the first export that builds anything (0293)
+            version=4,  # wearable.json schema_version 2: each frame's `offset`, `rect` trimmed (ticket 0308); 3: its clips carry `cell` and `pivot` (ticket 0303); 2: the first export that builds anything (0293)
             inputs=StageInputs(upstream=["sheet", "palette"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),
                     CheckSpec(code="wearable.body_not_exported",
-                              description="The body has been exported with the same cell (checked when exporting)."),),
+                              description="The body has been exported with the same cell and pivot, clip by clip (checked when exporting)."),),
             output_root="out", run=run_wearable_export, needs_input=export_needs_input, check=check_wearable_export,
             available_from="M5"),
     ),

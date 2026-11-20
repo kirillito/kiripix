@@ -84,7 +84,7 @@ def test_exported_is_either_and_files_are_ours_with_theirs_in_replacing(kpx: Kir
     assert merged["exported"] is True
     assert merged["files"] == {TSCN: "sha256:ours", png: "sha256:same", extra: "sha256:t"}
     assert merged["replacing"] == {TSCN: "sha256:theirs"}
-    assert merged["schema_version"] == 2
+    assert merged["schema_version"] == 3
 
 
 def test_the_merge_needs_no_project_and_is_byte_stable(kpx: Kiripix) -> None:
@@ -109,7 +109,7 @@ def test_a_missing_base_is_fine(kpx: Kiripix) -> None:
 @pytest.mark.parametrize("broken", [
     "not json at all",
     '{"schema_version": 1}',
-    manifest_text().replace('"schema_version": 2', '"schema_version": 3'),
+    manifest_text().replace('"schema_version": 2', '"schema_version": 4'),
     manifest_text().replace("room.alley", "room.other"),
     "",
 ])
@@ -132,7 +132,7 @@ def test_an_unreadable_ours_exits_1_and_leaves_it_unchanged(kpx: Kiripix) -> Non
 
 
 def test_a_newer_schema_version_is_named(kpx: Kiripix) -> None:
-    newer = manifest_text().replace('"schema_version": 2', '"schema_version": 3')
+    newer = manifest_text().replace('"schema_version": 2', '"schema_version": 4')
 
     result = kpx.json(*sides(kpx.cwd, manifest_text(), newer), expect=1)
 
@@ -150,7 +150,7 @@ def test_a_version_1_manifest_is_migrated_with_no_clips_and_the_merge_unions_the
 
     kpx.json(*sides(kpx.cwd, json.dumps(old), json.dumps(new)))
     migrated = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
-    assert migrated["schema_version"] == 2 and migrated["ids"]["clips"] == ["idle_s", "walk_s"]
+    assert migrated["schema_version"] == 3 and migrated["ids"]["clips"] == ["idle_s", "walk_s"]
 
     kpx.json(*sides(kpx.cwd, json.dumps(new), json.dumps(other)))
     merged = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
@@ -168,7 +168,7 @@ def test_a_version_1_manifest_is_migrated_with_no_clips_and_the_merge_unions_the
 
     kpx.json(*sides(kpx.cwd, json.dumps(old), json.dumps(new)))
     migrated = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
-    assert migrated["schema_version"] == 2 and migrated["ids"]["clips"] == ["idle_s", "walk_s"]
+    assert migrated["schema_version"] == 3 and migrated["ids"]["clips"] == ["idle_s", "walk_s"]
 
     kpx.json(*sides(kpx.cwd, json.dumps(new), json.dumps(other)))
     merged = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
@@ -459,3 +459,24 @@ def test_repair_refuses_all_when_one_cant_be_repaired(project: Kiripix) -> None:
     assert result["findings"][0]["code"] == "manifest.merge_unreadable"
     assert "room.street.json" in result["findings"][0]["message"]
     assert (project.cwd / MANIFEST).read_bytes() == before
+
+
+def test_the_merge_unions_the_look_markers_and_migrates_a_version_2_side(kpx: Kiripix) -> None:
+    old = json.loads(manifest_text(2))  # schema 2: no `look_markers`
+    ours = json.loads(manifest_text(3))
+    ours["schema_version"] = 3
+    ours["ids"]["look_markers"] = ["gate_open/lamp", "gate_open/torch"]
+    theirs = json.loads(manifest_text(3))
+    theirs["schema_version"] = 3
+    theirs["ids"]["look_markers"] = ["gate_open/torch", "power_on/lamp"]
+
+    kpx.json(*sides(kpx.cwd, json.dumps(ours), json.dumps(theirs)))
+    merged = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
+    assert merged["ids"]["look_markers"] == ["gate_open/lamp", "gate_open/torch", "power_on/lamp"]
+
+    kpx.json(*sides(kpx.cwd, json.dumps(old), json.dumps(ours)))
+    merged = json.loads((kpx.cwd / "ours.json").read_text("utf-8"))
+    assert merged["schema_version"] == 3 and merged["ids"]["look_markers"] == ["gate_open/lamp", "gate_open/torch"]
+
+    kpx.json(*sides(kpx.cwd, json.dumps(old), json.dumps(old)))
+    assert "look_markers" not in json.loads((kpx.cwd / "ours.json").read_text("utf-8"))["ids"]

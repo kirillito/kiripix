@@ -19,8 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
-
 from kiripix.checks import Position
 from kiripix.core import atomic, sources
 from kiripix.core.assets import Asset
@@ -32,7 +30,7 @@ from kiripix.recipes import clips
 from kiripix.recipes.base import StageFailure
 from kiripix.recipes.blender_launcher import launch_for
 
-THING_SUFFIXES = (".glb", ".blend")
+THING_SUFFIXES = clips.THING_SUFFIXES
 MATERIALS_SUFFIX = ".materials.json"
 CLIPS_STAGE = "clips"
 _GLB_MAGIC = b"glTF"
@@ -53,60 +51,37 @@ def folder(asset: Asset, thing: str) -> Path:
 
 def variants(asset: Asset, thing: str) -> dict[str, Path]:
     """A thing's Variants by name (the start of the file's hash), sorted."""
-    return {p.stem: p for p in sorted(folder(asset, thing).glob("*"))
-            if p.is_file() and p.suffix in THING_SUFFIXES and not p.name.endswith(MATERIALS_SUFFIX)}
-
-
-def _journal(asset: Asset) -> list[str]:
-    """The stored files of things in the order they were imported, one entry per import, from `imported.jsonl`."""
-    path = asset.dir / sources.IMPORTED_FILE
-    found: list[str] = []
-    if not path.is_file():
-        return found
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            entry = sources.ImportedName.model_validate_json(line)
-        except ValidationError:
-            continue  # `sources.imported_names` is the one that refuses a bad line
-        if entry.file.startswith(clips.THINGS_DIR):
-            found.append(entry.file)
-    return found
+    for held in clips.held_things_of(clips.folder_files(asset.dir), []):
+        if held.id == thing:
+            return {Path(name).stem: path for name, path in sorted(held.variants.items())}
+    return {}
 
 
 def thing_ids(asset: Asset) -> list[str]:
     """The IDs of the things that have a Variant, in the order they were first imported (a thing with no record, such as a
-    folder laid by hand, after those, by ID)."""
-    present = {t for t in _known(asset) if variants(asset, t)}
-    ordered: list[str] = []
-    for file in _journal(asset):
-        thing = file[len(clips.THINGS_DIR):].split("/", 1)[0]
-        if thing in present and thing not in ordered:
-            ordered.append(thing)
-    return ordered + sorted(present - set(ordered))
+    folder laid by hand, after those, by ID). The Asset's own only: a base's are in `listed`."""
+    return [t.id for t in _held(asset)]
 
 
-def _known(asset: Asset) -> set[str]:
-    root = asset.dir / clips.THINGS_DIR
-    return {p.name for p in root.iterdir() if p.is_dir()} if root.is_dir() else set()
+def _held(asset: Asset, base: Asset | None = None) -> list[clips.HeldThing]:
+    """The one rule, shared with the Stages (`recipes.clips.held_things_of`)."""
+    return clips.held_things_of(clips.folder_files(asset.dir), clips.thing_journal(asset.dir),
+                                clips.folder_files(base.dir) if base is not None else None,
+                                clips.thing_journal(base.dir) if base is not None else ())
 
 
 def current(asset: Asset, thing: str) -> Path | None:
-    """The thing's current Variant: the newest imported (the last in `imported.jsonl`), else the newest file."""
-    found = variants(asset, thing)
-    if not found:
-        return None
-    for file in reversed(_journal(asset)):
-        path = asset.dir / file
-        if path.parent.name == thing and path in found.values():
-            return path
-    return max(found.values(), key=lambda p: (p.stat().st_mtime_ns, p.name))
+    """The thing's current Variant: the newest imported (the last in `imported.jsonl`), else the last by name."""
+    for held in _held(asset):
+        if held.id == thing:
+            return held.variants[held.current]
+    return None
 
 
 def glb_materials(data: bytes) -> list[str] | None:
     """The names of the materials a `.glb`'s meshes use, sorted; None when it isn't a readable `.glb`. A material with no name
-    is `Material`, as Blender names it."""
+    is `Material`, and a name taken is numbered (`Material.001`), each as Blender names them, so the numbering matches the
+    material pass."""
     if len(data) < 20 or data[:4] != _GLB_MAGIC:
         return None
     length, kind = struct.unpack("<II", data[12:20])
@@ -115,8 +90,15 @@ def glb_materials(data: bytes) -> list[str] | None:
     try:
         document = json.loads(data[20:20 + length].decode("utf-8"))
         materials = document.get("materials", [])
-        used = {p["material"] for mesh in document.get("meshes", []) for p in mesh.get("primitives", []) if "material" in p}
-        return sorted({str(materials[i].get("name") or "Material") for i in used})
+        used = sorted({p["material"] for mesh in document.get("meshes", []) for p in mesh.get("primitives", [])
+                       if "material" in p})
+        seen: dict[str, int] = {}
+        names: list[str] = []
+        for index in used:  # as Blender names them: a name taken is numbered, `Material`, `Material.001`
+            name = str(materials[index].get("name") or "Material")
+            names.append(name if name not in seen else f"{name}.{seen[name]:03d}")
+            seen[name] = seen.get(name, 0) + 1
+        return sorted(names)
     except (ValueError, KeyError, IndexError, TypeError, AttributeError):
         return None
 
@@ -137,42 +119,53 @@ def materials_of(path: Path) -> list[str] | None:
 @dataclass
 class ThingInfo:
     thing: str
+    owner: Asset  # whose folder holds the thing: the Asset, or its base
     variants: dict[str, Path]
     path: Path  # the current Variant
     materials: list[str] | None  # None: not known until a render reads them
     first: int  # the number of its first material among the things' (from 1); its materials follow in order
+    from_base: bool = False
 
 
-def listed(asset: Asset) -> list[ThingInfo]:
-    """The Asset's things in numbering order, each with its current Variant's materials. A material's number is the Model's
-    count plus `first` plus its place among the thing's own."""
+def listed(asset: Asset, base: Asset | None = None) -> list[ThingInfo]:
+    """The Asset's things in numbering order (its base's first), each with its current Variant's materials. A material's
+    number is the Model's count plus `first` plus its place among the thing's own."""
     found: list[ThingInfo] = []
     first = 1
-    for thing in thing_ids(asset):
-        path = current(asset, thing)
-        assert path is not None
+    for held in _held(asset, base):
+        owner = base if held.from_base and base is not None else asset
+        path = held.variants[held.current]
         names = materials_of(path)
-        found.append(ThingInfo(thing=thing, variants=variants(asset, thing), path=path, materials=names, first=first))
+        found.append(ThingInfo(thing=held.id, owner=owner, variants={Path(n).stem: p for n, p in sorted(held.variants.items())},
+                               path=path, materials=names, first=first, from_base=held.from_base))
         first += len(names or [])
     return found
 
 
-def model_material_count(asset: Asset) -> int | None:
+def model_material_count(graph: AssetGraph) -> int | None:
     """How many materials the Model has, from the `render` Stage's output; None while `render` isn't built."""
     try:
-        document: dict[str, Any] = json.loads((asset.dir / "work" / "render" / "render.json").read_text(encoding="utf-8"))
+        path = graph.output_dir(graph.spec("render")) / "render.json"
+        document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         return len(document["materials"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
+def attachments(graph: AssetGraph) -> dict[str, list[str]]:
+    """Each thing a clip's current Decision attaches, with the clips that do, by name. The Decisions are read as the Stage
+    reads them (`decisions_view`): a clip decided again replaces its earlier Decision of the same name, and a base's count."""
+    held: dict[str, list[str]] = {}
+    for d in graph.decisions(graph.spec(CLIPS_STAGE)):
+        if d.name == clips.CLIP.name:
+            for thing in {str(a["thing"]) for a in d.data.get("attach", [])}:
+                held.setdefault(thing, []).append(str(d.data["name"]))
+    return {thing: sorted(names) for thing, names in held.items()}
+
+
 def attached_by(project: Project, asset: Asset, thing: str) -> list[str]:
     """The clips whose current Decision attaches the thing, by name."""
-    graph = AssetGraph(project, asset, HashCache(project.state_dir))
-    # Read as the Stage reads them (`decisions_view`): a clip decided again replaces its earlier Decision of the same name.
-    held = [str(d.data["name"]) for d in graph.decisions(graph.spec(CLIPS_STAGE))
-            if d.name == clips.CLIP.name and any(a["thing"] == thing for a in d.data.get("attach", []))]
-    return sorted(held)
+    return attachments(AssetGraph(project, asset, HashCache(project.state_dir))).get(thing, [])
 
 
 def _need_character(asset: Asset, shown: str) -> None:

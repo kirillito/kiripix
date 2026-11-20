@@ -2,7 +2,7 @@
 `sheet`'s `sheet.json` and atlases only, and leaves in `out/export/`:
 
     color.png, normal.png   the two atlases, copied
-    character.json          {"schema_version": 6, "asset": "character.hero",
+    character.json          {"schema_version": 7, "asset": "character.hero",
                              "files": {"color": "color.png", "normal": "normal.png"},
                              "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # the body's; from the cell's top left
                              "atlas": {"width": 858, "height": 936},
@@ -10,8 +10,9 @@
                              "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
                                         "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # this clip's (0303)
                                         "events": {"foot": [0, 5]},   # frames (the same in every direction) where a foot plants
-                                        "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78,
-                                                                                     "height": 78},
+                                        "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 31,
+                                                                                     "height": 52},   # in the atlas
+                                                              "offset": {"x": 22, "y": 14},   # in the clip's cell
                                                               "points": {"hand_r": {"x": 12, "y": -20, "hidden": false}}},
                                                              ...]}}],
                              "parts": [{"name": "skin", "materials": ["skin"], "row": 0, "shared": true,
@@ -47,8 +48,10 @@ from kiripix.recipes.character_sheet import COLOR_ATLAS, NORMAL_ATLAS, SHEET_FIL
 #    keeps its version 4 file byte for byte; a reader takes both
 # 6: each clip's own `cell` and `pivot` (ticket 0303), written always; the top-level `cell` and `pivot` are the body's. Version 4
 #    and 5 files migrate (`kiripix.core.settings.migrate_character_record`: each clip gets the top-level cell and pivot)
-CHARACTER_SCHEMA_VERSION = 6
-CHARACTER_SCHEMA_VERSIONS = (4, 5, 6)
+# 7: each frame is cut to its opaque box (ticket 0308): `rect` is the box's place in the atlas and `offset` ({"x", "y"}) its place in
+#    the clip's `cell`, so a reader restores the cell exactly. Version 4 to 6 files migrate (offset 0, 0: their rect is the cell)
+CHARACTER_SCHEMA_VERSION = 7
+CHARACTER_SCHEMA_VERSIONS = (4, 5, 6, 7)
 CHARACTER_FILE = "character.json"
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 

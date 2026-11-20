@@ -18,7 +18,7 @@ def _rect(column: int, row: int) -> dict[str, int]:
 
 def character() -> dict[str, object]:
     def frames(row: int, count: int) -> list[dict[str, object]]:
-        return [{"index": i, "rect": _rect(i, row)} for i in range(count)]
+        return [{"index": i, "rect": _rect(i, row), "offset": {"x": 0, "y": 0}} for i in range(count)]
 
     return {
         "schema_version": 1, "asset": "character.hero", "files": {"color": "color.png", "normal": "normal.png"},
@@ -70,6 +70,46 @@ def test_the_ramps_image_pads_rows_and_leaves_a_part_the_character_lacks_transpa
 
 def test_the_sprite_frames(request: pytest.FixtureRequest) -> None:
     assert_golden(request, character_frames(character(), f"{BASE}/texture.tres"), "frames.tres")
+
+
+def wide() -> dict[str, object]:
+    """`character()` with its `attack` clip on its own larger cell (24 x 20, pivot 12, 17): the body's clips are padded to it."""
+    value = character()
+    own = {"cell": {"width": 24, "height": 20}, "pivot": {"x": 12, "y": 17}}
+    clips = [{**clip, **(own if clip["name"] == "attack" else {"cell": value["cell"], "pivot": value["pivot"]})}
+             for clip in value["clips"]]  # type: ignore[attr-defined]
+    for clip in clips:
+        if clip["name"] == "attack":  # its frames fill its own cell
+            for listed in clip["directions"].values():
+                for frame in listed:
+                    frame["rect"] = {**frame["rect"], "width": 24, "height": 20}
+    return {**value, "clips": clips}
+
+
+def trimmed() -> dict[str, object]:
+    """`wide()` with every frame cut to its opaque box (ticket 0308): a smaller `rect` and the `offset` of the box in its clip's
+    cell. One frame's box is its whole cell, which takes no margin when its clip's cell is the logical cell."""
+    value = wide()
+    for clip in value["clips"]:  # type: ignore[attr-defined]
+        for listed in clip["directions"].values():
+            for frame in listed:
+                whole = clip["name"] == "attack" and frame["index"] == 2
+                width, height = (24, 20) if whole else (10, 12)
+                frame["rect"] = {**frame["rect"], "width": width, "height": height}
+                frame["offset"] = {"x": 0, "y": 0} if whole else {"x": 3 + frame["index"], "y": 2}
+    return value
+
+
+def test_the_sprite_frames_of_a_clip_with_its_own_cell_pad_every_frame_to_one_logical_cell(request: pytest.FixtureRequest) -> None:
+    assert_golden(request, character_frames(wide(), f"{BASE}/texture.tres"), "frames_wide.tres")
+
+
+def test_the_sprite_frames_of_trimmed_frames_pad_each_back_to_the_logical_cell(request: pytest.FixtureRequest) -> None:
+    assert_golden(request, character_frames(trimmed(), f"{BASE}/texture.tres"), "frames_trimmed.tres")
+
+
+def test_the_scene_of_a_clip_with_its_own_cell_is_offset_by_the_logical_pivot(request: pytest.FixtureRequest) -> None:
+    assert_golden(request, character_scene(wide(), "hero", f"{BASE}/frames.tres"), "hero_wide.tscn")
 
 
 def test_the_canvas_texture(request: pytest.FixtureRequest) -> None:

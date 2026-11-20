@@ -29,7 +29,6 @@ RECIPE_PATH = (FIXTURES, Path(__file__).resolve().parents[1] / "fixtures")  # it
 ASSET = "room.alley"
 AREA = "battle.test"  # the `area` Marker the stand-in owner places (fixtures/owner.json)
 AREA_CELL = 32
-AREA_BOX = (32, 0, 95, 31)  # the box fixtures/owner.json finally gives it ((40, 8)-(70, 24)), snapped outward to 32 px cells
 CHARACTER = "character.hero"
 ASSETS = (ASSET, CHARACTER)
 MODEL = Path(__file__).resolve().parents[1] / "fixtures" / "characters" / "rigged.glb"  # pre-rigged: `rig` needs no Mixamo
@@ -55,6 +54,32 @@ GAME_FILES = (
     "kiripix/manifest/character.hero.json",
 )
 CARRY_ON = "Done, carry on."
+
+
+def handback(did: list[str]) -> str:
+    """What the stand-in owner says when it hands back: what it did, in plain words, as a real owner would, and never a
+    Command (ticket 0233: after "Done, carry on." alone, the agent forgot that the owner had recorded the clips).
+    `did` is the owner's steps as `StandInOwner.step` logs them: "<verb> <asset> <stage or Variant> ...: exit <code>"."""
+    decided: dict[str, list[str]] = {}
+    accepted: list[str] = []
+    picked: list[str] = []
+    for line in did:
+        verb, asset, what = line.split()[:3]
+        what = what.rstrip(":")
+        if verb == "decide" and what not in decided.setdefault(asset, []):
+            decided[asset].append(what)
+        elif verb == "accept":
+            accepted.append(f"{asset}'s {what}")
+        elif verb == "pick":
+            picked.append(f"a Variant of {asset}")
+    clauses = []
+    if decided:
+        clauses.append("I recorded Decisions on " + " and on ".join(f"{a} ({', '.join(s)})" for a, s in decided.items()))
+    if accepted:
+        clauses.append("I accepted " + " and ".join(accepted))
+    if picked:
+        clauses.append("I picked " + " and ".join(picked))
+    return f"Done: {', and '.join(clauses)}. Carry on." if clauses else CARRY_ON
 
 TASK = f"""\
 You are working in a Kiripix Project, a folder of pixel art assets for a Godot game, using only the command line tool \
@@ -385,7 +410,7 @@ class StandInOwner:
         if not self.stopped:
             # The owner reviews the room at the agent's first stop, whatever the Stage: the agent may have run the room to
             # export and stopped at the character (M4 gate run, 2026-11-16). Its room entries land then, so the agent
-            # has to rebuild and re-export the room after "Done, carry on." Entries tagged `when_stage` still wait.
+            # has to rebuild and re-export the room after the owner hands back. Entries tagged `when_stage` still wait.
             self.stopped = True
             for index, entry in enumerate(self.entries):
                 if index in self.applied or "when_stage" in entry or entry.get("asset", self.asset) != self.asset:
@@ -439,6 +464,24 @@ def manifest_ids(setup: Setup, asset: str, kind: str) -> list[str]:
         return []
 
 
+def area_box_problem(scene: str) -> str | None:
+    """Why the scene's `area` isn't a box of whole `AREA_CELL` cells inside the room; None when it is. Any such box
+    passes, the owner's or the agent's own (ticket 0233): that it can be stood on and reached is `check --all`'s part
+    (`area.no_walkable`, `area.not_reached`), which must be clean too."""
+    shape = re.search(r'id="area_battle_test"\]\s*size = Vector2\((\d+), (\d+)\)', scene)
+    node = re.search(r'type="Area2D"[^\]]*\]\s*position = Vector2\(([\d.]+), ([\d.]+)\)', scene)
+    if shape is None or node is None:
+        return f"the Area2D `{AREA}`'s box can't be read from the scene"
+    width, height = int(shape[1]), int(shape[2])
+    x0, y0 = float(node[1]) - width / 2, float(node[2]) - height / 2
+    box = [x0, y0, x0 + width - 1, y0 + height - 1]
+    if any(v % AREA_CELL for v in (x0, y0, width, height)) or not width or not height:
+        return f"the Area2D `{AREA}` box {box} is not on whole {AREA_CELL} px cells"
+    if x0 < 0 or y0 < 0 or x0 + width > WIDTH or y0 + height > HEIGHT:
+        return f"the Area2D `{AREA}` box {box} is not inside the room's {WIDTH} x {HEIGHT}"
+    return None
+
+
 def room_export_problems(setup: Setup) -> list[str]:
     """What the room's export in the Godot project lacks of the M4 room: the `area` as an `Area2D` of the right place and
     size, `masks/solid.png` at the room's size, and `room.json` listing both. Read from the files, whoever wrote them."""
@@ -453,9 +496,8 @@ def room_export_problems(setup: Setup) -> list[str]:
         return [f"the room's scene, room.json or masks/solid.png can't be read: {error}"]
     if 'type="Area2D"' not in scene or f'metadata/kiripix_id = "{AREA}"' not in scene:
         problems.append(f"the scene has no Area2D for `{AREA}`")
-    box = AREA_BOX  # the box the owner's last Decision asks for, on whole cells
-    if f"size = Vector2({box[2] - box[0] + 1}, {box[3] - box[1] + 1})" not in scene             or f"position = Vector2({(box[0] + box[2] + 1) / 2:g}, {(box[1] + box[3] + 1) / 2:g})" not in scene:
-        problems.append(f"the Area2D `{AREA}` is not the box {list(box)} (the owner's move onto the floor)")
+    if (problem := area_box_problem(scene)) is not None:
+        problems.append(problem)
     if "metadata/walkable = true" not in scene or f"metadata/cell = {AREA_CELL}" not in scene:
         problems.append(f"the Area2D `{AREA}` lacks walkable = true or cell = {AREA_CELL}")
     if solid_size != (WIDTH, HEIGHT):
@@ -535,7 +577,8 @@ def run_acceptance(agent: Agent, setup: Setup, budget: int, dry_run: bool, max_u
                    fixture: Path = FIXTURES / "owner.json") -> Outcome:
     """Start the agent, play the owner until the Project is done or the agent is lost, and verify.
 
-    The harness never names a Command to the agent: after an owner step it only says "Done, carry on."
+    The harness never names a Command to the agent: after an owner step it says what the owner did, in plain words
+    (`handback`), and to carry on.
     """
     started = time.monotonic()
     owner = StandInOwner(setup, fixture)
@@ -574,7 +617,7 @@ def run_acceptance(agent: Agent, setup: Setup, budget: int, dry_run: bool, max_u
             if did is not None:
                 note = f" (the agent asked the owner, though `next` names `{state.command}`)" if asked else ""
                 interventions += [f"after turn {turns}, waiting at {state.stage}{note}: " + "; ".join(did)]
-                turn = agent.resume(CARRY_ON, budget - usage.fresh)
+                turn = agent.resume(handback(did), budget - usage.fresh)
                 continue
             if state.needs_owner:
                 failure = (state.describe(), "the project waits on the owner and the fixture has nothing left for it")

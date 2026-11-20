@@ -1,10 +1,14 @@
-"""The sprite Kind's Ops (spec §7, ticket 0177): slice a sheet, find the feet, normals from a height."""
+"""The sprite Kind's Ops (spec §7, ticket 0177): slice a sheet, find the feet, normals from a height, and colour regions as
+parts (ticket 0319)."""
 
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from kiripix.ops.colour import srgb_to_oklab
 from kiripix.ops.lazy import lazy_module
 
 if TYPE_CHECKING:
@@ -118,4 +122,107 @@ def normals_from_height(height: F64, alpha: U8, strength: float = 1.6) -> U8:
     out = np.zeros((*alpha.shape, 4), dtype=np.uint8)
     out[..., :3] = np.where(opaque[..., None], encoded, 0)
     out[..., 3] = np.where(opaque, 255, 0)
+    return out
+
+
+# The hue words that name a sprite's colour regions (ticket 0319), each at its OKLab hue in degrees.
+HUE_WORDS = (("red", 25.0), ("orange", 60.0), ("yellow", 100.0), ("green", 140.0), ("cyan", 195.0), ("blue", 255.0),
+             ("purple", 305.0), ("pink", 350.0))
+NEUTRAL = "grey"
+
+
+@dataclass(frozen=True)
+class ColourRegions:
+    """A sprite's colours grouped into regions, its parts when it has no material pass (ticket 0319).
+
+    `names[i]` is region i + 1's name, `pixels[i]` its pixel count over every frame. `colours` (N, 3) is every opaque colour
+    of the frames, and `region` (N,) the region of each, from 1.
+    """
+
+    names: list[str]
+    pixels: list[int]
+    colours: U8
+    region: npt.NDArray[np.int64]
+
+
+def _hue_word(degrees: float) -> str:
+    def apart(centre: float) -> float:
+        d = abs(degrees - centre) % 360.0
+        return min(d, 360.0 - d)
+
+    return min(HUE_WORDS, key=lambda w: (apart(w[1]), w[1]))[0]
+
+
+def colour_regions(frames: Sequence[U8], hue_gap: float = 8.0, neutral_chroma: float = 0.025) -> ColourRegions:
+    """The opaque colours of every frame together grouped by OKLab hue and chroma, so one part keeps one region in every frame.
+
+    A colour of chroma (the OKLab a, b length) under `neutral_chroma` is neutral: every one of them is one region, `grey`. The
+    others are sorted round the hue circle and cut wherever two neighbouring hues are more than `hue_gap` degrees apart; each
+    run between cuts is a region (with no such gap, all of them are one). A region is named after the hue word (`HUE_WORDS`)
+    nearest its mean hue (weighted by pixels and chroma); regions with the same word are numbered by pixel count, the largest
+    plain, then `_2`, `_3` (a tie to the lower mean hue). Regions are in order of mean hue, `grey` last. Lightness plays no
+    part: a part's shades, dark to light, stay in one region. Alpha must be 0 or 255; only 255 counts.
+    """
+    if hue_gap <= 0:
+        raise ValueError("hue_gap must be above 0")
+    pixels = [f[..., :3][f[..., 3] == 255] for f in frames]
+    opaque = np.concatenate(pixels) if pixels else np.zeros((0, 3), dtype=np.uint8)
+    if len(opaque) == 0:
+        return ColourRegions([], [], np.zeros((0, 3), dtype=np.uint8), np.zeros(0, dtype=np.int64))
+    colours, counts = np.unique(opaque, axis=0, return_counts=True)
+    lab = srgb_to_oklab(colours)
+    chroma = np.hypot(lab[:, 1], lab[:, 2])
+    hue = np.degrees(np.arctan2(lab[:, 2], lab[:, 1])) % 360.0
+    neutral = chroma < neutral_chroma
+    groups: list[list[int]] = []
+    chromatic = np.flatnonzero(~neutral)
+    if len(chromatic):
+        ordered = chromatic[np.argsort(hue[chromatic], kind="stable")]
+        values = hue[ordered]
+        gaps = np.diff(np.concatenate([values, [values[0] + 360.0]]))  # gaps[i]: from i to the next, the last wrapping round
+        cuts = np.flatnonzero(gaps > hue_gap)
+        if len(cuts) == 0:
+            groups.append([int(i) for i in ordered])
+        else:
+            for k, cut in enumerate(cuts):
+                end = cuts[(k + 1) % len(cuts)]
+                run = [(cut + 1 + j) % len(ordered) for j in range((end - cut) % len(ordered) or len(ordered))]
+                groups.append([int(ordered[j]) for j in run])
+    means: list[float] = []
+    for members in groups:
+        weight = counts[members] * chroma[members]
+        angle = np.radians(hue[members])
+        means.append(float(np.degrees(np.arctan2((weight * np.sin(angle)).sum(), (weight * np.cos(angle)).sum())) % 360.0))
+    order = sorted(range(len(groups)), key=lambda g: means[g])
+    groups = [groups[g] for g in order]
+    means = [means[g] for g in order]
+    words = [_hue_word(m) for m in means]
+    if neutral.any():
+        groups.append([int(i) for i in np.flatnonzero(neutral)])
+        means.append(float("inf"))
+        words.append(NEUTRAL)
+    sizes = [int(counts[members].sum()) for members in groups]
+    names = list(words)
+    for word in set(words):
+        same = sorted((g for g, w in enumerate(words) if w == word), key=lambda g: (-sizes[g], means[g]))
+        for rank, g in enumerate(same[1:], start=2):
+            names[g] = f"{word}_{rank}"
+    region = np.zeros(len(colours), dtype=np.int64)
+    for number, members in enumerate(groups, start=1):
+        region[members] = number
+    return ColourRegions(names, sizes, colours, region)
+
+
+def region_labels(frame: U8, regions: ColourRegions) -> U8:
+    """Frame's (H, W) region labels: 0 where transparent, else the region (from 1) of the pixel's colour, or, for a colour
+    `regions` didn't see, the region of the nearest colour it did (OKLab)."""
+    out = np.zeros(frame.shape[:2], dtype=np.uint8)
+    opaque = frame[..., 3] == 255
+    if not opaque.any() or len(regions.colours) == 0:
+        return out
+    colours, inverse = np.unique(frame[..., :3][opaque], axis=0, return_inverse=True)
+    known = srgb_to_oklab(regions.colours)
+    lab = srgb_to_oklab(colours)
+    nearest = np.sqrt(((lab[:, None, :] - known[None, :, :]) ** 2).sum(axis=2)).argmin(axis=1)
+    out[opaque] = regions.region[nearest][inverse.ravel()].astype(np.uint8)
     return out

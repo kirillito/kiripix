@@ -13,6 +13,8 @@ from kiripix.ops import (
     border_colour,
     chroma_key,
     chroma_key_tolerant,
+    clear_light_edge,
+    light_edge,
     mask_touching_target,
     remove_key_spill,
     remove_light_rim,
@@ -131,6 +133,37 @@ def test_a_rim_reach_of_one_takes_one_ring_of_the_rim() -> None:
 
     assert one[0, :, 3].tolist() == [0, 0, 0, 0, 255, 255, 255, 255]
     assert three[0, :, 3].tolist() == [0, 0, 0, 0, 0, 0, 255, 255]
+
+
+def specked() -> np.ndarray:
+    """16 x 12 of a dark-haired figure cut by the canvas's bottom edge (a portrait's waist), with pale grey specks on its edge
+    (one two deep), a white highlight inside, a white collar on the edge larger than a speck, and a white pixel on the bottom row
+    where the canvas cuts it (ticket 0322)."""
+    rgba = np.zeros((16, 12, 4), dtype=np.uint8)
+    rgba[3:, 2:10] = (40, 35, 45, 255)  # the hair, down to the canvas's bottom edge
+    rgba[2, 4:8] = (40, 35, 45, 255)
+    rgba[2, 5, :3] = (205, 205, 200)  # a speck on the top edge
+    rgba[7, 1] = (215, 212, 214, 255)  # a speck out to the left, and the one it hides
+    rgba[7, 2, :3] = (200, 200, 205)
+    rgba[10, 9, :3] = (190, 192, 190)  # a speck on the right edge
+    rgba[8, 5, :3] = (250, 250, 250)  # a highlight inside
+    rgba[12:15, 2:5, :3] = (235, 235, 235)  # a white collar on the left edge, 9 px
+    rgba[15, 6, :3] = (250, 250, 250)  # white on the cut: the canvas's edge isn't the figure's
+    return rgba
+
+
+def test_pale_specks_on_the_edge_go_and_a_highlight_inside_stays(request: pytest.FixtureRequest) -> None:
+    image = specked()
+
+    found = light_edge(image)
+    cleared = clear_light_edge(image)
+
+    assert {(int(y), int(x)) for y, x in np.argwhere(found)} == {(2, 5), (7, 1), (7, 2), (10, 9)}, "a speck goes whole"
+    assert not light_edge(cleared).any()
+    assert cleared[8, 5, 3] == 255 and cleared[15, 6, 3] == 255, "the highlight and the white on the cut stay"
+    assert (cleared[12:15, 2:5, 3] == 255).all(), "a collar is larger than a speck"
+    assert (clear_light_edge(image, largest=0) == image).all()
+    assert_golden(request, cleared, "portrait_light_edge.png")
 
 
 def islands() -> np.ndarray:

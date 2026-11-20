@@ -64,6 +64,7 @@ class ThingOut(BaseModel):
     materials: list[ThingMaterialOut] = Field(description="The current Variant's materials, numbered after the Model's.")
     materials_known: bool = Field(description="False for a .blend made without Blender: the render reads its materials.")
     attached_by: list[str] = Field(description="The clips whose `attach` holds the thing; it can't be removed while any does.")
+    from_base: bool = Field(False, description="The thing is the base's, in the base's folder: the Asset has none of that ID.")
 
 
 class StateImageOut(BaseModel):
@@ -185,7 +186,7 @@ class ShowData(BaseModel):
             lines += [f"    variant {v.name}{' (picked)' if v.name == emotion.picked else ''}" for v in emotion.variants]
         lines += [f"  parameters {self.parameters.file}"] if self.parameters is not None else []
         for t in self.things:
-            lines.append(f"  thing {t.thing}, current {t.current}" + (f", held by {', '.join(t.attached_by)}" if t.attached_by else ""))
+            lines.append(f"  thing {t.thing}, current {t.current}" + (" (base)" if t.from_base else "") + (f", held by {', '.join(t.attached_by)}" if t.attached_by else ""))
             lines += [f"    material {m.number} {m.name}" + (f" (pass {m.index})" if m.index is not None else "")
                       for m in t.materials]
             lines += [] if t.materials_known else ["    materials: read at the first render"]
@@ -216,20 +217,24 @@ def _wearables(project: Project, asset: Asset, cache: HashCache) -> list[Wearabl
     return sorted(found, key=lambda w: (w.order, w.asset))
 
 
-def _things(project: Project, asset: Asset, names: dict[str, str]) -> list[ThingOut]:
-    """A character's things with their materials numbered after the Model's (ticket 0301)."""
+def _things(project: Project, graph: AssetGraph, names: dict[str, str]) -> list[ThingOut]:
+    """A character's things with their materials numbered after the Model's (ticket 0301): its base's first (ticket 0312)."""
+    asset = graph.asset
     if asset.kind != "character":
         return []
-    model = things.model_material_count(asset)
+    model = things.model_material_count(graph)
+    held = things.attachments(graph)  # once, not per thing
+    theirs = sources.imported_names(graph.base.asset) if graph.base is not None else {}
     found: list[ThingOut] = []
-    for info in things.listed(asset):
+    for info in things.listed(asset, graph.base_asset):
+        own, journal = (graph.base.asset, theirs) if info.from_base and graph.base is not None else (asset, names)
         found.append(ThingOut(
-            thing=info.thing, current=info.path.stem,
-            variants=[_variant(project, asset, names, name, path) for name, path in info.variants.items()],
+            thing=info.thing, current=info.path.stem, from_base=info.from_base,
+            variants=[_variant(project, own, journal, name, path) for name, path in info.variants.items()],
             materials=[ThingMaterialOut(name=name, number=info.first + i, index=None if model is None else model + info.first + i)
                        for i, name in enumerate(info.materials or [])],
             materials_known=info.materials is not None,
-            attached_by=things.attached_by(project, asset, info.thing)))
+            attached_by=held.get(info.thing, [])))
     return found
 
 
@@ -372,7 +377,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
                                        for name, path in emotions.emotion_variants(asset, e).items()],
                              images=_emotion_images(project, graph, e.id))
                   for e in emotions.declared_emotions(graph).values()],
-        things=_things(project, asset, names),
+        things=_things(project, graph, names),
         clip_sources=_clip_sources(project, graph, names),
         rigged=_variant(project, asset, names, rigged_path.stem, rigged_path)
         if (rigged_path := sources.rigged(asset)) is not None else None,

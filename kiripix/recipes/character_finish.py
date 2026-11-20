@@ -16,7 +16,10 @@ Two things, both after `palette`:
 - the inner lines (ticket 0215), with `inner_lines=outline` or `dark`, after the eyes and before the outline: the farther pixel
   of each border between two materials (`inner_lines` in the ops), in the outline's colour or, with `dark`, a darker palette
   colour of its own material chosen once over all the frames (`line_colours`). `line_skip` drops borders. Only inside the
-  render's mask, never over an eye pixel, never on the eye materials. The normal pass is not changed.
+  render's mask, never over an eye pixel, never on the eye materials. The normal pass is not changed. A sprite (ticket 0320)
+  has its lines between its parts, the colour regions `palette` joined (its material pass); a region in no part is one of its
+  own. It has no depth, so the line is the lower pixel of a border (the right one, side by side), and no mask, so its alpha
+  is the inside. `line_skip` names its parts.
 - the normal pass, from `render`: quantised to `normal_levels` values per axis, encoded for Godot, and cut by the final colour
   frame's alpha, so an outline pixel gets a normal that faces the camera and the two images line up pixel for pixel. It is
   never palette-mapped.
@@ -320,7 +323,14 @@ class _InnerLines:
                                "part recolours its lines too; palette part_lines=true adds it (inner_lines=outline needs "
                                "none)", code="finish.inner_lines_with_parts",
                                fix=f"kiripix set {run.asset_id} palette part_lines=true")
+        if not document.get("materials"):
+            raise StageFailure("finish can't draw inner lines: there are no parts to draw between (a sprite's are palette "
+                               f"`parts`, ticket 0320); name them (kiripix set {run.asset_id} palette parts=...) or draw none",
+                               code="finish.inner_lines_without_parts", fix=f"kiripix set {run.asset_id} finish inner_lines=off")
         self.indexes = material_indexes(document)  # the Model's materials, and a held thing's after them (ticket 0305)
+        self.merge: np.ndarray | None = None
+        if document.get("kind") == "sprite":
+            self._join_sprite_parts()
         by_name = {n: i[0] for n, i in self.indexes.items()}
         self.skip_text: list[str] = []
         self.skip: list[int | tuple[int, int]] = []
@@ -334,9 +344,12 @@ class _InnerLines:
                 raise StageFailure(f"line_skip: {what} in {token!r}; the materials are {', '.join(sorted(by_name)) or 'none'}",
                                    code="finish.line_skip_unknown", fix=f"kiripix set {run.asset_id} finish line_skip=")
             self.skip_text.append("+".join(names))
-            self.skip.append(by_name[names[0]] if len(names) == 1 else (by_name[names[0]], by_name[names[1]]))
+            if len(names) == 1:  # every index of the name, a held thing's as well as the Model's (ticket 0313)
+                self.skip += self.indexes[names[0]]
+            else:
+                self.skip += [(a, b) for a in self.indexes[names[0]] for b in self.indexes[names[1]]]
         eye_names = {str(n) for n in document.get("eyes", [])}
-        self.skip += [i for n, i in by_name.items() if n in eye_names]
+        self.skip += [i for n, found in self.indexes.items() if n in eye_names for i in found]
         self.frames: dict[tuple[str, str, int], dict[str, str]] = {
             (str(e["name"]), d, int(f["index"])): {k: str(v) for k, v in f["files"].items()}
             for e in document["clips"] for d, listed in e["directions"].items() for f in listed}
@@ -345,7 +358,7 @@ class _InnerLines:
         # spans `depth_range` over 65535 (ticket 0247).
         self.line_depth = float(run.params.get("line_depth", 0.0))
         self.depth_step: float | None = None
-        if self.line_depth > 0:
+        if self.line_depth > 0 and "depth_range" in document:  # a sprite has no depth pass
             near, far = (float(v) for v in document["depth_range"])
             self.depth_step = self.line_depth / float(document["px_per_unit"]) / max(far - near, 1e-9) * 65535.0
         self.outline: tuple[int, tuple[int, int, int]] | None = None
@@ -354,6 +367,27 @@ class _InnerLines:
             self.outline = _outline_colour(run, palette, force=True)
         else:
             self._choose(files, palette)
+
+    def _join_sprite_parts(self) -> None:
+        """A sprite's material pass is its colour regions; its lines are between its parts (ticket 0320). Each part's regions
+        become its first region's index (`merge`, applied to every label read), and the part's name stands for them, so
+        `line_skip` and finish.json name parts. A region in no part keeps its own index and name."""
+        merge = np.arange(256, dtype=np.uint8)
+        joined: dict[str, list[int]] = {}
+        taken: set[str] = set()
+        for part in self.described.get("parts", []):
+            found = [i for m in part["materials"] for i in self.indexes.get(str(m), [])]
+            if not found:
+                continue
+            merge[found] = found[0]
+            joined[str(part["name"])] = [found[0]]
+            taken.update(str(m) for m in part["materials"])
+        joined.update({n: i for n, i in self.indexes.items() if n not in taken and n not in joined})
+        self.indexes, self.merge = joined, merge
+
+    def _labels(self, path: Path) -> np.ndarray:
+        labels = _read_labels(path)
+        return labels if self.merge is None else self.merge[labels]
 
     def _choose(self, files: list[tuple[str, str, int, str]], palette: np.ndarray) -> None:
         # With `part_lines` (ticket 0216) a part's line is the first colour of its ramp, the step the frames never use; the
@@ -366,7 +400,7 @@ class _InnerLines:
             ramp_colours |= {tuple(int(v) for v in rgb) for r in self.described.get("table", [])
                              if r.get("rgb") is not None for rgb in r["rgb"]}
             for part in parts:
-                for material in part["materials"]:
+                for material in [part["name"]] if self.merge is not None else part["materials"]:
                     for found in self.indexes.get(material, []):
                         claimed.append(found)
                         r, g, b = (int(v) for v in part["rgb"][0])
@@ -376,7 +410,7 @@ class _InnerLines:
         for clip, direction, index, name in files:
             self.run.check_cancel()
             frame = read_rgba(self.run.upstream["palette"] / name)
-            label = _read_labels(self._path(clip, direction, index, "material"))
+            label = self._labels(self._path(clip, direction, index, "material"))
             if claimed:
                 frame[np.isin(label, np.array(claimed, dtype=np.int64)), 3] = 0
             mapped.append(frame)
@@ -397,10 +431,13 @@ class _InnerLines:
 
     def paint(self, colour: np.ndarray, clip: str, direction: str, index: int, eyed: np.ndarray | None) -> np.ndarray:
         """The frame with the lines painted, inside the render's mask and never over a pixel the eyes painted."""
+        files = self.frames[(clip, direction, index)]
         try:
-            labels = _read_labels(self._path(clip, direction, index, "material"))
-            depth = _read_depth(self._path(clip, direction, index, "depth"))
-            inside = _read_labels(self._path(clip, direction, index, "mask")) > 0
+            labels = self._labels(self._path(clip, direction, index, "material"))
+            # a sprite has no depth or mask pass (ticket 0320): every pixel ties, and its alpha is the inside
+            depth = _read_depth(self._path(clip, direction, index, "depth")) if "depth" in files else np.zeros(labels.shape)
+            inside = (_read_labels(self._path(clip, direction, index, "mask")) > 0 if "mask" in files
+                      else colour[..., 3] > 0)
         except (OSError, KeyError):
             raise StageFailure(f"{self.source} has no material, depth or mask pass for {clip}/{direction} frame {index}; "
                                f"run {self.source} again") from None

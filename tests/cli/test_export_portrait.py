@@ -43,7 +43,7 @@ def test_the_stage_leaves_an_image_per_emotion_and_the_record(project: Kiripix) 
     out = folder / "out" / "export"
 
     assert json.loads((out / "portrait.json").read_text("utf-8")) == {
-        "schema_version": 1, "asset": PORTRAIT, "canvas": [160, 224], "anchor": [80, 223], "fallback": "neutral",
+        "schema_version": 1, "asset": PORTRAIT, "canvas": [192, 240], "anchor": [96, 239], "fallback": "neutral",
         "emotions": [{"id": "neutral", "file": "neutral.png"}, {"id": "happy", "file": "happy.png"},
                      {"id": "sad", "file": "sad.png"}]}
     assert sorted(p.name for p in out.iterdir() if p.name != ".stage.json") == [
@@ -51,7 +51,7 @@ def test_the_stage_leaves_an_image_per_emotion_and_the_record(project: Kiripix) 
     assert (out / "neutral.png").read_bytes() == (folder / "work" / "finish" / "finish.png").read_bytes()
     assert (out / "happy.png").read_bytes() == (folder / "work" / "finish" / "emotions" / "happy.png").read_bytes()
     with Image.open(out / "sad.png") as image:
-        assert image.size == (160, 224)
+        assert image.size == (192, 240)
 
 
 def test_export_writes_the_images_and_the_record_lists_the_emotions_and_a_second_export_writes_nothing(project: Kiripix) -> None:

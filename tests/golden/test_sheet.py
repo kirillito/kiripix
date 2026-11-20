@@ -1,4 +1,4 @@
-"""Golden tests for `pack_atlas` and direct tests for the sheet Checks (ticket 0108)."""
+"""Golden tests for `pack_atlas` and the trimmed packer (ticket 0308), and direct tests for the sheet Checks (ticket 0108)."""
 
 from pathlib import Path
 
@@ -14,7 +14,7 @@ from kiripix.checks import (
     check_normal_size,
     check_pivot_drift,
 )
-from kiripix.ops import pack_atlas
+from kiripix.ops import opaque_box, pack_atlas, pack_trimmed, place_in_cell, shelf_layout
 
 EXPECTED = Path(__file__).parent / "expected"
 FIX = "kiripix op render"
@@ -149,3 +149,41 @@ def test_normal_size_mismatch() -> None:
     bad = np.zeros((4, 4, 4), dtype=np.uint8)
     found = check_normal_size([sf("idle", "e", 0, normal=good), sf("idle", "e", 1, normal=bad), sf("idle", "e", 2)], FIX)
     assert [(f.code, f.position.field if f.position else None) for f in found] == [("normal.size_mismatch", "idle/e/1")]
+
+
+def five_cells() -> list[np.ndarray]:
+    """`five_frames` placed in 8 x 8 cells at the bottom centre: whole cells with a transparent margin to trim."""
+    frames, pivots = five_frames()
+    return [place_in_cell(frame, pivot, (8, 8), (4, 7)) for frame, pivot in zip(frames, pivots, strict=True)]
+
+
+def test_opaque_box_covers_every_layer_and_an_empty_frame_is_one_pixel() -> None:
+    colour, normal = np.zeros((6, 6, 4), np.uint8), np.zeros((6, 6, 4), np.uint8)
+    colour[2, 1] = 255
+    normal[4, 3] = 7  # a pixel only one layer has still counts
+
+    assert opaque_box([colour, normal]) == (1, 2, 3, 3)
+    assert opaque_box([np.zeros((6, 6, 4), np.uint8)]) == (0, 0, 1, 1)
+
+
+def test_shelf_layout_puts_the_tallest_first_with_a_gap_and_no_overlap() -> None:
+    places, size = shelf_layout([(3, 4), (5, 3), (2, 5), (4, 4), (3, 2)], gap=1)
+
+    assert places[2] == (0, 0)  # the tallest
+    boxes = [(x, y, x + w, y + h) for (x, y), (w, h) in zip(places, [(3, 4), (5, 3), (2, 5), (4, 4), (3, 2)], strict=True)]
+    for i, a in enumerate(boxes):
+        assert a[2] <= size[0] and a[3] <= size[1]
+        for b in boxes[i + 1:]:  # a gap of 1 between any two: grown by 1, they still don't overlap
+            assert a[2] + 1 <= b[0] or b[2] + 1 <= a[0] or a[3] + 1 <= b[1] or b[3] + 1 <= a[1]
+
+
+def test_pack_trimmed_cuts_each_cell_to_its_box_and_restores_it_exactly(request: pytest.FixtureRequest) -> None:
+    cells = five_cells()
+
+    [atlas], rects, offsets = pack_trimmed([cells])
+
+    assert_golden(request, atlas, "sheet_trimmed.png")
+    for cell, (x, y, w, h), (ox, oy) in zip(cells, rects, offsets, strict=True):
+        restored = np.zeros_like(cell)
+        restored[oy:oy + h, ox:ox + w] = atlas[y:y + h, x:x + w]
+        assert (restored == cell).all()

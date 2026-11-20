@@ -80,8 +80,8 @@ def test_markers_are_the_current_ones_with_a_move_in_the_first_place_before_any_
 
     shown = project.json("show", ROOM)["data"]
 
-    assert stage(shown, "place")["markers"] == [{"id": "a", "type": "spawn", "x": 3, "y": 0},
-                                                {"id": "b", "type": "spawn", "x": 2, "y": 0}]
+    assert stage(shown, "place")["markers"] == [{"id": "a", "type": "spawn", "x": 3, "y": 0, "look": None},
+                                                {"id": "b", "type": "spawn", "x": 2, "y": 0, "look": None}]
     assert stage(shown, "masks")["markers"] == []
 
 

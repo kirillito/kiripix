@@ -28,9 +28,10 @@ def hand_sheet(project: Kiripix, name: str, *, cell: tuple[int, int] = (40, 50),
     atlas[..., :3], atlas[..., 3] = colour, 255
     atlas[:, width:, 0] = 90  # the second frame differs
     Image.fromarray(atlas, "RGBA").save(folder / "color.png")
-    rects = [{"index": i, "rect": {"x": i * width, "y": 0, "width": width, "height": height}} for i in range(2)]
-    sheet = {"schema_version": 1, "files": {"color": "color.png", "normal": "normal.png"},
-             "cell": {"width": width, "height": height}, "pivot": {"x": pivot[0], "y": pivot[1]}, "columns": 2,
+    rects = [{"index": i, "rect": {"x": i * width, "y": 0, "width": width, "height": height},
+              "offset": {"x": 0, "y": 0}} for i in range(2)]
+    sheet = {"schema_version": 2, "files": {"color": "color.png", "normal": "normal.png"},
+             "cell": {"width": width, "height": height}, "pivot": {"x": pivot[0], "y": pivot[1]},
              "atlas": {"width": width * 2, "height": height}, "directions": ["s"],
              "clips": [{"name": "idle", "fps": 8, "loop": True, "stationary": True, "directions": {"s": rects}}]}
     (folder / "sheet.json").write_text(json.dumps(sheet), encoding="utf-8")
@@ -75,9 +76,12 @@ def test_two_characters_stand_on_one_ground_line_at_their_pivots(project: Kiripi
     inside = image[elder["y"] + 3: elder["y"] + 6, elder["x"] + 3: elder["x"] + 6]
     assert (inside[..., :3] == (200, 30, 30)).all()
     # The hero's cell holds its idle/s/0 frame from the built atlas, scaled.
-    [rect] = [f["rect"] for c in sheet["clips"] if c["name"] == "idle" for f in c["directions"]["s"] if f["index"] == 0]
+    [(clip, entry)] = [(c, f) for c in sheet["clips"] if c["name"] == "idle" for f in c["directions"]["s"] if f["index"] == 0]
+    rect, offset = entry["rect"], entry["offset"]  # the frame is trimmed in the atlas (ticket 0308); the cast puts it back in its cell
     atlas = np.array(Image.open(folder / "work" / "sheet" / "color.png").convert("RGBA"))
-    frame = atlas[rect["y"]: rect["y"] + rect["height"], rect["x"]: rect["x"] + rect["width"]]
+    frame = np.zeros((clip["cell"]["height"], clip["cell"]["width"], 4), dtype=np.uint8)
+    frame[offset["y"]: offset["y"] + rect["height"], offset["x"]: offset["x"] + rect["width"]] = atlas[
+        rect["y"]: rect["y"] + rect["height"], rect["x"]: rect["x"] + rect["width"]]
     drawn = image[hero["y"]: hero["y"] + hero["height"]: 3, hero["x"]: hero["x"] + hero["width"]: 3]
     opaque = frame[..., 3] == 255
     assert opaque.any() and (drawn[opaque] == frame[opaque]).all()

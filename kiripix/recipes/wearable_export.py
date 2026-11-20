@@ -2,7 +2,7 @@
 `sheet`'s `sheet.json` and atlases and `palette`'s `palette.json`, and leaves in `out/export/`:
 
     color.png, normal.png, depth.png   the three atlases, copied (the body's cell, pivot and frame layout)
-    wearable.json                      {"schema_version": 1, "asset": "wearable.hair", "body": "character.hero", "order": 30,
+    wearable.json                      {"schema_version": 2, "asset": "wearable.hair", "body": "character.hero", "order": 30,
                                         "files": {"color": ..., "normal": ..., "depth": "depth.png"},
                                         "cell", "pivot", "atlas", "directions", "clips",   # as character.json
                                         "parts": [{"name", "materials", "row", "shared", "indexes", "rgb"}]}
@@ -23,7 +23,8 @@ from kiripix.recipes.character_palette import PALETTE_FILE, PALETTE_SCHEMA_VERSI
 from kiripix.recipes.character_sheet import COLOR_ATLAS, NORMAL_ATLAS, SHEET_FILE, SHEET_SCHEMA_VERSION
 from kiripix.recipes.wearable_sheet import DEPTH_ATLAS
 
-WEARABLE_SCHEMA_VERSION = 1
+# 2: each clip's frames carry an `offset` and a trimmed `rect` (ticket 0308); no migration: a Stage's rebuilt output, refused when old
+WEARABLE_SCHEMA_VERSION = 2
 WEARABLE_FILE = "wearable.json"
 
 __all__ = ["WEARABLE_FILE", "WEARABLE_SCHEMA_VERSION", "check_wearable_export", "export_needs_input", "run_wearable_export"]

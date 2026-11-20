@@ -22,8 +22,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
 from kiripix.checks import Finding, Position
 from kiripix.recipes.base import (
     PICK,
@@ -405,6 +403,8 @@ def _export(run: StageRun) -> None:
 def _check_export(run: StageRun) -> list[Finding]:
     """`export.no_target`; every image the canvas's size with binary alpha, on the Grid's anchor (`export.portrait_canvas`);
     the fallback an emotion of the set."""
+    from PIL import Image  # here, not at the top: a light Command such as `describe` loads every Recipe
+
     where = Position(asset=run.asset_id, stage="export")
     findings: list[Finding] = []
     if not run.settings["export.godot"].get("project"):

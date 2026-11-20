@@ -156,5 +156,7 @@ taken (the relief is too coarse for the game's lights)."
 
 ### The Owner's verdict (2026-11-18)
 
-**Yes:** "0252 results look good." The four tickets above are the build for the game's M10, still to be filed. Open: whether
+**Yes:** "0252 results look good." The four tickets above are the build for the game's M10, filed in M6 on 2026-11-19 as
+[0339](../m6/0339-m6-adr-room-normals-stage.md) to [0343](../m6/0343-m6-ui-room-normals.md) (an ADR first: per ADR 0004 the
+Stage sits before `palette`). Open: whether
 DA3-Small/Base is tried first (ticket 1 says "or after a trial").

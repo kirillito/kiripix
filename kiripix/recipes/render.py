@@ -62,9 +62,9 @@ socket bone with its `offset` and `turn` (in the bone's frame, Model units), in 
 thing is part of the character's render: its pixels are in the colour, normal, depth and mask passes and the clip's measured extent.
 Its materials are numbered in the material pass after the Model's, as `core.things` numbers them (the things in the order they were
 first imported, each one's own materials by name), and `render.json` lists them in `things`: `[{"thing", "file", "materials":
-[{"index", "name"}]}]`, every thing of the Asset when any clip holds one; `materials` stays the Model's own. Each clip entry has its
-`attach`. A socket an attached thing sits on is also a point (named for the bone, `grip_r@grip_r`), unless `points` already has one at
-that bone, so the game's fallback and the real thing agree.
+[{"index", "name"}]}]`, the things up to the last one a clip holds (a later one is in no clip and moves no number); `materials` stays the Model's own. Each clip entry has its
+`attach`. A socket an attached thing sits on is also a point (named for the bone, `rightforearm` for `mixamorig:RightForeArm`; `socket_<name>` when a given point of that name aims at another
+bone), unless `points` already has one at that bone, so the game's fallback and the real thing agree.
 
 A cell per clip (ticket 0303): the top-level `frame` and `pivot` are the body's cell, fitted to the clips that hold nothing (to
 every clip when all hold something). A clip whose extent fits it keeps it; a clip that doesn't (its held thing, a long attack)
@@ -83,7 +83,9 @@ from typing import Any
 
 from kiripix.recipes.base import Scalar, StageFailure, StageRun, computed_setting, param_or_generated
 from kiripix.recipes.blender_launcher import launch
-from kiripix.recipes.clips import DIRECTIONS, EYELIDS, THINGS_DIR, clip_files, socket_message, unknown_sockets
+from kiripix.recipes.clips import (
+    DIRECTIONS, EYELIDS, clip_files, held_things_of, socket_message, thing_journal, unknown_sockets,
+)
 
 # 2: each clip carries its measured `bounds` (0155), a stationary clip one pivot (0154)
 # 3: a material pass, `materials` and `bands` (0148)
@@ -267,44 +269,31 @@ def _thing_files(run: StageRun) -> list[dict[str, Any]]:
     """The Asset's held things in numbering order, each `{"id", "file", "name"}` with the current Variant's path: the order they
     were first imported (the journal, `imported.jsonl`), a folder laid by hand after those, by ID. The current Variant is the
     newest import naming a file of the thing's folder, else the last by name. A Stage can't import core, so it reads these."""
-    found: dict[str, dict[str, Path]] = {}
-    for name, path in run.files.items():
-        if name.startswith(THINGS_DIR) and name.count("/") == 3 and name.endswith((".glb", ".blend")):
-            found.setdefault(name[len(THINGS_DIR):].split("/", 1)[0], {})[name] = path
-    order: list[str] = []
-    newest: dict[str, str] = {}
-    try:
-        lines = (run.asset_dir / "imported.jsonl").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        lines = []
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        file = str(entry.get("file", "")) if isinstance(entry, dict) else ""
-        thing = file[len(THINGS_DIR):].split("/", 1)[0]
-        if file.startswith(THINGS_DIR) and thing in found and file in found[thing]:
-            newest[thing] = file
-            if thing not in order:
-                order.append(thing)
-    order += sorted(set(found) - set(order))
-    chosen = {t: newest.get(t) or sorted(found[t])[-1] for t in order}
-    return [{"id": t, "file": found[t][chosen[t]], "name": Path(chosen[t]).name} for t in order]
+    base = run.base  # its things come first (ticket 0312); the base's journal is read where it is, not hashed
+    held = held_things_of(run.files, thing_journal(run.asset_dir), base.files if base is not None else None,
+                          thing_journal(base.asset_dir) if base is not None else ())
+    return [{"id": t.id, "file": t.variants[t.current], "name": Path(t.current).name} for t in held]
 
 
 def _socket_points(points: list[dict[str, str]], clips: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """`points` with a point at each socket an `attach` uses that has none: named for the bone (lower case, other characters
-    `_`), unless that name is taken."""
+    """`points` with a point at each socket an `attach` uses that has none (a given point on the socket's bone is its point): named
+    for the bone (lower case, other characters `_`); when a given point already has that name on another bone, `socket_<name>`
+    (and a number after it if that is taken too), so the socket always gets its point (ticket 0313)."""
     found = list(points)
     for clip in clips:
         for held in clip.get("attach", []):
             socket = str(held["socket"])
+            if any(p["target"] == socket for p in found):
+                continue
             name = re.sub(r"[^a-z0-9]+", "_", socket.lower().split(":")[-1]).strip("_") or "socket"
             if not POINT_NAME.fullmatch(name):
                 name = "socket_" + name
-            if any(p["target"] == socket or p["name"] == name for p in found):
-                continue
+            taken = {p["name"] for p in found}
+            if name in taken:
+                base = f"socket_{name}" if not name.startswith("socket_") else name
+                name, n = base, 2
+                while name in taken:
+                    name, n = f"{base}_{n}", n + 1
             found.append({"name": name, "target": socket})
     return found
 
@@ -504,11 +493,14 @@ def run_render(run: StageRun) -> None:
         args["eyes"] = eyes
     things = _thing_files(run)
     _check_held(run, clips, rig, things)
+    # A thing numbered after the last one a clip holds is in no clip and moves no number, so it isn't passed on (ticket 0313).
+    order = {t["id"]: n for n, t in enumerate(things)}
+    things = things[:max((order[str(a["thing"])] for c in clips for a in c.get("attach", [])), default=-1) + 1]
     for entry, source in zip(args["clips"], clips):
         if source.get("attach"):
             entry["attach"] = [dict(a) for a in source["attach"]]
     held = any(c.get("attach") for c in clips)
-    if held:  # every thing of the Asset, so the material numbers are the same whichever clips hold them
+    if held:  # the things up to the last one held, so the material numbers are the same whichever clips hold them
         args["things"] = [{"id": t["id"], "file": str(t["file"])} for t in things]
     points = _socket_points(parse_points(str(run.params.get("points") or ""), run.asset_id), clips)
     if points:
@@ -541,11 +533,12 @@ def run_render(run: StageRun) -> None:
         shared["eyes"] = eyes
     if points:
         shared["points"] = points
-    if held:
-        shared["things"] = [[t["id"], t["name"]] for t in things]
 
     def key(clip: dict[str, Any], device: str) -> str:
-        own = {"frame": [cells[clip["name"]][0]] * 2, "pivot": cells[clip["name"]][1]}  # its own cell (ticket 0303)
+        own: dict[str, Any] = {"frame": [cells[clip["name"]][0]] * 2, "pivot": cells[clip["name"]][1]}  # its own cell (ticket 0303)
+        if clip.get("attach"):  # the things it holds and those numbered before them: a later one moves no number (ticket 0313)
+            last = max(order[str(a["thing"])] for a in clip["attach"])
+            own["things"] = [[t["id"], t["name"]] for t in things[:last + 1]]
         return hashlib.sha256(json.dumps({"clip": clip, **shared, **own, "device": device}, sort_keys=True)
                               .encode("utf-8")).hexdigest()
 

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: imaging-engineer
 type: trial
@@ -43,7 +43,10 @@ folder of PNGs, with a short README, so the game can use it if the Kind isn't bu
 ## Acceptance criteria
 
 - [x] The numbers and images above (Results, below; the Owner's view of them is in "The Owner's view").
-- [ ] The Owner's answers to 0240's questions recorded, and 0242–0245 updated to match. **Withdrawn 2026-11-18** (see "The Owner's view"): the approach changes, so the questions are asked again after the redesign.
+- [x] The Owner's answers to 0240's questions recorded, and 0242–0245 updated to match. Withdrawn 2026-11-18 (see "The Owner's view"),
+  then answered by the redesign, 2026-11-19: see "Answers after the redesign" at the end. 0242–0245 were built on the
+  withdrawn answers, so the changes are filed as [0321](0321-m5-portrait-whole-body-emotions.md),
+  [0322](0322-m5-portrait-light-rim-check.md) and [0323](0323-m5-portrait-canvas-default.md).
 - [x] The prototype runs on a folder of PNGs, with its README, for the game's fallback.
 
 ## Results
@@ -53,7 +56,8 @@ where the ticket asks for three), six 896 x 1200 JPEGs on a green that is about 
 in [0241-trial/](0241-trial/) (`portrait_set.py`, the fallback, with its [README](0241-trial/README.md); `experiments.py`;
 `register_check.py`; `layout.py`). It reads `kiripix.ops` only; nothing in `kiripix/` or `tests/` changed. The inputs are copied
 there as `input/<emotion>.jpeg`, originals untouched. Output is in `0241-trial/out/`; the figures below are in
-`out/results.json`. Status stays todo: the Owner's view (2026-11-18) rejected the approach, see "The Owner's view".
+`out/results.json`. The Owner's view (2026-11-18) rejected the approach (see "The Owner's view"); the redesign's answers close the
+ticket (2026-11-19, at the end).
 
 ### The Owner's time (told by the coordinator, 2026-11-18)
 
@@ -246,3 +250,44 @@ colours, at least eventually: `n` a parameter up to 256, default 32 for now; see
   emotions differ by noise outside the face, as these do, so the lock is tested against what real edits do and not only
   against clean shifts.
 - **0242, 0244, 0245:** no change from the trial.
+
+### Answers after the redesign (2026-11-19, from the game's 0091 and DEC-071, the Owner's OK; recorded in 0240)
+
+The game's portrait spec settles 0240's four questions for whole-body emotions. Where the withdrawn answers above still stand,
+it says so.
+
+1. **Registration:** not applied by default. The pose, shoulders, arms, lean and the head's turn are free between emotions,
+   so laying an emotion on the neutral (over the whole figure, or outside a `face` region) would fight the change the
+   emotion is for. One fit from the neutral holds the set together instead: one scale, one crop. `register` stays, opt-in,
+   for a set whose edits are meant to keep the body still. Filed as [0321](0321-m5-portrait-whole-body-emotions.md).
+2. **Shimmer:** judged by eye, not locked. `lock_outside_face` is off by default and `portrait.shimmer` stays info
+   ([0321](0321-m5-portrait-whole-body-emotions.md)). The trial's white-rim specks, which changed between emotions, do
+   need a Check and a cutout that takes the rim off whole ([0322](0322-m5-portrait-light-rim-check.md)).
+3. **Colours:** as withdrawn answer 3, unchanged: the set's own colours, `n` 32 (a parameter up to 256), no dither, one set
+   over every emotion, the outline colour kept.
+4. **Canvas and scale:** **192 x 240** for the whole cast (was 160 x 224), anchor bottom centre (96, 239), the figure cut at
+   the waist on the bottom edge. One scale from the neutral, chosen so the neutral's head top is about **40 px** below the
+   canvas top (not `Grid.cover`'s fill, which leaves it about 4 px down at 192 x 240 from a 3:4 image). Every gesture inside
+   the canvas with 2 px to spare. Filed as [0321](0321-m5-portrait-whole-body-emotions.md) (the fit and the Check) and
+   [0323](0323-m5-portrait-canvas-default.md) (the Project's default canvas).
+
+**0244 (export) and 0245 (UI):** no change. The export shape is unchanged, and the UI's `face` region drawing is still
+used by an opt-in `register` and lock.
+
+### The fallback, brought up to the redesign (2026-11-19)
+
+`portrait_set.py`'s `build` and its command line now follow the rules above, for the game's M04 fallback
+([README](0241-trial/README.md)):
+
+- **192 x 240 canvas.** The scale puts the neutral's top at `--head-top` (default 40) and the image's bottom edge on the
+  canvas's bottom. One crop for the set, centred on the neutral's figure. On Sanjay's set: scale 1097/200 (5.485 source px
+  per target px), figure top at row 40 in every emotion, x 33-158 of 192.
+- **No registration and no lock** in `build` (the trial's helpers stay, for `experiments.py`).
+- **Outline `edge` by default** (`--outline outside` for the old way), as 0243 chose.
+- **Two reports per emotion** in `portrait.json`, with a warning on the console: `near_edge` (opaque pixels within 2 px
+  of the top, left or right edge: 0 on Sanjay's set) and `light_edge` (pale grey pixels on the silhouette's edge, the
+  rim's leftovers: 2-4 per emotion on Sanjay's set, the specks the Owner saw).
+- **Island removal uses `remove_small_islands`** (0243's Op, same result), so the set takes about 8 s against about a
+  minute.
+
+Checked by running it on `input/` into a scratch folder. Nothing in `kiripix/` or `tests/` changed for this ticket.

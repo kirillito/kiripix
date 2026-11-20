@@ -13,6 +13,7 @@ from kiripix.checks import Finding
 from kiripix.core.assets import Asset, is_asset_id, load_asset
 from kiripix.core.emotions import emotion_edit_findings
 from kiripix.core.held import attach_edit_findings
+from kiripix.core.lookmarkers import marker_look_findings
 from kiripix.export import emotion_freeze_findings, frozen_layer_findings, loop_edit_findings, state_edit_findings
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
@@ -192,7 +193,7 @@ def _edit_findings(project: Project, asset: Asset, stage: str, edits: list[tuple
     portrait's emotion (a duplicate ID, an unknown emotion, or an exported emotion's remove or rename), spec §9. Each reads
     the Stage's journal itself and keeps to its own Stage."""
     for check in (loop_edit_findings, state_edit_findings, emotion_edit_findings, emotion_freeze_findings,
-                  attach_edit_findings):
+                  attach_edit_findings, marker_look_findings):
         if found := check(project, asset, stage, edits):
             return found
     return []

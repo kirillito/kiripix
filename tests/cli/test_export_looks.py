@@ -68,10 +68,9 @@ def test_a_look_over_a_layer_with_a_solid_exports_hidden_nodes_with_metadata(pro
     piece = node(text, LOOK, "Foreground/lamp")
     assert "visible = false" in piece and f'metadata/kiripix_id = "{LOOK}"' in piece
     assert "position = Vector2(1, -19)" in piece, "relative to the Layer's sort line at y 20"
-    body = node(text, LOOK, "LookSolids")
-    assert "StaticBody2D" in body and "collision_layer = 1" in body
-    polygon = node(text, "polygon_0", f"LookSolids/{LOOK}")
-    assert "disabled = true" in polygon
+    assert 'type="Node2D"' in node(text, LOOK, "LookSolids")
+    assert "StaticBody2D" in node(text, "added", f"LookSolids/{LOOK}") and "collision_layer = 1" in node(
+        text, "cleared", f"LookSolids/{LOOK}")
     assert f"{RES}/looks/{LOOK}/plate.png" in data["written"] and f"{RES}/looks/{LOOK}/layer.lamp.png" in data["written"]
     assert f"{RES}/masks/{LOOK}.solid.png" in data["written"]
     out = folder / "work" / "looks"

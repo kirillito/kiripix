@@ -16,6 +16,8 @@ tested without a model by `uv run pytest tests/acceptance` (the dry run, the iso
 
 How the agent is held to the tool, how the stand-in owner works and what counts as a pass are in the docstrings of
 `tests/acceptance/claude_agent.py` and `harness.py`. The owner's Decisions are `tests/acceptance/fixtures/owner.json`.
+When the stand-in owner hands back, it says what it did in plain words, never a Command ("Done: I recorded Decisions on
+room.alley (masks, layers, place) and on character.hero (clips). Carry on."; ticket 0233).
 
 **M2 and later.** The room has a red crate for the stand-in owner to lift into a foreground Layer (`click` on `layers`,
 then `accept`, then a y-sort line on `place`). The Runners are fakes (0037's D16): `tests/acceptance/fixtures/acceptance_recipes.py`
@@ -37,5 +39,6 @@ the Project, which is what `extend canvas --side east` writes the canvas for, fi
 on texture, and the room has only the four colours the `palette` Stage keeps. The task also asks for an `area` Marker
 `battle.test` on 32 px cells that can be stood on. The stand-in owner first puts it on the wall (`area.no_walkable`), and
 moves it onto the floor when the agent reports the finding (the entry with `when_stage: place`). A pass also needs the
-room's export to hold the `Area2D` (the box snapped to cells, `walkable`, `cell`), `masks/solid.png` at the room's size and
+room's export to hold the `Area2D` (`walkable`, `cell`, and a box of whole 32 px cells inside the room: the owner's move or
+the agent's own box, since `check --all` being clean already says it can be stood on and reached; ticket 0233), `masks/solid.png` at the room's size and
 `room.json` beside the scene. Use `--milestone m4` for that record; the token count is the one to set against M3's.

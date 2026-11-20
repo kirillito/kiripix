@@ -32,7 +32,7 @@ from kiripix.core.project import Project
 from kiripix.core import snapshots
 from kiripix.ops.resample import upscale
 from kiripix.recipes.base import Scalar
-from kiripix.recipes.character_sheet import SHEET_FILE, SHEET_SCHEMA_VERSION
+from kiripix.recipes.character_sheet import SHEET_FILE, SHEET_SCHEMA_VERSION, restore_cell
 
 SHEET_STAGE = "sheet"
 CELL_GAP = 2  # target px between the cells of one Asset
@@ -161,8 +161,8 @@ def _frames(asset: Asset, document: dict[str, Any], atlas: np.ndarray, clips: li
                 continue
             for position in _picked(len(listed), frames):
                 frame = listed[position]
-                r = frame["rect"]
-                image = atlas[r["y"]: r["y"] + r["height"], r["x"]: r["x"] + r["width"]]
+                cell = (clip or {}).get("cell", document["cell"])  # trimmed frames (ticket 0308) are put back in the clip's cell
+                image = restore_cell(atlas, (int(cell["width"]), int(cell["height"])), frame)
                 made.append(_Frame(asset.id, name, direction, int(frame["index"]), image, pivot, not made))
     return made
 

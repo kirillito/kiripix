@@ -5,6 +5,7 @@ from typing import Any
 
 from kiripix.checks import Finding, Position
 from kiripix.core.errors import ExitCode, KiripixError
+from kiripix.core.settings import migrate_character_record
 from kiripix.core.graph import AssetGraph
 from kiripix.export.manifest import read_manifest
 from kiripix.export.built import EXPORT_STAGE, read_built_record
@@ -36,15 +37,28 @@ def body_exported(wearable: dict[str, Any], target: GodotTarget, planned: dict[s
         raise KiripixError([Finding(
             code="wearable.body_not_exported", message=f"{asset}'s body {body} hasn't been exported to the game",
             position=position, fix=f"kiripix export {body}")], ExitCode.ERROR)
+    problem, fix = "", f"kiripix export {body}"
     try:
-        theirs = json.loads(coming.decode("utf-8") if coming is not None else target.path(record).read_text(encoding="utf-8"))
-        same = theirs["cell"] == wearable["cell"] and theirs["pivot"] == wearable["pivot"]
-    except (OSError, ValueError, KeyError, TypeError):  # UnicodeDecodeError is a ValueError
-        same = False
-    if not same:
+        theirs = migrate_character_record(json.loads(
+            coming.decode("utf-8") if coming is not None else target.path(record).read_text(encoding="utf-8")))
+        if theirs["cell"] != wearable["cell"] or theirs["pivot"] != wearable["pivot"]:
+            problem = f"({wearable['cell']['width']} x {wearable['cell']['height']} px)"
+        else:  # each clip's own cell and pivot, and the same clips (ticket 0311)
+            body_clips = {str(c["name"]): c for c in theirs["clips"]}
+            mine = {str(c["name"]) for c in wearable["clips"]}
+            for clip in wearable["clips"]:
+                found = body_clips.get(str(clip["name"]))
+                if found is None or found["cell"] != clip["cell"] or found["pivot"] != clip["pivot"]:
+                    problem = f"(clip {clip['name']}: {clip['cell']['width']} x {clip['cell']['height']} px)"
+                    break
+            missing = sorted(set(body_clips) - mine)
+            if not problem and missing:
+                problem, fix = f"(clip {missing[0]} is the body's and not the Wearable's)", f"kiripix run {asset}"
+    except (OSError, ValueError, KeyError, TypeError, KiripixError):  # UnicodeDecodeError is a ValueError; KiripixError: too old
+        problem = f"({wearable['cell']['width']} x {wearable['cell']['height']} px)"
+    if problem:
         raise KiripixError([Finding(
             code="wearable.body_not_exported",
             message=f"{asset}'s body {body} was exported with another cell or pivot than the Wearable's "
-                    f"({wearable['cell']['width']} x {wearable['cell']['height']} px), or its character.json is missing, so "
-                    "the two wouldn't lie on each other",
-            position=position, fix=f"kiripix export {body}")], ExitCode.ERROR)
+                    f"{problem}, or its character.json is missing, so the two wouldn't lie on each other",
+            position=position, fix=fix)], ExitCode.ERROR)

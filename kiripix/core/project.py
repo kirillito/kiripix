@@ -92,8 +92,8 @@ canvas = [1376, 768]           # width and height in px
 size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) overrides it
 
 [portrait]                     # `kiripix new portrait <name>`: the canvas of a character's dialogue portraits
-canvas = [160, 224]            # width and height in px; a portrait's own brief overrides it
-# anchor = [80, 223]           # the pixel the figure stands on; the bottom centre when unset
+canvas = [192, 240]            # width and height in px; a portrait's own brief overrides it
+# anchor = [96, 239]           # the pixel the figure stands on; the bottom centre when unset
 
 [character]
 height = 52                    # target height in px; a character's own `height` parameter overrides it

@@ -14,6 +14,9 @@ depends_on: [0242-m5-portrait-asset-and-emotions.md, 0274-m5-set-colours-op.md]
 > parts are in question; see [0241](0241-m5-portrait-trial.md) "The Owner's view" and [0240](0240-m5-portrait-kind.md). Don't
 > start until 0240 is redesigned. Kept from the trial: the key tolerance, the white-rim removal (and a Check for
 > leftover rim specks, which differed between emotions), one scale and `n` colours for the set, the outline placement.
+>
+> **Redesigned 2026-11-19** (the game's 0091; [0241](0241-m5-portrait-trial.md), "Answers after the redesign"). The
+> changes to what's built here are [0321](0321-m5-portrait-whole-body-emotions.md) and [0322](0322-m5-portrait-light-rim-check.md).
 
 Part of [0240](0240-m5-portrait-kind.md). Its table is the design, with the trial [0241](0241-m5-portrait-trial.md)'s
 changes the Owner accepted (2026-11-18, 0240's Answers). The trial's prototype, `0241-trial/portrait_set.py`, is the

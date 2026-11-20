@@ -47,7 +47,7 @@ def test_render_records_every_point_in_every_frame(project: Kiripix) -> None:
 def test_character_json_has_the_points_relative_to_the_pivot(project: Kiripix) -> None:
     folder, character = exported(project, "hand_r@hand_r")
 
-    assert character["schema_version"] == 6
+    assert character["schema_version"] == 7
     pivot = render_json(folder)["pivot"]
     for clip in character["clips"]:
         for direction, frames in clip["directions"].items():
@@ -75,7 +75,7 @@ def test_the_points_reach_the_game_in_its_character_json(project: Kiripix) -> No
 def test_without_the_parameter_nothing_is_written_and_character_json_is_as_before(project: Kiripix) -> None:
     folder, character = exported(project)
 
-    assert character["schema_version"] == 6
+    assert character["schema_version"] == 7
     assert "points" not in render_json(folder) and "points" not in render_calls(project)[-1]["args"]
     assert "points" not in render_json(folder)["clips"][0]["directions"]["s"][0]
     sheet = json.loads((folder / "work" / "sheet" / "sheet.json").read_text("utf-8"))

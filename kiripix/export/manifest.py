@@ -18,7 +18,9 @@ from kiripix.core.errors import fail
 MANIFEST_DIR = "manifest"
 # 2: `ids.clips`, each exported animation name of a character (ticket 0113). A version 1 Manifest is migrated on read: it
 # lists the same files and the IDs it froze, so refusing it would lose the freeze; its `clips` are empty.
-MANIFEST_SCHEMA_VERSION: Literal[2] = 2
+# 3: `ids.look_markers`, a room's Look Markers as `<look>/<marker>` (ticket 0316). A version 2 Manifest is migrated on read, with
+# none.
+MANIFEST_SCHEMA_VERSION: Literal[3] = 3
 
 
 class ExportedIds(BaseModel):
@@ -36,12 +38,13 @@ class ExportedIds(BaseModel):
     states: list[str] = Field(default_factory=list)  # a Prop's state IDs (ticket 0258); left out of the file when empty
     links: list[str] = Field(default_factory=list)  # a room's Link IDs (ticket 0267); left out of the file when empty
     emotions: list[str] = Field(default_factory=list)  # a portrait's emotion IDs (ticket 0244); left out when empty
+    look_markers: list[str] = Field(default_factory=list)  # a room's Look Markers, `<look>/<marker>` (0316); left out when empty
 
     @model_serializer(mode="wrap")
     def _without_empty_looks(self, handler: Any) -> dict[str, Any]:
         """A Manifest of an Asset with no Looks, Loops, states, Links or emotions is the file it was before they existed: byte for byte."""
         data: dict[str, Any] = handler(self)
-        for noun in ("looks", "loops", "states", "links", "emotions"):
+        for noun in ("looks", "loops", "states", "links", "emotions", "look_markers"):
             if not data.get(noun):
                 data.pop(noun, None)
         return data
@@ -50,7 +53,7 @@ class ExportedIds(BaseModel):
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[2] = MANIFEST_SCHEMA_VERSION
+    schema_version: Literal[3] = MANIFEST_SCHEMA_VERSION
     kiripix_version: str
     asset: str
     exported: bool
@@ -69,9 +72,10 @@ class Manifest(BaseModel):
     @classmethod
     def from_value(cls, value: Any) -> "Manifest":
         """Validate a decoded Manifest, migrating one from an older schema version first (a newer one fails validation)."""
-        migrated = isinstance(value, dict) and value.get("schema_version") == 1
+        migrated = isinstance(value, dict) and value.get("schema_version") in (1, 2)
         if migrated:
-            value = migrate_v1(value)
+            assert isinstance(value, dict)
+            value = migrate_v2(migrate_v1(value) if value.get("schema_version") == 1 else value)
         manifest = cls.model_validate(value)
         manifest._migrated = migrated
         return manifest
@@ -82,6 +86,13 @@ def migrate_v1(value: dict[str, Any]) -> dict[str, Any]:
     ids = value.get("ids")
     ids = {**ids, "clips": ids.get("clips", [])} if isinstance(ids, dict) else ids
     return {**value, "schema_version": 2, "ids": ids}
+
+
+def migrate_v2(value: dict[str, Any]) -> dict[str, Any]:
+    """Schema 2 to 3: `ids` gains `look_markers`, empty. Pure."""
+    ids = value.get("ids")
+    ids = {**ids, "look_markers": ids.get("look_markers", [])} if isinstance(ids, dict) else ids
+    return {**value, "schema_version": 3, "ids": ids}
 
 
 def kiripix_version() -> str:

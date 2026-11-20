@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 type: spec
 parent: 0236-m5-the-games-next-needs.md
@@ -9,7 +9,9 @@ parent: 0236-m5-the-games-next-needs.md
 
 Part of [0236](0236-m5-the-games-next-needs.md), item 2. Child tickets: [0241](0241-m5-portrait-trial.md) (trial),
 [0242](0242-m5-portrait-asset-and-emotions.md), [0274](0274-m5-set-colours-op.md) (the set's colours),
-[0243](0243-m5-portrait-recipe.md), [0244](0244-m5-export-a-portrait.md), [0245](0245-m5-ui-portrait-screens.md).
+[0243](0243-m5-portrait-recipe.md), [0244](0244-m5-export-a-portrait.md), [0245](0245-m5-ui-portrait-screens.md); after the
+redesign, [0321](0321-m5-portrait-whole-body-emotions.md), [0322](0322-m5-portrait-light-rim-check.md) and
+[0323](0323-m5-portrait-canvas-default.md).
 
 Background: spec §3 (Kinds: `portrait` was Later), §6.1 (Looks: an edit of a Source, registered to it), §6.2 (Prop: `cutout`,
 `fit`), §6.3 (`palette`, `finish`). The game's `docs/MILESTONE_PLANS.md` § M04 (M04-01 to M04-07, acceptance and risks),
@@ -87,15 +89,47 @@ exported, like clip names (ADR 0003).
    smooth). No ramps.
 4. **Canvas:** 160 x 224, bottom centre, one scale from the neutral (`Grid.cover`) and one crop for the set.
 
+## Input from the game (0091, the Owner's OK, 2026-11-19): the rules for the redesign
+
+The game's portrait spec (its ticket 0091 and DEC-071) settles what the redesign builds for. In short:
+
+- **Canvas 192 x 240** for the whole cast (was 160 x 224), anchor bottom centre `(96, 239)`, the figure cut at the waist on
+  the bottom edge in every emotion (the game hides the bottom 8 px behind its text box).
+- **Holds across a set:** one scale, from the neutral (the head the same size in every emotion); the anchor and the waist
+  cut; the neutral's head top about 40 px below the canvas top; every gesture inside the canvas with 2 px to spare; the
+  1 px outline in the characters' colour; the set's own colours, `n` 32, no dither, one set over every emotion; the same
+  outfit, hair, colours and light; no background, no white rim.
+- **Free between emotions:** the pose, the shoulders, the arms and hands, the torso's lean, the head's turn and tilt, the
+  face. So `register` outside a `face` region and `lock_outside_face` don't apply; one fit for the set from the neutral
+  still does. Shimmer is judged by eye, not locked.
+- **Facing:** each set is drawn facing the screen's centre from its side; the game may mirror it at runtime.
+- **Emotion IDs** (snake_case, frozen once exported): `neutral`, `happy`, `sad`, `angry`, `surprised`, `worried`; Sanjay
+  adds `exasperated`, `smirk`, `tired`, `relieved` and optionally `proud`. `fallback` stays `neutral`.
+- The export shape (0244) is unchanged.
+
+**Recorded in [0241](0241-m5-portrait-trial.md) ("Answers after the redesign", 2026-11-19)** as the answers to the four
+questions. 0242–0245 were built on the withdrawn answers, so what changes is filed: [0321](0321-m5-portrait-whole-body-emotions.md)
+(`register` opt-in, `lock_outside_face` off, the fit's head top, `portrait.out_of_canvas`),
+[0322](0322-m5-portrait-light-rim-check.md) (the leftover white rim) and [0323](0323-m5-portrait-canvas-default.md) (the
+canvas default).
+
 ## Order
 
 | Wave | Tickets |
 |---|---|
 | 1 | [0241](0241-m5-portrait-trial.md) the trial |
 | 2 | [0274](0274-m5-set-colours-op.md) the Op (any time, no dependency), [0242](0242-m5-portrait-asset-and-emotions.md) the Kind, `emotion` and import (core), then [0243](0243-m5-portrait-recipe.md) the Stages, then [0244](0244-m5-export-a-portrait.md) export and [0245](0245-m5-ui-portrait-screens.md) the UI |
+| 3 | The redesign: [0321](0321-m5-portrait-whole-body-emotions.md) the Stages, [0322](0322-m5-portrait-light-rim-check.md) the rim, [0323](0323-m5-portrait-canvas-default.md) the canvas (no dependency between them) |
 
 ## Out of scope
 
 - The game's portrait UI, transitions and dimming.
 - A mouth or eyes stamped on a 3D character's face (0203's "Open").
 - Portraits from the 3D Model: the game's portraits are painted.
+
+## Result
+
+Closed by the Owner, 2026-11-19. Built in [0242](0242-m5-portrait-asset-and-emotions.md) to
+[0245](0245-m5-ui-portrait-screens.md) and redesigned to the game's rules by [0321](0321-m5-portrait-whole-body-emotions.md)
+(whole-body emotions, `head_top`, `portrait.out_of_canvas`), [0322](0322-m5-portrait-light-rim-check.md) (the white rim's
+specks) and [0323](0323-m5-portrait-canvas-default.md) (192 x 240). Sanjay's set went from import to the game at the gate.

@@ -13,7 +13,15 @@ from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import cancel, sources
 from kiripix.core.assets import create_asset, is_asset_id, list_assets, load_asset
 from kiripix.core.errors import KiripixError, fail
-from kiripix.core.graph import AssetGraph, StageRunResult, StageState, run_all, run_asset
+from kiripix.core.graph import (
+    RUNNER_INPUT_CHANGED,
+    RUNNER_NOT_RUN,
+    AssetGraph,
+    StageRunResult,
+    StageState,
+    run_all,
+    run_asset,
+)
 from kiripix.core.hashing import HashCache
 from kiripix.core.kinds import all_kinds, get_kind
 from kiripix.core.project import find_project, init_project
@@ -269,6 +277,21 @@ class AssetStatus(BaseModel):
     stages: list[StageState]
     export_command: str | None = Field(
         None, description="While every Stage is done and the game doesn't have what is built: the Command that exports it.")
+    waits_on: dict[str, str] = Field(default_factory=dict, exclude=True)  # human output only: Stage -> first open one it reads
+
+
+def _stage_line(asset: AssetStatus, stage: StageState, first_open: str | None) -> str:
+    """One Stage of `status`'s human output, written so that agent work reads as work, not as a question (0233)."""
+    reason = stage.reason
+    hint = ""
+    if stage.stage == first_open and stage.status == "todo":  # its inputs are all there
+        hint = f" (ready: kiripix run {asset.asset})"
+    elif stage.status == "needs-input" and reason in (RUNNER_NOT_RUN, RUNNER_INPUT_CHANGED):  # only its Runner calls
+        hint = f" (run: kiripix run {asset.asset} {stage.stage} --rerun)"
+    elif stage.stage in asset.waits_on and stage.status in ("needs-input", "needs-review", "failed"):
+        first = asset.waits_on[stage.stage]  # what it says may be about a build from before `first` changed
+        reason = f"waits on {first}; may change once {first} is done: {reason}" if reason else f"waits on {first}"
+    return f"    {stage.stage:<10} {stage.status}{hint}{f'  ({reason})' if reason else ''}"
 
 
 class StatusData(BaseModel):
@@ -282,11 +305,7 @@ class StatusData(BaseModel):
         for asset in self.assets:
             lines.append(f"  {asset.asset}")
             first_open = next((s.stage for s in asset.stages if s.status != "done"), None)
-            for stage in asset.stages:
-                reason = f"  ({stage.reason})" if stage.reason else ""
-                # the first Stage that isn't done, when it is `todo`: its inputs are all there, so it is work, not a question
-                ready = f" (ready: kiripix run {asset.asset})" if stage.stage == first_open and stage.status == "todo" else ""
-                lines.append(f"    {stage.stage:<10} {stage.status}{ready}{reason}")
+            lines.extend(_stage_line(asset, stage, first_open) for stage in asset.stages)
             if asset.export_command:
                 lines.append(f"    built, but not in the game yet: {asset.export_command}")
         return "\n".join(lines)
@@ -311,11 +330,15 @@ def status(arguments: StatusInput, context: Context) -> Outcome[StatusData]:
         if arguments.kind is not None and asset.kind != arguments.kind:
             continue
         try:
-            states = AssetGraph(project, asset, cache).states()
+            graph = AssetGraph(project, asset, cache)
+            states = graph.states()
+            first_open = next((s.stage for s in states if s.status != "done"), None)
+            waits_on = {} if first_open is None else {
+                s.stage: first_open for s in states if first_open in graph.upstream_chain(graph.spec(s.stage))}
         except KiripixError as error:
             findings.extend(error.findings)
             continue
-        rows.append(AssetStatus(asset=asset.id, kind=asset.kind, stages=states,
+        rows.append(AssetStatus(asset=asset.id, kind=asset.kind, stages=states, waits_on=waits_on,
                                 export_command=export_command(project, asset, cache, states)))
     cache.save()
     return Outcome(

@@ -54,7 +54,7 @@ def test_room_json_lists_the_links_and_has_the_new_schema_version(project: Kirip
 
     room = room_json(project)
 
-    assert room["schema_version"] == 11
+    assert room["schema_version"] == 12
     assert room["links"] == [
         {"id": "climb.up", "kind": "climb", "from": [30, 26], "to": [40, 10], "two_way": True},
         {"id": "hop.down", "kind": "hop", "from": [24, 8], "to": [40, 24], "two_way": False},

@@ -15,7 +15,7 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "toon": {"bands": 2 to 4, "shadow": 0 to 1, "band_edge": 0 to 1, "band_smooth": px, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
                   toward the camera>}}, "eyes": [<names of the materials that are the eyes; optional>],
          "points": [{"name": <the point's name>, "target": <a bone of the armature or an Empty, by name>}; optional],
-         "things": [{"id": <a held thing's ID>, "file": <its .glb or .blend>}; optional] (every thing of the Asset, in the order their
+         "things": [{"id": <a held thing's ID>, "file": <its .glb or .blend>}; optional] (the Asset's things up to the last one a clip holds, in the order their
                     materials are numbered), and a clip's "attach": [{"thing", "socket": <a bone>, "offset": [x, y, z]?, "turn": [x, y, z]?}],
          "wearable": {"file": <a Wearable's model.blend, on the body's skeleton>, "holdout": <bool, default true>}; optional,
          "output": <folder to write the frames into>}

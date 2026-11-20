@@ -7,6 +7,8 @@ from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import clipcopy, held
 from kiripix.core.assets import is_asset_id, load_asset
+from kiripix.core.graph import AssetGraph
+from kiripix.core.hashing import HashCache
 from kiripix.core.project import find_project
 
 CLIPS_GROUP = "A character's clips (spec §6.3)."
@@ -77,7 +79,8 @@ def clips_copy(arguments: CopyInput, context: Context) -> Outcome[CopyData]:
                         fix=f"kiripix clips copy {asset.id} --from {other.id} --clip {name} --replace",
                         position=Position(asset=asset.id, stage=clipcopy.CLIPS_STAGE))
                 for name in result.skipped]
-    have = held.asset_things(asset)
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    have = held.asset_things(asset, graph.base_asset)
     for thing in sorted({str(a["thing"]) for d in result.decisions for a in d.data.get("attach", [])} - have):
         clips_with = sorted(str(d.data["name"]) for d in result.decisions
                             if any(a["thing"] == thing for a in d.data.get("attach", [])))

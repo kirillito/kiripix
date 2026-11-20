@@ -1,31 +1,35 @@
 """The character's `sheet` Stage (spec §6.3, ticket 0112).
 
-Packs `finish`'s colour frames into one atlas and its normal frames into a second atlas with the same layout (`pack_atlas`).
-Every cell is its clip's frame size (ticket 0303: the render's `frame` and `pivot` per clip, the character's when the clip has
-none), and each frame's pivot (the feet) lands on the clip's pivot in the cell, so the pivot is the same pixel in every cell of a
-clip and direction. Most clips have the body's cell, which is the top-level `cell` and `pivot`. The atlas is laid out in blocks, one
-for each distinct cell: the body's first, as one grid of `columns` columns, then each other cell size below it, a grid of its own.
-`rect` gives every frame's place; a reader never computes it. Each clip has its `cell` and `pivot`. Nothing reads `render`'s files after this: `sheet.json` is what
-the exporter and the UI read.
+Packs `finish`'s colour frames into one atlas and its normal frames into a second atlas with the same layout (ticket 0308: each
+frame is cut to the opaque box it has over every layer, `pack_trimmed`; `rect` is the box's place in the atlas and `offset` its place in the
+clip's logical cell, so `cell[offset.y:offset.y + rect.height, offset.x:offset.x + rect.width] = atlas[rect]` restores the cell exactly;
+an empty frame has a 1 x 1 rect at offset 0, 0). The logical cell is its clip's frame size
+(ticket 0303: the render's `frame` and `pivot` per clip, the character's when the clip has none), and each frame's pivot (the feet) lands
+on the clip's pivot in the cell, so the pivot is the same pixel in every cell of a clip and direction. Most clips have the body's cell,
+which is the top-level `cell` and `pivot`; a clip's own `cell` and `pivot` are its logical cell, which the game restores each frame to.
+Frames are packed in shelves with a 1 px gap, so there is no grid and no `columns`; a reader never computes a place, `rect` gives it.
+Nothing reads `render`'s files after this: `sheet.json` is what the exporter and the UI read.
 
-Output in `work/sheet/`: `color.png`, `normal.png` and `sheet.json`:
+Output in `work/sheet/`: `color.png`, `normal.png` and `sheet.json`. `color.png` is an indexed PNG with transparency (index 0) when
+the frames hold at most 256 colours, which a palette-mapped character always does (`atlas_png.py`); `sheet.colour_atlas_rgba`
+(info) names the count when it stays RGBA. `normal.png` and `depth.png` are not palette images and stay as they are:
 
-    {"schema_version": 1,
+    {"schema_version": 2,
      "files": {"color": "color.png", "normal": "normal.png"},
      "cell": {"width": 78, "height": 78},
      "pivot": {"x": 39, "y": 72},                    # in the cell, from its top left
-     "columns": 11,
-     "atlas": {"width": 858, "height": 936},
+     "atlas": {"width": 640, "height": 520},
      "directions": ["s", "se", ...],
      "clips": [{"name": "idle", "fps": 12, "loop": true, "stationary": true,
                 "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # this clip's; the body's for most
-                "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 78, "height": 78}}, ...]}}]}
+                "directions": {"s": [{"index": 0, "rect": {"x": 0, "y": 0, "width": 31, "height": 52},   # in the atlas
+                                    "offset": {"x": 22, "y": 14}}, ...]}}]}        # in the clip's cell
 
 With named points (ticket 0237, `render`'s `points`), each frame also has `"points": {"hand_r": {"x": 12, "y": -20, "hidden":
 false}}`: the point's pixel relative to the pivot, whole px, y down, as Godot draws: the pixel of the frame that holds it, counted
 from the pivot's pixel edge (`floor(render x - the frame's rounded pivot)`). A character without points has no such key.
 
-The Checks read `finish`'s frames again (the atlas has cut off what overflows the cell) and `clips`' frame counts. A finding
+The Checks read `finish`'s frames again and judge them in the logical cell, never the packed rect (the cell has cut off what overflows it) and `clips`' frame counts. A finding
 about a frame has `position.field` = `clip/direction/index` and `position.file` = the frame's colour file in `finish`.
 """
 
@@ -50,13 +54,15 @@ from kiripix.checks import (
     check_frame_overflow,
     check_pivot_drift,
 )
-from kiripix.ops import pack_atlas
-from kiripix.ops.sheet import Rect
+from kiripix.ops import pack_trimmed, place_in_cell
+from kiripix.recipes.atlas_png import write_colour_atlas
 from kiripix.recipes.base import CheckFunction, StageFailure, StageFunction, StageRun
 from kiripix.recipes.character_palette import RENDER_FILE
 from kiripix.recipes.common import read_rgba, write_rgba
 
-SHEET_SCHEMA_VERSION = 1
+# 2: each frame is cut to its opaque box (ticket 0308): `rect` is the box's place in the atlas, `offset` its place in the clip's cell;
+#    `columns` is gone (the atlas is packed, not a grid)
+SHEET_SCHEMA_VERSION = 2
 SHEET_FILE = "sheet.json"
 COLOR_ATLAS = "color.png"
 NORMAL_ATLAS = "normal.png"
@@ -74,51 +80,29 @@ def _json(path: Any, what: str, stage: str) -> dict[str, Any]:
     return document
 
 
+Cell = tuple[tuple[int, int], tuple[int, int]]  # (width, height), (pivot x, pivot y)
+
+
 def _cell(document: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
     frame, pivot = document["frame"], document["pivot"]
     return (int(frame["width"]), int(frame["height"])), (_round(pivot[0]), _round(pivot[1]))
 
 
-def _clip_cell(document: dict[str, Any], entry: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
+def _render_clip_cell(document: dict[str, Any], entry: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
     """A clip's cell and pivot (ticket 0303): its own `frame` and `pivot` in `render.json`, else the character's."""
     if "frame" in entry and "pivot" in entry:
         return _cell(entry)
     return _cell(document)
 
 
-Cell = tuple[tuple[int, int], tuple[int, int]]  # (width, height), (pivot x, pivot y)
-
-
-def pack_by_cell(images: list[Any], pivots: list[tuple[int, int]], cells: list[Cell], first: Cell) -> tuple[Any, list[Rect], int]:
-    """Packs frames into one atlas, a block of rows for each distinct cell (size and pivot): the block of cell `first` (the
-    body's) on top, the others in the order their first frame appears, each a grid of its own cells, `ceil(sqrt(count))`
-    columns, left aligned. A character whose frames share one cell is one block, the same layout as ever. Returns the atlas,
-    each frame's rect in the order given, and the first block's column count."""
-    order: list[Cell] = [first] if first in cells else []
-    for cell in cells:
-        if cell not in order:
-            order.append(cell)
-    blocks: list[tuple[Any, list[Rect], int]] = []
-    members: dict[Cell, list[int]] = {cell: [i for i, c in enumerate(cells) if c == cell] for cell in order}
-    for cell in order:
-        mine = members[cell]
-        columns = max(1, math.ceil(math.sqrt(len(mine))))
-        block, rects = pack_atlas([images[i] for i in mine], [pivots[i] for i in mine], cell[0], columns, cell[1])
-        blocks.append((block, rects, columns))
-    width = max(block.shape[1] for block, _, _ in blocks)
-    atlas = np.zeros((sum(block.shape[0] for block, _, _ in blocks), width, 4), dtype=np.uint8)
-    found: list[Rect | None] = [None] * len(images)
-    top = 0
-    for cell, (block, rects, _) in zip(order, blocks, strict=True):
-        atlas[top:top + block.shape[0], :block.shape[1]] = block
-        for i, (x, y, w, h) in zip(members[cell], rects, strict=True):
-            found[i] = (x, y + top, w, h)
-        top += block.shape[0]
-    placed: list[Rect] = []
-    for rect in found:
-        assert rect is not None
-        placed.append(rect)
-    return atlas, placed, blocks[0][2]
+def restore_cell(atlas: Any, cell: tuple[int, int], frame: dict[str, Any]) -> Any:
+    """A frame's whole logical cell (width, height) from the atlas: its `rect`'s pixels at its `offset` (0, 0 in a sheet of schema 1,
+    whose rect is the cell), the rest transparent."""
+    rect, offset = frame["rect"], frame.get("offset", {"x": 0, "y": 0})
+    restored = np.zeros((cell[1], cell[0], atlas.shape[2]), dtype=atlas.dtype)
+    x, y, w, h = int(rect["x"]), int(rect["y"]), int(rect["width"]), int(rect["height"])
+    restored[offset["y"]:offset["y"] + h, offset["x"]:offset["x"] + w] = atlas[y:y + h, x:x + w]
+    return restored
 
 
 def _points(frame: dict[str, Any]) -> dict[str, Any]:
@@ -159,38 +143,47 @@ def _frames(run: StageRun, source: str, document: dict[str, Any], *, normals: bo
     return frames, names
 
 
-def _run_sheet(run: StageRun, source: str) -> None:
+def _run_sheet(run: StageRun, source: str, depth: bool = False) -> dict[str, Any]:
+    """Cuts every frame to one box over its layers (colour, normal, and the render's depth when `depth`), packs them, writes
+    the atlases and `sheet.json`, and returns `sheet.json`'s document."""
     document = _json(run.upstream[source] / RENDER_FILE, RENDER_FILE, source)
     cell, cell_pivot = _cell(document)
     frames, _ = _frames(run, source, document, normals=True)
     if not frames:
         raise StageFailure(f"{source} has no frames to pack; run it again", fix=f"kiripix run {run.asset_id} {source} --force")
-    run.progress(0, 2, "packing the colour atlas")
-    pivots = [f.pivot for f in frames]
-    own = {str(e["name"]): _clip_cell(document, e) for e in document["clips"]}
-    cells = [own[f.clip] for f in frames]
-    colour, rects, columns = pack_by_cell([f.image for f in frames], pivots, cells, (cell, cell_pivot))
-    run.check_cancel()
-    run.progress(1, 2, "packing the normal atlas")
-    normal_frames: list[np.ndarray] = []
+    run.progress(0, 2, "cutting the frames to their boxes")
+    own = {str(e["name"]): _render_clip_cell(document, e) for e in document["clips"]}
+    colour_cells: list[np.ndarray] = []
+    normal_cells: list[np.ndarray] = []
     for f in frames:
+        run.check_cancel()
         assert f.normal is not None
-        normal_frames.append(f.normal)
-    normal, normal_rects, _ = pack_by_cell(normal_frames, pivots, cells, (cell, cell_pivot))
-    if normal_rects != rects:
-        raise StageFailure("the two atlases don't share a layout")  # can't happen: one cell list, one count
-    write_rgba(run.output_dir / COLOR_ATLAS, colour)
-    write_rgba(run.output_dir / NORMAL_ATLAS, normal)
+        size, own_pivot = own[f.clip]
+        colour_cells.append(place_in_cell(f.image, f.pivot, size, own_pivot))
+        normal_cells.append(place_in_cell(f.normal, f.pivot, size, own_pivot))
+    layers = [colour_cells, normal_cells]
+    if depth:
+        layers.append(_depth_cells(run, frames, own))
+    run.progress(1, 2, "packing the atlases")
+    atlases, rects, offsets = pack_trimmed(layers)
+    colour = atlases[0]
+    write_colour_atlas(run.output_dir / COLOR_ATLAS, colour)  # indexed when it fits (ticket 0310)
+    write_rgba(run.output_dir / NORMAL_ATLAS, atlases[1])
+    files = {"color": COLOR_ATLAS, "normal": NORMAL_ATLAS}
+    if depth:
+        _write_depth_atlas(run, atlases[2])
+        files["depth"] = DEPTH_ATLAS
 
-    found = {(f.clip, f.direction, f.index): rect for f, rect in zip(frames, rects, strict=True)}
+    found = {(f.clip, f.direction, f.index): (rect, offset) for f, rect, offset in zip(frames, rects, offsets, strict=True)}
     clips = []
     for entry in document["clips"]:
         directions: dict[str, list[dict[str, Any]]] = {}
         for direction, listed in entry["directions"].items():
             directions[direction] = [
                 {"index": int(frame["index"]),
-                 "rect": dict(zip(("x", "y", "width", "height"), found[(entry["name"], direction, int(frame["index"]))],
+                 "rect": dict(zip(("x", "y", "width", "height"), found[(entry["name"], direction, int(frame["index"]))][0],
                                   strict=True)),
+                 "offset": dict(zip(("x", "y"), found[(entry["name"], direction, int(frame["index"]))][1], strict=True)),
                  **_points(frame)}
                 for frame in listed if (entry["name"], direction, int(frame["index"])) in found]
         (own_width, own_height), own_pivot = own[str(entry["name"])]
@@ -200,15 +193,15 @@ def _run_sheet(run: StageRun, source: str) -> None:
                       "directions": directions})
     sheet = {
         "schema_version": SHEET_SCHEMA_VERSION,
-        "files": {"color": COLOR_ATLAS, "normal": NORMAL_ATLAS},
+        "files": files,
         "cell": {"width": cell[0], "height": cell[1]},
         "pivot": {"x": cell_pivot[0], "y": cell_pivot[1]},
-        "columns": columns,
         "atlas": {"width": int(colour.shape[1]), "height": int(colour.shape[0])},
         "directions": list(document["directions"]),
         "clips": clips,
     }
     (run.output_dir / SHEET_FILE).write_text(json.dumps(sheet, indent=1) + "\n", encoding="utf-8")
+    return sheet
 
 
 def _check_sheet(run: StageRun, source: str) -> list[Finding]:
@@ -239,7 +232,7 @@ def _check_sheet(run: StageRun, source: str) -> list[Finding]:
     # in a stationary clip, are that clip's.
     overflow: list[Finding] = []
     for entry in document["clips"]:
-        clip_cell, clip_pivot = _clip_cell(document, entry)
+        clip_cell, clip_pivot = _render_clip_cell(document, entry)
         overflow += check_frame_overflow([f for f in frames if f.clip == entry["name"]], clip_cell, rerender, clip_pivot)
     findings = (check_pivot_drift(frames, stationary, drift) + overflow
                 + check_frame_count(frames, expected, fix, list(document["directions"])) + check_empty_frame(frames, fix))
@@ -250,13 +243,34 @@ def _check_sheet(run: StageRun, source: str) -> list[Finding]:
         parts = (finding.position.field or "").split("/")
         if len(parts) == 3 and (parts[0], parts[1], int(parts[2])) in names:
             finding.position.file = names[(parts[0], parts[1], int(parts[2]))]
-    return findings
+    return findings + _check_colour_atlas(run)
+
+
+def _check_colour_atlas(run: StageRun) -> list[Finding]:
+    """`sheet.colour_atlas_rgba` (info): the colour atlas has more than 256 colours, so it stays RGBA (a larger file)."""
+    from PIL import Image
+
+    try:
+        with Image.open(run.output_dir / COLOR_ATLAS) as atlas:
+            if atlas.mode == "P":
+                return []
+            count = len(np.unique(np.asarray(atlas.convert("RGBA")).reshape(-1, 4), axis=0))
+    except OSError:
+        return []
+    return [Finding(code="sheet.colour_atlas_rgba", severity="info",
+                    position=Position(asset=run.asset_id, stage="sheet", file=COLOR_ATLAS),
+                    message=f"the colour atlas has {count} colours, more than the 256 of an indexed PNG, so it is RGBA and larger; "
+                            f"a palette-mapped character has at most the palette's",
+                    fix=f"kiripix run {run.asset_id} palette --force", data={"colours": count})]
 
 
 def sheet_stage(frames: str = "finish") -> tuple[StageFunction, CheckFunction]:
     """The Stage's `run` and `check` for a Recipe whose finished frames and frame list (`render.json`) are in the Stage named
     `frames` (ticket 0176). The Stage must list it upstream; `clips`, when listed, gives the expected frame counts."""
-    return (lambda run: _run_sheet(run, frames)), (lambda run: _check_sheet(run, frames))
+    def run_sheet(run: StageRun) -> None:
+        _run_sheet(run, frames)
+
+    return run_sheet, (lambda run: _check_sheet(run, frames))
 
 
 run_character_sheet, check_character_sheet = sheet_stage("finish")
@@ -277,48 +291,45 @@ def _depth_frame(path: Any, asset: str) -> Any:
     return depth
 
 
-def run_body_sheet(run: StageRun) -> None:
-    """The character's `sheet`: the colour and normal atlases, and `depth.png` in the same layout (ticket 0296)."""
-    run_character_sheet(run)
-    add_depth_atlas(run, None)
+def _depth_cells(run: StageRun, frames: list[SheetFrame],
+                 own: dict[str, tuple[tuple[int, int], tuple[int, int]]]) -> list[Any]:
+    """Each frame's depth pass from `render` as a whole cell of its clip: the 16 bit value in red and green, alpha 255 where
+    the render drew something (nearer than `FAR`), so the frame's one box covers its depth too (ticket 0308)."""
+    document: dict[str, Any] = json.loads((run.upstream["render"] / RENDER_FILE).read_text(encoding="utf-8"))
+    listed = {(c["name"], d, int(f["index"])): f for c in document["clips"] for d, fs in c["directions"].items() for f in fs}
+    cells: list[Any] = []
+    for f in frames:
+        run.check_cancel()
+        found = listed[(f.clip, f.direction, f.index)]
+        depth = _depth_frame(run.upstream["render"] / str(found["files"]["depth"]), run.asset_id)
+        drawn = depth != FAR
+        rgba = np.zeros((*depth.shape, 4), dtype=np.uint8)
+        rgba[..., 0] = np.where(drawn, depth >> 8, 0)
+        rgba[..., 1] = np.where(drawn, depth & 255, 0)
+        rgba[..., 3] = np.where(drawn, 255, 0)
+        size, own_pivot = own[f.clip]
+        cells.append(place_in_cell(rgba, (_round(found["pivot"][0]), _round(found["pivot"][1])), size, own_pivot))
+    return cells
 
 
-def add_depth_atlas(run: StageRun, order: int | None) -> None:
-    """Write `depth.png` next to the sheet's atlases, in their layout, and list it in `sheet.json` (`files.depth`; `order`
-    too when given, a Wearable's)."""
+def _write_depth_atlas(run: StageRun, atlas: Any) -> None:
+    """`depth.png`, 16 bit gray: the packed depth layer decoded, `FAR` wherever nothing is drawn."""
     from PIL import Image
 
-    sheet: dict[str, Any] = json.loads((run.output_dir / SHEET_FILE).read_text(encoding="utf-8"))
-    document: dict[str, Any] = json.loads((run.upstream["render"] / RENDER_FILE).read_text(encoding="utf-8"))
-    frames = {(c["name"], d, int(f["index"])): f for c in document["clips"] for d, listed in c["directions"].items()
-              for f in listed}
-    cell = (int(sheet["cell"]["width"]), int(sheet["cell"]["height"]))
-    cell_pivot = (int(sheet["pivot"]["x"]), int(sheet["pivot"]["y"]))
-    encoded: list[Any] = []
-    pivots: list[tuple[int, int]] = []
-    cells: list[Cell] = []
-    for clip in sheet["clips"]:
-        own: Cell = (((int(clip["cell"]["width"]), int(clip["cell"]["height"])), (int(clip["pivot"]["x"]), int(clip["pivot"]["y"])))
-                     if "cell" in clip else (cell, cell_pivot))
-        for direction, listed in clip["directions"].items():
-            for entry in listed:
-                run.check_cancel()
-                found = frames[(clip["name"], direction, int(entry["index"]))]
-                depth = _depth_frame(run.upstream["render"] / str(found["files"]["depth"]), run.asset_id)
-                rgba = np.zeros((*depth.shape, 4), dtype=np.uint8)  # the 16 bit value in two bytes; alpha marks a pixel
-                rgba[..., 0], rgba[..., 1], rgba[..., 3] = depth >> 8, depth & 255, 255
-                encoded.append(rgba)
-                pivots.append((int(np.floor(found["pivot"][0] + 0.5)), int(np.floor(found["pivot"][1] + 0.5))))
-                cells.append(own)
-    atlas, rects, _ = pack_by_cell(encoded, pivots, cells, (cell, cell_pivot))
-    expected = [(e["rect"]["x"], e["rect"]["y"], e["rect"]["width"], e["rect"]["height"])
-                for c in sheet["clips"] for listed in c["directions"].values() for e in listed]
-    if rects != expected:
-        raise StageFailure("the depth atlas doesn't share the colour atlas's layout")  # can't happen
-    depth_atlas = (atlas[..., 0].astype(np.uint16) << 8) | atlas[..., 1].astype(np.uint16)
-    depth_atlas[atlas[..., 3] == 0] = FAR
-    Image.fromarray(depth_atlas).save(run.output_dir / DEPTH_ATLAS)
-    sheet["files"]["depth"] = DEPTH_ATLAS
+    depth = (atlas[..., 0].astype(np.uint16) << 8) | atlas[..., 1].astype(np.uint16)
+    depth[atlas[..., 3] == 0] = FAR
+    Image.fromarray(depth).save(run.output_dir / DEPTH_ATLAS)
+
+
+def run_sheet_with_depth(run: StageRun, order: int | None) -> None:
+    """A `sheet` with `depth.png` in the same layout, listed in `sheet.json` (`files.depth`; `order` too when given, a
+    Wearable's). The character's `sheet` (ticket 0296) and a Wearable's."""
+    sheet = _run_sheet(run, "finish", depth=True)
     if order is not None:
         sheet["order"] = order
-    (run.output_dir / SHEET_FILE).write_text(json.dumps(sheet, indent=1) + "\n", encoding="utf-8")
+        (run.output_dir / SHEET_FILE).write_text(json.dumps(sheet, indent=1) + "\n", encoding="utf-8")
+
+
+def run_body_sheet(run: StageRun) -> None:
+    """The character's `sheet`: the colour and normal atlases, and `depth.png` in the same layout (ticket 0296)."""
+    run_sheet_with_depth(run, None)

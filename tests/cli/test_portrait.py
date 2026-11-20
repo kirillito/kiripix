@@ -193,14 +193,14 @@ def test_the_brief_takes_the_projects_canvas_and_anchor_unless_it_sets_them(proj
     brief = project.cwd / "assets" / "portrait" / "sanjay" / "work" / "brief" / "brief.json"
 
     project.json("run", PORTRAIT, "brief")
-    assert json.loads(brief.read_text("utf-8")) == {"schema_version": 1, "width": 160, "height": 224, "anchor": [80, 223], "fallback": "neutral"}
+    assert json.loads(brief.read_text("utf-8")) == {"schema_version": 1, "width": 192, "height": 240, "anchor": [96, 239], "fallback": "neutral"}
 
     project.json("set", PORTRAIT, "brief", "width=96", "height=128", "anchor_x=10", "fallback=happy")
     project.json("run", PORTRAIT, "brief")
     assert json.loads(brief.read_text("utf-8")) == {"schema_version": 1, "width": 96, "height": 128, "anchor": [10, 127], "fallback": "happy"}
 
     path = project.cwd / "kiripix.toml"
-    path.write_text(path.read_text("utf-8").replace("canvas = [160, 224]", "canvas = [64, 80]\nanchor = [5, 6]"), encoding="utf-8")
+    path.write_text(path.read_text("utf-8").replace("canvas = [192, 240]", "canvas = [64, 80]\nanchor = [5, 6]"), encoding="utf-8")
     project.json("set", PORTRAIT, "brief", "width=0", "height=0", "anchor_x=-1", "fallback=neutral")
     project.json("run", PORTRAIT, "brief")
     assert json.loads(brief.read_text("utf-8")) == {"schema_version": 1, "width": 64, "height": 80, "anchor": [5, 6], "fallback": "neutral"}
@@ -228,10 +228,22 @@ def test_a_canvas_over_the_resolution_an_anchor_off_the_canvas_and_an_unknown_fa
     assert project.json("check", PORTRAIT)["findings"] == []
 
 
+def test_a_project_that_wrote_the_old_canvas_keeps_it(project: Kiripix) -> None:
+    """Ticket 0323: the default moved to the game's 192 x 240; a canvas the Owner wrote is the Owner's."""
+    path = project.cwd / "kiripix.toml"
+    path.write_text(path.read_text("utf-8").replace("canvas = [192, 240]", "canvas = [160, 224]"), encoding="utf-8")
+    project.json("new", "portrait", "sanjay")
+
+    project.json("run", PORTRAIT, "brief")
+
+    brief = json.loads((project.cwd / "assets" / "portrait" / "sanjay" / "work" / "brief" / "brief.json").read_text("utf-8"))
+    assert (brief["width"], brief["height"], brief["anchor"]) == (160, 224, [80, 223])
+
+
 def test_the_project_file_at_version_8_reads_with_the_default_portrait_canvas(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8").replace("schema_version = 9", "schema_version = 8")
-    lines = [line for line in text.splitlines() if not line.startswith(("[portrait]", "canvas = [160", "# anchor"))]
+    lines = [line for line in text.splitlines() if not line.startswith(("[portrait]", "canvas = [192", "# anchor"))]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     assert "portrait" not in tomllib.loads(path.read_text(encoding="utf-8"))
 
@@ -239,7 +251,7 @@ def test_the_project_file_at_version_8_reads_with_the_default_portrait_canvas(pr
     project.json("run", PORTRAIT, "brief")
 
     brief = json.loads((project.cwd / "assets" / "portrait" / "sanjay" / "work" / "brief" / "brief.json").read_text("utf-8"))
-    assert (brief["width"], brief["height"]) == (160, 224)
+    assert (brief["width"], brief["height"]) == (192, 240)  # the default today (0323): the migration writes no canvas
     assert path.read_text(encoding="utf-8").count("schema_version = 8") == 1  # read only: a writing Command migrates the file
 
 
@@ -247,9 +259,9 @@ def test_an_unknown_portrait_key_or_an_anchor_off_the_canvas_is_an_error(project
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
 
-    path.write_text(text.replace("canvas = [160, 224]", "canvas = [160, 224]\nsize = 3"), encoding="utf-8")
+    path.write_text(text.replace("canvas = [192, 240]", "canvas = [192, 240]\nsize = 3"), encoding="utf-8")
     assert project("status", "--json").code == 1
-    path.write_text(text.replace("canvas = [160, 224]", "canvas = [160, 224]\nanchor = [160, 0]"), encoding="utf-8")
+    path.write_text(text.replace("canvas = [192, 240]", "canvas = [192, 240]\nanchor = [192, 0]"), encoding="utf-8")
     assert project("status", "--json").code == 1
 
 

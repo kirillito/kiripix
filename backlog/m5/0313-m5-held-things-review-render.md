@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: character-pipeline
 type: ticket
@@ -29,6 +29,38 @@ Stage `version` bumps where outputs change (1, 2).
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a given point named like a socket still gets the socket's point; `line_skip` on a name the Model and a thing
+- [x] CLI seam: a given point named like a socket still gets the socket's point; `line_skip` on a name the Model and a thing
       share skips both; importing a thing no clip holds re-renders no clip.
-- [ ] `uv run lint-imports` and `uv run mypy` pass.
+- [x] `uv run lint-imports` and `uv run mypy` pass.
+
+## Result
+
+Built, all four items:
+
+1. A socket's point: `_socket_points` (`kiripix/recipes/render.py`) now gives the socket `socket_<name>` (then `_2`, `_3`...) when a
+   given point already has its name on another bone; a given point on the socket's bone is still its point. The docstring says
+   `rightforearm`, not `grip_r@grip_r`.
+2. `line_skip`: `character_finish.py` skips every index of a material name (the Model's and a held thing's), a pair `a+b` as every
+   combination, and the eye materials the same way.
+3. A clip's render key holds the things it holds and those numbered before them (`own["things"]`), not every thing. A thing
+   numbered after the last one any clip holds is no longer passed to Blender or listed in `render.json`'s `things` (it moves no
+   number), so importing a thing no clip holds re-renders no clip (the Stage is stale and re-runs, drawing nothing); a clip newly
+   holding a later thing re-renders only the clips that hold it.
+4. `_check_attach` (`kiripix/recipes/clips.py`) no longer re-runs `attach_problem`; the Check code `clips.thing_twice` is gone
+   (`decide` refuses it as `decision.invalid`, tested in `test_clip_attach.py`). The Check list in `test_character_clips.py` lost it.
+
+Stage version bumps: `render` 3 to 4 (item 1 changes a point's name; item 3 changes every clip's key, so every clip with a hold
+draws again once), `finish` 3 to 4 (item 2).
+
+Tests: `tests/cli/test_held_things_review_render.py` (3 tests); `test_render_held.py`'s "thing added" test now expects no
+re-render.
+
+### Review follow-up (2026-11-18)
+
+- The Wearable's `finish` runs the character's finish code, so the `line_skip` change reaches it too: its `version` is bumped 4
+  to 5.
+- **`clips.thing_twice` removed, on purpose.** Its condition is refused by `decide` for every Decision (`decision.invalid`), so
+  the Check could only fire on a hand-edited journal. A finding code is retired, not renamed.
+- **Accepted:** a thing laid by hand (no `imported.jsonl` line) is numbered after the imported ones, by ID, so a hand-laid thing
+  whose ID sorts first can move a later hand-laid thing's number and re-render the clips that hold it. Things imported through
+  `import` never move. No mtime rule comes back (0312 removed it).

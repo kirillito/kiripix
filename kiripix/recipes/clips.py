@@ -20,6 +20,8 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,7 @@ PLANT_SPEED = 0.25  # with root motion, a planted foot moves less than this many
 CLIP_SOURCES = "src/clips/"
 THINGS_DIR = "src/things/"  # a held thing's files: `src/things/<id>/<file>` (ticket 0301 imports them; 0300 only reads that they exist)
 THINGS_PATTERN = "src/things/*/*"  # the `clips` Stage's file input: a thing added or removed makes it stale, as it may fail
+THING_SUFFIXES = (".glb", ".blend")  # a thing's Variants (ticket 0312)
 THING_ID = r"^[a-z0-9_]+$"
 DEFAULT_SOCKET = "grip_r"  # the bone a held thing sits on (ticket 0238)
 EYELIDS = ("blink", "wink_left", "wink_right")  # a clip's frames with closed eyes: both, the Model's left, its right
@@ -113,10 +116,72 @@ def held_things(attach: list[dict[str, Any]]) -> list[dict[str, Any]]:
              **{key: [float(v) for v in a[key]] for key in ("offset", "turn") if key in a}} for a in attach]
 
 
-def thing_ids(files: Any) -> set[str]:
-    """The IDs of the things on an Asset, from its file names: `src/things/<id>/<file>`."""
-    return {name[len(THINGS_DIR):].split("/", 1)[0] for name in files
-            if name.startswith(THINGS_DIR) and name.count("/") >= 3}
+@dataclass(frozen=True)
+class HeldThing:
+    """A thing of an Asset (ticket 0312): `src/things/<id>/` with at least one Variant."""
+    id: str
+    current: str  # the current Variant's file, relative to its Asset's folder (a key of `variants`)
+    variants: dict[str, Path]  # by file, relative to the Asset's folder
+    from_base: bool = False  # the thing is the base's: the Asset has none of the same ID
+
+
+def folder_files(asset_dir: Path) -> dict[str, Path]:
+    """The files of an Asset's things by their path relative to its folder, as `StageInputs.files` names them."""
+    return {path.relative_to(asset_dir).as_posix(): path for path in sorted(asset_dir.glob(THINGS_PATTERN)) if path.is_file()}
+
+
+def thing_journal(asset_dir: Path) -> list[str]:
+    """The files of things named by an Asset's `imported.jsonl`, one per import, in the order they were imported."""
+    try:
+        lines = (asset_dir / "imported.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    found: list[str] = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        file = str(entry.get("file", "")) if isinstance(entry, dict) else ""
+        if file.startswith(THINGS_DIR):
+            found.append(file)
+    return found
+
+
+def _things_of(files: Mapping[str, Path], journal: Sequence[str]) -> list[HeldThing]:
+    """The one rule for "a thing exists": a `.glb` or `.blend` directly in `src/things/<id>/` (a stray file or a
+    `.materials.json` sidecar is none). The order is the one the things were first imported (the journal), a thing laid by
+    hand after those, by ID. The current Variant is the newest import naming a file of the thing, else the last by name."""
+    found: dict[str, dict[str, Path]] = {}
+    for name, path in files.items():
+        if name.startswith(THINGS_DIR) and name.count("/") == 3 and name.endswith(THING_SUFFIXES):
+            found.setdefault(name[len(THINGS_DIR):].split("/", 1)[0], {})[name] = path
+    order: list[str] = []
+    newest: dict[str, str] = {}
+    for file in journal:
+        thing = file[len(THINGS_DIR):].split("/", 1)[0]
+        if thing in found and file in found[thing]:
+            newest[thing] = file
+            if thing not in order:
+                order.append(thing)
+    order += sorted(set(found) - set(order))
+    return [HeldThing(t, newest.get(t) or sorted(found[t])[-1], found[t]) for t in order]
+
+
+def held_things_of(files: Mapping[str, Path], journal: Sequence[str], base_files: Mapping[str, Path] | None = None,
+                   base_journal: Sequence[str] = ()) -> list[HeldThing]:
+    """An Asset's things in numbering order: its base's first, in the base's order, then its own that the base has none of.
+    A thing of the same ID as the base's is the Asset's own, in the base's place."""
+    own = _things_of(files, journal)
+    theirs = _things_of(base_files or {}, base_journal)
+    mine = {t.id: t for t in own}
+    merged = [mine.get(t.id) or replace(t, from_base=True) for t in theirs]
+    return merged + [t for t in own if t.id not in {b.id for b in theirs}]
+
+
+def thing_ids(files: Mapping[str, Path], base_files: Mapping[str, Path] | None = None) -> set[str]:
+    """The IDs of the things on an Asset (and its base), from its file names."""
+    return {t.id for t in held_things_of(files, [], base_files)}
 
 
 def unknown_things(attach: list[dict[str, Any]], known: set[str]) -> list[str]:
@@ -461,16 +526,15 @@ def run_clips(run: StageRun) -> None:
 
 
 def _check_attach(run: StageRun, decisions: list[CurrentDecision], rig: dict[str, Any]) -> None:
-    """Every thing a clip holds is on the Asset, at a bone of the rig, and held once: `decide` refuses these when it can, and
-    a thing taken away or a rig changed since fails here."""
-    known = thing_ids(run.files)
+    """Every thing a clip holds is on the Asset and at a bone of the rig: `decide` refuses these when it can, and a thing taken
+    away or a rig changed since fails here. (A thing held twice in a clip is refused at `decide` for every Decision, so it isn't
+    checked again here; ticket 0313.)"""
+    known = thing_ids(run.files, run.base.files if run.base is not None else None)
     bones = list(rig.get("parents", {}))
     undo = f"kiripix undo {run.asset_id} clips"
     for decision in decisions:
         attach = list(decision.data.get("attach", []))
         name = decision.data["name"]
-        if problem := attach_problem(decision.data):
-            raise StageFailure(f"{name}: {problem}", code="clips.thing_twice", fix=undo)
         if lost := unknown_things(attach, known):
             raise StageFailure(f"the clip {name} holds {', '.join(lost)}, and the Asset has no such thing "
                                f"(its things are {', '.join(sorted(known)) or 'none'})", code="clips.unknown_thing",

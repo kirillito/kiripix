@@ -31,9 +31,11 @@ from .harness import (
     StandInOwner,
     Usage,
     agent_env,
+    area_box_problem,
     assert_agent_env_clean,
     clean_env,
     command_allowed,
+    handback,
     make_setup,
     owner_env,
     project_env,
@@ -160,6 +162,33 @@ def test_dry_run_the_area_is_put_wrong_first_and_the_owner_moves_it_when_the_age
     assert outcome.verification and any("Area2D" in d for d in outcome.verification.details)
 
 
+def _area_scene(position: tuple[float, float], size: tuple[int, int]) -> str:
+    return (f'[sub_resource type="RectangleShape2D" id="area_battle_test"]\nsize = Vector2({size[0]}, {size[1]})\n\n'
+            f'[node name="battle-test" type="Area2D" parent="Markers"]\nposition = Vector2({position[0]:g}, {position[1]:g})\n'
+            f'metadata/kiripix_id = "{AREA}"\n')
+
+
+@pytest.mark.parametrize(("position", "size"), [
+    ((64, 16), (64, 32)),  # the stand-in owner's move onto the floor, (32, 0)-(95, 31)
+    ((128, 96), (128, 64)),  # the real agent's own box of 2026-11-18, (64, 64)-(191, 127)
+])
+def test_any_area_box_on_whole_cells_inside_the_room_passes(position: tuple[int, int], size: tuple[int, int]) -> None:
+    assert area_box_problem(_area_scene(position, size)) is None
+
+
+@pytest.mark.parametrize(("position", "size"), [
+    ((55, 16), (30, 16)),  # the raw (40, 8)-(70, 24), not snapped to cells
+    ((64, 20), (64, 32)),  # whole cells in size, but off the grid
+    ((224, 16), (64, 32)),  # past the room's right edge
+])
+def test_an_area_box_off_the_cells_or_outside_the_room_fails(position: tuple[int, int], size: tuple[int, int]) -> None:
+    assert area_box_problem(_area_scene(position, size)) is not None
+
+
+def test_an_area_box_that_cant_be_read_fails() -> None:
+    assert area_box_problem("") is not None
+
+
 def test_the_agent_sees_only_the_real_kinds_and_runners_though_the_fakes_are_loaded(setup: Setup) -> None:
     env = agent_env(shim_dir=setup.shims)
 
@@ -242,6 +271,33 @@ def test_the_owner_does_all_its_room_entries_at_the_agents_first_stop_whatever_t
     assert not second, "the room entries and the clips are done once"
     place = setup.project / "assets" / "room" / "alley" / "decisions" / "place.jsonl"
     assert len(place.read_text("utf-8").splitlines()) == 4, "the Markers are in the room's journal"
+
+
+def test_the_owner_says_what_it_did_in_plain_words_and_names_no_command(setup: Setup) -> None:
+    class Listens(StoppedAgent):  # stops at once; keeps what the owner says when it hands back
+        heard: list[str] = []
+
+        def resume(self, message: str, budget_left: int) -> AgentTurn:
+            self.heard.append(message)
+            return super().resume(message, budget_left)
+
+    agent = Listens()
+    run_acceptance(agent, setup, BUDGET, dry_run=True)
+
+    assert agent.heard, "the owner did its room entries at the first stop and handed back"
+    said = agent.heard[0]
+    assert said.startswith("Done") and said.endswith("Carry on."), said
+    assert "room.alley" in said and all(stage in said for stage in ("masks", "layers", "place")), said
+    assert "kiripix" not in said.replace("room.alley", "") and "decide" not in said and "--" not in said, said
+
+
+def test_the_handback_names_each_assets_decisions_accepts_and_picks() -> None:
+    said = handback(["decide room.alley masks brush: exit 0", "decide room.alley place marker: exit 0",
+                     "decide room.alley place marker: exit 0", "decide character.hero clips clip: exit 0",
+                     "accept room.alley layers: exit 0"])
+
+    assert said == ("Done: I recorded Decisions on room.alley (masks, place) and on character.hero (clips), "
+                    "and I accepted room.alley's layers. Carry on.")
 
 
 def test_the_owner_volunteers_nothing_after_its_first_stop_when_the_agent_asks_at_a_stage_with_no_entry(

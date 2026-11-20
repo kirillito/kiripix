@@ -134,13 +134,13 @@ def test_each_marker_type_keeps_its_own_fields_in_the_markers_file(project: Kiri
 
     assert [f["code"] for f in findings(result, "ysort.unknown_layer")] == ["ysort.unknown_layer"]
     assert markers(folder) == [
-        {"id": "spawn.main", "type": "spawn", "x": 30, "y": 16},
-        {"id": "exit.east", "type": "exit", "x": 40, "y": 16, "target_room": "room.street", "target_exit": "exit.west"},
-        {"id": "crate", "type": "interactable", "x": 30, "y": 20},
-        {"id": "lamp", "type": "light", "x": 30, "y": 8, "colour": "#FFCC88", "radius": 24, "energy": 1.5},
+        {"id": "spawn.main", "type": "spawn", "x": 30, "y": 16, "look": None},
+        {"id": "exit.east", "type": "exit", "x": 40, "y": 16, "target_room": "room.street", "target_exit": "exit.west", "look": None},
+        {"id": "crate", "type": "interactable", "x": 30, "y": 20, "look": None},
+        {"id": "lamp", "type": "light", "x": 30, "y": 8, "colour": "#FFCC88", "radius": 24, "energy": 1.5, "look": None},
         {"id": "steam", "type": "emitter", "x": 32, "y": 8, "name": "steam_vent", "shape": None,
-         "direction": None, "colours": None},
-        {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "layer": "rail", "x2": 40, "y2": 20},
+         "direction": None, "colours": None, "look": None},
+        {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "layer": "rail", "x2": 40, "y2": 20, "look": None},
     ]
 
 
@@ -152,8 +152,8 @@ def test_moving_a_marker_with_the_same_id_leaves_one_marker_at_the_new_position(
 
     built_place(project)
 
-    assert markers(folder) == [{"id": "spawn.main", "type": "spawn", "x": 34, "y": 18},
-                               {"id": "crate", "type": "interactable", "x": 30, "y": 20}]
+    assert markers(folder) == [{"id": "spawn.main", "type": "spawn", "x": 34, "y": 18, "look": None},
+                               {"id": "crate", "type": "interactable", "x": 30, "y": 20, "look": None}]
 
 
 def test_undo_removes_a_marker_and_undoing_a_move_puts_it_back(project: Kiripix) -> None:
@@ -163,7 +163,7 @@ def test_undo_removes_a_marker_and_undoing_a_move_puts_it_back(project: Kiripix)
 
     project.json("undo", ROOM, "place")
     built_place(project)
-    assert markers(folder) == [{"id": "spawn.main", "type": "spawn", "x": 30, "y": 16}]
+    assert markers(folder) == [{"id": "spawn.main", "type": "spawn", "x": 30, "y": 16, "look": None}]
 
     project.json("undo", ROOM, "place")
     built_place(project)
@@ -410,7 +410,7 @@ def test_a_room_with_no_layers_passes_and_a_ysort_without_a_layer_warns_and_is_k
     [warning] = findings(result, "ysort.no_layer")
     assert warning["severity"] == "warning" and warning["fix"] is None and "ysort.rail" in warning["owner_action"]
     assert findings(result, "layer.no_ysort") == []
-    assert markers(folder)[-1] == {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "x2": 40, "y2": 20}
+    assert markers(folder)[-1] == {"id": "ysort.rail", "type": "ysort", "x": 24, "y": 20, "x2": 40, "y2": 20, "look": None}
     assert sort_of(folder) == []
 
 
@@ -478,7 +478,7 @@ def test_a_link_between_two_walkable_spots_is_recorded_built_and_shown(project: 
 
     assert findings(result, "link.outside") == [] and findings(result, "link.not_walkable") == []
     built = json.loads((folder / "work" / "place" / "markers.json").read_text("utf-8"))
-    assert built["schema_version"] == 2
+    assert built["schema_version"] == 3
     assert built["links"] == [{"id": "hop.down", "from": [24, 8], "to": [40, 24], "kind": "hop", "two_way": False}]
     shown = project.json("show", ROOM)["data"]["stages"]
     listed = next(s for s in shown if s["stage"] == "place")["markers"]
@@ -548,6 +548,7 @@ def test_an_old_markers_file_is_refused_naming_the_rebuild(project: Kiripix) -> 
     del old["links"]
     path.write_text(json.dumps(old), "utf-8")
 
-    result = project.json("check", ROOM, expect=1)
+    result = project.json("check", ROOM, expect=2)  # a finding naming the rebuild, not internal.error
 
-    assert any(f"kiripix run {ROOM} place" in json.dumps(f) for f in result["findings"])
+    assert any(f["code"] == "stage.output_unreadable" and f["fix"] == f"kiripix run {ROOM} place --force"
+               for f in result["findings"])

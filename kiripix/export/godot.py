@@ -17,7 +17,10 @@ PLATE = "Plate"
 LOOKS = "Looks"  # the hidden Plate pieces of the room's Looks, one Sprite2D each
 LOOPS = "Loops"  # the Plate pieces of the room's Loops, one Sprite2D each, drawn with the Plate (ticket 0190)
 LOOP_UNSHADED = "loop_unshaded"  # the CanvasItemMaterial every Loop's Sprite2D shares: a Loop's frames aren't darkened by the room
-LOOK_SOLIDS = "LookSolids"  # the Looks' own `solid` bodies, one StaticBody2D each, their shapes disabled
+LOOK_SOLIDS = "LookSolids"  # per Look with its own `solid`: a Node2D holding its `added` and `cleared` bodies (ticket 0316)
+LOOK_NAVIGATION = "LookNavigation"  # a disabled NavigationRegion2D per Look with its own `solid`
+LOOK_MARKERS = "LookMarkers"  # a hidden Node2D per Look with Markers, holding them
+SHARED_PREFIX = "Shared_"  # a body for the pixels several Looks clear: no Look's ID has a capital, so it can't clash
 LINKS = "Links"  # a Node2D per Link, with `from` and `to` Marker2D ends
 FOREGROUND = "Foreground"  # the y-sorted parent of the foreground Layers
 ABOVE = "Above"  # the Layers that are always above the actors
@@ -46,7 +49,9 @@ def room_ids(room: dict[str, Any]) -> ExportedIds:
     return ExportedIds(markers=sorted(str(marker["id"]) for marker in exported_markers(room)), layers=layers,
                        masks=sorted(room["collision"]), looks=sorted(str(look["id"]) for look in room["looks"]),
                        loops=sorted(str(loop["id"]) for loop in room["loops"]),
-                       links=sorted(str(each["id"]) for each in room["links"]))
+                       links=sorted(str(each["id"]) for each in room["links"]),
+                       look_markers=sorted(f"{look['id']}/{marker['id']}" for look in room["looks"]
+                                           for marker in look["markers"] if marker["type"] in EXPORTED_MARKER_TYPES))
 
 
 def _text(value: str) -> str:
@@ -138,11 +143,13 @@ def _link_nodes(link: dict[str, Any]) -> list[str]:
             _node("to", "Marker2D", parent, f"position = Vector2({link['to'][0]}, {link['to'][1]})")]
 
 
-def _marker_properties(marker: dict[str, Any], light: int | None) -> list[str]:
+def _marker_properties(marker: dict[str, Any], light: int | None, look: str | None = None) -> list[str]:
     properties = [f"position = Vector2({marker['x']}, {marker['y']})"]
     if light is not None:
         properties += [f"color = {_colour(str(marker['colour']))}", f"energy = {_number(float(marker['energy']))}",
                        f'texture = SubResource("light_{light}")']
+        if look is not None:
+            properties.append("enabled = false")  # a Look's light is lit by the game when the Look shows
     if marker["type"] == "emitter":
         properties.append("emitting = false")  # a stub: the game gives it its material
     properties += [f"metadata/kiripix_id = {_text(str(marker['id']))}",
@@ -153,6 +160,8 @@ def _marker_properties(marker: dict[str, Any], light: int | None) -> list[str]:
     if marker["type"] == "emitter":
         properties.append(f"metadata/emitter = {_text(str(marker['name']))}")
         properties += _emitter_properties(marker)
+    if look is not None:
+        properties.append(f"metadata/kiripix_look = {_text(look)}")
     return properties
 
 
@@ -286,15 +295,28 @@ def _look_sprite(look: dict[str, Any], parent: str, ident: str, x: int, y: int) 
                  "visible = false", *place, *_look_properties(look))
 
 
+def _body(name: str, parent: str, shapes: list[list[list[int]]], *, disabled: bool, properties: Iterable[str] = ()) -> list[str]:
+    """A solid `StaticBody2D` (on the `solid` layer, colliding with nothing) and a polygon for each of `shapes`."""
+    return [_node(name, "StaticBody2D", parent, f"collision_layer = {COLLISION_LAYERS['solid']}", "collision_mask = 0",
+                  *properties),
+            *[_node(f"polygon_{index}", "CollisionPolygon2D", f"{parent}/{name}", *(["disabled = true"] if disabled else []),
+                    f"polygon = {_vectors(shape)}") for index, shape in enumerate(shapes)]]
+
+
 def _look_nodes(looks: list[dict[str, Any]], layers: list[dict[str, Any]], idents: dict[tuple[str, str | None], str],
-                ) -> tuple[list[str], list[str]]:
+                scene: dict[str, Any] | None = None) -> tuple[list[str], list[str]]:
     """The nodes of the Looks: first the `Looks` and `LookSolids` parents with their children, then the pieces that sit
-    under their Layer's node (a Layer's `Sprite2D` is positioned at its sort line, so its child's place is relative to it)."""
+    under their Layer's node (a Layer's `Sprite2D` is positioned at its sort line, so its child's place is relative to it).
+
+    A Look with its own `solid` is a `Node2D` under `LookSolids` holding two bodies: `added` (the pixels it makes solid,
+    disabled) and `cleared` (the pixels only it clears, enabled: the room's own body lacks them). The pixels several Looks
+    clear are one enabled `Shared_<look>+<look>` body each, carrying the Looks in `metadata/kiripix_looks`."""
     bases = {str(layer["id"]): (ABOVE if layer["above"] else FOREGROUND, 0 if layer["above"] else int(layer["y"]))
              for layer in layers}
     own: list[str] = []
     pieces: list[str] = []
     solids: list[str] = []
+    cleared_alone = (scene or {}).get("cleared", {})
     for look in looks:
         box = look["box"]
         if box is not None and look["file"] is not None:
@@ -306,14 +328,41 @@ def _look_nodes(looks: list[dict[str, Any]], layers: list[dict[str, Any]], ident
                                            idents[(str(look["id"]), str(piece["layer"]))], int(box[0]), int(box[1]) - line))
         if look["solid"] is not None:
             name = _node_name(str(look["id"]))
-            solids.append(_node(name, "StaticBody2D", LOOK_SOLIDS, f"collision_layer = {COLLISION_LAYERS['solid']}",
-                                "collision_mask = 0", *_look_properties(look)))
-            solids += [_node(f"polygon_{index}", "CollisionPolygon2D", f"{LOOK_SOLIDS}/{name}", "disabled = true",
-                             f"polygon = {_vectors(shape)}") for index, shape in enumerate(look["collision"]["solid"])]
+            where = f"{LOOK_SOLIDS}/{name}"
+            solids.append(_node(name, "Node2D", LOOK_SOLIDS, *_look_properties(look)))
+            solids += _body("added", where, look["added"]["collision"], disabled=True)
+            solids += _body("cleared", where, cleared_alone.get(str(look["id"]), []), disabled=False)
+    for shared in (scene or {}).get("shared", []):
+        names = [str(each) for each in shared["looks"]]
+        solids += _body(SHARED_PREFIX + "+".join(_node_name(each) for each in names), LOOK_SOLIDS, shared["collision"],
+                        disabled=False, properties=["metadata/kiripix_looks = PackedStringArray("
+                                                    + ", ".join(_text(each) for each in names) + ")"])
     parents = [_node(LOOKS, "Node2D", "."), *own] if looks else []
     if any(look["solid"] is not None for look in looks):
         parents += [_node(LOOK_SOLIDS, "Node2D", "."), *solids]
     return parents, pieces
+
+
+def _look_navigation(looks: list[dict[str, Any]], idents: dict[str, str]) -> list[str]:
+    """`LookNavigation/<look>`: a disabled `NavigationRegion2D` for each Look with its own navigation."""
+    shown = [look for look in looks if look.get("navigation") is not None]
+    if not shown:
+        return []
+    return [_node(LOOK_NAVIGATION, "Node2D", "."),
+            *[_node(_node_name(str(look["id"])), "NavigationRegion2D", LOOK_NAVIGATION, "enabled = false",
+                    f'navigation_polygon = SubResource("{idents[str(look["id"])]}")', *_look_properties(look))
+              for look in shown]]
+
+
+def _navigation_resource(ident: str, navigation: dict[str, Any]) -> str:
+    return _section(
+        f'[sub_resource type="NavigationPolygon" id="{ident}"]',
+        f"vertices = {_vectors(navigation['vertices'])}",
+        "polygons = Array[PackedInt32Array]([" + ", ".join(
+            "PackedInt32Array(" + ", ".join(str(index) for index in polygon) + ")" for polygon in navigation["polygons"]
+        ) + "])",
+        "outlines = Array[PackedVector2Array]([" + ", ".join(_vectors(ring) for ring in navigation["outlines"]) + "])",
+    )
 
 
 def _loop_properties(loop: dict[str, Any]) -> list[str]:
@@ -388,7 +437,7 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str, room_path: str)
     folder = plate_path.rsplit("/", 1)[0]
     looks = list(room["looks"])
     look_resources, look_idents = _look_resources(looks, folder)
-    look_parents, look_pieces = _look_nodes(looks, layers, look_idents)
+    look_parents, look_pieces = _look_nodes(looks, layers, look_idents, room.get("scene"))
     loops = list(room["loops"])
     loop_resources, loop_idents = _loop_resources(loops, folder)
     layer_resources, layer_nodes = _foreground(layers, folder, loops, loop_idents)
@@ -396,7 +445,11 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str, room_path: str)
     # the root joins the y-sort only when a Layer sorts, so that the game's actors can sort with it (see the ticket)
     sorted_root = ["y_sort_enabled = true"] if any(not layer["above"] for layer in layers) else []
     markers = exported_markers(room)
-    lights = [marker for marker in markers if marker["type"] == "light"]
+    look_markers = [(str(look["id"]), marker) for look in looks for marker in look["markers"]
+                    if marker["type"] in EXPORTED_MARKER_TYPES]
+    # a Look's lights follow the room's, so that adding one doesn't renumber the room's textures
+    lights = [marker for marker in markers if marker["type"] == "light"] + [
+        marker for _, marker in look_markers if marker["type"] == "light"]
     navigation = room["navigation"]
     resources = [resource for index, marker in enumerate(lights) for resource in _light_resources(index, marker)]
     shape_ids = _area_shape_ids(markers)
@@ -405,14 +458,12 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str, room_path: str)
                   for marker in markers if marker["type"] == "area"]
     if loops:
         resources.append(_section(f'[sub_resource type="CanvasItemMaterial" id="{LOOP_UNSHADED}"]', "light_mode = 1"))
-    resources.append(_section(
-        '[sub_resource type="NavigationPolygon" id="navigation"]',
-        f"vertices = {_vectors(navigation['vertices'])}",
-        "polygons = Array[PackedInt32Array]([" + ", ".join(
-            "PackedInt32Array(" + ", ".join(str(index) for index in polygon) + ")" for polygon in navigation["polygons"]
-        ) + "])",
-        "outlines = Array[PackedVector2Array]([" + ", ".join(_vectors(ring) for ring in navigation["outlines"]) + "])",
-    ))
+    resources.append(_navigation_resource("navigation", navigation))
+    with_navigation = [str(look["id"]) for look in looks if look.get("navigation") is not None]
+    navigation_idents = _idents("navigation_", with_navigation)
+    resources += [_navigation_resource(navigation_idents[str(look["id"])], look["navigation"])
+                  for look in sorted(looks, key=lambda each: navigation_idents.get(str(each["id"]), ""))
+                  if look.get("navigation") is not None]
     nodes = [
         _node(name, "Node2D", None, *sorted_root, f"metadata/kiripix_id = {_text(str(room['asset']))}",
               f"metadata/kiripix_room = {_text(room_path)}"),
@@ -424,10 +475,13 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str, room_path: str)
         *loop_pieces,
     ]
     for mask, shapes in room["collision"].items():
+        if mask == "solid" and room.get("scene") is not None:
+            shapes = room["scene"]["solid"]  # the room's `solid` minus every pixel some Look clears
         nodes.append(_node(mask, "StaticBody2D", ".", f"collision_layer = {COLLISION_LAYERS[mask]}", "collision_mask = 0"))
         nodes += [_node(f"polygon_{index}", "CollisionPolygon2D", mask, f"polygon = {_vectors(shape)}")
                   for index, shape in enumerate(shapes)]
     nodes.append(_node("Navigation", "NavigationRegion2D", ".", 'navigation_polygon = SubResource("navigation")'))
+    nodes += _look_navigation(looks, navigation_idents)
     for parent in ("Markers", "Lights", "Emitters"):
         nodes.append(_node(parent, "Node2D", "."))
         for marker in markers:
@@ -437,6 +491,18 @@ def room_scene(room: dict[str, Any], name: str, plate_path: str, room_path: str)
                 light = lights.index(marker) if marker["type"] == "light" else None
                 nodes.append(_node(_node_name(str(marker["id"])), _MARKER_NODE[marker["type"]], parent,
                                    *_marker_properties(marker, light)))
+    if look_markers:
+        nodes.append(_node(LOOK_MARKERS, "Node2D", "."))
+        for look in looks:
+            mine = [marker for name, marker in look_markers if name == str(look["id"])]
+            if not mine:
+                continue
+            where = f"{LOOK_MARKERS}/{_node_name(str(look['id']))}"
+            nodes.append(_node(_node_name(str(look["id"])), "Node2D", LOOK_MARKERS, "visible = false", *_look_properties(look)))
+            for marker in mine:
+                light = lights.index(marker) if marker["type"] == "light" else None
+                nodes.append(_node(_node_name(str(marker["id"])), _MARKER_NODE[marker["type"]], where,
+                                   *_marker_properties(marker, light, str(look["id"]))))
     links = sorted(room["links"], key=lambda each: str(each["id"]))
     if links:
         nodes.append(_node(LINKS, "Node2D", "."))
@@ -538,10 +604,28 @@ def character_texture(colour_path: str, normal_path: str) -> str:
     ])
 
 
+def _record_clip_cell(character: dict[str, Any], clip: dict[str, Any]) -> tuple[int, int, int, int]:
+    """A clip's own cell and pivot as (width, height, pivot x, pivot y): the clip's, else the character's (a record whose clips
+    carry none)."""
+    cell, pivot = clip.get("cell", character["cell"]), clip.get("pivot", character["pivot"])
+    return int(cell["width"]), int(cell["height"]), int(pivot["x"]), int(pivot["y"])
+
+
+def logical_cell(character: dict[str, Any]) -> tuple[int, int, int, int]:
+    """The one logical cell every frame is padded to, as (width, height, pivot x, pivot y): the smallest cell that holds every
+    clip's own cell with the pivots on one pixel. With one cell for every clip it is that cell, so the scene's one offset puts
+    the pivot pixel at the origin in every animation."""
+    cells = [_record_clip_cell(character, clip) for clip in character["clips"]] or [_record_clip_cell(character, {})]
+    left, top = max(c[2] for c in cells), max(c[3] for c in cells)
+    return (left + max(c[0] - c[2] for c in cells), top + max(c[1] - c[3] for c in cells), left, top)
+
+
 def character_frames(character: dict[str, Any], texture_path: str) -> str:
-    """The SpriteFrames: one animation per clip and direction, each frame an AtlasTexture region of the CanvasTexture.
-    Every frame lasts one frame time of its animation, whose speed is the clip's frame rate."""
+    """The SpriteFrames: one animation per clip and direction, each frame an AtlasTexture region of the CanvasTexture:
+    its packed `rect`, padded back to the logical cell with `margin` (the trim's offset and the clip's cell, ticket 0309). The
+    normal map is the same AtlasTexture's, so it takes the same region and margin. Every frame lasts one frame time of its animation, whose speed is the clip's frame rate."""
     animations = character_animations(character)
+    width, height, left, top = logical_cell(character)
     atlases: list[str] = []
     entries: list[str] = []
     for clip, direction, frames in animations:
@@ -549,9 +633,14 @@ def character_frames(character: dict[str, Any], texture_path: str) -> str:
         listed = []
         for frame in frames:
             ident = f"{name}_{frame['index']}"
-            rect = frame["rect"]
+            rect, offset = frame["rect"], frame["offset"]
+            _, _, pivot_x, pivot_y = _record_clip_cell(character, clip)
+            # one margin pads the trimmed box back to the clip's cell (its offset) and the cell to the logical cell (the pivots)
+            margin_box = (offset["x"] + left - pivot_x, offset["y"] + top - pivot_y,
+                          width - rect["width"], height - rect["height"])
+            margin = [f"margin = Rect2({', '.join(str(v) for v in margin_box)})"] if any(margin_box) else []
             atlases.append(_section(f'[sub_resource type="AtlasTexture" id="{ident}"]', 'atlas = ExtResource("texture")',
-                                    f"region = Rect2({rect['x']}, {rect['y']}, {rect['width']}, {rect['height']})"))
+                                    f"region = Rect2({rect['x']}, {rect['y']}, {rect['width']}, {rect['height']})", *margin))
             listed.append(f'{{\n"duration": 1.0,\n"texture": SubResource("{ident}")\n}}')
         entries.append("{\n\"frames\": [" + ", ".join(listed) + "],\n"
                        f"\"loop\": {'true' if clip['loop'] else 'false'},\n\"name\": &\"{name}\",\n"
@@ -568,7 +657,7 @@ def character_scene(character: dict[str, Any], name: str, frames_path: str, ramp
     AnimatedSprite2D is drawn offset so that the pivot pixel of the cell is the root's own place. With `ramps_path` the root
     names `ramps.png` in `metadata/kiripix_ramps` and the part names in row order in `metadata/kiripix_parts`; the scene
     itself doesn't load it, since the game's shader does."""
-    pivot = character["pivot"]
+    _, _, left, top = logical_cell(character)
     first = character_animations(character)[0]
     ramps = ([f"metadata/kiripix_ramps = {_text(ramps_path)}",
               "metadata/kiripix_parts = PackedStringArray(" + ", ".join(_text(p) for p in parts or []) + ")"]
@@ -577,7 +666,7 @@ def character_scene(character: dict[str, Any], name: str, frames_path: str, ramp
         _node(name, "Node2D", None, f"metadata/kiripix_id = {_text(str(character['asset']))}", *ramps),
         _node(SPRITE, "AnimatedSprite2D", ".", 'sprite_frames = ExtResource("frames")',
               f'animation = &"{animation_name(first[0]["name"], first[1])}"', "centered = false",
-              f"offset = Vector2({-pivot['x']}, {-pivot['y']})"),
+              f"offset = Vector2({-left}, {-top})"),
     ]
     frames = f'[ext_resource type="SpriteFrames" path="{frames_path}" id="frames"]\n'
     return GENERATED + "\n" + "\n".join(["[gd_scene load_steps=2 format=3]\n", frames, *nodes])

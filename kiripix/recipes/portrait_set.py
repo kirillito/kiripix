@@ -8,12 +8,18 @@ emotions in declaration order, so the next Stage reads the set from it.
 - **cutout:** the Prop's, on every image. The chroma key has a tolerance and a key read from each image's border (a lossy
   image model's green differs by image), and the key's spill, a light rim and small islands go. Matting is one pinned call
   per image.
-- **register:** each emotion laid on the neutral, outside the `face` region (a polygon or a brush, drawn in the neutral
-  cutout's pixels), with the Looks' registration. Writes each emotion's Alignment and its residual in target pixels.
-- **fit:** one Grid transform for the set, from the neutral: one scale (`Grid.cover`) and one crop that puts the figure's
-  centre and foot on the brief's anchor. Applied to every emotion; the alpha goes to the grid by vote.
+- **register:** off by default (ticket 0321): the game's rules free the pose, the arms and the head's turn between emotions, so
+  every emotion passes through as it is. `figure` lays each emotion on the neutral over the whole figure, `outside_face`
+  outside the `face` region (a polygon or a brush, drawn in the neutral cutout's pixels), with the Looks' registration. Writes
+  each emotion's Alignment and its residual in target pixels.
+- **fit:** one Grid transform for the set, from the neutral: one scale that puts the figure's top row `head_top` px below the
+  canvas top and its lowest row on the anchor's row, and the crop that centres it on the anchor's column; where the source
+  has no pixels the canvas is transparent. `head_top` -1 is `Grid.cover`'s fill. Applied to every emotion; the alpha goes to
+  the grid by vote.
 - **palette:** the set's own colours (`set`, over every image together), the Project's (`project`) or none (`off`).
-- **finish:** the outline, then `lock_outside_face`: outside the `face` region every emotion takes the neutral's pixels.
+- **finish:** the pale grey specks the cutout left on the edge cleared (`clear_light_edge`, ticket 0322), the outline, then, if
+  switched on, `lock_outside_face`: outside the `face` region every emotion takes the neutral's pixels.
+  `portrait.out_of_canvas` flags a figure within `SPARE` px of the top, left or right edge.
 """
 
 from __future__ import annotations
@@ -41,11 +47,13 @@ from kiripix.ops import (
     Grid,
     border_colour,
     chroma_key_tolerant,
+    clear_light_edge,
     conformance,
     connected_regions,
     downscale,
     fill_polygon,
     has_partial_alpha,
+    light_edge,
     map_set,
     mask_touching_target,
     outline_mask,
@@ -98,9 +106,12 @@ IMAGE = {CUTOUT: "cutout.png", REGISTER: "register.png", FIT: "fit.png", PALETTE
 RECORD = {CUTOUT: "cutout.json", REGISTER: "register.json", FIT: "grid.json", PALETTE: "palette.json", FINISH: "finish.json"}
 FACE_FILE = "face.png"  # register: the face region in the neutral cutout's pixels; fit: in target pixels
 _RUNNER_MAX_SIZE = 1536  # px on the longer side, to fit 8 GB of VRAM (ADR 0004)
-_CODE_VERSION = 1  # of the reuse keys below: bump with a Stage's `version`
+_CODE_VERSION = 2  # of the reuse keys below: bump with a Stage's `version` (2: register's `mode`, 0321)
 SHIMMER_VISIBLE = 0.03  # OKLab distance from which a pixel that differs from the neutral's shows (trial 0241)
 SHIMMER_BOXES = 8  # the boxes a `portrait.shimmer` lists, the largest first
+SPARE = 2  # px every gesture keeps from the canvas's top, left and right edges; the bottom edge is the waist cut (0321)
+HEAD_TOP = 40  # px from the canvas top to the neutral figure's top row (the game's portrait rule, 0240)
+REGISTER_MODES = ["off", "figure", "outside_face"]
 _HEX = re.compile("#[0-9A-Fa-f]{6}")
 
 
@@ -358,18 +369,21 @@ def _register(run: StageRun) -> None:
     neutral = read_rgba(cut / IMAGE[CUTOUT])
     height, width = neutral.shape[:2]
     brief = brief_of(run)
-    try:
-        scale = float(Grid.cover(width, height, int(brief["width"]), int(brief["height"])).scale_x)
-    except ValueError:
-        raise StageFailure(f"the neutral image is {width}x{height}, smaller than the {brief['width']}x{brief['height']} "
-                           "canvas; make it larger or the canvas smaller (kiripix set <asset> brief width=.. height=..)") from None
+    mode = str(run.params["mode"])
+    scale = 1.0  # source px per target px, for the limits in target px: `Grid.cover`'s, near enough to `fit`'s
+    if mode != "off":
+        try:
+            scale = float(Grid.cover(width, height, int(brief["width"]), int(brief["height"])).scale_x)
+        except ValueError:
+            raise StageFailure(f"the neutral image is {width}x{height}, smaller than the {brief['width']}x{brief['height']} "
+                               "canvas; make it larger or the canvas smaller (kiripix set <asset> brief width=.. height=..)") from None
     face = face_region(run, (height, width))
-    exclude = face if face.any() else None
+    exclude = face if face.any() and mode == "outside_face" else None
     reference = _on_grey(neutral)
     face_hash = hashlib.sha256(face.tobytes()).hexdigest()
     neutral_hash = _digest(cut / IMAGE[CUTOUT])
     shutil.copyfile(cut / IMAGE[CUTOUT], run.output_dir / IMAGE[REGISTER])
-    if exclude is not None:
+    if face.any():  # `finish`'s shimmer and lock read it, whatever the mode
         write_mask(run.output_dir / FACE_FILE, face)
     records: dict[str, Any] = {}
     reused = 0
@@ -377,13 +391,18 @@ def _register(run: StageRun) -> None:
         run.check_cancel()
         run.progress(index, len(ids), f"register {name}")
         path = image_file(cut, CUTOUT, name)
-        key = _reuse_key(neutral_hash, _digest(path), face_hash, scale)
+        key = _reuse_key(neutral_hash, _digest(path), face_hash, scale, mode)
         entry = _kept(run, REGISTER, name, key)
         if entry is not None:
             records[name] = entry
             reused += 1
             continue
         edit = resize_nearest(read_rgba(path), width, height)
+        if mode == "off":  # the identity: the emotion as its image put it
+            write_one(run.output_dir, REGISTER, name, edit)
+            records[name] = {"key": key, "scale": [1.0, 1.0], "shift": [0.0, 0.0], "residual": 0.0, "residual_target": 0.0,
+                             "tiles": 0, "applied": False, "problems": []}
+            continue
         alignment = register(reference, _on_grey(edit), exclude)
         residual = alignment.residual / scale
         problems = _problems(alignment, scale, residual)
@@ -394,15 +413,20 @@ def _register(run: StageRun) -> None:
                          "residual_target": residual, "tiles": alignment.tiles, "applied": applied, "problems": problems}
     if reused:
         run.notes.append(f"{reused} of {len(ids)} emotions unchanged, not registered again")
-    if ids and not any(r["applied"] for r in records.values()):
+    if mode == "off":
+        run.notes.append(f"registration is off: every emotion is used as its image put it (kiripix set {run.asset_id} "
+                         f"{REGISTER} mode=figure lays them on the neutral)")
+    elif ids and not any(r["applied"] for r in records.values()):
         run.notes.append("registration moved nothing: every emotion already lies on the neutral image")
-    write_record(run.output_dir, REGISTER, {"emotions": ids, "face": exclude is not None, "target_scale": scale,
-                                            "images": records})
+    write_record(run.output_dir, REGISTER, {"emotions": ids, "mode": mode, "face": exclude is not None,
+                                            "target_scale": scale, "images": records})
 
 
 def _check_register(run: StageRun) -> list[Finding]:
     record = read_record(run.output_dir, REGISTER, run.asset_id)
-    findings = []
+    findings: list[Finding] = []
+    if record.get("mode") == "off":
+        return findings
     for name in record["emotions"]:
         entry = record["images"][name]
         findings.append(Finding(
@@ -470,36 +494,82 @@ def set_grid(neutral: Any, width: int, height: int, anchor: tuple[int, int], off
         raise StageFailure(str(error)) from None
 
 
+def head_top_grid(neutral: Any, width: int, height: int, anchor: tuple[int, int], head_top: int, offset_x: int = -1,
+                  offset_y: int = -1) -> tuple[Grid, tuple[int, int, int, int]]:
+    """The set's Grid transform from the neutral (ticket 0321): one scale that puts the figure's top row `head_top` px below
+    the canvas top and its lowest row on the anchor's row, and the crop that puts its centre column on the anchor's column.
+    Where the crop reaches past the source the source is padded with transparent pixels: the padding (left, top, right,
+    bottom) is returned with the Grid, which is over the padded source. A crop offset of 0 or more is the Owner's, in the
+    source's pixels, and is used as given."""
+    source_height, source_width = neutral.shape[:2]
+    ys, xs = np.nonzero(neutral[..., 3])
+    if len(xs) == 0:
+        raise StageFailure("the neutral cutout is empty: the figure was keyed out; check the cutout")
+    rows = anchor[1] + 1 - head_top
+    if rows < 1:
+        raise StageFailure(f"head_top {head_top} isn't above the anchor's row {anchor[1]}; kiripix set <asset> fit "
+                           f"head_top={HEAD_TOP}")
+    top, foot = int(ys.min()), int(ys.max()) + 1
+    scale = Fraction(foot - top, rows)
+    if scale < 1:
+        raise StageFailure(f"the neutral figure is {foot - top} px tall, fewer than the {rows} canvas rows from head_top "
+                           f"{head_top} to the anchor; make the image larger or head_top larger")
+    centre = Fraction(int(xs.min()) + int(xs.max()) + 1, 2)
+    if offset_x < 0:
+        wanted = centre - (anchor[0] + Fraction(1, 2)) * scale
+        offset_x = int((wanted * 2 + 1) // 2)
+    if offset_y < 0:
+        offset_y = top - int(head_top * scale)  # row `head_top`'s cell starts on the figure's top row
+    left, upper = max(-offset_x, 0), max(-offset_y, 0)
+    grid = Grid(scale, scale, offset_x + left, offset_y + upper, width, height)
+    right = max(int(grid.edges_x()[-1]) - (source_width + left), 0)
+    bottom = max(int(grid.edges_y()[-1]) - (source_height + upper), 0)
+    return grid, (left, upper, right, bottom)
+
+
+def padded(image: Any, padding: tuple[int, int, int, int]) -> Any:
+    """An image or a Mask with transparent (False) pixels added: left, top, right, bottom."""
+    left, top, right, bottom = padding
+    width = ((top, bottom), (left, right)) + (((0, 0),) if image.ndim == 3 else ())
+    return np.pad(image, width)
+
+
 def _fit(run: StageRun) -> None:
     reg = run.upstream[REGISTER]
     ids = ids_of(reg, REGISTER)
     images = read_set(reg, REGISTER, ids)
     brief = brief_of(run)
     width, height, anchor = int(brief["width"]), int(brief["height"]), (int(brief["anchor"][0]), int(brief["anchor"][1]))
-    grid = set_grid(images[NEUTRAL], width, height, anchor, int(run.params["offset_x"]), int(run.params["offset_y"]))
+    head_top, offset_x, offset_y = int(run.params["head_top"]), int(run.params["offset_x"]), int(run.params["offset_y"])
+    padding = (0, 0, 0, 0)
+    if head_top < 0:
+        grid = set_grid(images[NEUTRAL], width, height, anchor, offset_x, offset_y)
+    else:
+        grid, padding = head_top_grid(images[NEUTRAL], width, height, anchor, head_top, offset_x, offset_y)
     figure: dict[str, Any] = {}
     for index, (name, image) in enumerate(images.items()):
         run.check_cancel()
         run.progress(index, len(images), f"fit {name}")
-        fitted = downscale(image, grid)
+        fitted = downscale(padded(image, padding), grid)
         write_one(run.output_dir, FIT, name, fitted)
         if name == NEUTRAL:
             figure = figure_place(fitted)
     face_file = reg / FACE_FILE
     if face_file.is_file():
-        write_mask(run.output_dir / FACE_FILE, mask_touching_target(read_mask(face_file), grid))
+        write_mask(run.output_dir / FACE_FILE, mask_touching_target(padded(read_mask(face_file), padding), grid))
     source = images[NEUTRAL].shape
     write_record(run.output_dir, FIT, {"mode": "downscale", "source": [source[1], source[0]], "anchor": list(anchor),
-                                       "figure": figure, "emotions": ids, "face": face_file.is_file(), **grid.to_json()})
+                                       "head_top": head_top, "padding": list(padding), "figure": figure, "emotions": ids,
+                                       "face": face_file.is_file(), **grid.to_json()})
 
 
 def figure_place(fitted: Any) -> dict[str, Any]:
-    """Where the fitted neutral figure stands on the canvas: its centre column (a half pixel when its width is even) and
-    its lowest opaque row. Empty for an empty figure."""
+    """Where the fitted neutral figure stands on the canvas: its centre column (a half pixel when its width is even), its
+    top row and its lowest opaque row. Empty for an empty figure."""
     ys, xs = np.nonzero(fitted[..., 3])
     if len(xs) == 0:
         return {}
-    return {"centre_x": (int(xs.min()) + int(xs.max())) / 2, "foot_y": int(ys.max())}
+    return {"centre_x": (int(xs.min()) + int(xs.max())) / 2, "top_y": int(ys.min()), "foot_y": int(ys.max())}
 
 
 def _check_fit(run: StageRun) -> list[Finding]:
@@ -659,6 +729,15 @@ def _finish(run: StageRun) -> None:
     record = read_record(pal, PALETTE, run.asset_id)
     colour = (int(record["outline"][0]), int(record["outline"][1]), int(record["outline"][2]))
     placement = str(run.params["placement"])
+    clearing = bool(run.params["clear_light_edge"])
+    light: dict[str, Any] = {}
+    for name in list(images):
+        before = images[name]
+        if clearing:
+            images[name] = clear_light_edge(before)
+        left = light_edge(images[name])
+        light[name] = {"cleared": int(((before[..., 3] > 0) & (images[name][..., 3] == 0)).sum()), "pixels": int(left.sum()),
+                       "boxes": boxes_of(left)}
     if run.params["outline"]:
         images = {n: paint_outline(i, outline_line(i, placement), colour) for n, i in images.items()}
     face_file = run.upstream[FIT] / FACE_FILE
@@ -679,13 +758,80 @@ def _finish(run: StageRun) -> None:
         write_one(run.output_dir, FINISH, name, image)
     write_record(run.output_dir, FINISH, {
         "emotions": ids, "outline": {"drawn": bool(run.params["outline"]), "colour": list(colour), "placement": placement},
-        "face": face is not None, "locked": lock, "shimmer": shimmer})
+        "face": face is not None, "locked": lock, "shimmer": shimmer,
+        "light_edge": {"cleared": clearing, "images": light}})
+
+
+def near_edge(rgba: Any, spare: int = SPARE) -> Any:
+    """The opaque pixels within `spare` px of the top, left or right edge (the bottom edge is the waist cut)."""
+    band = np.zeros(rgba.shape[:2], dtype=np.bool_)
+    band[:spare] = True
+    band[:, :spare] = True
+    band[:, -spare:] = True
+    near: Any = band & (rgba[..., 3] > 0)
+    return near
+
+
+def _out_of_canvas(run: StageRun, ids: list[str]) -> list[Finding]:
+    findings: list[Finding] = []
+    asset = run.asset_id
+    for name in (NEUTRAL, *ids):
+        near = near_edge(read_rgba(image_file(run.output_dir, FINISH, name)))
+        if not near.any():
+            continue
+        ys, xs = np.nonzero(near)
+        x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+        edges = {"top": int(near[:SPARE].sum()), "left": int(near[:, :SPARE].sum()), "right": int(near[:, -SPARE:].sum())}
+        said = ", ".join(f"{n} px at the {edge} edge" for edge, n in edges.items() if n)
+        image = "the neutral image" if name == NEUTRAL else f"the emotion {name}"
+        remake = (f"kiripix import {asset} <png> --emotion {name}, then kiripix pick {asset} <variant> --emotion {name}"
+                  if name != NEUTRAL else f"kiripix import {asset} <png>, then kiripix pick {asset} <variant>")
+        findings.append(Finding(
+            code="portrait.out_of_canvas", severity="warning",
+            message=f"{image} reaches within {SPARE} px of the canvas's edge: {said} (a gesture leaves the frame, or "
+                    f"comes too close to it)",
+            position=Position(asset=asset, stage=FINISH, file=f"{name}.png", x=x0, y=y0, width=x1 - x0 + 1,
+                              height=y1 - y0 + 1),
+            owner_action=f"Make the image again with the gesture inside the frame ({remake}); the image's crop is the "
+                         f"image model's, Kiripix doesn't move a figure.",
+            data={"emotion": name, "spare": SPARE, "edges": edges, "box": {"x": x0, "y": y0, "width": x1 - x0 + 1,
+                                                                             "height": y1 - y0 + 1}}))
+    return findings
+
+
+def _light_rim(asset: str, record: dict[str, Any]) -> list[Finding]:
+    """`portrait.light_rim`: the pale grey edge pixels left before the outline was drawn, per image."""
+    findings: list[Finding] = []
+    light = record.get("light_edge")
+    if not light:
+        return findings
+    for name, entry in light["images"].items():
+        if not entry["pixels"]:
+            continue
+        first = entry["boxes"][0]
+        image = "the neutral image" if name == NEUTRAL else f"the emotion {name}"
+        if light["cleared"]:
+            how: dict[str, str] = {"owner_action": f"Flip the emotions and judge the specks by eye; if they flicker, take a "
+                                                   f"wider rim off in the cutout: kiripix set {asset} cutout rim_reach=16."}
+        else:
+            how = {"fix": f"kiripix set {asset} finish clear_light_edge=true"}
+        findings.append(Finding(
+            code="portrait.light_rim", severity="warning",
+            message=f"{image} has {entry['pixels']} pixels of pale grey specks on its edge, the image model's white rim the "
+                    f"cutout left; they differ from image to image, so they flicker when the expression changes",
+            position=Position(asset=asset, stage=FINISH, file=f"{name}.png", x=first["x"], y=first["y"],
+                              width=first["width"], height=first["height"]),
+            data={"emotion": name, "pixels": entry["pixels"], "boxes": entry["boxes"], "cleared": light["cleared"]},
+            **how))
+    return findings
 
 
 def _check_finish(run: StageRun) -> list[Finding]:
     asset = run.asset_id
     findings = _check_on_colours(run, FINISH, _set_colours(run.upstream[PALETTE], asset))
     record = read_record(run.output_dir, FINISH, asset)
+    findings += _out_of_canvas(run, record["emotions"])
+    findings += _light_rim(asset, record)
     for name in record["emotions"]:
         entry = record["shimmer"][name]
         if not entry["exact"]:
@@ -699,10 +845,12 @@ def _check_finish(run: StageRun) -> list[Finding]:
                       f"region over it: kiripix decide {asset} {REGISTER} --help.")
         elif record["face"]:
             tail = "the lock is off"
-            action = f"Switch the lock on: kiripix set {asset} finish lock_outside_face=true."
+            action = (f"Nothing is needed: the body may change between emotions; judge the flicker by eye. For a set whose "
+                      f"body should stay still, switch the lock on: kiripix set {asset} finish lock_outside_face=true.")
         else:
             tail = "without a face region there is nothing to lock"
-            action = (f"Draw the face region so `lock_outside_face` can hold the body still: kiripix decide {asset} "
+            action = (f"Nothing is needed: the body may change between emotions; judge the flicker by eye. For a set whose "
+                      f"body should stay still, draw the face region and switch the lock on: kiripix decide {asset} "
                       f"{REGISTER} --help.")
         findings.append(Finding(
             code="portrait.shimmer", severity="info",
@@ -754,29 +902,46 @@ def _stages() -> tuple[StageSpec, ...]:
         ),
         StageSpec(
             name=REGISTER,
-            description="Each emotion laid on the neutral image (scale and shift, outside the `face` region).",
+            description="Off by default: every emotion as its image put it (the body may move between emotions). Or each "
+                        "emotion laid on the neutral image (scale and shift), over the whole figure or outside the `face` "
+                        "region.",
+            version=2,  # 0321: `mode`, off by default
             inputs=StageInputs(upstream=[CUTOUT, BRIEF]),
+            params=(
+                ParamSpec(name="mode", type="choice", default="off", choices=REGISTER_MODES,
+                          description="`off`: no registration, every emotion used as it is (a new pose, a raised arm). "
+                                      "`figure`: each emotion laid on the neutral over the whole figure. `outside_face`: "
+                                      "outside the `face` region only. The last two are for a set whose edits keep the body "
+                                      "still."),
+            ),
             decisions=(FACE,),
             checks=(
                 CheckSpec(code="portrait.misaligned", description="An emotion lies on the neutral within half a target "
                           "pixel after registration, and within its limits (scale 0.985 to 1.015, shift 4 target px)."),
-                CheckSpec(code="portrait.residual", description="Per emotion, the scale, shift and residual (info)."),
+                CheckSpec(code="portrait.residual", description="Per emotion, the scale, shift and residual (info). Neither "
+                          "is raised with `mode` off."),
             ),
             owner_input="Draws the face region, only if needed.",
             available_from="M5", image=IMAGE[REGISTER], run=_register, check=_check_register,
         ),
         StageSpec(
             name=FIT,
-            description="One Grid transform for the set, from the neutral: one scale and one crop onto the canvas at the "
-                        "anchor, applied to every emotion; alpha by majority vote.",
+            description="One Grid transform for the set, from the neutral: one scale that puts the figure's top row "
+                        "`head_top` px below the canvas top and its lowest row on the anchor's row, and one crop centred on "
+                        "the anchor, applied to every emotion; transparent where the source has no pixels; alpha by "
+                        "majority vote.",
+            version=2,  # 0321: `head_top`
             inputs=StageInputs(upstream=[REGISTER, BRIEF]),
             params=(
+                ParamSpec(name="head_top", type="int", default=HEAD_TOP, minimum=-1,
+                          description="Canvas px from the top to the neutral figure's top row (the game's rule is 40). -1 "
+                                      "fills the canvas instead (`Grid.cover`), the figure's lowest row on the anchor's row."),
                 ParamSpec(name="offset_x", type="int", default=-1, minimum=-1,
                           description="Source pixels from the left where the crop starts. -1 centres the figure on the "
                                       "anchor's column."),
                 ParamSpec(name="offset_y", type="int", default=-1, minimum=-1,
-                          description="Source pixels from the top where the crop starts. -1 puts the figure's lowest row on "
-                                      "the anchor's row."),
+                          description="Source pixels from the top where the crop starts. -1 puts the figure's top row at "
+                                      "`head_top` (or, with `head_top` -1, its lowest row on the anchor's row)."),
             ),
             checks=(CheckSpec(code="fit.size_mismatch", description="Every image has the brief's exact size."),
                     CheckSpec(code="image.partial_alpha", description="Alpha is binary.")),
@@ -815,22 +980,35 @@ def _stages() -> tuple[StageSpec, ...]:
         ),
         StageSpec(
             name=FINISH,
-            description="The outline, and the neutral's pixels outside the face region in every emotion.",
+            description="The pale grey specks on the edge cleared, the outline, and, if switched on, the neutral's pixels "
+                        "outside the face region in every emotion.",
+            version=2,  # 0321: `lock_outside_face` off by default; 0322: `clear_light_edge` on by default
             inputs=StageInputs(upstream=[PALETTE, FIT]),
             params=(
+                ParamSpec(name="clear_light_edge", type="bool", default=True,
+                          description="Before the outline, clear the specks of pale grey on the figure's edge (pieces of "
+                                      "up to 4 px, OKLab L over 0.7, a, b length under 0.08): the image model's white rim, "
+                                      "which the cutout leaves and which flickers between emotions. A highlight inside the "
+                                      "figure, or a white garment on its edge, stays."),
                 ParamSpec(name="outline", type="bool", default=True, description="Draw the outline."),
                 ParamSpec(name="placement", type="choice", default="edge", choices=["edge", "outside"],
                           description="edge: the figure's own border pixels are repainted (the image model already draws a "
                                       "dark outline). outside: a line around it, which doubles that outline. Where the "
                                       "canvas cuts the figure there is no line."),
-                ParamSpec(name="lock_outside_face", type="bool", default=True,
+                ParamSpec(name="lock_outside_face", type="bool", default=False,
                           description="Outside the `face` region (drawn on `register`) every emotion takes the neutral's "
-                                      "pixels: the image model redraws the body on every edit. Nothing to lock without a "
-                                      "face region."),
+                                      "pixels, for a set whose body never moves. Off: the game's rules let the pose, the "
+                                      "arms and the lean change between emotions. Nothing to lock without a face region."),
             ),
             checks=(
                 CheckSpec(code="palette.off_palette", description="Every opaque pixel is one of the set's colours."),
                 _CHECK_SHIMMER,
+                CheckSpec(code="portrait.out_of_canvas", description=f"Per image, no opaque pixel within {SPARE} px of the "
+                          "top, left or right edge (warning; the bottom is the waist cut). `data`: `emotion`, `spare`, "
+                          "`edges` (pixels per edge), `box`."),
+                CheckSpec(code="portrait.light_rim", description="Per image, no speck of pale grey (up to 4 px) on the "
+                          "figure's edge before the outline (warning): the white rim the cutout left. `data`: `emotion`, `pixels`, `boxes`, "
+                          "`cleared`."),
             ),
             available_from="M5", image=IMAGE[FINISH], run=_finish, check=_check_finish,
         ),

@@ -196,6 +196,7 @@ CHECKS = (
     CheckSpec(code="look.drift", description="The edit redrew nothing outside the Look's region (warning)."),
     CheckSpec(code="look.unchanged", description="The Look's region holds a pixel that differs from the room (warning)."),
     CheckSpec(code="look.no_region", description="The Look has a region (warning)."),
+    CheckSpec(code="look.overlap", description="No two Looks' regions overlap (warning)."),
 )
 
 
@@ -461,6 +462,43 @@ def check_looks(run: StageRun) -> list[Finding]:
                              f"(a polygon, a brush or a difference); if not, it is the model's noise outside the "
                              f"Look and is never shown. Largest first, at (x, y) of the boxes above.",
             ))
+    return findings + _check_overlaps(run, asset)
+
+
+def _region_alpha(run: StageRun, look: dict[str, Any]) -> Any:
+    """Where a built Look draws: the pixels any of its pieces has, in the room's frame as (x, y, boolean array)."""
+    x, y, width, height = (int(v) for v in look["box"])
+    drawn = np.zeros((height, width), dtype=np.bool_)
+    for file in ([str(look["plate"])] if look["plate"] else []) + [str(e["file"]) for e in look["layers"]]:
+        drawn |= read_rgba(run.output_dir / file)[:, :, 3] > 0
+    return x, y, drawn
+
+
+def _check_overlaps(run: StageRun, asset: str) -> list[Finding]:
+    """`look.overlap` (warning): two Looks whose regions share a pixel. The game decides which draws on top."""
+    regions = [(str(look["id"]), *_region_alpha(run, look)) for look in read_looks(run.output_dir, asset)
+               if look["box"] is not None]
+    findings: list[Finding] = []
+    for index, (first, x1, y1, a) in enumerate(regions):
+        for second, x2, y2, b in regions[index + 1:]:
+            left, top = max(x1, x2), max(y1, y2)
+            right, bottom = min(x1 + a.shape[1], x2 + b.shape[1]), min(y1 + a.shape[0], y2 + b.shape[0])
+            if right <= left or bottom <= top:
+                continue
+            both = a[top - y1:bottom - y1, left - x1:right - x1] & b[top - y2:bottom - y2, left - x2:right - x2]
+            if not both.any():
+                continue
+            rows, columns = np.nonzero(both)
+            x0, y0 = left + int(columns.min()), top + int(rows.min())
+            findings.append(Finding(
+                code="look.overlap", severity="warning",
+                message=f"the regions of the Looks {first} and {second} overlap in {int(both.sum())} px, from "
+                        f"({x0}, {y0}) to ({left + int(columns.max())}, {top + int(rows.max())}); if the game shows "
+                        "both, it decides which draws on top",
+                position=Position(asset=asset, stage=LOOKS_STAGE, x=x0, y=y0, width=int(columns.max() - columns.min()) + 1,
+                                  height=int(rows.max() - rows.min()) + 1),
+                owner_action=f"Trim a region so {first} and {second} don't share pixels, or leave it if the game never "
+                             f"shows them together (kiripix decide {asset} {LOOKS_STAGE} --help)."))
     return findings
 
 

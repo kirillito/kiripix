@@ -45,10 +45,10 @@ def test_a_characters_sheet_writes_depth_in_the_layout_of_its_atlases(project: K
     assert depth.dtype == np.uint16 and depth.shape == (sheet["atlas"]["height"], sheet["atlas"]["width"])
     rect = sheet["clips"][0]["directions"]["s"][0]["rect"]
     cell = depth[rect["y"]:rect["y"] + rect["height"], rect["x"]:rect["x"] + rect["width"]]
-    colour = np.asarray(Image.open(folder / "color.png"))[rect["y"]:rect["y"] + rect["height"],
+    colour = np.asarray(Image.open(folder / "color.png").convert("RGBA"))[rect["y"]:rect["y"] + rect["height"],
                                                           rect["x"]:rect["x"] + rect["width"]]
     assert (cell[colour[..., 3] > 0] < FAR).all()  # the body's pixels have a depth
-    assert (depth[np.asarray(Image.open(folder / "color.png"))[..., 3] == 0] == FAR).all()
+    assert (depth[np.asarray(Image.open(folder / "color.png").convert("RGBA"))[..., 3] == 0] == FAR).all()
 
 
 def test_stack_differs_lists_the_worst_frames_with_their_boxes(project: Kiripix) -> None:

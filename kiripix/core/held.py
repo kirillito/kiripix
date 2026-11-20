@@ -1,5 +1,5 @@
 """The things a character's clips hold (ticket 0300, 0238): what `decide` checks of a `clip` Decision's `attach` before it is
-recorded. A held thing is on the Asset when `src/things/<id>/` holds a file (ticket 0301 imports them there), and a socket
+recorded. A held thing is on the Asset (or its base) when `src/things/<id>/` holds a `.glb` or `.blend` Variant (ticket 0301 imports them there), and a socket
 is a bone of the built `rig.json`. The `clips` Stage checks the same when it runs (`recipes.clips`), so a thing taken away
 or a rig changed later fails there too. The caller holds the Asset lock."""
 
@@ -9,6 +9,8 @@ from typing import Any
 
 from kiripix.checks import Finding, Position
 from kiripix.core.assets import Asset
+from kiripix.core.graph import AssetGraph
+from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project
 from kiripix.recipes import clips
 
@@ -16,22 +18,26 @@ CHARACTER = "character"
 CLIPS_STAGE = "clips"
 
 
-def asset_things(asset: Asset) -> set[str]:
-    """The IDs of the Asset's held things: the folders of `src/things/` that hold a file."""
-    root = asset.dir / clips.THINGS_DIR
-    if not root.is_dir():
-        return set()
-    return {folder.name for folder in root.iterdir() if folder.is_dir() and any(f.is_file() for f in folder.iterdir())}
+def asset_things(asset: Asset, base: Asset | None = None) -> set[str]:
+    """The IDs of the Asset's held things (and its base's): the folders of `src/things/` that hold a Variant, the one rule
+    the Stages use (`recipes.clips.held_things_of`)."""
+    return clips.thing_ids(clips.folder_files(asset.dir), clips.folder_files(base.dir) if base is not None else None)
 
 
-def rig_bones(asset: Asset) -> list[str] | None:
-    """The bones of the built rig, or None while `rig` is not built (so no socket can be checked yet)."""
-    path: Path = asset.dir / "work" / "rig" / "rig.json"
-    try:
-        document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-        return list(document["parents"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+def rig_bones(graph: AssetGraph) -> list[str] | None:
+    """The bones of the built rig, or None while `rig` is not built (so no socket can be checked yet). A character made from
+    a base whose own `rig` isn't built yet has the base's skeleton (`rig.base_mismatch` holds it to that), so the base's rig
+    stands in."""
+    for each in (graph, graph.base):
+        if each is None:
+            continue
+        path: Path = each.output_dir(each.spec("rig")) / "rig.json"
+        try:
+            document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+            return list(document["parents"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
 
 
 def attach_edit_findings(project: Project, asset: Asset, stage: str, edits: list[tuple[str, dict[str, Any]]]
@@ -44,7 +50,8 @@ def attach_edit_findings(project: Project, asset: Asset, stage: str, edits: list
     wanted = [data for name, data in edits if name == clips.CLIP.name and data.get("attach")]
     if not wanted:
         return []
-    known, bones = asset_things(asset), rig_bones(asset)
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    known, bones = asset_things(asset, graph.base_asset), rig_bones(graph)
     found: list[Finding] = []
     for data in wanted:
         attach = list(data["attach"])

@@ -1,7 +1,9 @@
 """The character's `sheet` Stage (ticket 0112, spec §6.3). The CLI tests run on the fake Blender's flat, fully opaque frames;
 the ones about Checks first change what `finish` wrote (a moved pivot in its render.json, a blanked or oversized frame)."""
 
+import io
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,14 @@ def edit_render(folder: Path, change: Any) -> None:
     path.write_text(json.dumps(document), encoding="utf-8")
 
 
+def restored(atlas: np.ndarray, frame: dict[str, Any]) -> np.ndarray:
+    """The frame's CELL x CELL cell from its rect in the atlas and its offset in the cell."""
+    r, o = frame["rect"], frame["offset"]
+    cell = np.zeros((CELL, CELL, 4), dtype=np.uint8)
+    cell[o["y"]:o["y"] + r["height"], o["x"]:o["x"] + r["width"]] = atlas[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]]
+    return cell
+
+
 def findings(project: Kiripix, code: str, expect: int = 2) -> list[dict[str, Any]]:
     result = project.json("check", HERO, expect=expect)
     return [f for f in result["findings"] if f["code"] == code]
@@ -49,16 +59,16 @@ def test_the_stage_declares_its_checks(project: Kiripix) -> None:
     [stage] = kind["stages"]
 
     assert [c["code"] for c in stage["checks"]] == [
-        "sheet.pivot_drift", "sheet.frame_overflow", "sheet.frame_count", "sheet.empty_frame"]
+        "sheet.pivot_drift", "sheet.frame_overflow", "sheet.frame_count", "sheet.empty_frame", "sheet.colour_atlas_rgba"]
 
 
 def test_run_writes_both_atlases_and_sheet_json_whose_rectangles_line_up(project: Kiripix) -> None:
     folder, sheet = sheet_of(project)
 
     out = folder / "work" / "sheet"
-    assert sheet["schema_version"] == 1 and sheet["files"] == {"color": "color.png", "normal": "normal.png", "depth": "depth.png"}
+    assert sheet["schema_version"] == 2 and sheet["files"] == {"color": "color.png", "normal": "normal.png", "depth": "depth.png"}
     assert sheet["cell"] == {"width": CELL, "height": CELL} and sheet["pivot"] == {"x": 39, "y": 72}
-    colour, normal = np.array(Image.open(out / "color.png")), np.array(Image.open(out / "normal.png"))
+    colour, normal = np.array(Image.open(out / "color.png").convert("RGBA")), np.array(Image.open(out / "normal.png"))
     assert colour.shape == normal.shape == (sheet["atlas"]["height"], sheet["atlas"]["width"], 4)
     assert sheet["directions"] and [c["name"] for c in sheet["clips"]] == ["hit", "idle"]
     count = 0
@@ -67,13 +77,12 @@ def test_run_writes_both_atlases_and_sheet_json_whose_rectangles_line_up(project
         for direction, listed in clip["directions"].items():
             assert [f["index"] for f in listed] == list(range(len(listed)))
             for frame in listed:
-                r = frame["rect"]
-                assert (r["width"], r["height"]) == (CELL, CELL) and r["x"] % CELL == 0 and r["y"] % CELL == 0
-                cell = (slice(r["y"], r["y"] + r["height"]), slice(r["x"], r["x"] + r["width"]))
+                r = frame["rect"]  # cut to the frame's opaque box (ticket 0308): its cell is restored from rect and offset
+                assert r["width"] < CELL and r["height"] < CELL
                 name = f"{clip['name']}/{direction}/{frame['index']:03d}.png"
                 source = np.array(Image.open(folder / "work" / "finish" / "color" / name))
-                assert (colour[cell] == source).all()
-                assert (normal[cell][..., 3] == colour[cell][..., 3]).all()  # one layout: the alpha lines up
+                assert (restored(colour, frame) == source).all()
+                assert (restored(normal, frame)[..., 3] == restored(colour, frame)[..., 3]).all()  # one layout: the alpha lines up
                 count += 1
     assert count == 8 * 14 and len({(f["rect"]["x"], f["rect"]["y"]) for c in sheet["clips"]
                                     for fs in c["directions"].values() for f in fs}) == count
@@ -124,6 +133,48 @@ def test_a_moving_pivot_in_a_clip_that_is_not_stationary_is_not_drift(project: K
     project.json("run", HERO, "sheet")
 
     assert findings(project, "sheet.pivot_drift", expect=0) == []
+
+
+def test_the_colour_atlas_is_an_indexed_png_that_decodes_to_the_rgba_it_replaces_and_is_smaller(project: Kiripix) -> None:
+    folder, sheet = sheet_of(project)
+
+    path = folder / "work" / "sheet" / "color.png"
+    with Image.open(path) as indexed:
+        assert indexed.mode == "P" and indexed.size == (sheet["atlas"]["width"], sheet["atlas"]["height"])
+        rgba = indexed.convert("RGBA")
+        assert indexed.info["transparency"] is not None
+        palette = indexed.getpalette() or []
+    # index 0 is transparent: the empty cells of the grid are index 0, and the palette entry decodes to alpha 0
+    pixels = np.array(Image.open(path))
+    colour = np.array(rgba)
+    assert (pixels == 0).any() and (colour[pixels == 0][..., 3] == 0).all() and len(palette) <= 768
+    assert (colour[pixels != 0][..., 3] == 255).all()
+    # exactly the frames: every cell equals the finished frame it came from
+    for clip in sheet["clips"]:
+        for direction, listed in clip["directions"].items():
+            for frame in listed:
+                source = np.array(Image.open(folder / "work" / "finish" / "color" / f"{clip['name']}/{direction}/{frame['index']:03d}.png"))
+                assert (restored(colour, frame) == source).all()
+    plain = io.BytesIO()
+    rgba.save(plain, format="PNG")
+    assert path.stat().st_size < plain.getbuffer().nbytes
+    assert project.json("check", HERO)["findings"] == []
+
+
+def test_more_than_256_colours_keep_an_rgba_atlas_and_an_info_finding_names_the_count(project: Kiripix) -> None:
+    folder = finished(project, border=3)
+    noise = np.random.default_rng(7).integers(0, 256, (CELL, CELL, 4), dtype=np.uint8)
+    noise[..., 3] = 255
+    Image.fromarray(noise, "RGBA").save(folder / "work" / "finish" / "color" / "hit" / "s" / "000.png")
+
+    project.json("run", HERO, "sheet")
+
+    out = folder / "work" / "sheet" / "color.png"
+    with Image.open(out) as atlas:
+        assert atlas.mode == "RGBA"
+        assert len(np.unique(np.array(atlas).reshape(-1, 4), axis=0)) > 256
+    [finding] = findings(project, "sheet.colour_atlas_rgba")  # the off-palette noise is an error too, so exit 2
+    assert finding["severity"] == "info" and finding["fix"] and re.search(r"[0-9]{3,} colours", finding["message"])
 
 
 def test_an_empty_frame_is_reported_on_its_frame(project: Kiripix) -> None:

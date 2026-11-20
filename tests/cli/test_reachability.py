@@ -352,7 +352,8 @@ def test_describe_says_reach_is_implemented_with_its_checks(kpx: Kiripix) -> Non
     assert stage["implemented"]
     assert stage["params"][0]["name"] == "step" and stage["params"][0]["default"] == 1
     assert {c["code"] for c in stage["checks"]} == {"reach.unreachable_marker", "reach.unreachable_island",
-                                                    "reach.narrow_gap", "area.not_reached", "reach.unreachable_link", "reach.link_joins"}
+                                                    "reach.narrow_gap", "area.not_reached", "reach.unreachable_link", "reach.link_joins",
+                                                    "reach.island_under_look", "reach.look_island", "reach.look_cuts_off"}
 
 
 def test_a_view_that_stops_deriving_walkable_fails_reach_and_check_still_answers(project: Kiripix) -> None:

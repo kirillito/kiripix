@@ -123,6 +123,7 @@ def run_wearable_render(run: StageRun) -> None:
     if list(shown["directions"]) != list(names) or [c["name"] for c in clips] != [c["name"] for c in shown["clips"]]:
         raise StageFailure(f"the render of {body.asset_id} doesn't match its clips", fix=f"kiripix run {body.asset_id} render")
     side, pivot = int(shown["frame"]["width"]), [float(v) for v in shown["pivot"]]
+    cells = {str(e["name"]): _body_clip_cell(e, side, pivot) for e in shown["clips"]}  # each clip's own cell (ticket 0311)
     height = int(shown["height"])
     on_body = replace(run, files=body.files, base=None)  # `clips` finds a clip's source file by its stem among the body's files
     args: dict[str, Any] = {
@@ -146,7 +147,7 @@ def run_wearable_render(run: StageRun) -> None:
     measured = launch(run, "render_frames", {**args, "measure": True})["frames"]
     measure_seconds = time.monotonic() - started
     outside: list[dict[str, Any]] = []
-    wearing: list[list[float]] = []
+    past: list[list[float]] = []  # the extents that don't fit their clip's cell
     bounds: dict[str, list[float]] = {}
     for clip in clips:
         follows_root = not clip["stationary"] and not clip["root_motion"]
@@ -154,15 +155,15 @@ def run_wearable_render(run: StageRun) -> None:
         for direction, frames in measured[clip["name"]].items():
             for index, frame in enumerate(frames):
                 extent = clip_bounds({direction: [frame]}, follows_root)
-                wearing.append(extent)
-                if not fits_cell(side, pivot, extent):
+                if not fits_cell(*cells[clip["name"]], extent):
                     outside.append({"clip": clip["name"], "direction": direction, "frame": index})
+                    past.append(extent)
         run.check_cancel()
-    margin = needed_margin(height, [list(map(float, c["bounds"])) for c in shown["clips"]], wearing) if outside else None
+    margin = needed_margin(height, [list(map(float, c["bounds"])) for c in shown["clips"]], past) if outside else None
 
     run.progress(0, 1, "starting Blender")
     started = time.monotonic()
-    result = launch(run, "render_frames", args)
+    result = _launch_cells(run, args, cells)
     render_seconds = time.monotonic() - started
     if any(abs(a - b) > DEPTH_TOLERANCE for a, b in zip(result["depth_range"], shown["depth_range"], strict=True)):
         raise StageFailure(
@@ -188,11 +189,13 @@ def run_wearable_render(run: StageRun) -> None:
                 if missing:
                     raise StageFailure(f"Blender finished without writing {missing[0]}")
                 frames.append({"index": index, "source_frame": clip["frames"][index], "files": files,
-                               "pivot": list(pivot) if clip["stationary"] else found["pivot"]})
+                               "pivot": list(cells[clip["name"]][1]) if clip["stationary"] else found["pivot"]})
             directions[direction] = frames
             frames_made += len(frames)
         entries.append({"name": clip["name"], "fps": entry["fps"], "loop": entry["loop"], "stationary": entry["stationary"],
-                        "root_motion": entry["root_motion"], "directions": directions, "bounds": bounds[clip["name"]]})
+                        "root_motion": entry["root_motion"], "directions": directions, "bounds": bounds[clip["name"]],
+                        "frame": {"width": cells[clip["name"]][0], "height": cells[clip["name"]][0]},
+                        "pivot": list(cells[clip["name"]][1])})
         run.check_cancel()
     document = {
         "schema_version": RENDER_SCHEMA_VERSION,
@@ -217,6 +220,32 @@ def run_wearable_render(run: StageRun) -> None:
         "margin": margin,
     }
     (run.output_dir / "render.json").write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
+
+
+def _body_clip_cell(entry: dict[str, Any], side: int, pivot: list[float]) -> tuple[int, list[float]]:
+    """A body clip's cell, `(side, pivot)`: its own (ticket 0303), or the body's when its `render.json` is older."""
+    if "frame" not in entry:
+        return side, pivot
+    return int(entry["frame"]["width"]), [float(v) for v in entry["pivot"]]
+
+
+def _launch_cells(run: StageRun, args: dict[str, Any], cells: dict[str, tuple[int, list[float]]]) -> dict[str, Any]:
+    """Blender for the clips in `args`, once for each cell size they need (the frame and pivot are the scene's); one result."""
+    groups: dict[tuple[int, tuple[float, ...]], list[dict[str, Any]]] = {}
+    for clip in args["clips"]:
+        side, at = cells[clip["name"]]
+        groups.setdefault((side, tuple(at)), []).append(clip)
+    merged: dict[str, Any] | None = None
+    for (size, place), group in groups.items():
+        found = launch(run, "render_frames", {**args, "clips": group, "frame": [size, size], "pivot": list(place)})
+        if merged is None:
+            merged = found
+        else:
+            if found["depth_range"] != merged["depth_range"]:
+                raise StageFailure("Blender gave two depth ranges for one Wearable", fix=f"kiripix run {run.asset_id} render --force")
+            merged["frames"] = {**merged["frames"], **found["frames"]}
+    assert merged is not None
+    return merged
 
 
 def device_fallback(args: dict[str, Any], result: dict[str, Any]) -> bool:

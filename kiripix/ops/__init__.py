@@ -42,7 +42,9 @@ from kiripix.ops.chroma import (
     border_colour,
     chroma_key,
     chroma_key_tolerant,
+    clear_light_edge,
     key_fringe,
+    light_edge,
     remove_key_spill,
     remove_light_rim,
 )
@@ -108,9 +110,17 @@ from kiripix.ops.palette import (
     parse_hex,
     suggest_palette,
 )
-from kiripix.ops.sheet import Rect, default_cell_pivot, pack_atlas
-from kiripix.ops.sprite import feet_point, height_from_alpha, normals_from_height, slice_grid
-from kiripix.ops.reach import Gap, Island, Link, narrowest_gaps, reachable, reachable_via, walkable, walkable_islands
+from kiripix.ops.sheet import Rect, blit_trimmed, default_cell_pivot, opaque_box, pack_atlas, pack_trimmed, place_in_cell, shelf_layout
+from kiripix.ops.sprite import (
+    ColourRegions,
+    colour_regions,
+    feet_point,
+    height_from_alpha,
+    normals_from_height,
+    region_labels,
+    slice_grid,
+)
+from kiripix.ops.reach import Gap, Island, Link, narrowest_gaps, reachable, reachable_via, walkable, walkable_island_labels, walkable_islands
 from kiripix.ops.resample import (
     Grid,
     alpha_by_vote,
@@ -185,6 +195,11 @@ __all__ = [
     "cut_by_alpha",
     "default_cell_pivot",
     "pack_atlas",
+    "pack_trimmed",
+    "blit_trimmed",
+    "opaque_box",
+    "place_in_cell",
+    "shelf_layout",
     "detect_grid",
     "downscale",
     "enclosed_holes",
@@ -223,6 +238,9 @@ __all__ = [
     "open_edges",
     "paint_stroke",
     "feet_point",
+    "ColourRegions",
+    "colour_regions",
+    "region_labels",
     "fill_polygon",
     "parse_gpl",
     "parse_hex",
@@ -246,6 +264,8 @@ __all__ = [
     "chroma_key_tolerant",
     "remove_key_spill",
     "remove_light_rim",
+    "light_edge",
+    "clear_light_edge",
     "sample_nearest",
     "simplify",
     "slice_grid",
@@ -260,5 +280,6 @@ __all__ = [
     "upscale",
     "walkable",
     "wall_off",
+    "walkable_island_labels",
     "walkable_islands",
 ]

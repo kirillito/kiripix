@@ -68,13 +68,16 @@ def test_the_sheet_has_the_bodys_cell_pivot_and_layout_with_colour_normal_and_de
     mine = json.loads((folder / "work" / "sheet" / "sheet.json").read_text("utf-8"))
     theirs = json.loads((assets(project, "character", "zed") / "work" / "sheet" / "sheet.json").read_text("utf-8"))
 
-    for key in ("cell", "pivot", "columns", "atlas", "directions"):
+    for key in ("cell", "pivot", "directions"):  # the atlas and each frame's rect and offset are the Wearable's own (ticket 0308)
         assert mine[key] == theirs[key]
-    assert [(c["name"], c["directions"]) for c in mine["clips"]] == [(c["name"], c["directions"]) for c in theirs["clips"]]
+    assert [(c["name"], c["cell"], c["pivot"], {d: [f["index"] for f in fs] for d, fs in c["directions"].items()}) for c in mine["clips"]] == [
+        (c["name"], c["cell"], c["pivot"], {d: [f["index"] for f in fs] for d, fs in c["directions"].items()}) for c in theirs["clips"]]
     assert mine["files"] == {"color": "color.png", "normal": "normal.png", "depth": "depth.png"} and mine["order"] == 10
     sizes = {name: Image.open(folder / "work" / "sheet" / name).size for name in ("color.png", "normal.png", "depth.png")}
     assert set(sizes.values()) == {(mine["atlas"]["width"], mine["atlas"]["height"])}
     assert np.asarray(Image.open(folder / "work" / "sheet" / "depth.png")).dtype == np.uint16
+    assert Image.open(folder / "work" / "sheet" / "color.png").mode == "P"  # indexed (ticket 0310); the normal atlas stays RGBA
+    assert Image.open(folder / "work" / "sheet" / "normal.png").mode == "RGBA"
 
 
 def test_order_is_a_sheet_parameter_that_lands_in_wearable_json(project: Kiripix) -> None:
@@ -95,7 +98,7 @@ def test_the_stage_leaves_three_atlases_and_wearable_json_in_out_export(project:
     sheet = json.loads((folder / "work" / "sheet" / "sheet.json").read_text("utf-8"))
 
     assert sorted(p.name for p in out.iterdir() if p.name != ".stage.json") == ["color.png", "depth.png", "normal.png", "wearable.json"]
-    assert record["schema_version"] == 1 and record["asset"] == WEARABLE and record["body"] == BODY and record["order"] == 10
+    assert record["schema_version"] == 2 and record["asset"] == WEARABLE and record["body"] == BODY and record["order"] == 10
     assert record["files"] == {"color": "color.png", "normal": "normal.png", "depth": "depth.png"}
     keys = ("cell", "pivot", "atlas", "directions", "clips")
     assert {k: record[k] for k in keys} == {k: sheet[k] for k in keys}

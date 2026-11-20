@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 type: spec
 parent: 0236-m5-the-games-next-needs.md
@@ -43,15 +43,17 @@ A soft edge with binary alpha stays open (decision 8): no room needs one yet.
 ## Order
 
 1. [0269](0269-m5-adr-looks-markers-combining-reach.md): the ADR draft by `reviewer`, then the Owner's review.
-2. Once the Owner accepts the ADR, 0269 files the work tickets from it, each with its agent:
-   - Markers per Look on `place` (core-engineer);
-   - `reach` per Look (imaging-engineer);
-   - export of the nodes, navigation and `room.json` (godot-export);
-   - the UI (ui-engineer).
+2. The Owner accepted [ADR 0013](../../docs/adr/0013-a-look-has-its-own-markers-collision-and-reach.md) (2026-11-18, with
+   the Manifest at schema 3), and 0269 filed the work tickets from it:
+   - [0314](0314-m5-look-markers-on-place.md): Markers per Look on `place` (core-engineer);
+   - [0315](0315-m5-reach-per-look.md): `reach` per Look (imaging-engineer);
+   - [0316](0316-m5-export-look-markers-collision-navigation.md): export of the nodes, navigation, `room.json` and the
+     Manifest (godot-export);
+   - [0317](0317-m5-ui-look-markers-and-reach.md): the UI (ui-engineer).
 
 They aren't filed before the ADR, so they don't need rewriting if it changes the proposals.
 
 ## Acceptance criteria
 
-- [ ] Spec §6.1 and §16 decision 8 corrected on taking collision away.
-- [ ] The Owner's answers to 1–4, the ADR, and the work tickets filed.
+- [x] Spec §6.1 and §16 decision 8 corrected on taking collision away.
+- [x] The Owner's answers to 1–4, the ADR, and the work tickets filed.

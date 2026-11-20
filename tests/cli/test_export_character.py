@@ -2,6 +2,7 @@
 SpriteFrames and scene in the game, the freeze of each `<clip>_<dir>` animation, and the same ownership rules as a room.
 The writers' exact text is in `tests/golden/test_character_export_writers.py`; the CLI tests run on the fake Blender."""
 
+import hashlib
 import json
 import os
 import re
@@ -61,7 +62,7 @@ def test_the_stage_leaves_both_atlases_and_character_json_in_out_export(project:
     sheet = json.loads((folder / "work" / "sheet" / "sheet.json").read_text("utf-8"))
 
     assert sorted(p.name for p in out.iterdir() if p.name != ".stage.json") == ["character.json", "color.png", "normal.png"]
-    assert character == {"schema_version": 6, "asset": HERO, "files": {"color": "color.png", "normal": "normal.png"},
+    assert character == {"schema_version": 7, "asset": HERO, "files": {"color": "color.png", "normal": "normal.png"},
                          **{key: sheet[key] for key in ("cell", "pivot", "atlas", "directions")},
                          "clips": [{**c, "events": {"foot": []}} for c in sheet["clips"]], "parts": [], "rows": []}
     for name in ("color.png", "normal.png"):
@@ -92,7 +93,7 @@ def test_a_character_exports_a_texture_sprite_frames_and_a_scene_and_the_manifes
     assert frames.count('"loop": false') == 8 and frames.count('"speed": 15.0') == 8 and frames.count('"speed": 12.0') == 8
     assert f'path="{RES}/texture.tres"' in frames and frames.count("[sub_resource") == 8 * 14
     record = manifest(project)
-    assert record["asset"] == HERO and record["exported"] is True and record["schema_version"] == 2
+    assert record["asset"] == HERO and record["exported"] is True and record["schema_version"] == 3
     assert sorted(record["files"]) == FILES
     assert record["ids"] == {"markers": [], "layers": [], "masks": [],
                              "clips": sorted(f"{c}_{d}" for c in ("hit", "idle") for d in DIRECTIONS)}
@@ -242,7 +243,7 @@ def test_a_version_1_manifest_is_read_and_rewritten_as_version_2(project: Kiripi
     project.json("export", HERO)
 
     record = manifest(project)
-    assert record["schema_version"] == 2 and len(record["ids"]["clips"]) == 16 and record["counter"] == 1
+    assert record["schema_version"] == 3 and len(record["ids"]["clips"]) == 16 and record["counter"] == 1
 
 
 RAMPS = f"{FOLDER}/ramps.png"
@@ -276,7 +277,7 @@ def test_character_json_lists_each_part_dark_to_light_in_palettes_order(project:
 
     character = built(folder)
 
-    assert character["schema_version"] == 6
+    assert character["schema_version"] == 7
     assert character["parts"] == [{key: part[key] for key in ("name", "materials", "row", "shared", "indexes", "rgb")}
                                   for part in palette_parts(folder)]
     assert [(p["name"], p["row"], p["shared"]) for p in character["parts"]] == [("cloth", 0, False), ("skin", 1, False)]
@@ -453,9 +454,48 @@ func _init() -> void:
 	var first: AtlasTexture = frames.get_frame_texture(&"idle_s", 0)
 	print("PROBE ", JSON.stringify({"animations": found, "offset": [sprite.offset.x, sprite.offset.y],
 		"canvas": first.atlas is CanvasTexture, "normal": first.atlas.normal_texture != null,
-		"region": [first.region.size.x, first.region.size.y]}))
+		"size": [first.get_size().x, first.get_size().y], "region": [first.region.size.x, first.region.size.y]}))
 	quit()
 """
+
+
+INDEXED_PROBE = """extends SceneTree
+
+func _init() -> void:
+	var hero: Node = load("res://kiripix/character/hero/hero.tscn").instantiate()
+	var sprite: AnimatedSprite2D = hero.get_node("Sprite")
+	var first: AtlasTexture = sprite.sprite_frames.get_frame_texture(&"idle_s", 0)
+	var image: Image = first.atlas.diffuse_texture.get_image()
+	image.decompress()
+	image.convert(Image.FORMAT_RGBA8)
+	var hashing := HashingContext.new()
+	hashing.start(HashingContext.HASH_SHA256)
+	hashing.update(image.get_data())
+	print("PROBE ", JSON.stringify({"size": [image.get_width(), image.get_height()], "sha256": hashing.finish().hex_encode()}))
+	quit()
+"""
+
+
+@pytest.mark.godot
+def test_godot_imports_and_draws_the_indexed_colour_atlas_unchanged(project: Kiripix) -> None:
+    """Marked: the exported scene's texture, as real Godot 4.7 imports it, holds the pixels the indexed PNG decodes to."""
+    folder = exportable_character(project)
+    project.json("export", HERO)
+    game = project.cwd / "game"
+    (game / "probe.gd").write_text(INDEXED_PROBE, "utf-8")
+    godot = os.environ["KIRIPIX_GODOT"]
+    subprocess.run([godot, "--headless", "--path", str(game), "--import", "--quit"], capture_output=True, timeout=300, check=False)
+
+    done = subprocess.run([godot, "--headless", "--path", str(game), "-s", "res://probe.gd"], capture_output=True, text=True,
+                          encoding="utf-8", timeout=120, check=False)
+
+    [line] = [line for line in done.stdout.splitlines() if line.startswith("PROBE ")]
+    found = json.loads(line.removeprefix("PROBE "))
+    with Image.open(game / "kiripix" / "character" / "hero" / "color.png") as exported:
+        assert exported.mode == "P"
+        rgba = exported.convert("RGBA")
+    assert found["size"] == list(rgba.size)
+    assert found["sha256"] == hashlib.sha256(rgba.tobytes()).hexdigest()
 
 
 @pytest.mark.godot
@@ -476,6 +516,6 @@ def test_godot_opens_the_scene_and_the_animations_are_the_clips(project: Kiripix
     probe = json.loads(line.removeprefix("PROBE "))
     assert sorted(probe["animations"]) == sorted(f"{c}_{d}" for c in ("hit", "idle") for d in DIRECTIONS)
     assert probe["animations"]["hit_sw"] == [4, 15.0, False] and probe["animations"]["idle_s"] == [10, 12.0, True]
-    assert probe["canvas"] and probe["normal"] and probe["region"] == [78, 78] and probe["offset"] == [-39, -72]
+    assert probe["canvas"] and probe["normal"] and probe["size"] == [78, 78] and probe["region"][0] < 78 and probe["offset"] == [-39, -72]
     # Godot reports resources still held at exit as an ERROR; a scene it can't parse or load is what matters here
     assert not re.search(r"Parse Error|Failed loading|Failed to load|Invalid|Cannot", done.stderr + done.stdout)

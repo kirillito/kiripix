@@ -50,9 +50,9 @@ def test_the_things_materials_follow_the_models_and_render_json_records_them_and
         held: tuple[Path, dict[str, Any]]) -> None:
     _, document = held
     assert len(document["materials"]) == BODY_MATERIALS  # the Model's own, unchanged
-    stick, flag = document["things"]
-    assert (stick["thing"], flag["thing"]) == ("stick", "flag")  # the order they were imported
-    assert stick["materials"] == [{"index": 5, "name": "metal"}] and flag["materials"] == [{"index": 6, "name": "metal"}]
+    # `flag` was imported after `stick` and no clip holds it, so it moves no number and isn't listed (ticket 0313)
+    (stick,) = document["things"]
+    assert stick["thing"] == "stick" and stick["materials"] == [{"index": 5, "name": "metal"}]
     assert next(c for c in document["clips"] if c["name"] == "hold")["attach"] == [
         {"thing": "stick", "socket": HAND, "turn": [90.0, 0.0, 0.0]}]
     assert "attach" not in next(c for c in document["clips"] if c["name"] == "idle")

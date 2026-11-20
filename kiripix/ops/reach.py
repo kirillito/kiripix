@@ -180,12 +180,18 @@ class Island:
 
 def walkable_islands(ground: BoolMask, reached: BoolMask) -> list[Island]:
     """The 4-connected pieces of `ground` with no spot in `reached`, the largest first; ties go top-left first."""
+    return walkable_island_labels(ground, reached)[0]
+
+
+def walkable_island_labels(ground: BoolMask, reached: BoolMask) -> tuple[list[Island], np.ndarray]:
+    """The islands of `walkable_islands`, and a label array of the grid's shape: the island's position in the list plus
+    one on each of its spots, 0 elsewhere."""
     _require_mask(ground)
     _require_mask(reached)
     rows, columns = ground.shape
     free = ground.tobytes()
     seen = bytearray(rows * columns)
-    islands = []
+    found: list[tuple[Island, np.ndarray]] = []
     for start in np.flatnonzero(ground):
         origin = int(start)
         if seen[origin]:
@@ -206,8 +212,12 @@ def walkable_islands(ground: BoolMask, reached: BoolMask) -> list[Island]:
         ys, xs = spots // columns, spots % columns
         if not reached[ys, xs].any():
             left, top = int(xs.min()), int(ys.min())
-            islands.append(Island(left, top, int(xs.max()) - left + 1, int(ys.max()) - top + 1, len(pieces)))
-    return sorted(islands, key=lambda island: (-island.spots, island.y, island.x))
+            found.append((Island(left, top, int(xs.max()) - left + 1, int(ys.max()) - top + 1, len(pieces)), spots))
+    found.sort(key=lambda item: (-item[0].spots, item[0].y, item[0].x))
+    labels = np.zeros(rows * columns, dtype=np.int32)
+    for number, (_, spots) in enumerate(found, start=1):
+        labels[spots] = number
+    return [island for island, _ in found], labels.reshape(rows, columns)
 
 
 @dataclass(frozen=True)

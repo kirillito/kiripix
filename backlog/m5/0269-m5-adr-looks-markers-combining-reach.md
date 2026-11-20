@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M5
 agent: reviewer
 type: ticket
@@ -27,8 +27,8 @@ tickets are written from the accepted ADR, not before it.
 ## Acceptance criteria
 
 - [x] The ADR drafted as `proposed`, with the spec's stale sentences fixed.
-- [ ] The Owner's acceptance recorded in the ADR (the Owner's, not the agent's).
-- [ ] The work tickets filed from the accepted ADR, and listed in 0254 and 0236.
+- [x] The Owner's acceptance recorded in the ADR (the Owner's, not the agent's).
+- [x] The work tickets filed from the accepted ADR, and listed in 0254 and 0236.
 
 ## Result (2026-11-17)
 
@@ -48,3 +48,15 @@ For the Owner, before accepting:
   (not `reach.json`), which has no `schema_version` yet. The ADR uses the real names.
 
 Left: the Owner's acceptance, then the work tickets.
+
+### Accepted (2026-11-18, main session)
+
+- **The Owner accepted ADR 0013** with one change: `ids.look_markers` bumps the Manifest to schema 3, with a pure
+  `migrate_v2` beside `migrate_v1` (an older Kiripix refuses it; each Manifest is rewritten once at its next export). The
+  ADR records it. Two Looks that both change `solid` stay as drafted (split collision bodies; no navigation or `reach` for
+  the pair).
+- The ADR's versions corrected: `reach` was already at 2 (0266), so it goes to 3, and `export` to 3.
+- **Work tickets filed:** [0314](0314-m5-look-markers-on-place.md) Markers, walkable and clear per Look on `place`, and
+  `look.overlap` (core-engineer); [0315](0315-m5-reach-per-look.md) `reach` per Look (imaging-engineer, after 0314);
+  [0316](0316-m5-export-look-markers-collision-navigation.md) export, `room.json` 12 and the Manifest 3 (godot-export,
+  after 0314 and 0315); [0317](0317-m5-ui-look-markers-and-reach.md) the UI (ui-engineer, after all three).

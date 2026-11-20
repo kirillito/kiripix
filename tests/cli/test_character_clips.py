@@ -233,7 +233,7 @@ def test_describe_shows_the_final_schema(project: Kiripix) -> None:
     assert [c["code"] for c in stage["checks"]] == [
         "clips.source_missing", "clips.range", "clips.bad_name", "clips.root_motion", "clips.transition_missing_clip",
         "clips.transition_frame", "clips.transition_loop", "clips.duplicate_name", "clips.unknown_thing", "clips.unknown_socket",
-        "clips.thing_twice", "clips.remove_unknown"]
+        "clips.remove_unknown"]
 
 
 # the real Blender

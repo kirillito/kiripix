@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from kiripix.ops import Gap, Island, Link, narrowest_gaps, reachable, reachable_via, walkable, walkable_islands
+from kiripix.ops import Gap, Island, Link, narrowest_gaps, reachable, reachable_via, walkable, walkable_island_labels, walkable_islands
 
 EXPECTED = Path(__file__).parent / "expected"
 
@@ -249,6 +249,22 @@ def test_ground_partly_reached_is_not_an_island_and_the_largest_island_comes_fir
 
     assert walkable_islands(ground, reached) == [Island(x=5, y=2, width=2, height=3, spots=6),
                                                  Island(x=10, y=0, width=1, height=1, spots=1)]
+
+
+def test_island_labels_number_each_island_from_one_in_the_order_walkable_islands_lists_them() -> None:
+    ground = np.zeros((6, 12), dtype=np.bool_)
+    ground[0, 0:3] = True
+    ground[2:5, 5:7] = True
+    ground[0, 10] = True
+    reached = np.zeros_like(ground)
+    reached[0, 0] = True
+
+    islands, labels = walkable_island_labels(ground, reached)
+
+    assert islands == walkable_islands(ground, reached)
+    assert labels.shape == ground.shape
+    assert (labels[2:5, 5:7] == 1).all() and labels[0, 10] == 2
+    assert (labels[0, 0:3] == 0).all() and int((labels > 0).sum()) == 7
 
 
 # the narrowest gaps

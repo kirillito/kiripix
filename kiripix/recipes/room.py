@@ -61,6 +61,7 @@ from kiripix.ops import (
     srgb_to_oklab,
     split_painted,
     walkable,
+    walkable_island_labels,
     walkable_islands,
     wall_off,
 )
@@ -102,6 +103,7 @@ from kiripix.recipes.looks import (
     CHECKS as LOOK_CHECKS,
     DECISIONS as LOOK_DECISIONS,
     LOOKS_DIR,
+    LOOK_ID,
     PARAMS as LOOK_PARAMS,
     LOOKS_STAGE,
     check_looks,
@@ -636,7 +638,9 @@ def _marker_decision() -> DecisionSpec:
                     "(at most 16 hex colours, each on the Project palette). The `colours` are what the game draws: "
                     "opaque, exactly these. Choose them from the room around the emitter, so the particles belong to "
                     "the painting. The game's particle kind, count and seed stay in its data; Kiripix gives an emitter "
-                    "no meaning.",
+                    "no meaning. A light, an emitter or an interactable may name a `look` (a built Look's ID): it then "
+                    "belongs to that Look and the game shows it with the Look (ADR 0013). A new Decision with the same "
+                    "ID and type moves a Marker into or out of a Look; IDs stay one set over the room and its Looks.",
         entry_schema={
             "type": "object",
             "properties": {
@@ -644,6 +648,7 @@ def _marker_decision() -> DecisionSpec:
                 "type": {"enum": list(_MARKER_FIELDS)},
                 "x": point,
                 "y": point,
+                "look": {"type": "string", "pattern": LOOK_ID},
                 **fields,
             },
             "required": ["id", "type", "x", "y"],
@@ -670,9 +675,9 @@ def _marker_decision() -> DecisionSpec:
     )
 
 
-def _no_walking(run: StageRun) -> np.ndarray:
-    """Where the Body can't walk: `solid`, and `pit` where the project defines it."""
-    solid = _read_mask(run.upstream[MASKS_STAGE] / "solid.png")
+def _no_walking(run: StageRun, solid_file: Path | None = None) -> np.ndarray:
+    """Where the Body can't walk: `solid` (a Look's own, with `solid_file`), and `pit` where the project defines it."""
+    solid = _read_mask(solid_file or run.upstream[MASKS_STAGE] / "solid.png")
     pit = run.upstream[MASKS_STAGE] / "pit.png"
     return solid | _read_mask(pit) if pit.is_file() else solid
 
@@ -680,6 +685,7 @@ def _no_walking(run: StageRun) -> np.ndarray:
 def _snapped(data: dict[str, Any]) -> dict[str, Any]:
     """An area with a `cell` has its box widened outward to whole cells from the room's top-left corner; `walkable` is
     written out whatever the Decision left to its default, so a reader needs no default."""
+    data = {**data, "look": data.get("look")}  # a Look's ID or null, always written (markers.json schema 3)
     if data["type"] == "emitter":  # the optional fields are written out, `null` when unset, so a reader needs no default
         return {**data, "shape": data.get("shape"), "direction": data.get("direction"), "colours": data.get("colours")}
     if data["type"] != "area":
@@ -810,7 +816,9 @@ def _removed_layers(run: StageRun) -> list[str]:
 
 
 MARKERS_FILE = "markers.json"
-MARKERS_SCHEMA_VERSION = 2  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046); 2: `links` (0265)
+LOOKS_FOLDER = "looks"  # in `place`'s output: `looks/<look>/walkable.png` and `clear.png`, per Look with its own `solid`
+MARKERS_SCHEMA_VERSION = 3  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046); 2: `links` (0265);
+# 3: each Marker has `look`, a Look's ID or null (ticket 0314)
 
 
 def _read_markers_file(place_dir: Path, asset: str) -> dict[str, Any]:
@@ -853,6 +861,17 @@ def _place(run: StageRun) -> None:
     _write_mask(run.output_dir / "walkable.png", walkable(_no_walking(run), footprint))
     # Where a dash may pass: only `solid` stops it. The walk test reads it, as `reach` works it out.
     _write_mask(run.output_dir / "clear.png", walkable(_read_mask(path), footprint))
+    # Each Look with its own `solid`: its walkable and clear, derived from that `solid` and the room's `pit` (ADR 0013)
+    looks_dir = run.upstream[LOOKS_STAGE]
+    for look in read_looks(looks_dir, run.asset_id):
+        if not look["solid"]:
+            continue
+        run.check_cancel()
+        own = looks_dir / str(look["solid"])
+        folder = run.output_dir / LOOKS_FOLDER / str(look["id"])
+        folder.mkdir(parents=True, exist_ok=True)
+        _write_mask(folder / "walkable.png", walkable(_no_walking(run, own), footprint))
+        _write_mask(folder / "clear.png", walkable(_read_mask(own), footprint))
 
 
 def _check_sort(run: StageRun, markers: list[dict[str, Any]], sort: list[SortPosition]) -> list[Finding]:
@@ -938,6 +957,7 @@ def _check_place(run: StageRun) -> list[Finding]:
                 )
             )
         seen.setdefault(marker_id, marker_type)
+    findings += _check_marker_looks(run, markers)
     path = run.output_dir / "walkable.png"
     if path.is_file():
         ground = _read_mask(path)
@@ -968,6 +988,45 @@ def _check_place(run: StageRun) -> list[Finding]:
             ))
     findings += _check_links(run, links)
     return findings + _check_areas(run, [m for m in markers if m["type"] == "area"])
+
+
+LOOK_MARKER_TYPES = ("light", "emitter", "interactable")  # the Marker types that may name a `look` (ADR 0013)
+
+
+def look_marker_problem(marker_type: str, look: str | None, built: set[str]) -> tuple[str, str] | None:
+    """Why a Marker may not name this `look`, as (finding code, message), or None. `built` is the room's Look IDs."""
+    if look is None:
+        return None
+    if marker_type not in LOOK_MARKER_TYPES:
+        return ("marker.look_type", f"a {marker_type} can't name a Look: only a light, an emitter or an interactable can "
+                                    f"(it names '{look}')")
+    if look not in built:
+        return ("marker.unknown_look", f"the Look '{look}' is not built: the room has "
+                                       f"{', '.join(sorted(built)) or 'no Looks'}")
+    return None
+
+
+def _check_marker_looks(run: StageRun, markers: list[dict[str, Any]]) -> list[Finding]:
+    """`marker.look_type` and `marker.unknown_look` (errors): a Marker's `look`, which `decide` refuses first, so these
+    catch a Look whose pick was undone later."""
+    named = [m for m in markers if m.get("look") is not None]
+    if not named:
+        return []
+    built = {str(look["id"]) for look in read_looks(run.upstream[LOOKS_STAGE], run.asset_id)}
+    findings = []
+    for marker in named:
+        problem = look_marker_problem(str(marker["type"]), str(marker["look"]), built)
+        if problem is None:
+            continue
+        code, message = problem
+        findings.append(Finding(
+            code=code,
+            message=f"the {marker['type']} '{marker['id']}': {message}",
+            position=Position(asset=run.asset_id, stage="place", x=int(marker["x"]), y=int(marker["y"])),
+            owner_action=f"Place {marker['id']} again with a `look` that is a built Look and a light, an emitter or an "
+                         f"interactable (a marker Decision of the same ID, left without `look` for the room's own), or "
+                         f"undo it (kiripix undo {run.asset_id} place)."))
+    return findings
 
 
 def _check_links(run: StageRun, links: list[dict[str, Any]]) -> list[Finding]:
@@ -1198,8 +1257,22 @@ def _with_links(targets: list[dict[str, Any]], links: list[dict[str, Any]]) -> l
     return targets + [{"type": "link", **link} for link in links] if targets else []
 
 
-def _flood_targets(place_dir: Path) -> list[dict[str, Any]]:
-    built: dict[str, Any] = json.loads((place_dir / MARKERS_FILE).read_text(encoding="utf-8"))
+REACH_FILE = "report.json"
+REACH_SCHEMA_VERSION = 1  # 1: `schema_version` and `looks`, the report per Look with its own `solid` (ticket 0315)
+
+
+def _read_reach_report(reach_dir: Path, asset: str) -> dict[str, Any]:
+    """A built `report.json`. An older file, one with no `schema_version`, is refused, naming the rebuild."""
+    built: dict[str, Any] = json.loads((reach_dir / REACH_FILE).read_text(encoding="utf-8"))
+    version = built.get("schema_version")
+    if version != REACH_SCHEMA_VERSION:
+        raise StageFailure(f"{REACH_FILE} has schema_version {version}; this Kiripix reads {REACH_SCHEMA_VERSION}. "
+                           f"Rebuild it: kiripix run {asset} reach --force")
+    return built
+
+
+def _flood_targets(place_dir: Path, asset: str) -> list[dict[str, Any]]:
+    built = _read_markers_file(place_dir, asset)
     return _with_links(_with_areas(built["markers"]), built.get("links", []))
 
 
@@ -1214,8 +1287,13 @@ def _reach_needs_input(run: StageRun) -> NeedsInput | None:
         return NeedsInput(reason, owner_action=f"Make {run.asset_id} a top-view room, or wait until side view is "
                                                f"planned: {reason}.")
     place_dir = run.upstream["place"]
-    if not (place_dir / MARKERS_FILE).is_file() or _flood_targets(place_dir):
+    if not (place_dir / MARKERS_FILE).is_file():
         return None
+    try:
+        if _flood_targets(place_dir, run.asset_id):
+            return None
+    except StageFailure:
+        return None  # an old `markers.json`: `place`'s own rebuild is what's wanted, and `reach` refuses it when run
     # Where the Body starts is the owner's choice, so the owner_action names no command an agent could run with a guessed
     # position (the M3 acceptance run, 2026-11-11).
     return NeedsInput("no Spawn or Exit is placed, so the Body has nowhere to start from",
@@ -1247,10 +1325,11 @@ def _main_group(targets: list[dict[str, Any]], regions: list[np.ndarray]) -> set
     return max(groups.values(), key=rank)
 
 
-def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarray,
+                  solid_file: Path | None = None) -> tuple[np.ndarray, dict[str, Any]]:
     """The Reachable Mask and the report, over `ground` (walkable) from `targets`, the Masks being `run.upstream`'s. The
     `reach` Stage writes both; the `reach` Probe answers with the report. The walkable areas among `targets` are
-    reported on, not flooded from."""
+    reported on, not flooded from. A Look's report is over its own walkable, with its own `solid` as `solid_file`."""
     areas = [marker for marker in targets if marker["type"] == "area"]
     placed = [marker for marker in targets if marker["type"] == "link"]
     links: list[Link] = [((int(link["from"][0]), int(link["from"][1])), (int(link["to"][0]), int(link["to"][1])),
@@ -1259,7 +1338,7 @@ def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarr
     width, height = run.settings["body"]["size"]
     footprint = (int(width), int(height))
     step, dash = int(run.params["step"]), int(run.settings["body"]["dash"])
-    solid = _read_mask(run.upstream[MASKS_STAGE] / "solid.png")
+    solid = _read_mask(solid_file or run.upstream[MASKS_STAGE] / "solid.png")
     regions: list[np.ndarray] = []
     crossed: list[tuple[int, ...]] = []
     # At step 1 every move can be made both ways, and so can a two-way Link, so a Marker another flood reached has that
@@ -1287,7 +1366,7 @@ def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarr
                     for index, marker in enumerate(targets)],
         "main": [targets[index]["id"] for index in sorted(main)],
         "islands": [vars(island) for island in walkable_islands(ground, reached)],
-        "gaps": [vars(gap) for gap in narrowest_gaps(_no_walking(run), footprint)],
+        "gaps": [vars(gap) for gap in narrowest_gaps(_no_walking(run, solid_file), footprint)],
         "areas": [],
         "links": [{"id": link["id"], "kind": link["kind"], "two_way": link["two_way"], "from": link["from"],
                    "to": link["to"], "joins": index in main_crossed,
@@ -1304,14 +1383,56 @@ def _reach_report(run: StageRun, targets: list[dict[str, Any]], ground: np.ndarr
     return reached, report
 
 
+def _with_no_looks(report: dict[str, Any]) -> dict[str, Any]:
+    """The report with `looks` (per Look, empty) and, on each island and area, the Looks that reach it (none yet)."""
+    for island in report["islands"]:
+        island["looks"] = []
+    for area in report["areas"]:
+        area["looks"] = []
+    report["looks"] = {}
+    return report
+
+
 def _reach(run: StageRun) -> None:
     path = run.upstream["place"] / "walkable.png"
     if not path.is_file():
         raise StageFailure(f"reach floods over walkable, and the {run.asset_params['view']} view doesn't derive it; "
                            "add walkable = { derived = true } under [masks] in kiripix.toml")
     ground = _read_mask(path)
-    reached, report = _reach_report(run, _flood_targets(run.upstream["place"]), ground)
+    place_dir = run.upstream["place"]
+    targets = _flood_targets(place_dir, run.asset_id)
+    reached, report = _reach_report(run, targets, ground)
     _write_mask(run.output_dir / "reachable.png", reached)
+    islands, labels = walkable_island_labels(ground, reached)
+    report = _with_no_looks(report)
+    # Each Look with its own `solid`: the same flood from the room's Spawns and Exits over the Look's walkable (ADR 0013)
+    looks_dir = run.upstream[LOOKS_STAGE]
+    for look in read_looks(looks_dir, run.asset_id):
+        if not look["solid"]:
+            continue
+        run.check_cancel()
+        name = str(look["id"])
+        own = place_dir / LOOKS_FOLDER / name / "walkable.png"
+        if not own.is_file():
+            raise StageFailure(f"the Look '{name}' has no walkable from `place`. Rebuild it: kiripix run {run.asset_id} place")
+        look_ground = _read_mask(own)
+        look_reached, own_report = _reach_report(run, targets, look_ground, looks_dir / str(look["solid"]))
+        folder = run.output_dir / LOOKS_FOLDER / name
+        folder.mkdir(parents=True, exist_ok=True)
+        _write_mask(folder / "reachable.png", look_reached)
+        _, own_labels = walkable_island_labels(look_ground, look_reached)
+        for number, island in enumerate(own_report["islands"], start=1):
+            island["added"] = int(((own_labels == number) & ~ground).sum())
+        for number, island in enumerate(islands, start=1):
+            if (look_reached & (labels == number)).any():
+                report["islands"][number - 1]["looks"].append(name)
+        for area in own_report["areas"]:
+            if area["reached"]:
+                for room_area in report["areas"]:
+                    if room_area["id"] == area["id"]:
+                        room_area["looks"].append(name)
+        report["looks"][name] = {key: own_report[key] for key in ("markers", "main", "islands", "areas")}
+    report = {"schema_version": REACH_SCHEMA_VERSION, **report}
     (run.output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
@@ -1328,11 +1449,13 @@ def _reach_probe(run: StageRun, targets: list[dict[str, Any]]) -> dict[str, Any]
         raise StageFailure(f"walkable is derived from the 'solid' Mask, and the {run.asset_params['view']} view "
                            "doesn't define one; add it under [masks] in kiripix.toml")
     width, height = run.settings["body"]["size"]
-    return _reach_report(run, targets, walkable(_no_walking(run), (int(width), int(height))))[1]
+    # The room's own report: the Probe doesn't flood the Looks, so `looks` is empty
+    report = _with_no_looks(_reach_report(run, targets, walkable(_no_walking(run), (int(width), int(height))))[1])
+    return {"schema_version": REACH_SCHEMA_VERSION, **report}
 
 
 def _check_reach(run: StageRun) -> list[Finding]:
-    report = json.loads((run.output_dir / "report.json").read_text(encoding="utf-8"))
+    report = _read_reach_report(run.output_dir, run.asset_id)
     asset = run.asset_id
     erase = f"erase with a brush Decision (kiripix decide {asset} {MASKS_STAGE} --help)"
     findings = []
@@ -1377,6 +1500,16 @@ def _check_reach(run: StageRun) -> list[Finding]:
             )
     for island in report["islands"]:
         x, y, width, height = int(island["x"]), int(island["y"]), int(island["width"]), int(island["height"])
+        if island["looks"]:
+            findings.append(Finding(
+                code="reach.island_under_look",
+                severity="info",
+                message=f"walkable ground at ({x}, {y}), {width}x{height}, can't be reached from any Spawn or Exit, but "
+                        f"can under the Look {', '.join(island['looks'])}",
+                position=Position(asset=asset, stage="reach", x=x, y=y, width=width, height=height),
+                owner_action="Nothing, if the Look is what opens the way there.",
+            ))
+            continue
         findings.append(
             Finding(
                 code="reach.unreachable_island",
@@ -1391,6 +1524,17 @@ def _check_reach(run: StageRun) -> list[Finding]:
         if area["reached"]:
             continue
         x, y = int(area["x"]), int(area["y"])
+        if area["looks"]:
+            findings.append(Finding(
+                code="area.not_reached",
+                severity="info",
+                message=f"no walkable part of the area '{area['id']}' can be reached from any Spawn or Exit, but can "
+                        f"under the Look {', '.join(area['looks'])}",
+                position=Position(asset=asset, stage="reach", x=x, y=y, width=int(area["width"]),
+                                  height=int(area["height"])),
+                owner_action="Nothing, if the Look is what opens the way there.",
+            ))
+            continue
         findings.append(
             Finding(
                 code="area.not_reached",
@@ -1402,8 +1546,35 @@ def _check_reach(run: StageRun) -> list[Finding]:
                              f"for standing in, place {area['id']} again with walkable false.",
             )
         )
+    room_reached = {marker["id"] for marker in report["markers"] if marker["reached"]}
+    for name, own in report["looks"].items():
+        for marker in own["markers"]:
+            if marker["reached"] or marker["id"] not in room_reached:
+                continue
+            x, y = int(marker["x"]), int(marker["y"])
+            findings.append(Finding(
+                code="reach.look_cuts_off",
+                severity="info",
+                message=f"the {marker['type']} '{marker['id']}' at ({x}, {y}) can't be reached under the Look {name}",
+                position=Position(asset=asset, stage="reach", x=x, y=y),
+                owner_action=f"Nothing, if the Look is meant to close that way. To open it, edit the Look's solid "
+                             f"(kiripix decide {asset} looks --help).",
+            ))
+        for island in own["islands"]:
+            if not island["added"]:
+                continue
+            x, y, width, height = int(island["x"]), int(island["y"]), int(island["width"]), int(island["height"])
+            findings.append(Finding(
+                code="reach.look_island",
+                severity="warning",
+                message=f"the Look {name} makes ground walkable at ({x}, {y}), {width}x{height}, that it doesn't reach "
+                        "from any Spawn or Exit",
+                position=Position(asset=asset, stage="reach", x=x, y=y, width=width, height=height),
+                owner_action=f"If the Body should get there, open a way in the Look's solid: kiripix decide {asset} "
+                             "looks --help. If not, leave it.",
+            ))
     for gap in report["gaps"]:
-        fits = "the Body fits" if gap["width"] >= gap["needed"] else "the Body doesn't fit"
+        fits ="the Body fits" if gap["width"] >= gap["needed"] else "the Body doesn't fit"
         findings.append(
             Finding(
                 code="reach.narrow_gap",
@@ -1419,7 +1590,7 @@ def _check_reach(run: StageRun) -> list[Finding]:
 # export: what the game gets, with nothing of Godot in it: the mapped Plate, the collision Masks and `room.json` with the collision shapes, the
 # navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
 
-ROOM_SCHEMA_VERSION = 11 # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
+ROOM_SCHEMA_VERSION = 12 # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
 #                          3: `area` Markers, with `walkable` and a snapped box (ticket 0137)
 #                          4: an emitter's `shape`, `direction` and `colours`, `null` when unset (ticket 0185)
 #                          5: `masks`, the collision Masks' PNG files, by name (ticket 0140)
@@ -1429,6 +1600,8 @@ ROOM_SCHEMA_VERSION = 11 # 2: `layers`, the foreground Layers with their files a
 #                          9: a Layer's `remainder`, its file with the frame Loops' regions cleared, or None (ticket 0211)
 #                          10: a Loop's `rest`, true when frame 0 is the room's and `sequence` never plays it (ticket 0222)
 #                          11: `links`, each Link's ID, kind, ends and `two_way`, ordered by ID (ticket 0267)
+#                          12: a Look's `markers`, `navigation`, `added` and `cleared`, and `scene`, the bodies the scene's
+#                              `solid` is split into; the room's `markers` hold only its own (ticket 0316)
 STRIP_LIMIT = 4096  # px: a Loop's strip wraps into rows at this width, and none may be taller (a texture's safe size)
 MASKS_DIR = "masks"  # in `out/export/`, and beside the scene in the game: the game builds its grid from `masks/solid.png`
 _COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
@@ -1444,11 +1617,57 @@ def _export_needs_input(run: StageRun) -> NeedsInput | None:
 LOOKS_DIR_OUT = "looks"  # in `out/export/`, and beside the scene in the game: each Look's pieces, `looks/<look>/<piece>.png`
 
 
-def _export_looks(run: StageRun, mask_files: dict[str, str], tolerance: float) -> list[dict[str, Any]]:
+def _look_markers(markers: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """A Look's own Markers by Look ID, as the room's entries are (the Look is the key, so `look` is left out of them)."""
+    found: dict[str, list[dict[str, Any]]] = {}
+    for marker in markers:
+        if marker.get("look") is not None:
+            found.setdefault(str(marker["look"]), []).append({key: value for key, value in marker.items() if key != "look"})
+    return found
+
+
+def _shapes(mask: np.ndarray, tolerance: float) -> list[Any]:
+    return collision_shapes(simplify(contours(mask), tolerance))
+
+
+def _write_derived(run: StageRun, mask: np.ndarray, target: str) -> None:
+    (run.output_dir / MASKS_DIR).mkdir(exist_ok=True)
+    _write_mask(run.output_dir / target, mask)
+
+
+def _scene_solid(run: StageRun, room_solid: np.ndarray, cleared: dict[str, np.ndarray], whole: list[Any],
+                 tolerance: float) -> dict[str, Any]:
+    """What the scene's `solid` bodies hold (ADR 0013): the room's `solid` minus every pixel some Look clears, each Look's
+    own cleared pixels (those no other Look clears), and the pixels several Looks clear, one body per set of Looks. With no
+    Look clearing anything, the room's body is the whole `solid`, as it was."""
+    if not any(mask.any() for mask in cleared.values()):
+        return {"solid": whole, "cleared": {name: [] for name in cleared}, "shared": []}
+    names = sorted(cleared)
+    stack = np.stack([cleared[name] for name in names])
+    count = stack.sum(axis=0)
+    run.check_cancel()
+    alone = {name: _shapes(cleared[name] & (count == 1), tolerance) for name in names}
+    shared: list[dict[str, Any]] = []
+    several = count >= 2
+    if several.any():
+        patterns = np.unique(stack[:, several].T, axis=0)
+        for pattern in sorted(patterns.tolist(), key=lambda row: [names[i] for i, on in enumerate(row) if on]):
+            run.check_cancel()
+            members = (stack == np.asarray(pattern, dtype=np.bool_)[:, None, None]).all(axis=0) & several
+            shared.append({"looks": [names[i] for i, on in enumerate(pattern) if on], "collision": _shapes(members, tolerance)})
+    return {"solid": _shapes(room_solid & ~stack.any(axis=0), tolerance), "cleared": alone, "shared": shared}
+
+
+def _export_looks(run: StageRun, mask_files: dict[str, str], tolerance: float, markers: list[dict[str, Any]],
+                  room_solid: np.ndarray, whole: list[Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The Looks as `room.json` lists them: their pieces copied to `looks/`, their `solid` Masks to `masks/<look>.solid.png`
-    (and named in `mask_files`), and their shapes simplified as the room's are. Ordered by ID."""
+    (and named in `mask_files`), and their shapes simplified as the room's are. Ordered by ID. A Look with its own `solid`
+    also gets `masks/<look>.added.png` and `masks/<look>.cleared.png` (its `solid` against the room's), its navigation
+    (its walkable and its reachable), and the second result is the room's `scene`. Its Markers are the Look's, not the room's."""
     built = sorted(read_looks(run.upstream[LOOKS_STAGE], run.asset_id), key=lambda look: str(look["id"]))
+    own_markers = _look_markers(markers)
     listed: list[dict[str, Any]] = []
+    cleared: dict[str, np.ndarray] = {}
     for look in built:
         run.check_cancel()
         name = str(look["id"])
@@ -1463,16 +1682,28 @@ def _export_looks(run: StageRun, mask_files: dict[str, str], tolerance: float) -
             "id": name, "condition": look["condition"], "file": copy(str(look["plate"])) if look["plate"] else None,
             "box": look["box"], "pieces": [{"layer": piece["id"], "file": copy(str(piece["file"]))}
                                             for piece in look["layers"]],
-            "solid": None, "collision": {},
+            "solid": None, "collision": {}, "added": None, "cleared": None, "navigation": None,
+            "markers": own_markers.get(name, []),
         }
         if look["solid"]:
             source = run.upstream[LOOKS_STAGE] / str(look["solid"])
             (run.output_dir / MASKS_DIR).mkdir(exist_ok=True)
             shutil.copyfile(source, run.output_dir / MASKS_DIR / f"{name}.solid.png")
             record["solid"] = mask_files[f"{name}.solid"] = f"{MASKS_DIR}/{name}.solid.png"
-            record["collision"] = {"solid": collision_shapes(simplify(contours(_read_mask(source)), tolerance))}
+            own = _read_mask(source)
+            record["collision"] = {"solid": _shapes(own, tolerance)}
+            for key, mask in (("added", own & ~room_solid), ("cleared", room_solid & ~own)):
+                target = f"{MASKS_DIR}/{name}.{key}.png"
+                _write_derived(run, mask, target)
+                mask_files[f"{name}.{key}"] = target
+                record[key] = {"file": target, "collision": _shapes(mask, tolerance)}
+            cleared[name] = room_solid & ~own
+            ground = (_read_mask(run.upstream["place"] / LOOKS_FOLDER / name / "walkable.png")
+                      & _read_mask(run.upstream["reach"] / LOOKS_FOLDER / name / "reachable.png"))
+            walk = navigation_polygon(simplify(contours(ground), tolerance))
+            record["navigation"] = {"vertices": walk.vertices, "polygons": walk.polygons, "outlines": walk.outlines}
         listed.append(record)
-    return listed
+    return listed, _scene_solid(run, room_solid, cleared, whole, tolerance)
 
 
 LOOPS_DIR_OUT = "loops"  # in `out/export/`, and beside the scene in the game: each Loop's strips, `loops/<loop>/<piece>.png`
@@ -1610,7 +1841,10 @@ def _export(run: StageRun) -> None:
             shutil.copyfile(path, run.output_dir / MASKS_DIR / path.name)  # byte for byte: 1-bit, the room's size
             mask_files[name] = f"{MASKS_DIR}/{path.name}"
         collision[name] = collision_shapes(simplify(contours(_read_mask(path)), tolerance)) if path.is_file() else []
-    looks = _export_looks(run, mask_files, tolerance)
+    solid_path = run.upstream[MASKS_STAGE] / "solid.png"
+    ground_size = _read_mask(run.upstream["place"] / "walkable.png").shape
+    room_solid = _read_mask(solid_path) if solid_path.is_file() else np.zeros(ground_size, dtype=np.bool_)
+    looks, scene = _export_looks(run, mask_files, tolerance, markers, room_solid, collision["solid"])
     loops, remainders = _export_loops(run)
     for layer in layers:  # the Layer's remainder file, or None when no frame Loop moves part of it (ticket 0211)
         layer["remainder"] = remainders.get(str(layer["id"]))
@@ -1624,12 +1858,15 @@ def _export(run: StageRun) -> None:
         "collision": collision,
         "navigation": {"vertices": navigation.vertices, "polygons": navigation.polygons,
                        "outlines": navigation.outlines},
-        "markers": markers,
+        # the room's own Markers only; a Look's are under the Look
+        "markers": [{key: value for key, value in marker.items() if key != "look"}
+                    for marker in markers if marker.get("look") is None],
         "links": [{"id": link["id"], "kind": link["kind"], "from": link["from"], "to": link["to"],
                    "two_way": link["two_way"]} for link in sorted(links, key=lambda each: str(each["id"]))],
         "layers": layers,
         "masks": mask_files,
         "looks": looks,
+        "scene": scene,
         "loops": loops,
     }
     (run.output_dir / "room.json").write_text(json.dumps(room, indent=2) + "\n", encoding="utf-8")
@@ -1920,15 +2157,20 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="place",
-            version=2,  # 2: markers.json has `links` (ticket 0265)
+            version=3,  # 2: markers.json has `links` (ticket 0265); 3: schema 3, `look` on a Marker, and the Looks' walkable (0314)
             description="Places Markers: Exits, Spawns, lights, emitters, areas (boxes), Links (two ends, for a hop, a "
-                        "climb or a jump) and y-sort lines, one for each foreground Layer unless it is always above.",
-            inputs=StageInputs(upstream=["palette", "layers", MASKS_STAGE],
+                        "climb or a jump) and y-sort lines, one for each foreground Layer unless it is always above. A "
+                        "light, an emitter or an interactable may belong to a Look (`look`). A Look with its own `solid` "
+                        "gets its own walkable and clear Masks.",
+            inputs=StageInputs(upstream=["palette", "layers", MASKS_STAGE, LOOKS_STAGE],
                                settings=["body", "masks", "project.tile", "palette"]),
             decisions=(_marker_decision(), _link_decision(), _above_decision()),
             checks=(
                 CheckSpec(code="marker.duplicate_id", description="Marker IDs are unique."),
                 CheckSpec(code="marker.not_walkable", description="Exits and Spawns stand on walkable ground."),
+                CheckSpec(code="marker.look_type", description="Only a light, an emitter or an interactable names a "
+                                                               "`look`."),
+                CheckSpec(code="marker.unknown_look", description="A Marker's `look` names a built Look."),
                 CheckSpec(code="layer.no_ysort", description="Every foreground Layer has a y-sort line or is above."),
                 CheckSpec(code="ysort.unknown_layer", description="Every y-sort line or flag names a Layer of the room."),
                 CheckSpec(code="ysort.no_layer", description="Every y-sort line names the Layer it sorts (warning)."),
@@ -1958,9 +2200,10 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="reach",
-            version=2,  # 2: the flood crosses Links, and the report lists them (ticket 0266)
+            version=3,  # 2: the flood crosses Links, and the report lists them (ticket 0266); 3: a flood per Look with its
+            # own `solid`, and `report.json` schema 1 (ticket 0315)
             description="Reachability of every Marker for the Body's footprint.",
-            inputs=StageInputs(upstream=["place", MASKS_STAGE], settings=["body"]),
+            inputs=StageInputs(upstream=["place", MASKS_STAGE, LOOKS_STAGE], settings=["body"]),
             params=(ParamSpec(name="step", type="int", description="Flood step in px. 1 is exact; a longer one can "
                               "miss a gap the Body fits only at one exact offset.", default=1, minimum=1),),
             checks=(
@@ -1970,8 +2213,13 @@ ROOM = KindSpec(
                 CheckSpec(code="reach.link_joins", description="The Links that join ground the Body can't walk "
                           "between (info)."),
                 CheckSpec(code="reach.unreachable_island", description="All walkable ground is reachable (warning)."),
+                CheckSpec(code="reach.island_under_look", description="A room island some Look reaches (info)."),
+                CheckSpec(code="reach.look_island", description="Ground only a Look makes walkable is reachable under "
+                                                                "it (warning)."),
+                CheckSpec(code="reach.look_cuts_off", description="A Spawn or Exit the room reaches is reachable under "
+                                                                  "each Look (info)."),
                 CheckSpec(code="area.not_reached", description="A walkable area has walkable ground the Body can reach "
-                                                               "(warning)."),
+                                                               "(warning; info when a Look reaches it)."),
                 CheckSpec(code="reach.narrow_gap", description="The narrowest gaps in solid (info)."),
             ),
             available_from="M1",
@@ -1983,8 +2231,10 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="export",
-            version=2,  # 2: room.json schema 11, with `links` (ticket 0267)
-            description="Builds what the game gets: the mapped Plate, collision shapes, navigation polygon and Markers. "
+            version=3,  # 2: room.json schema 11, with `links` (ticket 0267); 3: schema 12, a Look's Markers, navigation and
+            # added and cleared Masks, and the scene's split `solid` (ticket 0316)
+            description="Builds what the game gets: the mapped Plate, collision shapes, navigation polygon and Markers, and "
+                        "for each Look with its own `solid` what it adds, clears and navigates. "
                         "`kiripix export` then writes them into the Godot project.",
             inputs=StageInputs(upstream=["reach", "place", "palette", MASKS_STAGE, LOOKS_STAGE, LOOPS_STAGE],
                                settings=["export.godot"]),

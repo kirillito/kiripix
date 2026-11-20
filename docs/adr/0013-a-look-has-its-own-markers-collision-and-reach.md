@@ -1,6 +1,7 @@
 # A Look has its own Markers, collision, navigation and reach
 
-**Status: proposed** (2026-11-17, drafted for ticket 0269; amends ADR 0009. The Owner's acceptance is recorded here.)
+**Status: accepted** (2026-11-18, by the Owner, for ticket 0269, with one change: the Manifest's `schema_version` goes to 3
+for `ids.look_markers`, with a migration. Drafted 2026-11-17; amends ADR 0009.)
 
 ADR 0009 made a room's Looks a Stage on the room, and left open what a Look does beyond its picture (spec §16, open
 decision 8). The code already went part of the way: a Look's `solid` Decision starts from the room's `solid`, and `erase`
@@ -53,8 +54,8 @@ the game.
 
 - **The graph.** `place` and `reach` gain `looks` upstream (a valid edge: room is ... → looks → loops → place → reach →
   export). Every Look edit then makes `place`, `reach` and `export` stale, which is a deterministic rebuild. `reach` runs
-  one more set of floods per Look with its own `solid` (the laneway's room takes 1.4–1.7 s). `place` goes to version 3, and
-  `reach` to version 2.
+  one more set of floods per Look with its own `solid` (the laneway's room takes 1.4–1.7 s). `place` goes to version 3, `reach`
+  to version 3, and `export` to version 3 (each is at 2 since the Links, tickets 0265 to 0267).
 - **`markers.json` schema 3.** Each Marker has `look`, a Look ID or `null`, always written out. `place` refuses a `look`
   that names no built Look (`marker.unknown_look`, error, with the undo), and a `look` on any other Marker type
   (`marker.look_type`, error). For each Look with its own `solid`, `place` also writes `looks/<look>/walkable.png` and
@@ -97,8 +98,12 @@ the game.
   - `ids.markers` lists only the room's own Markers.
   - A new `ids.look_markers` lists the Look Markers as `<look>/<marker>`. Moving an exported Marker into or out of a
     Look changes its node path, so it is refused (`export.id_frozen`), as a rename is.
-  - It is optional and left out of the file when empty, as `looks`, `loops` and `states` were, so a room without Look
-    Markers keeps its Manifest byte for byte.
+  - **Manifest schema 3** (the Owner's change to the draft, which added the list without a bump as `looks`, `loops`,
+    `states`, `links` and `emotions` were). A schema 2 Manifest is migrated on read by a pure `migrate_v2` (`ids` gains
+    `look_markers`, empty), as `migrate_v1` does, and the next export of the Asset rewrites it once at schema 3. An older
+    Kiripix refuses a schema 3 Manifest, and `manifest merge` names a newer side as such.
+  - The list is left out of the file when empty, as `looks` and the others are, so the bump is the only change to the
+    Manifest of an Asset without Look Markers.
   - `manifest merge` takes the union of the new list too.
   - `ids.looks` is unchanged and freezes the Look node names under `LookSolids`, `LookNavigation` and `LookMarkers`.
 - **What the game does to show a Look:**

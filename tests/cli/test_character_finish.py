@@ -23,6 +23,10 @@ def build_finished(project: Kiripix, *params: str, border: int = 0) -> None:
             image = np.array(Image.open(path))
             image[:border], image[-border:], image[:, :border], image[:, -border:] = 0, 0, 0, 0
             Image.fromarray(image, "RGBA").save(path)
+        for path in frames(folder, "render", "depth"):  # and the depth pass is far (65535) in a render's background
+            depth = np.array(Image.open(path), dtype=np.uint16)
+            depth[:border], depth[-border:], depth[:, :border], depth[:, -border:] = 65535, 65535, 65535, 65535
+            Image.fromarray(depth).save(path)
     if params:
         project.json("set", HERO, "finish", *params)
     project.json("run", HERO, "finish")

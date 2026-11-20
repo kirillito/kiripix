@@ -35,8 +35,8 @@ def test_an_area_goes_into_the_markers_file_with_walkable_and_a_second_decision_
 
     assert "area.no_walkable" not in codes(checked(project))  # (24, 6) to (38, 22) holds walkable ground
     assert markers(folder) == [
-        {"id": "battle.yard", "type": "area", "x": 26, "y": 8, "x2": 38, "y2": 22, "walkable": True},
-        {"id": "escape.fence", "type": "area", "x": 0, "y": 0, "x2": 10, "y2": 10, "walkable": False},
+        {"id": "battle.yard", "type": "area", "x": 26, "y": 8, "x2": 38, "y2": 22, "walkable": True, "look": None},
+        {"id": "escape.fence", "type": "area", "x": 0, "y": 0, "x2": 10, "y2": 10, "walkable": False, "look": None},
     ]
 
 

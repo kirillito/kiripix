@@ -10,6 +10,7 @@ else:
     np = lazy_module("numpy")
 
 from kiripix.ops.colour import U8, srgb_to_oklab
+from kiripix.ops.layers import connected_regions
 from kiripix.ops.resample import BoolMask
 
 
@@ -145,4 +146,40 @@ def remove_light_rim(rgba: U8, reach: int = 10, lightness: float = 0.8, chroma: 
     light = (lab[..., 0] > lightness) & (np.hypot(lab[..., 1], lab[..., 2]) < chroma) & ~cleared
     gone = _grow_into(cleared, light, reach)
     out[gone & ~cleared] = 0
+    return out
+
+
+LIGHT_EDGE_LIGHTNESS = 0.7  # OKLab L above which an edge pixel is pale (ticket 0322, calibrated on trial 0241's six images)
+LIGHT_EDGE_CHROMA = 0.08  # OKLab a, b length under which it is grey
+LIGHT_EDGE_LARGEST = 4  # px: the trial's specks are 1 or 2; a white garment or a highlight is larger
+
+
+def light_edge(rgba: U8, lightness: float = LIGHT_EDGE_LIGHTNESS, chroma: float = LIGHT_EDGE_CHROMA,
+               largest: int = LIGHT_EDGE_LARGEST) -> BoolMask:
+    """The image model's white rim, left by the cutout as specks on the figure's edge: each 8-connected piece of pale (OKLab L
+    over `lightness`) grey (a, b length under `chroma`) opaque pixels that has a pixel on the silhouette's edge (a transparent
+    4-neighbour) and is at most `largest` pixels. The canvas's border counts as figure, so a figure cut by the canvas (a
+    portrait's waist) has no edge along the cut. A highlight inside the figure isn't on the edge, and a white garment on it is
+    larger than a speck."""
+    _check_rgba(rgba)
+    if largest < 0:
+        raise ValueError("the largest piece can't be negative")
+    opaque = rgba[..., 3] > 0
+    around = np.pad(opaque, 1, mode="edge")
+    edge = opaque & ~(around[:-2, 1:-1] & around[2:, 1:-1] & around[1:-1, :-2] & around[1:-1, 2:])
+    lab = srgb_to_oklab(np.ascontiguousarray(rgba[..., :3]))
+    pale = opaque & (lab[..., 0] > lightness) & (np.hypot(lab[..., 1], lab[..., 2]) < chroma)
+    found: BoolMask = np.zeros(opaque.shape, dtype=np.bool_)
+    for piece in connected_regions(pale, eight=True):
+        if len(piece) <= largest and edge[piece[:, 0], piece[:, 1]].any():
+            found[piece[:, 0], piece[:, 1]] = True
+    return found
+
+
+def clear_light_edge(rgba: U8, lightness: float = LIGHT_EDGE_LIGHTNESS, chroma: float = LIGHT_EDGE_CHROMA,
+                     largest: int = LIGHT_EDGE_LARGEST) -> U8:
+    """`rgba` with the specks `light_edge` finds cleared to (0, 0, 0, 0), each piece whole, a speck two pixels deep included.
+    The input is not modified."""
+    out = rgba.copy()
+    out[light_edge(rgba, lightness, chroma, largest)] = 0
     return out

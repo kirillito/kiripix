@@ -1,20 +1,26 @@
 """The portrait's image Stages (ticket 0243, spec §6.7): cutout, register, fit, palette and finish on a fixture set made here:
 a neutral image on a noisy green with a light rim, and emotions that are shifted and scaled copies of it (what an image model
-does to an edit), or copies with other noise, each with its own changed face."""
+does to an edit), or copies with other noise, each with its own changed face.
+
+The game's rules (ticket 0321) leave `register` off and `finish`'s lock off by default; the tests of registration and the lock
+(0243's) switch them on with `still_body`."""
 
 import json
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 from conftest import Kiripix, stage_statuses
 from PIL import Image
 
 PORTRAIT = "portrait.sanjay"
 KEY = (30, 238, 24)
-WIDTH, HEIGHT = 480, 640  # 3:4, so `Grid.cover` for the 160 x 224 canvas scales by 20/7
-SCALE = 20 / 7
+WIDTH, HEIGHT = 480, 640
+SCALE = 2.6  # the figure's 520 rows onto the 200 canvas rows from `head_top` 40 to the anchor's row 239
 FIGURE = (slice(120, 640), slice(100, 380))  # rows, columns: the figure stands on the bottom edge
+CANVAS = (240, 192)  # rows, columns: the default canvas (0323)
 FACE = (slice(130, 270), slice(170, 310))
 FACE_POLYGON = [[150, 110], [330, 110], [330, 290], [150, 290]]  # the face's box with room for a 1 % shift
 REGION = (slice(110, 291), slice(150, 331))  # the same, as a box
@@ -78,6 +84,12 @@ def draw_face(project: Kiripix, expect: int = 0) -> dict[str, Any]:
     return project.json("decide", PORTRAIT, "register", "--decision", entry, expect=expect)
 
 
+def still_body(project: Kiripix, mode: str = "outside_face") -> None:
+    """0243's set: registration on and the body locked to the neutral's outside the face."""
+    project.json("set", PORTRAIT, "register", f"mode={mode}")
+    project.json("set", PORTRAIT, "finish", "lock_outside_face=true")
+
+
 def work(folder: Path, stage: str, name: str = "") -> Path:
     return folder / "work" / stage / name
 
@@ -92,12 +104,19 @@ def image_of(folder: Path, stage: str, emotion: str, neutral_name: str) -> np.nd
     return np.asarray(Image.open(work(folder, stage, name)).convert("RGBA"))
 
 
-def target_box(folder: Path, rows: slice, columns: slice) -> tuple[slice, slice]:
-    """A box of the 640 x 480 picture in the canvas's pixels, through the Grid `fit` recorded, widened by one."""
+def to_canvas(folder: Path, x: float, y: float) -> tuple[float, float]:
+    """A point of the 640 x 480 picture on the canvas, through the Grid and the padding `fit` recorded."""
     grid = record(folder, "fit", "grid.json")
-    x0, y0 = grid["offset_x"], grid["offset_y"]
-    return (slice(max(int((rows.start - y0) / SCALE) - 1, 0), int((rows.stop - y0) / SCALE) + 2),
-            slice(max(int((columns.start - x0) / SCALE) - 1, 0), int((columns.stop - x0) / SCALE) + 2))
+    scale = float(Fraction(str(grid["scale_x"])))
+    left, top = grid["padding"][0], grid["padding"][1]
+    return (x + left - grid["offset_x"]) / scale, (y + top - grid["offset_y"]) / scale
+
+
+def target_box(folder: Path, rows: slice, columns: slice) -> tuple[slice, slice]:
+    """A box of the 640 x 480 picture in the canvas's pixels, widened by one."""
+    x0, y0 = to_canvas(folder, columns.start, rows.start)
+    x1, y1 = to_canvas(folder, columns.stop, rows.stop)
+    return slice(max(int(y0) - 1, 0), int(y1) + 2), slice(max(int(x0) - 1, 0), int(x1) + 2)
 
 
 STAGES = ["brief", "source", "cutout", "register", "fit", "palette", "finish"]
@@ -116,10 +135,12 @@ def run_finish(project: Kiripix, expect: int = 0) -> dict[str, Any]:
     return build(project, "finish", expect)
 
 
-def test_shifted_and_scaled_emotions_end_on_the_canvas_with_the_body_still(project: Kiripix) -> None:
+@pytest.mark.parametrize("mode", ["outside_face", "figure"])
+def test_shifted_and_scaled_emotions_end_on_the_canvas_with_the_body_still(project: Kiripix, mode: str) -> None:
     base = neutral()
     emotions = {"happy": with_face(moved(base, 1.01, 2.4, -1.8), 11), "sad": with_face(moved(base, 0.99, -2.2, 1.9), 12)}
     folder = make_set(project, emotions)
+    still_body(project, mode)
 
     result = run_finish(project)
 
@@ -129,17 +150,17 @@ def test_shifted_and_scaled_emotions_end_on_the_canvas_with_the_body_still(proje
         entry = shown["images"][name]
         assert entry["applied"] and not entry["problems"] and entry["residual_target"] < 0.5, entry
     grid = record(folder, "fit", "grid.json")
-    assert (grid["width"], grid["height"]) == (160, 224) and grid["anchor"] == [80, 223]
+    assert (grid["width"], grid["height"]) == (192, 240) and grid["anchor"] == [96, 239]
     colours = {tuple(c) for c in record(folder, "palette", "palette.json")["colours"]}
     assert 1 < len(colours) <= 32
     box = target_box(folder, *REGION)
-    outside = np.ones((224, 160), dtype=bool)
+    outside = np.ones(CANVAS, dtype=bool)
     outside[box] = False
     base_image = image_of(folder, "finish", "neutral", "finish.png")
     assert outside.sum() > 10000 and (base_image[..., 3] == 255).sum() > 10000
     for name in ("neutral", *emotions):
         image = image_of(folder, "finish", name, "finish.png")
-        assert image.shape == (224, 160, 4), "the canvas's size"
+        assert image.shape == (*CANVAS, 4), "the canvas's size"
         assert set(np.unique(image[..., 3])) <= {0, 255}, "alpha is binary"
         opaque = image[image[..., 3] == 255][:, :3]
         assert {tuple(int(v) for v in c) for c in np.unique(opaque, axis=0)} <= colours, "every pixel on the set's colours"
@@ -150,6 +171,7 @@ def test_shifted_and_scaled_emotions_end_on_the_canvas_with_the_body_still(proje
 
 def test_an_emotion_shifted_past_the_limits_is_misaligned(project: Kiripix) -> None:
     folder = make_set(project, {"happy": with_face(moved(neutral(), 1.0, 40, 0), 11)})
+    still_body(project)
 
     result = build(project, "register", expect=2)
 
@@ -170,6 +192,7 @@ def noisy(image: np.ndarray, seed: int) -> np.ndarray:
 def test_noise_outside_the_face_is_locked_to_the_neutral_s_pixels(project: Kiripix) -> None:
     base = neutral()
     folder = make_set(project, {"happy": with_face(noisy(base, 5), 11), "angry": with_face(noisy(base, 6), 12)})
+    still_body(project)
 
     result = run_finish(project)
 
@@ -179,7 +202,7 @@ def test_noise_outside_the_face_is_locked_to_the_neutral_s_pixels(project: Kirip
     assert {f["data"]["emotion"] for f in shimmer} == {"happy", "angry"}, "what the lock removed is still reported"
     assert all(f["data"]["locked"] and f["data"]["exact"] > 100 for f in shimmer)
     box = target_box(folder, *REGION)
-    outside = np.ones((224, 160), dtype=bool)
+    outside = np.ones(CANVAS, dtype=bool)
     outside[box] = False
     base_image = image_of(folder, "finish", "neutral", "finish.png")
     for name in ("happy", "angry"):
@@ -188,15 +211,14 @@ def test_noise_outside_the_face_is_locked_to_the_neutral_s_pixels(project: Kirip
 
 def test_without_the_lock_shimmer_counts_the_noise(project: Kiripix) -> None:
     base = neutral()
-    folder = make_set(project, {"happy": with_face(noisy(base, 5), 11)})
-    project.json("set", PORTRAIT, "finish", "lock_outside_face=false")
+    folder = make_set(project, {"happy": with_face(noisy(base, 5), 11)})  # the lock is off by default
 
     result = run_finish(project)
 
     [found] = [f for f in result["findings"] if f["code"] == "portrait.shimmer"]
     assert not found["data"]["locked"] and found["data"]["face"] and found["data"]["exact"] > 100
     assert found["data"]["boxes"] and found["severity"] == "info" and found["owner_action"]
-    outside = np.ones((224, 160), dtype=bool)
+    outside = np.ones(CANVAS, dtype=bool)
     outside[target_box(folder, *REGION)] = False
     happy = image_of(folder, "finish", "happy", "finish.png")
     base_image = image_of(folder, "finish", "neutral", "finish.png")
@@ -220,15 +242,13 @@ def test_shimmer_counts_a_known_change_outside_the_face(project: Kiripix) -> Non
     changed = with_face(base, 11)
     changed[450:474, 250:274] = (255, 0, 255)  # a 24 px block, 8 to 9 canvas px across, on the body
     folder = make_set(project, {"happy": changed})
-    project.json("set", PORTRAIT, "finish", "lock_outside_face=false")
 
     result = run_finish(project)
-    x0 = record(folder, "fit", "grid.json")["offset_x"]
+    left, top = (int(v) for v in to_canvas(folder, 250, 450))
 
     [found] = [f for f in result["findings"] if f["code"] == "portrait.shimmer"]
     assert 40 <= found["data"]["exact"] <= 160 and found["data"]["visible"] >= 40
     [box] = [b for b in found["data"]["boxes"] if b["pixels"] >= 40]
-    left, top = int((250 - x0) / SCALE), int(450 / SCALE)  # about (84, 157) to (93, 166) on the canvas
     assert box["y"] <= top + 9 and box["y"] + box["height"] >= top and box["x"] <= left + 9 and box["x"] + box["width"] >= left
     assert found["position"]["x"] >= 0
 
@@ -266,8 +286,8 @@ def test_the_palette_modes_and_the_outline(project: Kiripix) -> None:
     finish = image_of(folder, "finish", "neutral", "finish.png")
     row = np.nonzero(finish[150, :, 3])[0]
     assert (finish[150, row[0], :3] == np.array(colours["outline"], dtype=np.uint8)).all(), "the figure's edge is the outline"
-    assert (finish[223, 40:120, 3] == 255).all(), "no line along the cut at the bottom of the canvas: the figure is there"
-    assert (finish[223, 60:100, :3] != np.array(colours["outline"], dtype=np.uint8)).any()
+    assert (finish[239, 50:140, 3] == 255).all(), "no line along the cut at the bottom of the canvas: the figure is there"
+    assert (finish[239, 70:120, :3] != np.array(colours["outline"], dtype=np.uint8)).any()
     project.json("set", PORTRAIT, "palette", "mode=off")
     run_finish(project)
     off = image_of(folder, "finish", "neutral", "finish.png")
@@ -326,3 +346,95 @@ def test_show_lists_each_emotions_built_images_per_stage(project: Kiripix) -> No
     assert images["register"]["input_image"] == images["cutout"]["image"]
     assert images["fit"]["image"] is None  # not built yet: only its input is listed
     assert (project.cwd / images["register"]["image"]).is_file()
+
+
+# ticket 0321: whole-body emotions
+
+
+ARM = (slice(130, 250), slice(390, 430))  # rows, columns: a raised arm beside the head, outside the face region
+
+
+def test_a_raised_arm_goes_through_finish_where_its_image_put_it(project: Kiripix) -> None:
+    base = neutral()
+    wave = with_face(base, 11)
+    wave[ARM] = blocks(np.random.default_rng(21), 120, 40)
+    folder = make_set(project, {"wave": wave})
+
+    registered = build(project, "register")
+    result = run_finish(project)
+
+    codes = [f["code"] for f in result["findings"]]
+    assert "portrait.misaligned" not in codes and "portrait.residual" not in codes
+    shown = record(folder, "register", "register.json")
+    assert shown["mode"] == "off" and shown["images"]["wave"]["scale"] == [1.0, 1.0] and not shown["images"]["wave"]["applied"]
+    assert "registration is off" in " ".join(str(r.get("message")) for r in registered["data"]["results"])
+    assert not record(folder, "finish", "finish.json")["locked"]
+    rows, columns = target_box(folder, *ARM)
+    inner = (slice(rows.start + 2, rows.stop - 3), slice(columns.start + 2, columns.stop - 3))  # inside the arm's outline
+    arm = image_of(folder, "finish", "wave", "finish.png")[inner][..., 3] == 255
+    assert arm.mean() > 0.9, "the arm is the emotion's own (a pale block at its edge goes with the light rim)"
+    assert (image_of(folder, "finish", "neutral", "finish.png")[inner][..., 3] == 0).all(), "the neutral has no arm there"
+
+
+def test_fit_puts_the_head_top_at_head_top_and_the_foot_on_the_anchor(project: Kiripix) -> None:
+    base = neutral()
+    folder = make_set(project, {"happy": with_face(base, 11), "sad": with_face(moved(base, 1.0, 0, 30), 12)}, face=False)
+
+    build(project, "fit")
+
+    grid = record(folder, "fit", "grid.json")
+    assert grid["head_top"] == 40 and grid["scale_x"] == grid["scale_y"] == "13/5", "one scale, the set's"
+    assert grid["figure"]["top_y"] == 40 and grid["figure"]["foot_y"] == 239
+    fitted = image_of(folder, "fit", "neutral", "fit.png")
+    assert fitted.shape == (*CANVAS, 4) and (fitted[:40, ..., 3] == 0).all() and fitted[40, :, 3].any()
+    assert (fitted[:, :3, 3] == 0).all(), "transparent where the source has no pixels"
+    sad = image_of(folder, "fit", "sad", "emotions/sad.png")
+    assert int(np.nonzero(sad[..., 3].any(axis=1))[0].min()) < 40, "an emotion that sits higher is not moved to the neutral"
+
+    project.json("set", PORTRAIT, "fit", "head_top=-1")
+    build(project, "fit")
+    assert record(folder, "fit", "grid.json")["scale_x"] == "5/2", "`Grid.cover`'s fill: 480/192"
+
+
+def test_an_emotion_that_reaches_the_edge_is_out_of_canvas(project: Kiripix) -> None:
+    base = neutral()
+    lean = with_face(base, 11)
+    lean[300:360, 20:100] = blocks(np.random.default_rng(22), 60, 80)  # an arm out to the left, joined to the body
+    make_set(project, {"happy": with_face(base, 12), "lean": lean}, face=False)
+    project.json("set", PORTRAIT, "brief", "width=160")  # a canvas narrower than the picture, so the arm reaches its edge
+
+    result = run_finish(project)
+
+    found = [f for f in result["findings"] if f["code"] == "portrait.out_of_canvas"]
+    assert [f["data"]["emotion"] for f in found] == ["lean"]
+    [one] = found
+    assert one["severity"] == "warning" and one["owner_action"] and not one.get("fix")
+    assert one["data"]["edges"]["left"] > 0 and one["data"]["edges"]["top"] == 0 and one["position"]["x"] == 0
+
+
+# ticket 0322: the white rim's leftover specks
+
+
+def test_pale_specks_on_the_edge_are_a_light_rim_until_finish_clears_them(project: Kiripix) -> None:
+    base = neutral()
+    specks = with_face(base, 11)
+    for rows in (slice(380, 385), slice(450, 455)):  # grey, lighter than the cutout's rim test reaches (L 0.75, under 0.8)
+        specks[rows, 95:100] = (175, 175, 175)  # where the rim was: specks of 2 x 2 canvas px at most
+    folder = make_set(project, {"specks": specks}, face=False)
+    project.json("set", PORTRAIT, "palette", "mode=off")  # the colours as they are, so the grey stays grey
+    project.json("set", PORTRAIT, "finish", "clear_light_edge=false")
+
+    kept = run_finish(project)
+
+    found = [f for f in kept["findings"] if f["code"] == "portrait.light_rim"]
+    [one] = [f for f in found if f["data"]["emotion"] == "specks"]
+    assert one["severity"] == "warning" and one["fix"] == f"kiripix set {PORTRAIT} finish clear_light_edge=true"
+    left = int(to_canvas(folder, 100, 0)[0])
+    assert len([b for b in one["data"]["boxes"] if b["x"] <= left]) == 2, "both specks, on the figure's left edge"
+
+    project.json("set", PORTRAIT, "finish", "clear_light_edge=true")
+    cleared = run_finish(project)
+
+    assert "portrait.light_rim" not in [f["code"] for f in cleared["findings"]]
+    entry = record(folder, "finish", "finish.json")["light_edge"]
+    assert entry["cleared"] and entry["images"]["specks"]["cleared"] >= one["data"]["pixels"]

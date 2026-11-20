@@ -306,6 +306,9 @@ def test_a_portraits_emotions_validate(project: Kiripix, schemas: dict[str, dict
     kind = next(k for k in project.json("describe", "portrait")["data"]["kinds"] if k["name"] == "portrait")
     source = next(s for s in kind["stages"] if s["name"] == "source")
     assert {"emotion", "emotion_remove", "emotion_rename", "emotion_pick"} <= {d["name"] for d in source["decisions"]}
+    stages = {s["name"]: s for s in kind["stages"]}
+    assert "portrait.out_of_canvas" in {c["code"] for c in stages["finish"]["checks"]}  # ticket 0321
+    assert {"mode"} <= {p["name"] for p in stages["register"]["params"]} and "head_top" in {p["name"] for p in stages["fit"]["params"]}
 
 
 def test_import_of_loop_frames_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:

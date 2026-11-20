@@ -251,6 +251,11 @@ class AssetGraph:
         return self._base
 
     @property
+    def base_asset(self) -> Asset | None:
+        """The Asset's base (ADR 0012), or None, without building its graph."""
+        return self._base_asset
+
+    @property
     def body(self) -> AssetGraph | None:
         """The graph of a Wearable's body (ticket 0290), or None. It is only read, never written or locked from here."""
         if self._body is None and self._body_asset is not None:
@@ -801,7 +806,14 @@ class AssetGraph:
         """The Stage's Checks on its built output; nothing when it has no output."""
         if spec.check is None or self.built_hash(spec) is None:
             return []
-        found = spec.check(self.stage_run(spec, self.output_dir(spec)))
+        try:
+            found = spec.check(self.stage_run(spec, self.output_dir(spec)))
+        except StageFailure as failure:  # an output it can't read, such as one from an older Kiripix: rebuild it
+            command = failure.fix or f"kiripix run {self.asset.id} {spec.name} --force"
+            return [Finding(code=failure.code or "stage.output_unreadable", message=str(failure),
+                            position=Position(asset=self.asset.id, stage=spec.name),
+                            **({"owner_action": failure.owner_action} if failure.owner_action is not None
+                               else {"fix": command}))]
         for advise in _ADVISERS:
             found = advise(self, spec, found)
         return found

@@ -309,7 +309,7 @@ CHARACTER = KindSpec(
             version=2,  # a clip's `attach`, and a transition's, in clips.json (ticket 0300)
             inputs=StageInputs(files=["src/clips/*", THINGS_PATTERN], upstream=["model", "rig"],
                                settings=[BLENDER_VERSION_SETTING], given=[BLENDER_SETTING],
-                               base=BaseInputs(files=["src/clips/*"], decisions=["clips"])),
+                               base=BaseInputs(files=["src/clips/*", THINGS_PATTERN], decisions=["clips"])),
             decisions=(CLIP, TRANSITION, REMOVE),
             decisions_view=apply_clip_edits,
             checks=(
@@ -324,7 +324,6 @@ CHARACTER = KindSpec(
                 CheckSpec(code="clips.duplicate_name", description="A transition doesn't take the name of a clip."),
                 CheckSpec(code="clips.unknown_thing", description="A thing a clip holds (`attach`) is on the Asset."),
                 CheckSpec(code="clips.unknown_socket", description="The socket a held thing sits on is a bone of the rig."),
-                CheckSpec(code="clips.thing_twice", description="A clip holds a thing once."),
                 CheckSpec(code="clips.remove_unknown", description="A `remove` names a clip or a transition (a warning)."),
             ),
             run=run_clips,
@@ -337,11 +336,13 @@ CHARACTER = KindSpec(
         StageSpec(
             name="render",
             description="Headless Blender render at the target pixel size: colour, normal, depth and mask passes.",
-            version=3,  # each clip's own `frame` and `pivot` in render.json (ticket 0303); 2: held things (0302)
+            version=4,  # a clip keyed on the things it holds and those before them, a socket's point never lost to a same-named one (ticket 0313); 3: each clip's own `frame` and `pivot` in render.json (0303); 2: held things (0302)
             inputs=StageInputs(upstream=["model", "rig", "clips"], files=["src/clips/*", THINGS_PATTERN, "imported.jsonl"],
                                settings=["character.camera", "character.height", BLENDER_VERSION_SETTING,
                                          RENDER_FORMAT_SETTING],
-                               given=[BLENDER_SETTING], base=BaseInputs(files=["src/clips/*"], built=[RIG_STAGE])),
+                               given=[BLENDER_SETTING],
+                               # the base's journal orders its things and picks their current Variants (ADR 0012: hashed)
+                               base=BaseInputs(files=["src/clips/*", THINGS_PATTERN, "imported.jsonl"], built=[RIG_STAGE])),
             params=(
                 ParamSpec(
                     name="height",
@@ -485,7 +486,7 @@ CHARACTER = KindSpec(
         StageSpec(
             name="finish",
             description="Outline after mapping; the normal pass quantised and aligned to the colour frames.",
-            version=3,  # inner lines on a held thing's materials (ticket 0305); 2: finish.json gains `line_depth` (ticket 0247)
+            version=4,  # line_skip skips every index of a shared material name (ticket 0313); 3: inner lines on a held thing's materials (0305); 2: finish.json gains `line_depth` (ticket 0247)
             inputs=StageInputs(upstream=["palette", "render"], settings=["palette"]),
             params=(
                 ParamSpec(name="outline", type="bool", description="Draw a 1 px outline round the silhouette.", default=True),
@@ -546,13 +547,15 @@ CHARACTER = KindSpec(
         StageSpec(
             name="sheet",
             description="Packs frames into colour, normal and depth atlases with a fixed pivot per frame.",
-            version=3,  # a cell and pivot per clip in sheet.json, the atlas laid out by cell (ticket 0303); 2: depth.png (0296)
+            version=5,  # frames cut to their opaque boxes, `rect` plus `offset` (ticket 0308); 4: color.png an indexed PNG when it fits 256 colours (ticket 0310); 3: a cell and pivot per clip, the atlas laid out by cell (0303); 2: depth.png (0296)
             inputs=StageInputs(upstream=["finish", "clips", "render"]),
             checks=(
                 CheckSpec(code="sheet.pivot_drift", description="The feet don't move in a stationary clip."),
                 CheckSpec(code="sheet.frame_overflow", description="Every frame fits its cell."),
                 CheckSpec(code="sheet.frame_count", description="Frame counts match the clip."),
                 CheckSpec(code="sheet.empty_frame", description="No frame is empty."),
+                CheckSpec(code="sheet.colour_atlas_rgba",
+                          description="Info: the colour atlas has more than 256 colours, so it is RGBA, not indexed (a larger file)."),
             ),
             run=run_body_sheet,
             check=check_character_sheet,
@@ -561,7 +564,7 @@ CHARACTER = KindSpec(
         StageSpec(
             name="export",
             description="SpriteFrames, a CanvasTexture with the normal map, and an AnimatedSprite2D scene.",
-            version=2,  # character.json schema_version 6: a cell and pivot per clip (ticket 0303)
+            version=3,  # character.json schema_version 7: each frame's `offset`, `rect` trimmed (ticket 0308); 2: schema_version 6, a cell and pivot per clip (0303)
             inputs=StageInputs(upstream=["sheet", "palette", "clips"], settings=["export.godot"]),
             checks=(CheckSpec(code="export.no_target", description="The export target is set."),),
             output_root="out",

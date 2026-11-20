@@ -5,10 +5,12 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.commands.contract import Context, ExitCode, Outcome
+from kiripix.commands.project import NextData, NextInput, next_step
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core import cliptable as _cliptable  # noqa: F401 - registers its Project check
 from kiripix.core import ramps as _ramps  # noqa: F401 - registers `palette.parts_differ` (commands load lazily, 0277)
 from kiripix.core.assets import list_assets, load_asset
+from kiripix.core.errors import KiripixError
 from kiripix.core.hashing import HashCache
 from kiripix.core.previews import write_preview
 from kiripix.core.project import find_project
@@ -46,6 +48,10 @@ class CheckData(BaseModel):
         default_factory=list,
         description="The checked Stages whose status isn't `done`: their Checks ran on an output that may not match "
                     "the current inputs, so a clean result doesn't cover them. Empty when everything checked is current.")
+    unfinished: list[NextData] = Field(
+        default_factory=list,
+        description="With --all: what `next` says of each Asset it doesn't call done, since a clean result covers only "
+                    "what is built, not what is still to build or export. Empty when every Asset is finished.")
 
     def text(self) -> str:
         scope = "the Project" if self.project_checks else ", ".join(self.assets)
@@ -53,7 +59,7 @@ class CheckData(BaseModel):
         if self.out_of_date:
             names = ", ".join(f"{o.asset} {o.stage}" if self.project_checks else o.stage for o in self.out_of_date)
             line = f"checked {len(self.stages)} built Stage(s), {len(self.out_of_date)} out of date: {names}"
-        return line
+        return "\n".join([line] + [f"not finished: {step.text()}" for step in self.unfinished])
 
 
 @command(
@@ -89,8 +95,23 @@ def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
     else:
         code = ExitCode.OK
     out_of_date = [OutOfDate(asset=a, stage=s.stage, status=s.status, reason=s.reason) for a, s in late]
-    return Outcome(CheckData(assets=assets, stages=stages, project_checks=arguments.all, out_of_date=out_of_date),
-                   findings, code)
+    unfinished = _unfinished(assets, context) if arguments.all else []
+    return Outcome(CheckData(assets=assets, stages=stages, project_checks=arguments.all, out_of_date=out_of_date,
+                             unfinished=unfinished), findings, code)
+
+
+def _unfinished(assets: list[str], context: Context) -> list[NextData]:
+    """What `next` says of each Asset it doesn't call done (ticket 0233): a clean `check --all` covers what is built, not
+    what isn't built or exported yet."""
+    found: list[NextData] = []
+    for asset in assets:
+        try:
+            step = next_step(NextInput(asset=asset), context).data
+        except KiripixError:
+            continue  # an Asset that can't be loaded is already check_all's error
+        if step is not None and not step.done:
+            found.append(step)
+    return found
 
 
 class PreviewInput(BaseModel):

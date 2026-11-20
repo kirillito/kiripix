@@ -27,6 +27,7 @@ function portrait(studio: Studio, upto: string): void {
   studio.kiripix("new", "portrait", "sanjay");
   studio.kiripix("set", PORTRAIT, "brief", "width=32", "height=40");
   studio.kiripix("set", PORTRAIT, "cutout", "rim_reach=0", "spill_reach=0", "islands=0");
+  studio.kiripix("set", PORTRAIT, "fit", "head_top=-1"); // `Grid.cover`'s fill: the default 40 px head top needs a taller canvas
   studio.kiripix("pick", PORTRAIT, studio.importVariant(PORTRAIT, "neutral.png", figure(0)));
   for (const [id, face] of [["happy", 1], ["sad", 2]] as const) {
     studio.kiripix("decide", PORTRAIT, "source", "--decision", JSON.stringify({ decision: "emotion", data: { id } }));
