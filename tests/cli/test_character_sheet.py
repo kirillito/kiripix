@@ -72,6 +72,7 @@ def test_run_writes_both_atlases_and_sheet_json_whose_rectangles_line_up(project
     assert colour.shape == normal.shape == (sheet["atlas"]["height"], sheet["atlas"]["width"], 4)
     assert sheet["directions"] and [c["name"] for c in sheet["clips"]] == ["hit", "idle"]
     count = 0
+    cells: set[bytes] = set()
     for clip in sheet["clips"]:
         assert clip["fps"] > 0 and isinstance(clip["loop"], bool) and set(clip["directions"]) == set(sheet["directions"])
         for direction, listed in clip["directions"].items():
@@ -83,9 +84,12 @@ def test_run_writes_both_atlases_and_sheet_json_whose_rectangles_line_up(project
                 source = np.array(Image.open(folder / "work" / "finish" / "color" / name))
                 assert (restored(colour, frame) == source).all()
                 assert (restored(normal, frame)[..., 3] == restored(colour, frame)[..., 3]).all()  # one layout: the alpha lines up
+                normal_source = np.array(Image.open(folder / "work" / "finish" / "normal" / name))
+                cells.add(source.tobytes() + normal_source.tobytes())
                 count += 1
-    assert count == 8 * 14 and len({(f["rect"]["x"], f["rect"]["y"]) for c in sheet["clips"]
-                                    for fs in c["directions"].values() for f in fs}) == count
+    # a cell that repeats is packed once (ticket 0375): one rect for each distinct cell, fewer than the frames
+    rects = {(f["rect"]["x"], f["rect"]["y"]) for c in sheet["clips"] for fs in c["directions"].values() for f in fs}
+    assert count == 8 * 14 and len(rects) == len(cells) < count
     assert project.json("check", HERO)["findings"] == []
 
 

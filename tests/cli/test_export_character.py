@@ -54,6 +54,13 @@ def built(folder: Path) -> dict[str, Any]:
     return value
 
 
+def regions(folder: Path) -> set[tuple[Any, ...]]:
+    """The distinct AtlasTextures the SpriteFrames needs: a cell that repeats is packed once (ticket 0375), so its frames share one."""
+    character = built(folder)
+    return {(tuple(f["rect"].values()), tuple(f["offset"].values())) for c in character["clips"]
+            for fs in c["directions"].values() for f in fs}
+
+
 def test_the_stage_leaves_both_atlases_and_character_json_in_out_export(project: Kiripix) -> None:
     folder = exportable_character(project)
 
@@ -91,9 +98,9 @@ def test_a_character_exports_a_texture_sprite_frames_and_a_scene_and_the_manifes
     names = re.findall(r'"name": &"([a-z_]+)"', frames)
     assert names == [f"{c}_{d}" for c in ("hit", "idle") for d in DIRECTIONS]
     assert frames.count('"loop": false') == 8 and frames.count('"speed": 15.0') == 8 and frames.count('"speed": 12.0') == 8
-    assert f'path="{RES}/texture.tres"' in frames and frames.count("[sub_resource") == 8 * 14
+    assert f'path="{RES}/texture.tres"' in frames and frames.count("[sub_resource") == len(regions(folder))
     record = manifest(project)
-    assert record["asset"] == HERO and record["exported"] is True and record["schema_version"] == 3
+    assert record["asset"] == HERO and record["exported"] is True and record["schema_version"] == 4
     assert sorted(record["files"]) == FILES
     assert record["ids"] == {"markers": [], "layers": [], "masks": [],
                              "clips": sorted(f"{c}_{d}" for c in ("hit", "idle") for d in DIRECTIONS)}
@@ -149,7 +156,7 @@ def test_a_clip_taken_away_is_refused_and_a_clip_added_is_fine(project: Kiripix)
 
 
 def test_a_clip_changed_after_an_export_keeps_its_ids_and_exports_fewer_frames(project: Kiripix) -> None:
-    exportable_character(project)  # hit (4 frames) and idle (10)
+    folder = exportable_character(project)  # hit (4 frames) and idle (10)
     project.json("export", HERO)
     ids = manifest(project)["ids"]["clips"]
 
@@ -159,7 +166,7 @@ def test_a_clip_changed_after_an_export_keeps_its_ids_and_exports_fewer_frames(p
 
     assert data["counter"] == 2
     assert manifest(project)["ids"]["clips"] == ids
-    assert (project.cwd / FRAMES).read_text("utf-8").count("[sub_resource") == 8 * 9
+    assert (project.cwd / FRAMES).read_text("utf-8").count("[sub_resource") == len(regions(folder))
 
 
 def test_editing_the_scene_refuses_and_force_backs_it_up(project: Kiripix) -> None:
@@ -243,7 +250,7 @@ def test_a_version_1_manifest_is_read_and_rewritten_as_version_2(project: Kiripi
     project.json("export", HERO)
 
     record = manifest(project)
-    assert record["schema_version"] == 3 and len(record["ids"]["clips"]) == 16 and record["counter"] == 1
+    assert record["schema_version"] == 4 and len(record["ids"]["clips"]) == 16 and record["counter"] == 1
 
 
 RAMPS = f"{FOLDER}/ramps.png"

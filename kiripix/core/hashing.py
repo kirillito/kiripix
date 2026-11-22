@@ -43,6 +43,7 @@ class HashCache:
         self._derived_path = state_dir / "derived-cache.json"
         self._derived: dict[str, Any] = {}
         self._derived_dirty = False
+        self.memo: dict[str, Any] = {}  # what a Command works out once, such as the recipes' source files; never saved
         try:
             loaded = json.loads(self._path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):

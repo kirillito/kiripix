@@ -502,7 +502,7 @@ def room_export_problems(setup: Setup) -> list[str]:
         problems.append(f"the Area2D `{AREA}` lacks walkable = true or cell = {AREA_CELL}")
     if solid_size != (WIDTH, HEIGHT):
         problems.append(f"masks/solid.png is {solid_size}, not the room's {(WIDTH, HEIGHT)}")
-    if room.get("masks", {}).get("solid") != "masks/solid.png":
+    if {m.get("name"): m.get("file") for m in room.get("masks", [])}.get("solid") != "masks/solid.png":
         problems.append(f"room.json does not list masks/solid.png: {room.get('masks')}")
     if AREA not in [m.get("id") for m in room.get("markers", [])]:
         problems.append(f"room.json does not list the area `{AREA}`")

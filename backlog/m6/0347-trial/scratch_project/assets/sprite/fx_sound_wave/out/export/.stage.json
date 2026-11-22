@@ -1,0 +1,13 @@
+{
+  "stage": "export",
+  "input_hash": "e37f0153cf1e4179c8e938ac4b14da53fad3770cd6cdf2f62c1673ca5dc1ed96",
+  "version": 3,
+  "upstream_versions": {
+    "frames": 1,
+    "fit": 2,
+    "palette": 3,
+    "finish": 5,
+    "sheet": 5
+  },
+  "finished": "2026-11-20T19:37:39+00:00"
+}

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: none
 type: ticket
@@ -38,8 +38,36 @@ couldn't record its tokens at all: the session can't read its own count.
 
 ## Acceptance criteria
 
-- [ ] The batch mode is in the repo, and the README's line on installing the skill covers it.
-- [ ] A run over at least three ch01 rooms with painted Sources (the Owner paints them first), from one command, with no
+- [x] The batch mode is in the repo, and the README's line on installing the skill covers it.
+- [x] ~~A run over at least three ch01 rooms with painted Sources (the Owner paints them first), from one command, with no
       Owner input until the queue. Recorded here: per room, the stop, the tokens, the Decisions; then the Owner's minutes
-      in the queue sitting (`stats --match`), against M5's 2.95 minutes for one room.
-- [ ] Every finding the run raises is filed as a ticket or accepted in writing.
+      in the queue sitting (`stats --match`), against M5's 2.95 minutes for one room.~~ Dropped by the Owner (below).
+- [x] ~~Every finding the run raises is filed as a ticket or accepted in writing.~~ No run, so no findings.
+
+## Result
+
+Built (main session, 2026-11-20); the run over the ch01 rooms waits for the Owner, so `status` stays `todo`.
+
+- **Batch mode in the same skill**, not a sibling: `skills/room-first-pass/SKILL.md` gains "Batch mode" and the hand-over
+  note at every stop (`kiripix note`, from [0326](0326-m6-hand-over-note.md)). One skill reads more clearly, because the
+  per-room session *is* the single-room skill with two rules added (never ask or wait; no brief found → a note on `brief`, end).
+- **The driver**, `skills/room-first-pass/batch.py` (standard library only): `--match <glob>` (via `status --match`, 0327) or
+  room IDs; one `claude -p --output-format json` per room, in sequence; tokens from each result's `usage`
+  (input, cache creation, cache read, output) and its reported cost; Decisions per Stage in this pass from `stats` before and
+  after; where it stopped from `next`; live notes from `show` (a note on a `todo` brief is no `queue` stop, so `queue` can't
+  give it). `--timeout` (minutes, default 60), `--allowed-tools` (default: Kiripix, Read, Write, Edit, Glob, Grep),
+  `--model`, `--report`, `--dry-run`. The report is rewritten after every room, so a stopped batch still leaves one.
+- **Skips, never guesses:** a room with no Variant is skipped before any session; a room whose session leaves a note on
+  `brief` and stops there is reported as "no brief" with the note.
+- **The report**, `.kiripix/first-passes/<date>.md`: a table (room, stop, Decisions this pass, tokens, minutes), per room its
+  notes, tokens and the session's last words, the skipped rooms, then `kiripix queue --match <glob>` and `stats --match`.
+- Tried with a stub in place of `claude` on a scratch Project (a room with a Source, one leaving a note on `brief`, one with no
+  Source) and in `--dry-run` on the art Project (four ch01 rooms, all would run). No Command was missing, so no ticket filed.
+- README's line on installing the skill names `batch.py`.
+
+### The Owner's decision, 2026-11-20
+
+The run and its measure are dropped. The Owner won't do a manual run, and comparing the queue sitting with M5's 2.95 minutes
+says nothing: each M6 room now goes through more Stages (masks, layers, normals, palette and on), so an earlier milestone's
+minutes aren't a baseline for it. Kiripix is meant to be run by agents, with the Owner reviewing results and adjusting along
+the way. The batch mode stays, for agents to use (the gate runs it).

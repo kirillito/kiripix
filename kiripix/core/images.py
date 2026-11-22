@@ -103,6 +103,20 @@ def save_mask_png(path: Path, mask: npt.NDArray[np.bool_]) -> None:
     atomic.write_bytes(path, buffer.getvalue())
 
 
+def save_gray16_png(path: Path, pixels: npt.NDArray[np.uint16]) -> None:
+    """16-bit greyscale pixels as a PNG, such as a pinned depth (`ops.unit_to_u16`)."""
+    buffer = io.BytesIO()
+    Image.fromarray(pixels).save(buffer, format="PNG")
+    atomic.write_bytes(path, buffer.getvalue())
+
+
+def load_gray16(path: Path) -> npt.NDArray[np.uint16] | None:
+    """A 16-bit greyscale PNG's pixels; None when the image isn't one channel."""
+    with Image.open(path) as image:
+        pixels = np.asarray(image, dtype=np.uint16)
+    return pixels if pixels.ndim == 2 else None
+
+
 def load_palette(path: Path, shown: str) -> Palette:
     """Load a `.gpl` (stored) or `.hex` (imported) palette and run the palette Checks on it.
 

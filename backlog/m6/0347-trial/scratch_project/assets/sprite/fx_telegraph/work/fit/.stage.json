@@ -1,0 +1,9 @@
+{
+  "stage": "fit",
+  "input_hash": "d6b714ca4d5445b50af3ff349184374f16d3be9fd569e4c8064277d544fa2516",
+  "version": 2,
+  "upstream_versions": {
+    "frames": 1
+  },
+  "finished": "2026-11-20T19:37:33+00:00"
+}

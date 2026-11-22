@@ -134,6 +134,37 @@ class BodyInputs(BaseModel):
     wait: bool = False
 
 
+class ChosenInputs(BaseModel):
+    """What a Stage reads of the Assets that a parameter of its own lists (ticket 0356, ADR 0015: an NPC's Wearables).
+    `param` is the Stage parameter holding their IDs, comma-separated (an entry may carry `@<number>` after the ID; the
+    number is not part of the ID). `built` names the Stages of each one whose input hash is part of this Stage's input hash;
+    each must be done, or the Stage is needs-input with the command that builds it. An Asset that isn't there, or whose Kind has
+    none of the Stages, counts for nothing: the Stage's own `needs_input` says what is wrong with the list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    param: str
+    built: list[str] = []
+
+
+def chosen_ids(text: object) -> list[str]:
+    """The Asset IDs in a `ChosenInputs.param` value: comma-separated, each without its `@<number>` suffix, blanks dropped."""
+    if not isinstance(text, str):
+        return []
+    return [item.split("@", 1)[0].strip() for item in text.split(",") if item.strip()]
+
+
+@dataclass(frozen=True)
+class ChosenView:
+    """One Asset a Stage's `StageInputs.chosen` lists, as it is now: its Kind, its `body` parameter (a Wearable's body) and the
+    output folders of the Stages named, for those its Kind has. READ-ONLY."""
+
+    asset_id: str
+    kind: str
+    body: str | None
+    built: dict[str, Path] = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class BodyView:
     """What a Stage is handed of a Wearable's body (ticket 0291), for a Stage whose `StageInputs.body` has `built`. READ-ONLY:
@@ -167,6 +198,7 @@ class StageInputs(BaseModel):
     given: list[str] = []
     base: BaseInputs | None = None
     body: BodyInputs | None = None
+    chosen: ChosenInputs | None = None
 
 
 COMPUTED_SETTINGS: dict[str, Callable[[], Any]] = {}
@@ -312,6 +344,8 @@ class StageRun:
     base: BaseView | None = None
     # What the Stage's `StageInputs.body` declares of a Wearable's body (ticket 0291); None for any other Asset.
     body: BodyView | None = None
+    # The Assets the Stage's `StageInputs.chosen` parameter lists, by ID, for those that exist (ticket 0356).
+    chosen: dict[str, ChosenView] = field(default_factory=dict)
     # The Wearables worn on this Asset (ticket 0294), for a Stage with `StageSpec.worn_stage`: each Wearable's ID and the output
     # folder of its Stage of that name, for those that are built, in ID order. READ-ONLY. Empty for any other Stage.
     wearing: dict[str, Path] = field(default_factory=dict)
@@ -476,12 +510,23 @@ class StageSpec:
     # file's content (every file under a folder) to the input hash and hands the Stage their place in
     # `StageRun.project_files`. It is called with a run whose `project_files` is still empty.
     project_files: Callable[[StageRun], list[str]] | None = None
+    # What this Stage's `check` reads outside its own output folder, the Asset's own folder, its upstream outputs, its related
+    # Assets' folders (base, body, Wearables), `kiripix.toml` and the palette: Project files, as paths relative to the Project's
+    # root (a folder stands for every file under it), from the run as `project_files` is. Core keeps a Stage's Check findings until
+    # something the Check reads changes (ticket 0367) and adds each file's content to that key. A Check that reads anything else
+    # (another Asset, a file of the Project's) must name it here, or `check_cache=False` leaves the Stage out of the cache.
+    check_reads: Callable[[StageRun], list[str]] | None = None
+    # False leaves this Stage's findings out of the cache: its Check runs on every call.
+    check_cache: bool = True
     # The parameter values that what is built upstream gives this Stage (a generated Model's eye materials), by name; none
     # before it is built. The Stage uses one unless the Asset set that parameter itself (`StageRun.param_sources`), and
     # `show` reports it the same way.
     generated_params: Callable[[StageRun], dict[str, Scalar]] | None = None
     # The Stage's parts, each built from its own inputs (`PartHooks`); none for a Stage that is built whole.
     parts: PartHooks | None = None
+    # `preview --stage` draws this Stage's figure instead of reading an image from its output (an NPC's `choose`, ticket 0356):
+    # core stacks and swaps the Stage's output as `cast-sheet` does.
+    preview_figure: bool = False
 
 
 @dataclass(frozen=True)
@@ -496,6 +541,10 @@ class KindSpec:
     # An Asset of this Kind can be made from a base (ADR 0012): its `base` parameter names another Asset of the Kind, whose
     # parameters it falls back to and of which its Stages read what their `StageInputs.base` declares.
     takes_base: bool = False
+    # The Kind of the base, when it isn't this Kind's own (an `npc`'s base is a character), and the finding code that refuses a
+    # base that can't be one (`npc.base_unknown`); `asset.base_invalid` when unset.
+    base_kind: str | None = None
+    base_refusal: str = "asset.base_invalid"
     # An Asset of this Kind names its body in the `body` parameter (ticket 0290): an Asset of one of these Kinds, never of
     # this Kind. Its Stages' `StageInputs.body` say what they read of it. Empty: the Kind has no body.
     takes_body: tuple[str, ...] = ()

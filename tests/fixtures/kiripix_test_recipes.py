@@ -36,13 +36,14 @@ from kiripix.core.project_checks import register_project_check
 from kiripix.recipes import register_kind
 from kiripix.recipes.hole import hole_params
 from kiripix.runners import (
-    INPAINTER, MATTER, SEGMENTER, CheckCancel, Device, EmbeddingRunner, Runner, RunnerError, WeightFile, register_runner,
+    DEPTH, INPAINTER, MATTER, SEGMENTER, CheckCancel, Device, EmbeddingRunner, Runner, RunnerError, WeightFile, register_runner,
 )
 from PIL import Image
 from kiripix.recipes.base import (
     PLATE,
     DecisionSpec,
     KindSpec,
+    NeedsInput,
     ParamSpec,
     RunnerCall,
     StageFailure,
@@ -59,8 +60,29 @@ def _copy(run: StageRun) -> None:
     (run.output_dir / "out.txt").write_text(text, encoding="utf-8")
 
 
+def _check_reads(run: StageRun) -> list[str]:
+    """What the copy Check reads outside its output and the Asset's folder, as the Check declares it (ticket 0367)."""
+    return ["style-note.txt"]
+
+
 def _check_copy(run: StageRun) -> list[Finding]:
-    if "bad" not in (run.output_dir / "out.txt").read_text(encoding="utf-8"):
+    root = run.asset_dir.parents[2]
+    (root / ".kiripix").mkdir(exist_ok=True)  # the Check counts its own calls, in a file the Check cache doesn't read
+    with (root / ".kiripix" / "check-calls.txt").open("a", encoding="utf-8") as calls:
+        calls.write(f"{run.asset_id}\n")
+    note = run.asset_dir / "src" / "note.txt"  # a read outside the output, inside the Asset (ticket 0367)
+    if note.is_file() and "loud" in note.read_text(encoding="utf-8"):
+        return [Finding(code="demo.loud_note", severity="warning", message="the note is loud", position=Position(file="src/note.txt"),
+                        fix=f"kiripix set {run.asset_id} concat sep=-")]
+    style = root / "style-note.txt"  # a read outside the Asset, declared by `check_reads`
+    if style.is_file() and "loud" in style.read_text(encoding="utf-8"):
+        return [Finding(code="demo.loud_style", severity="warning", message="the style note is loud",
+                        owner_action="Quieten style-note.txt.")]
+    text = (run.output_dir / "out.txt").read_text(encoding="utf-8")
+    if "owner" in text:  # a finding only the Owner can settle (ticket 0325)
+        return [Finding(code="demo.owner_text", message="the text asks for the Owner", position=Position(file="out.txt"),
+                        owner_action="Decide what the text should say.")]
+    if "bad" not in text:
         return []
     return [Finding(code="demo.bad_text", message="the text says bad", position=Position(file="out.txt", x=1, y=2),
                     fix=f"kiripix set {run.asset_id} concat sep=-")]
@@ -74,6 +96,14 @@ def _check_demo_count(project: object, assets: list[Asset]) -> list[Finding]:
         return []
     return [Finding(code="demo.too_many", message=f"{len(demos)} demo Assets: {', '.join(demos)}",
                     owner_action="Remove all but one demo Asset.")]
+
+
+@register_project_check
+def _check_demo_mirror(project: object, assets: list[Asset]) -> list[Finding]:
+    """The test Project check that names Assets (ticket 0325): one finding for each demo Asset with a src/mirror.txt."""
+    return [Finding(code="demo.mirrored", severity="warning", message=f"{a.id} has a mirror file",
+                    position=Position(asset=a.id), owner_action="Look at the mirror.")
+            for a in assets if a.kind == "demo" and (a.dir / "src" / "mirror.txt").is_file()]
 
 
 def _concat(run: StageRun) -> None:
@@ -133,7 +163,8 @@ register_kind(
         description="A test Kind with trivial Stages.",
         stages=chain(
             StageSpec(name="copy", description="Copy the input.", inputs=StageInputs(files=["src/input.txt"]),
-                      run=_copy, check=_check_copy),
+                      version=int(os.environ.get("KIRIPIX_TEST_COPY_VERSION", "1")),
+                      run=_copy, check=_check_copy, check_reads=_check_reads),
             StageSpec(
                 name="concat",
                 description="Join the copy, the extra file and the palette's first line.",
@@ -185,6 +216,31 @@ register_kind(
             StageSpec(name="trace", description="Copy the image it is handed and write its Decisions.",
                       decisions=(point_decision("click", "A click on the image.", on_image=True),),
                       image="trace.png", run=_trace),
+        ),
+    )
+)
+
+
+# The test Kind `gated` (ticket 0325): one Stage that waits on a file only the Owner can add, src/ok.txt.
+
+
+def _gate_needs(run: StageRun) -> NeedsInput | None:
+    if "src/ok.txt" in run.files:
+        return None
+    return NeedsInput("src/ok.txt is missing", owner_action="Put the Owner's go-ahead in src/ok.txt.")
+
+
+def _gate(run: StageRun) -> None:
+    (run.output_dir / "out.txt").write_text("open", encoding="utf-8")
+
+
+register_kind(
+    KindSpec(
+        name="gated",
+        description="A test Kind with one Stage that waits on the Owner.",
+        stages=chain(
+            StageSpec(name="gate", description="Wait for the Owner's file.", inputs=StageInputs(files=["src/ok.txt"]),
+                      needs_input=_gate_needs, run=_gate),
         ),
     )
 )
@@ -316,6 +372,7 @@ register_kind(
 # The fake Runners. Everything a test watches is in the folder the Command runs in:
 # - runner-calls.jsonl: one line per call, with the device and the parameters;
 # - runner-fails: while it exists, a call fails;
+# - runner-out-of-memory: while it exists, a fake depth call at a `size` above 518 fails as the real one does with no VRAM;
 # - hold-runner: while it exists, a call marks `runner-holding` and waits in chunks, checking the cancel token;
 # - runner-embeds.jsonl, runner-decodes.jsonl: one line per run of a warm Runner's two halves;
 # - hold-embed: while it exists, an `embed` marks `embed-holding` and waits in chunks, checking the cancel token;
@@ -545,6 +602,34 @@ register_kind(
     )
 )
 
+# The test Kind `counted` (ticket 0372): one Stage with a Decision and a Runner call list that counts its own calls in
+# `.kiripix/calls-asked.txt`, which no cache reads. Its `version` comes from KIRIPIX_TEST_SHOT_VERSION.
+
+
+def _counted_calls(run: StageRun) -> list[RunnerCall]:
+    root = run.asset_dir.parents[2]
+    (root / ".kiripix").mkdir(exist_ok=True)
+    with (root / ".kiripix" / "calls-asked.txt").open("a", encoding="utf-8") as asked:
+        asked.write(f"{run.asset_id}\n")
+    return [RunnerCall(runner=MATTER, image=run.files["src/input.png"], params=dict(_MATTE_PARAMS), decisions=[])]
+
+
+def _shot(run: StageRun) -> None:
+    (run.output_dir / "out.txt").write_text("shot", encoding="utf-8")
+
+
+register_kind(
+    KindSpec(
+        name="counted",
+        description="A test Kind whose Runner call list counts how often it is worked out.",
+        stages=chain(
+            StageSpec(name="shot", description="Write a note.", inputs=StageInputs(files=["src/input.png"]), decisions=(MARK,),
+                      version=int(os.environ.get("KIRIPIX_TEST_SHOT_VERSION", "1")), run=_shot, runner_calls=_counted_calls),
+        ),
+    )
+)
+
+
 class FakeInpainter(Runner):
     """Deterministic, as the INPAINTER contract says: the crop of the image, with the hole's pixels set to the mean colour
     of the others (opaque). A subclass with another ID stands in for a swapped Runner."""
@@ -589,6 +674,79 @@ class FakeInpainter(Runner):
         self._device = None
 
 
+class FakeDepth(Runner):
+    """Deterministic: a float32 depth at the model's input size (`input_size`, as the real Runner's), 0 at the left column
+    and 1 at the right one."""
+
+    id = DEPTH
+    description = "A fake depth Runner for the tests."
+    licence = "test"
+    weights = (_fake_weight(hashlib.sha256(_WEIGHTS.read_bytes()).hexdigest()),)
+
+    def __init__(self) -> None:
+        self._device: Device | None = None
+
+    @property
+    def weights_hash(self) -> str:
+        version = "v2" if Path("fake-weights-v2").exists() else "v1"
+        return hashlib.sha256(f"{version} {super().weights_hash}".encode()).hexdigest()
+
+    def load(self, directory: Path, device: Device) -> None:
+        assert (directory / "fake_weights.bin").is_file()
+        _take_time("runner-load-seconds")
+        self._device = device
+
+    @property
+    def device_used(self) -> str:
+        return "cpu" if self._device == "cpu" else "cuda"
+
+    def call(self, image: np.ndarray, params: dict[str, Any], check_cancel: CheckCancel) -> np.ndarray:
+        from kiripix.runners.depth import input_size
+
+        assert self._device is not None, "called while not loaded"
+        _take_time("runner-call-seconds")
+        with Path("runner-calls.jsonl").open("a", encoding="utf-8") as calls:
+            calls.write(json.dumps({"runner": self.id, "device": self._device, "params": params}) + "\n")
+        hold = Path("hold-runner")
+        if hold.exists():
+            Path("runner-holding").write_text("", encoding="utf-8")
+            while hold.exists():
+                check_cancel()
+                time.sleep(0.05)  # stands in for a long inference
+        if Path("runner-fails").exists():
+            raise RunnerError("the fake Runner was told to fail")
+        if Path("runner-out-of-memory").exists() and int(params["size"]) != 518:
+            raise RunnerError("the GPU has no room for Depth Anything at size 1036: set the call's `size` to 518, or run with "
+                              "--cpu", set_param=("size", 518))
+        width, height = input_size(image.shape[1], image.shape[0], int(params["size"]))
+        return np.tile(np.linspace(0, 1, width, dtype=np.float32), (height, 1))
+
+    def unload(self) -> None:
+        self._device = None
+
+
+# The test Kind `depth`: one Stage whose only input is a DEPTH call on src/input.png, with the size in a Stage parameter.
+def _depth_calls(run: StageRun) -> list[RunnerCall]:
+    return [RunnerCall(runner=DEPTH, image=run.files["src/input.png"], params={"size": 1036}, decisions=[])]
+
+
+def _depth_map(run: StageRun) -> None:
+    [call] = _depth_calls(run)
+    shutil.copyfile(run.pinned(call), run.output_dir / "depth.png")
+
+
+register_kind(
+    KindSpec(
+        name="depth",
+        description="A test Kind with one depth Runner call.",
+        stages=chain(
+            StageSpec(name="relief", description="The pinned depth.", inputs=StageInputs(files=["src/input.png"]),
+                      image="depth.png", run=_depth_map, runner_calls=_depth_calls),
+        ),
+    )
+)
+
+
 class OtherInpainter(FakeInpainter):
     id = "fake.inpainter-b"
 
@@ -622,6 +780,7 @@ register_kind(
 register_runner(FakeSegmenter())
 register_runner(FakeMatter())
 register_runner(FakeInpainter())
+register_runner(FakeDepth())
 register_runner(OtherInpainter())
 register_runner(TamperedWeights())
 
@@ -822,7 +981,7 @@ class FakeBlender:
                             for band, value in enumerate(bands):  # one vertical band per material present (ticket 0159)
                                 image.paste(value, (band * width // len(bands), 0, (band + 1) * width // len(bands), height))
                         if name == "color":  # two colours that differ by frame, so a palette has something to choose
-                            tint = (index * 13 + len(direction["name"]) * 29) % 90
+                            tint = (clip["frames"].index(clip["frames"][index]) * 13 + len(direction["name"]) * 29) % 90  # a held pose (`still`) renders alike
                             image.paste((200 - tint, 100 + tint, 50 + tint, 255), (width // 2, 0, width, height))
                         if name == "material" and Path("blender-material-split").exists():  # the right half is the 2nd material
                             image.paste(2, (width // 2, 0, width, height))
@@ -897,3 +1056,27 @@ if Path("render-format").exists():  # an older Kiripix's render.json format (tic
     render_recipe.RENDER_SCHEMA_VERSION = int(Path("render-format").read_text("utf-8"))
 if Path("blender-version").exists():  # the fake reports another Blender version (ADR 0010: it is part of the hashes)
     blender_launcher.BLENDER_VERSION = tuple(int(part) for part in Path("blender-version").read_text("utf-8").split("."))
+
+
+def _log_state_work() -> None:
+    """Ticket 0373: while `.kiripix/log-states` exists in the Project, every `AssetGraph.states` call (the work `status` and
+    `queue` do for an Asset) appends the Asset's ID to `.kiripix/states-calls.txt`, after sleeping the seconds the marker
+    holds, so a test can see how often `serve` works an Asset out and widen the window in which two calls overlap."""
+    from kiripix.core import graph as graph_module
+
+    real = graph_module.AssetGraph.states
+
+    def states(self: Any) -> Any:
+        marker = self.project.state_dir / "log-states"
+        if marker.exists():
+            with (self.project.state_dir / "states-calls.txt").open("a", encoding="utf-8") as calls:
+                calls.write(self.asset.id + "\n")
+            delay = marker.read_text(encoding="utf-8").strip()
+            if delay:
+                time.sleep(float(delay))
+        return real(self)
+
+    graph_module.AssetGraph.states = states  # type: ignore[method-assign]
+
+
+_log_state_work()

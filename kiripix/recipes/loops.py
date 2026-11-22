@@ -393,6 +393,8 @@ CHECKS = (
                                                        "changes outside is cut away (warning, one per patch)."),
     CheckSpec(code="loop.partial_alpha", description="A kit frame's alpha is 0 or 255."),
     CheckSpec(code="loop.frame0",description="Frame 0 of a Loop's strips is the room inside its region, pixel for pixel."),
+    CheckSpec(code="loop.stale_size", description="A Loop's region lies inside the palette image; when the palette image "
+                                                  "changed size, frame 0 isn't compared until a rebuild."),
     CheckSpec(code="loop.seam", description=f"The loop's wrap is no rougher than {SEAM_LIMIT:g} times the change "
                                             "between its other frames (warning)."),
     CheckSpec(code="loop.still", description="A Loop's frames differ from frame 0 somewhere (warning)."),
@@ -1426,6 +1428,13 @@ def check_loops(run: StageRun) -> list[Finding]:
             tile = read_rgba(run.output_dir / file)[:height, :width]
             seen = tile[..., 3] > 0
             room = composite[y:y + height, x:x + width]
+            if room.shape != tile.shape:  # the palette image changed (by hand, or not yet rebuilt): nothing to compare
+                findings.append(Finding(
+                    code="loop.stale_size",
+                    message=f"the region of {name} ({width}x{height} at {x}, {y}) doesn't fit the palette image, "
+                            f"{composite.shape[1]}x{composite.shape[0]}: the Loop was built from another one",
+                    position=box, fix=f"kiripix run {asset} {LOOPS_STAGE} --force"))
+                break
             wrong = seen & (tile != room).any(axis=2)
             if wrong.any():
                 py, px = (int(v) for v in np.argwhere(wrong)[0])

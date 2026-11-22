@@ -9,6 +9,7 @@ from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core.assets import Asset, is_asset_id, list_assets, load_asset
 from kiripix.core.hashing import HashCache
 from kiripix.core.locks import asset_lock, hold
+from kiripix.core.match import matches, no_match
 from kiripix.core.project import find_project
 from kiripix.export import EXPORTERS, ExportOptions, ExportResult, PruneResult, export_assets, prune_assets
 
@@ -18,6 +19,9 @@ class ExportInput(BaseModel):
 
     asset: str | None = Field(None, description="The Asset ID, such as room.queen_west_alley. Omit with --all.")
     all: bool = Field(False, description="Export every room, prop, character and sprite, or none: Exit pairing must hold and no file may be refused.")
+    match: str | None = Field(None, description="Only the Assets whose IDs match this glob, such as room.ch01_dungeon_*; "
+                                                "alone it means --all --match. The --all rules hold for them, and --prune removes "
+                                                "only the deleted Assets that match.")
     force: bool = Field(False, description="Back up and overwrite files the Manifest lists that the game changed.")
     adopt: bool = Field(False, description="Back up and take over files at the target paths that the Manifest doesn't list.")
     prune: bool = Field(False, description="Remove the files of Assets deleted from the Project, under the same hash rule. "
@@ -29,10 +33,10 @@ class ExportInput(BaseModel):
     @model_validator(mode="after")
     def _asset_or_all(self) -> Self:
         if self.prune:
-            if self.all and self.asset is not None:
-                raise ValueError("give an Asset ID or --all, not both")
-        elif self.all == (self.asset is not None):
-            raise ValueError("give an Asset ID or --all, not both")
+            if (self.all or self.match is not None) and self.asset is not None:
+                raise ValueError("give an Asset ID or --all/--match, not both")
+        elif (self.all or self.match is not None) == (self.asset is not None):
+            raise ValueError("give an Asset ID or --all/--match, not both")
         return self
 
 
@@ -101,7 +105,8 @@ def export(arguments: ExportInput, context: Context) -> Outcome[ExportData]:
     project = find_project(context.cwd)
     cache = HashCache(project.state_dir)
     options = ExportOptions(force=arguments.force, adopt=arguments.adopt, dry_run=arguments.dry_run)
-    if arguments.prune and not arguments.all:
+    scoped = arguments.all or arguments.match is not None
+    if arguments.prune and not scoped:
         # The Assets pruned aren't in the Project, so there are no Asset locks to take, and no Asset is exported.
         run = prune_assets(project, arguments.asset, options)
         return Outcome(_data(arguments.asset, arguments.dry_run, [], run.pruned), run.findings)
@@ -110,8 +115,14 @@ def export(arguments: ExportInput, context: Context) -> Outcome[ExportData]:
         run = export_assets(project, assets, cache, options)
     else:
         # The project lock is held; take every exportable Asset's lock too, so none is being built while its files are read.
-        exportable = [asset for asset in list_assets(project)[0] if asset.kind in EXPORTERS]
+        every = list_assets(project)[0]
+        named = [asset for asset in every if arguments.match is None or matches(asset.id, arguments.match)]
+        if arguments.match is not None and not named and not arguments.prune:
+            raise no_match(arguments.match)
+        exportable = [asset for asset in named if asset.kind in EXPORTERS]
         with hold(project.state_dir, [asset_lock(asset.id) for asset in exportable], context.wait, context.command_line):
-            run = export_assets(project, None, cache, options, prune=arguments.prune)
+            run = export_assets(project, None, cache, options, prune=arguments.prune, match=arguments.match)
+        if arguments.match is not None and not named and not run.pruned:
+            raise no_match(arguments.match)  # a glob that names no Asset and no deleted one
     cache.save()
     return Outcome(_data(arguments.asset, arguments.dry_run, run.results, run.pruned), run.findings)

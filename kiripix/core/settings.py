@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal, Self
 
 import tomli_w
 import tomlkit
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
 
 from kiripix.checks import Finding, Position
 from kiripix.core import atomic
@@ -22,6 +22,7 @@ from kiripix.core.errors import KiripixError
 PROJECT_FILE_NAME = "kiripix.toml"
 Scalar = str | int | float | bool
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_CHOICE_NAME = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
 
 
 class _Strict(BaseModel):
@@ -49,6 +50,14 @@ class MaskDefinition(_Strict):
     meaning: str | None = None
     derived: bool = False
 
+    @model_serializer(mode="wrap")
+    def _leave_out_derived_false(self, handler: Any) -> dict[str, Any]:
+        """A painted Mask is written without `derived = false`, as the Owner writes it."""
+        data: dict[str, Any] = handler(self)
+        if data.get("derived") is False:
+            del data["derived"]
+        return data
+
     @model_validator(mode="after")
     def _painted_or_derived(self) -> Self:
         if self.derived == (self.colour is not None):
@@ -65,6 +74,14 @@ class MaskSet(BaseModel):
     __pydantic_extra__: dict[str, MaskDefinition] = Field(init=False)
 
     import_colours: dict[str, list[str]] = Field(default_factory=dict, alias="import")
+
+    def definitions(self) -> dict[str, MaskDefinition]:
+        """Every Mask of the view by name, painted and derived, in the project file's order."""
+        return dict(self.__pydantic_extra__ or {})
+
+    def painted(self) -> dict[str, MaskDefinition]:
+        """The painted Masks of the view by name, in the project file's order: derived ones are never painted."""
+        return {name: mask for name, mask in self.definitions().items() if not mask.derived}
 
     @model_validator(mode="after")
     def _import_names_masks(self) -> Self:
@@ -88,6 +105,13 @@ class ExportSection(_Strict):
     godot: GodotExport = GodotExport()
 
 
+class StyleSection(_Strict):
+    """`[style]`: the Assets whose look is the Project's (ticket 0334); `check` measures every other Asset against them."""
+
+    references: list[str] = Field(default_factory=list, description="Asset IDs of any Kind with style Checks (character, sprite, "
+                                                                    "wearable, room, prop); `kiripix style-add` and `style-remove`.")
+
+
 class ExtendSection(_Strict):
     """`[extend]`: the canvas, in px, that `kiripix extend <id> canvas` writes for the image model (ticket 0136)."""
 
@@ -97,6 +121,18 @@ class ExtendSection(_Strict):
     def _positive(self) -> Self:
         if min(self.canvas) < 16:
             raise ValueError("canvas must be at least 16 x 16 px")
+        return self
+
+
+class InboxSection(_Strict):
+    """`[inbox]`: the folder `kiripix inbox` reads the images the Owner made from (ticket 0350)."""
+
+    folder: str = Field("inbox", description="The folder, relative to the Project (or absolute), that `kiripix inbox` reads.")
+
+    @model_validator(mode="after")
+    def _named(self) -> Self:
+        if not self.folder.strip():
+            raise ValueError("folder must name a folder")
         return self
 
 
@@ -155,6 +191,33 @@ class RampSpec(_Strict):
     length: int = Field(ge=2, description="The steps of the part's ramp.")
     rgb: list[tuple[Channel, Channel, Channel]] | None = Field(
         None, description="The ramp's colours dark to light, `length` of them; unset when each character fits its own.")
+    choices: dict[str, list[tuple[Channel, Channel, Channel]]] = Field(
+        default_factory=dict,
+        description="Named ramps for the part (ticket 0356, ADR 0015), such as `auburn`: each `length` colours of the Project "
+                    "palette, dark to light, as [r, g, b] or \"#rrggbb\". An NPC names one per part; the game's appearance "
+                    "data and Kiripix share this list.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _choices_as_hex(cls, data: Any) -> Any:
+        """A choice's colours may be written as `"#rrggbb"` text; they are held (and written back) as [r, g, b]."""
+        if isinstance(data, dict) and isinstance(data.get("choices"), dict):
+            made: dict[Any, Any] = {}
+            for name, ramp in data["choices"].items():
+                if isinstance(ramp, list):
+                    ramp = [(int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)) if isinstance(c, str) and _HEX.match(c) else c
+                            for c in ramp]
+                made[name] = ramp
+            return {**data, "choices": made}
+        return data
+
+    @model_serializer(mode="wrap")
+    def _leave_out_no_choices(self, handler: Any) -> dict[str, Any]:
+        """A row with no named ramps is written as before: without `choices`."""
+        data: dict[str, Any] = handler(self)
+        if not data.get("choices"):
+            data.pop("choices", None)
+        return data
 
 
 class ClipSpec(_Strict):
@@ -242,14 +305,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 9
+PROJECT_SCHEMA_VERSION = 12
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[9] = 9
+    schema_version: Literal[12] = 12
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -259,6 +322,8 @@ class ProjectSettings(_Strict):
     extend: ExtendSection = Field(default_factory=ExtendSection)
     icon: IconSettings = Field(default_factory=IconSettings)
     portrait: PortraitSettings = Field(default_factory=PortraitSettings)
+    inbox: InboxSection = Field(default_factory=InboxSection)
+    style: StyleSection = Field(default_factory=StyleSection)
 
 
 class AssetSettings(_Strict):
@@ -326,10 +391,26 @@ def _add_portrait_section(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 9}
 
 
+def _add_inbox_section(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 9 had no `[inbox]`; version 10 adds it (ticket 0350), its folder `inbox` (written nowhere: the default is read)."""
+    return {**document, "schema_version": 10}
+
+
+def _add_style_section(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 10 had no `[style]`; version 11 adds it with no references (ticket 0334)."""
+    return {**document, "style": {"references": []}, "schema_version": 11}
+
+
+def _add_ramp_choices(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 11 had no named colour choices; version 12 adds `choices` to each `[[character.ramps]]` row (ticket 0356), an
+    empty table (written nowhere: the default is read)."""
+    return {**document, "schema_version": 12}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
     4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section,
-    8: _add_portrait_section}
+    8: _add_portrait_section, 9: _add_inbox_section, 10: _add_style_section, 11: _add_ramp_choices}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 
@@ -372,7 +453,14 @@ def _add_frame_offsets(document: dict[str, Any]) -> dict[str, Any]:
     return {**rest, "schema_version": 7, "clips": clips}
 
 
-CHARACTER_MIGRATIONS: dict[int, Migration] = {4: _same_version, 5: _add_clip_cells, 6: _add_frame_offsets}
+def _add_blend_and_lit(document: dict[str, Any]) -> dict[str, Any]:
+    """`character.json` version 7 had no `blend` or `lit`; version 8 (ticket 0364) says how the sprite is drawn. An older file is
+    drawn as before: `mix` and lit."""
+    return {**document, "schema_version": 8, "blend": "mix", "lit": True}
+
+
+CHARACTER_MIGRATIONS: dict[int, Migration] = {4: _same_version, 5: _add_clip_cells, 6: _add_frame_offsets,
+                                              7: _add_blend_and_lit}
 
 
 def migrate_character_record(document: dict[str, Any], file: str = "character.json") -> dict[str, Any]:
@@ -492,6 +580,23 @@ def ramp_table_findings(ramps: list[RampSpec], palette: list[tuple[int, int, int
             add("ramps.name_twice", row, "name", f"the part '{ramp.name}' is also row {names[ramp.name]}",
                 f"Keep one [[character.ramps]] row named '{ramp.name}' in {file}.")
         names.setdefault(ramp.name, row)
+        for choice, colours in ramp.choices.items():
+            if not _CHOICE_NAME.match(choice):
+                add("ramps.choice_name", row, f"choices.{choice}",
+                    f"the choice '{choice}' of '{ramp.name}' isn't a lower-case snake_case name",
+                    f"Rename the choice '{choice}' of '{ramp.name}' in {file} to lower-case letters, digits and underscores.")
+            if len(colours) != ramp.length:
+                add("ramps.choice_length", row, f"choices.{choice}",
+                    f"the choice '{choice}' of '{ramp.name}' has {len(colours)} colours, and the part's ramp has {ramp.length}",
+                    f"Give the choice '{choice}' of '{ramp.name}' {ramp.length} colours in {file}.")
+            for colour in colours:
+                if palette is not None and colour not in palette:
+                    add("ramps.choice_not_in_palette", row, f"choices.{choice}",
+                        f"the choice '{choice}' of '{ramp.name}' has the colour {list(colour)}, which the Project palette "
+                        "doesn't hold",
+                        f"Use only colours of the Project palette in the choice '{choice}' in {file}, or add the colour to the "
+                        "palette first.")
+                    break
         if ramp.rgb is None:
             continue
         if len(ramp.rgb) != ramp.length:

@@ -1,0 +1,107 @@
+{
+ "schema_version": 2,
+ "files": {
+  "color": "color.png",
+  "normal": "normal.png"
+ },
+ "cell": {
+  "width": 23,
+  "height": 23
+ },
+ "pivot": {
+  "x": 11,
+  "y": 18
+ },
+ "atlas": {
+  "width": 41,
+  "height": 53
+ },
+ "directions": [
+  "s"
+ ],
+ "clips": [
+  {
+   "name": "idle",
+   "fps": 8,
+   "loop": true,
+   "stationary": false,
+   "cell": {
+    "width": 23,
+    "height": 23
+   },
+   "pivot": {
+    "x": 11,
+    "y": 18
+   },
+   "directions": {
+    "s": [
+     {
+      "index": 0,
+      "rect": {
+       "x": 22,
+       "y": 0,
+       "width": 19,
+       "height": 19
+      },
+      "offset": {
+       "x": 2,
+       "y": 2
+      }
+     },
+     {
+      "index": 1,
+      "rect": {
+       "x": 0,
+       "y": 42,
+       "width": 11,
+       "height": 11
+      },
+      "offset": {
+       "x": 6,
+       "y": 6
+      }
+     },
+     {
+      "index": 2,
+      "rect": {
+       "x": 20,
+       "y": 22,
+       "width": 15,
+       "height": 15
+      },
+      "offset": {
+       "x": 4,
+       "y": 4
+      }
+     },
+     {
+      "index": 3,
+      "rect": {
+       "x": 0,
+       "y": 22,
+       "width": 19,
+       "height": 19
+      },
+      "offset": {
+       "x": 2,
+       "y": 2
+      }
+     },
+     {
+      "index": 4,
+      "rect": {
+       "x": 0,
+       "y": 0,
+       "width": 21,
+       "height": 21
+      },
+      "offset": {
+       "x": 1,
+       "y": 1
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

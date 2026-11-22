@@ -69,7 +69,7 @@ M6 runs while the game works through its M04 to about M10. These four help it so
   Masks, so what's missing is a Command to add one ([0344](0344-m6-mask-add.md)), their export with frozen names
   ([0345](0345-m6-export-named-masks.md)) and the masks screen ([0346](0346-m6-ui-named-masks.md)).
 - **Battle effects** (game M06 placeholders, M18), moved from Later as a trial first ([0347](0347-m6-vfx-trial.md)). It
-  tests whether an effect is a `sprite` with a few parameters before designing a Kind, and files the build tickets.
+  found an effect is a `sprite` with a few parameters (the Owner, 2026-11-20) and filed the build tickets 0362 to 0364.
 
 ## Questions for the Owner
 
@@ -82,7 +82,7 @@ Each has a recommendation. The tickets are written to the recommendation, so a d
 | Q3 | Does the queue hold **findings an agent could fix** (a `fix` command)? | No. They're counted, with their commands, so a session clears them before the Owner sits down. The queue holds only what the Owner owns. | 0325 |
 | Q4 | Who picks the **style references**? | The Owner only: `style-add` is owner-only, so a session can't make a mismatch pass by changing what it's measured against. | 0334 |
 | Q5 | How strict is the **style Check** in M6? | Warnings only, never blocking `export`, until the gate shows it rarely misfires. Then the Owner may raise chosen codes to errors. | 0333 |
-| Q6 | **0143 and 0144** sit in `backlog/m6/` with `milestone: M6`, but the spec moved them out of M6. | Set their `milestone` to `later` and leave the files where they are, so their links still work. | 0143, 0144 |
+| Q6 | **0143 and 0144** sit in `backlog/m6/` with `milestone: M6`, but the spec moved them out of M6. | Set their `milestone` to `later` and leave the files where they are, so their links still work. **Done 2026-11-20** (the Owner took the recommendation). | 0143, 0144 |
 
 The NPC questions are in [0336](0336-m6-npc-variants-from-a-base.md).
 
@@ -93,7 +93,7 @@ The NPC questions are in [0336](0336-m6-npc-variants-from-a-base.md).
 | 1 | Foundations, and what the game needs first | [0327](0327-m6-match-scope.md) the `--match` scope, [0326](0326-m6-hand-over-note.md) the hand-over note, [0332](0332-m6-style-match-trial.md) the style trial, [0337](0337-m6-cast-sheet-stacks-and-swaps.md) the stacked cast sheet; [0347](0347-m6-vfx-trial.md) the VFX trial (game M06); [0344](0344-m6-mask-add.md) named Masks; [0339](0339-m6-adr-room-normals-stage.md) the normals ADR; [0348](0348-m6-brief-renders-the-prompt.md) the prompt |
 | 2 | The queue, the district, Sources | [0325](0325-m6-review-queue-command.md), then [0329](0329-m6-ui-review-queue.md); [0328](0328-m6-district-probe.md), then [0330](0330-m6-ui-district-view.md); [0349](0349-m6-to-paint-pack.md), then [0350](0350-m6-source-inbox.md), then [0351](0351-m6-ui-rooms-waiting-for-a-source.md); [0345](0345-m6-export-named-masks.md) and [0346](0346-m6-ui-named-masks.md) (game M09) |
 | 3 | Rooms without the Owner; room normals | [0331](0331-m6-first-passes-over-a-list-of-rooms.md): the skill's batch mode, then the run on the ch01 rooms that have Sources; [0340](0340-m6-depth-runner.md), [0341](0341-m6-room-normals-stage.md), [0342](0342-m6-export-room-normals.md), [0343](0343-m6-ui-room-normals.md) (game M10) |
-| 4 | Style; effects | [0333](0333-m6-style-measures-and-check.md), then [0334](0334-m6-style-references-and-wiring.md), then [0335](0335-m6-ui-style-scores.md); the build tickets [0347](0347-m6-vfx-trial.md) files |
+| 4 | Style; effects | [0333](0333-m6-style-measures-and-check.md), then [0334](0334-m6-style-references-and-wiring.md), then [0335](0335-m6-ui-style-scores.md); the build tickets [0347](0347-m6-vfx-trial.md) files: [0362](0362-m6-sprite-effect-parameters.md), [0363](0363-m6-alpha-dither-op.md), then [0364](0364-m6-export-effect-blend.md) |
 | 5 | NPCs | The work tickets [0336](0336-m6-npc-variants-from-a-base.md) files, after the Owner's answers |
 | Gate | | [0338](0338-m6-gate.md) |
 
@@ -147,7 +147,7 @@ on the normals (0341, 0343).
   with no milestone (spec §14).
 - The tileset recipe: Later, after the trial chose painted rooms for chapter 1 ([0251](../m5/0251-m5-tileset-trial.md)).
 - Still under Later: side view, "promote to Prop" for a room's foreground Layer, and renaming exported IDs with aliases.
-- Normals for a Look that changes a room's geometry (ADR 0339 records it as open). Particles and screen shake: the game's.
+- Normals for a Look that changes a room's geometry (ADR 0014, from ticket 0339, records it as open). Particles and screen shake: the game's.
 - Kiripix starting Claude sessions itself. The batch of first passes is driven from the art Project by the skill; Kiripix
   stays a tool the session calls (§1).
 - A district's room layout on a map. The district view lists the rooms and their Exits; placing rooms by their Exits' sides

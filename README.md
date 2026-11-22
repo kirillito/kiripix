@@ -366,6 +366,7 @@ Ops run one image function directly, outside any Asset. They use the Project's p
 |---|---|
 | `kiripix op quantize <in.png> <out.png> [--palette P] [--dither none\|bayer2\|bayer4\|bayer8] [--strength 0..1]` | Map an image to the palette in OKLab, strictly or with ordered dithering. |
 | `kiripix op conformance <image.png> [--palette P]` | Report pixels off the palette and partially transparent pixels. Exits 2 if there are any. |
+| `kiripix op dither-alpha <in.png> <out.png> [--pattern bayer2\|bayer4\|bayer8]` | Turn partial alpha into a fixed ordered-dither pattern of opaque and clear pixels (a glow's haze). |
 | `kiripix op palette-suggest <image.png> --add N` | Suggest up to N colours the palette lacks for an image, as a proposal file for `palette-add`. Changes nothing. |
 | `kiripix op register-piece` / `match-tone` / `seam-join` | The three steps of `extend`'s join, one at a time, for trying a piece by hand. |
 
@@ -470,6 +471,8 @@ check.
 - [CLAUDE.md](CLAUDE.md): rules for contributors and agents working on Kiripix itself.
 - [skills/room-first-pass/](skills/room-first-pass/SKILL.md): a Claude Code skill for an agent's first pass on a room,
   from brief to export. Install it in your asset Project by copying the folder to `.claude/skills/room-first-pass/` there.
+  The folder's `batch.py` runs the first pass over many rooms, one Claude Code session per room
+  (`python .claude/skills/room-first-pass/batch.py --match "room.ch01_*"`); the skill says how.
 
 ## License
 

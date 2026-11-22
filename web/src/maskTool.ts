@@ -74,6 +74,12 @@ export class MaskTool implements CanvasTool {
   // Where a click will go (ticket 0092): named beside the cursor, and on each click still waiting for its answer.
   label = "";
   layerColours = new Map<string, string>();
+  // The Project's colour for each painted Mask (`describe room`), and the Masks whose overlay is switched off.
+  maskColours = new Map<string, string>();
+  hidden = new Set<string>();
+  // The areas of the room that have a cell, as the Place Stage's markers give them: the grid the Owner paints whole cells for.
+  private halfFor: { name: string; cells: { x: number; y: number; cell: number }[] } | null = null; // the half-cells Probe's last answer
+  private areas: { x: number; y: number; x2: number; y2: number; cell: number }[] = [];
   private names: string[] = [];
   private overlays: Overlay[] = [];
   private pixels = new Map<string, MaskPixels>();
@@ -229,13 +235,27 @@ export class MaskTool implements CanvasTool {
     this.overlays = masks.map(({ name, pixels }, index) => {
       let count = 0;
       for (const value of pixels.set) count += value;
-      const image = tinted(pixels.width, pixels.height, (x, y) => pixels.set[y * pixels.width + x] === 1, tintOf(index));
+      const image = tinted(pixels.width, pixels.height, (x, y) => pixels.set[y * pixels.width + x] === 1, this.maskColours.get(name) ?? tintOf(index));
       return { name, image, count };
     });
   }
 
+  setAreas(areas: { x: number; y: number; x2: number; y2: number; cell: number }[]): void {
+    this.areas = areas;
+  }
+
+  // The cells of the room's areas that the picked Mask half covers, each by its top-left pixel, as the `half-cells`
+  // Probe answers them: the backend counts, the screen only draws (ADR 0008).
+  setHalfCells(name: string, cells: { x: number; y: number; cell: number }[]): void {
+    this.halfFor = { name, cells };
+  }
+
+  private halfCovered(name: string): { x: number; y: number; cell: number }[] {
+    return this.halfFor?.name === name ? this.halfFor.cells : [];
+  }
+
   colourOf(name: string): string {
-    return this.layerColours.get(name) ?? tintOf(Math.max(0, this.names.indexOf(name)));
+    return this.layerColours.get(name) ?? this.maskColours.get(name) ?? tintOf(Math.max(0, this.names.indexOf(name)));
   }
 
   setTool(tool: MaskToolName): void {
@@ -427,8 +447,17 @@ export class MaskTool implements CanvasTool {
     const width = frame.width * frame.zoom;
     const height = frame.height * frame.zoom;
     for (const overlay of this.overlays) {
+      if (this.hidden.has(overlay.name)) continue;
       context.globalAlpha = overlay.name === this.mask ? this.opacity : this.opacity * 0.6;
       context.drawImage(overlay.image, frame.left, frame.top, width, height);
+    }
+    const half = this.areas.length > 0 ? this.halfCovered(this.mask) : [];
+    for (const { x, y, cell } of half) {
+      context.globalAlpha = 1;
+      context.fillStyle = "#ffd40066";
+      context.fillRect(frame.left + x * frame.zoom, frame.top + y * frame.zoom, cell * frame.zoom, cell * frame.zoom);
+      context.strokeStyle = "#ffd400";
+      context.strokeRect(frame.left + x * frame.zoom + 0.5, frame.top + y * frame.zoom + 0.5, cell * frame.zoom - 1, cell * frame.zoom - 1);
     }
     if (this.preview) {
       context.globalAlpha = Math.min(1, this.opacity + 0.2);
@@ -470,6 +499,8 @@ export class MaskTool implements CanvasTool {
     data.pendingMarks = this.marks.map((entry) => entry.mark.kind).join(" ");
     data.masks = this.overlays.map((overlay) => `${overlay.name}:${overlay.count}`).join(" ");
     data.target = this.label;
+    data.hiddenMasks = [...this.hidden].join(" ");
+    data.halfCells = half.map((cell) => `${cell.x},${cell.y}`).join(" ");
     data.tool = this.tool;
     data.mask = this.mask;
     data.polygonPoints = String(this.draft.length);

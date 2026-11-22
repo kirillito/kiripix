@@ -84,12 +84,15 @@ CLIP = DecisionSpec(
     name="clip",
     description="One clip's playback: `name` (an ID in the game: lower-case snake_case, frozen at its first export, never ending "
                 "in a direction suffix), `fps` (default 8), `loop` (default true) and `stationary` (default: true when the clip "
-                "has one frame), which holds the clip to the sheet's pivot-drift Check. Deciding a clip again under its name "
-                "changes it; `undo` brings the old one back.",
+                "has one frame), which holds the clip to the sheet's pivot-drift Check, and `ticks` (optional: one duration per "
+                "frame in game ticks, 60 a second, as a Loop's; the clip's frame count must match, else clips.ticks_count; "
+                "`fps` stays what it says, and the game plays by `ticks` when they are there). Deciding a clip again under its "
+                "name changes it whole; `undo` brings the old one back.",
     entry_schema={
         "type": "object",
         "properties": {"name": _CLIP_NAME, "fps": {"type": "integer", "minimum": 1}, "loop": {"type": "boolean"},
-                       "stationary": {"type": "boolean"}},
+                       "stationary": {"type": "boolean"},
+                       "ticks": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1}},
         "required": ["name"], "additionalProperties": False,
     },
 )
@@ -284,6 +287,7 @@ def run_frames(run: StageRun) -> None:
             directions[direction] = listed
         clips.append({"name": clip, "fps": int(said.get("fps", DEFAULT_FPS)), "loop": bool(said.get("loop", True)),
                       "stationary": bool(said.get("stationary", one_frame)), "raw": found.raw[clip],
+                      **({"ticks": [int(t) for t in said["ticks"]]} if "ticks" in said else {}),  # only a decided clip has them
                       "directions": directions})
     document = {"schema_version": SCHEMA_VERSION, "directions": wanted, "sheets": list(sheets), "clips": clips,
                 "unplaced": unplaced, "duplicates": found.duplicates}
@@ -324,6 +328,15 @@ def check_frames(run: StageRun) -> list[Finding]:
                                  f"a `sheet` Decision for a PNG), or ask for fewer directions: kiripix set {asset} frames "
                                  "directions=<8, 4 or 1>."))
         counts = {d: len(listed) for d, listed in present.items()}
+        ticks = clip.get("ticks")
+        if ticks is not None and any(n != len(ticks) for n in counts.values()):
+            shown = ", ".join(f"{d} {n}" for d, n in counts.items())
+            findings.append(Finding(
+                code="clips.ticks_count",
+                message=f"the clip {name} has {len(ticks)} `ticks` but its directions have {shown} frames; one duration per frame",
+                position=at(name),
+                owner_action=f"Decide the clip again with one tick count per frame: kiripix decide {asset} frames --decision "
+                             "'{\"decision\": \"clip\", \"data\": {\"name\": \"" + name + "\", \"ticks\": [...]}}'"))
         if len(set(counts.values())) > 1:
             shown = ", ".join(f"{d} {n}" for d, n in counts.items())
             findings.append(Finding(

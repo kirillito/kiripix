@@ -71,6 +71,20 @@ def _room_image(project: Kiripix) -> None:
     _image(project)
 
 
+def _room_with_prompt(project: Kiripix) -> None:
+    """A room with no Source and a built brief that has a prompt, for `to-paint`."""
+    (project.cwd / "style" / "prompts" / "room.j2").write_text("{{ width }}x{{ height }}\n", encoding="utf-8", newline="\n")
+    project.json("new", "room", "alley", "--view", "top")
+    project.json("run", "room.alley", "brief")
+
+
+def _room_inbox(project: Kiripix) -> None:
+    """A room, and its image waiting in the inbox folder under the name `to-paint` gives it."""
+    _room_image(project)
+    (project.cwd / "inbox").mkdir()
+    shutil.copy(project.cwd / "in.png", project.cwd / "inbox" / "alley.png")
+
+
 def _imported(project: Kiripix) -> str:
     """Import in.png into room.alley (once; importing again is a no-op) and return the Variant's name."""
     if not (project.cwd / "in.png").exists():
@@ -130,7 +144,8 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "new": lambda p: ["new", "prop", "bench"],
     "describe": lambda p: ["describe", "room"],
     "schema": lambda p: ["schema", "run"],
-    "status": lambda p: (make_demo(p), ["status"])[1],
+    "status": lambda p: (make_demo(p), ["status", "--match", "demo.*", "--asset", "demo.a", "--refresh", "r1", "--forget", "demo.a"])[1],
+    "assets": lambda p: (make_demo(p), ["assets", "--match", "demo.*", "--kind", "demo"])[1],
     "next": lambda p: (make_demo(p), ["next", "demo.a"])[1],
     "run": lambda p: (make_demo(p), ["run", "demo.a", "--force", "--from", "copy"])[1],
     "set": lambda p: (make_demo(p), ["set", "demo.a", "concat", "sep=-"])[1],
@@ -139,21 +154,27 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "redo": lambda p: (_undone(p), ["redo", "demo.a", "choose"])[1],
     "override": lambda p: (sketched(p), ["override", "sketch.a", "draw", "fix.png"])[1],
     "accept": lambda p: (in_review(p), ["accept", "sketch.a", "draw"])[1],
+    "note": lambda p: (make_demo(p), ["note", "demo.a", "choose", "the bench may be 16 px"])[1],
+    "queue": lambda p: (make_demo(p), ["queue", "--match", "demo.*", "--kind", "demo", "--asset", "demo.a"])[1],
+    "district": lambda p: (_room_image(p), ["district", "room.*"])[1],
+    "to-paint": lambda p: (_room_with_prompt(p), ["to-paint", "--match", "room.*", "--out", "paint"])[1],
+    "inbox": lambda p: (_room_inbox(p), ["inbox", "--folder", "inbox"])[1],
     "import": lambda p: (_character_files(p), ["import", "character.hero", "rigged.fbx", "--role", "clip-source"])[1],
     "thing-remove": lambda p: (_a_thing(p), ["thing-remove", "character.hero", "phone"])[1],
     "clips copy": lambda p: (_clips_to_copy(p), ["clips", "copy", "character.twin", "--from", "character.hero"])[1],
     "mask-import": lambda p: (_room_image(p), ["mask-import", "room.alley", "in.png"])[1],
     "plate-import": lambda p: (_room_image(p), ["plate-import", "room.alley", "in.png"])[1],
     "pick": lambda p: (_imported(p), ["pick", "room.alley", _imported(p)])[1],
-    "check": lambda p: (make_demo(p), ["check", "demo.a"])[1],
+    "check": lambda p: (make_demo(p), ["check", "--match", "demo.a"])[1],
     "show": lambda p: (_character_files(p), ["show", "character.hero"])[1],
     "preview": lambda p: (sketched(p), ["preview", "sketch.a", "--stage", "draw", "--region", "0,0,4,4", "--grid", "2"])[1],
-    "export": lambda p: (exportable_room(p), ["export", "room.alley"])[1],
+    "export": lambda p: (exportable_room(p), ["export", "--match", "room.*"])[1],
     "probe": lambda p: (make_demo(p), ["probe", "echo", "demo.a", "x"])[1],
-    "cast-sheet": lambda p: (_cast_ready(p), ["cast-sheet", "sprite.npc", "--scale", "2"])[1],
+    "cast-sheet": lambda p: (_cast_ready(p), ["cast-sheet", "sprite.npc", "--stack", "depth", "--scale", "2"])[1],
     "snapshot": lambda p: (_cast_ready(p), ["snapshot", "sprite.npc", "--label", "first"])[1],
     "op quantize": lambda p: (_image(p), ["op", "quantize", "in.png", "out.png"])[1],
     "op conformance": lambda p: (_image(p), ["op", "conformance", "in.png"])[1],
+    "op dither-alpha": lambda p: (_image(p), ["op", "dither-alpha", "in.png", "out.png"])[1],
     "op palette-suggest": lambda p: (_image(p), ["op", "palette-suggest", "in.png", "--add", "2", "--scale", "1"])[1],
     "op register-piece": lambda p: (_join_images(p), ["op", "register-piece", "base.png", "piece.png", "--overlap", "east:100", "--output", "reg.png"])[1],
     "op match-tone": lambda p: (_join_images(p), ["op", "match-tone", "base.png", "piece.png", "toned.png", "--overlap", "east:100"])[1],
@@ -161,11 +182,14 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "extend": lambda p: (_extend_ready(p), ["extend", "room.alley", "canvas", "--side", "east"])[1],
     "loop kit": lambda p: (_loop_kit_ready(p), ["loop", "kit", "room.alley", "lamp_glow", "kit_a", "--frames", "3"])[1],
     "track": lambda p: (_room_image(p), ["track", "room.alley", "source", "--seconds", "30"])[1],
-    "stats": lambda p: (_room_image(p), ["stats", "--all"])[1],
+    "stats": lambda p: (_room_image(p), ["stats", "--match", "room.*"])[1],
     "palette": lambda p: ["palette"],
     "palette-add": lambda p: (_proposal(p), ["palette-add", ".kiripix/palette-proposals/in-proposal.json"])[1],
     "ramps-add": lambda p: (_built_hero(p), ["ramps-add", "character.hero", "--parts", "skin"])[1],
     "clips-add": lambda p: (_built_hero(p), ["clips-add", "character.hero", "--clips", "idle"])[1],
+    "masks-add": lambda p: ["masks-add", "cover", "--colour", "#00AA00", "--meaning", "half cover"],
+    "style-add": lambda p: (p.json("new", "prop", "bench"), ["style-add", "prop.bench"])[1],
+    "style-remove": lambda p: (p.json("new", "prop", "bench"), p.json("style-add", "prop.bench", owner=True), ["style-remove", "prop.bench"])[2],
     "area-settle": lambda p: (_settle_ready(p), ["area-settle", "room.alley", "battle.yard"])[1],
     "runners list": lambda p: ["runners", "list"],
     "runners pull": lambda p: ["runners", "pull", "sam2.1-small"],
@@ -212,6 +236,17 @@ def test_json_output_validates_against_the_schema(project: Kiripix, schemas: dic
 def test_input_schema_lists_the_options(schemas: dict[str, dict[str, object]], name: str) -> None:
     schema = schemas[name]["input"]
     assert isinstance(schema, dict) and schema["type"] == "object"
+
+
+def test_probe_style_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The shape `probe style` answers with (ticket 0334; the UI's style scores read it)."""
+    project.json("new", "prop", "bench")
+    project.json("style-add", "prop.bench", owner=True)
+
+    result = project.json("probe", "style", "prop.bench")
+
+    jsonschema.validate(result, schemas["probe"]["output"])
+    assert result["data"]["result"]["asset"] == "prop.bench" and result["data"]["result"]["built"] is False
 
 
 def test_import_and_show_of_a_sprite_sheet_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
@@ -433,6 +468,45 @@ def test_a_wearable_validates(project: Kiripix, schemas: dict[str, dict[str, obj
     assert shown["data"]["tile"] == 16 and shown["data"]["wearables"] == [{"asset": "wearable.hair", "order": 10}]
     assert "body" in schemas["new"]["input"]["properties"]  # type: ignore[index]
     assert refused["findings"][0]["code"] == "wearable.body_unknown"
+
+
+def test_an_npc_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The `npc` Kind (ticket 0356): `new --base`, `describe`, and the `npc.base_unknown` refusal."""
+    project.json("new", "character", "zed")
+
+    made = project.json("new", "npc", "guard", "--base", "character.zed")
+    described = project.json("describe", "npc")
+    refused = project.json("new", "npc", "thief", "--base", "character.nobody", expect=1)
+    described_project = project.json("describe", "project")
+
+    for result, name in ((made, "new"), (described, "describe"), (refused, "new"), (described_project, "describe")):
+        jsonschema.validate(result, schemas[name]["output"])
+    assert [s["name"] for s in described["data"]["kinds"][0]["stages"]] == ["choose", "export"]
+    assert refused["findings"][0]["code"] == "npc.base_unknown"
+
+
+def test_an_npc_crowd_validates(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """`new npc --count/--seed/--wearables/--choices` and `--reroll` (ticket 0359), and `cast-sheet --match`'s refusal."""
+    path = project.cwd / "kiripix.toml"
+    path.write_text(path.read_text("utf-8") + '\n[[character.ramps]]\nname = "hair"\nlength = 2\n'
+                    'choices = { auburn = [[0, 0, 0], [29, 43, 83]], blond = [[0, 0, 0], [95, 87, 79]] }\n', encoding="utf-8")
+    project.json("new", "character", "zed")
+    project.json("new", "wearable", "hair", "--body", "character.zed")
+
+    made = project.json("new", "npc", "guards", "--base", "character.zed", "--count", "2", "--seed", "1",
+                        "--wearables", "wearable.h*", "--choices", "hair=auburn,blond")
+    again = project.json("new", "npc", "npc.guards_01", "--reroll", "--seed", "2")
+    refused = project.json("new", "npc", "guards", "--base", "character.zed", "--count", "2", expect=1)
+    none = project.json("cast-sheet", "--match", "npc.nobody_*", expect=1)
+
+    for result in (made, again, refused, none):
+        jsonschema.validate(result, schemas["new" if result is not none else "cast-sheet"]["output"])
+    assert [n["asset"] for n in made["data"]["crowd"]] == ["npc.guards_01", "npc.guards_02"]
+    assert again["data"]["crowd"][0]["asset"] == "npc.guards_01"
+    assert refused["findings"][0]["code"] == "new.crowd_incomplete"
+    for name in ("count", "seed", "wearables", "choices", "reroll"):
+        assert name in schemas["new"]["input"]["properties"]  # type: ignore[index]
+    assert "match" in schemas["cast-sheet"]["input"]["properties"]  # type: ignore[index]
 
 
 def test_a_bad_decision_of_a_look_is_refused(project: Kiripix) -> None:

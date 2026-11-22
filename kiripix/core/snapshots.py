@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic
+from kiripix.core import atomic, changes
 from kiripix.core.assets import Asset
 from kiripix.core.errors import KiripixError, fail
 from kiripix.core.graph import AssetGraph
@@ -160,6 +160,7 @@ def _store(target: Path, sheet: Path, color: Path, note: SnapshotNote) -> None:
             shutil.rmtree(old, ignore_errors=True)
         else:
             building.rename(target)
+        changes.record(target)
     finally:
         shutil.rmtree(building, ignore_errors=True)
 
@@ -180,6 +181,7 @@ def drop(project: Project, label: str) -> list[str]:
     held = sorted(a.name for a in folder.iterdir() if a.is_dir())
     gone = folder.with_name(f".dropped-{label}-{uuid.uuid4().hex[:8]}")
     folder.rename(gone)
+    changes.record(folder)
     shutil.rmtree(gone, ignore_errors=True)
     return held
 

@@ -1,0 +1,15 @@
+schema_version = 1
+kind = "sprite"
+
+[params]
+
+[stages]
+[stages.frames]
+directions = "1"
+
+[stages.finish]
+outline = false
+normals = "flat"
+
+[stages.palette]
+colors = 24

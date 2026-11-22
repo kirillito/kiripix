@@ -20,7 +20,9 @@ MANIFEST_DIR = "manifest"
 # lists the same files and the IDs it froze, so refusing it would lose the freeze; its `clips` are empty.
 # 3: `ids.look_markers`, a room's Look Markers as `<look>/<marker>` (ticket 0316). A version 2 Manifest is migrated on read, with
 # none.
-MANIFEST_SCHEMA_VERSION: Literal[3] = 3
+# 4: `ids.masks` lists every painted Mask of the room's view, not only `solid` and `pit` (ticket 0345): each is a file name the game's
+# grid reads, so it is frozen. A version 3 Manifest is migrated on read: the Masks it lists are the ones it froze.
+MANIFEST_SCHEMA_VERSION: Literal[4] = 4
 
 
 class ExportedIds(BaseModel):
@@ -53,7 +55,7 @@ class ExportedIds(BaseModel):
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[3] = MANIFEST_SCHEMA_VERSION
+    schema_version: Literal[4] = MANIFEST_SCHEMA_VERSION
     kiripix_version: str
     asset: str
     exported: bool
@@ -72,10 +74,14 @@ class Manifest(BaseModel):
     @classmethod
     def from_value(cls, value: Any) -> "Manifest":
         """Validate a decoded Manifest, migrating one from an older schema version first (a newer one fails validation)."""
-        migrated = isinstance(value, dict) and value.get("schema_version") in (1, 2)
+        migrated = isinstance(value, dict) and value.get("schema_version") in (1, 2, 3)
         if migrated:
             assert isinstance(value, dict)
-            value = migrate_v2(migrate_v1(value) if value.get("schema_version") == 1 else value)
+            if value.get("schema_version") == 1:
+                value = migrate_v1(value)
+            if value.get("schema_version") == 2:
+                value = migrate_v2(value)
+            value = migrate_v3(value)
         manifest = cls.model_validate(value)
         manifest._migrated = migrated
         return manifest
@@ -93,6 +99,11 @@ def migrate_v2(value: dict[str, Any]) -> dict[str, Any]:
     ids = value.get("ids")
     ids = {**ids, "look_markers": ids.get("look_markers", [])} if isinstance(ids, dict) else ids
     return {**value, "schema_version": 3, "ids": ids}
+
+
+def migrate_v3(value: dict[str, Any]) -> dict[str, Any]:
+    """Schema 3 to 4: only the version changes; `ids.masks` already lists what the Manifest froze. Pure."""
+    return {**value, "schema_version": 4}
 
 
 def kiripix_version() -> str:

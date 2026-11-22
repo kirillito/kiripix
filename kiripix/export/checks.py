@@ -6,8 +6,9 @@ is imported with `kiripix.export`, which every Command that checks already impor
 """
 
 import json
+from dataclasses import dataclass
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from kiripix.checks import Finding, Position
 from kiripix.core import cancel
@@ -39,7 +40,7 @@ from kiripix.recipes.sprite_frames import FRAMES_FILE
 
 STATE_NAMES = frozenset(d.name for d in _STATE_DECISIONS)
 
-EXPORTERS = frozenset({"room", "prop", "character", "sprite", "icon", "wearable", "portrait"})  # the Kinds that have an exporter
+EXPORTERS = frozenset({"room", "prop", "character", "sprite", "icon", "wearable", "portrait", "npc"})  # the Kinds that have an exporter
 
 
 def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
@@ -72,6 +73,12 @@ def _room_ids(graph: AssetGraph, unchanged: ExportedIds) -> dict[str, Any]:
                              # a Loop's ID is its `loop` Decision's once a `rename` and a `remove` are replayed, and shares
                              # the namespace with the Looks'
                              "loops": declared_ids(graph.replay(LOOPS_STAGE).current)}
+    # a painted Mask's name is its file name in the game, so one taken away from kiripix.toml fails before the Stage is run
+    # again (ticket 0345); `solid` and `pit` are always exported, as the bodies of the scene
+    name_of_view = str(graph.asset.settings.params.get("view"))
+    view = graph.project.settings.masks.get("side" if name_of_view == "side" else "top")
+    painted = list(view.painted()) if view else []
+    found["masks"] = sorted({"solid", "pit", *painted})
     spec = graph.spec(EXPORT_STAGE)
     if graph.built_hash(spec) is not None:
         try:
@@ -80,7 +87,7 @@ def _room_ids(graph: AssetGraph, unchanged: ExportedIds) -> dict[str, Any]:
             room = {}
         if room.get("schema_version") == ROOM_SCHEMA_VERSION:
             built = room_ids(room)
-            found.update(layers=built.layers, masks=built.masks)
+            found.update(layers=built.layers)
     return found
 
 
@@ -236,25 +243,52 @@ def emotion_freeze_findings(project: Project, asset: Asset, stage: str, document
                                lambda m: m.ids.emotions)
 
 
-def _exits(project: Project, assets: list[Asset]) -> dict[str, dict[str, dict[str, str]]]:
-    """Each Asset that places Markers, with its Exits by ID: `{target_room, target_exit}`."""
+def _placed(project: Project, assets: list[Asset]) -> dict[str, list[dict[str, Any]]]:
+    """Each Asset that places Markers, with its Markers (a Link as a Marker of type `link`) as its Decisions give them."""
     cache = HashCache(project.state_dir)
-    rooms: dict[str, dict[str, dict[str, str]]] = {}
+    rooms: dict[str, list[dict[str, Any]]] = {}
     for asset in assets:
         cancel.check()
         graph = AssetGraph(project, asset, cache)
         specs = [spec for spec in graph.kind.stages if spec.markers is not None]
         if not specs:
             continue
-        exits: dict[str, dict[str, str]] = {}
+        placed: list[dict[str, Any]] = []
         for spec in specs:
             assert spec.markers is not None
-            for marker in spec.markers(graph.replay(spec.name).current):
-                if marker["type"] == "exit":
-                    exits[str(marker["id"])] = {"target_room": str(marker.get("target_room", "")),
-                                                "target_exit": str(marker.get("target_exit", ""))}
-        rooms[asset.id] = exits
+            placed.extend(spec.markers(graph.replay(spec.name).current))
+        rooms[asset.id] = placed
     return rooms
+
+
+def _exits_of(placed: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, dict[str, Any]]]:
+    return {room: {str(m["id"]): {"target_room": str(m.get("target_room", "")), "target_exit": str(m.get("target_exit", "")),
+                                  "one_way": bool(m.get("one_way", False))}
+                   for m in markers if m["type"] == "exit"}
+            for room, markers in placed.items()}
+
+
+def _exits(project: Project, assets: list[Asset]) -> dict[str, dict[str, dict[str, Any]]]:
+    """Each Asset that places Markers, with its Exits by ID: `{target_room, target_exit}`."""
+    return _exits_of(_placed(project, assets))
+
+
+def _pairing(rooms: dict[str, dict[str, dict[str, Any]]], room: str, exit_id: str) -> tuple[str, str]:
+    """The one pairing rule: `("", "")` when the Exit names an existing room and an Exit of it that points back, else the
+    finding's code (`exit.no_room`, `exit.no_exit`, `exit.not_paired`) and why. A `one_way` Exit needs only its target to
+    exist."""
+    exit_ = rooms[room][exit_id]
+    there, back = exit_["target_room"], exit_["target_exit"]
+    if there not in rooms:
+        return "exit.no_room", f"there is no room '{there}'"
+    if back not in rooms[there]:
+        return "exit.no_exit", f"{there} has no Exit '{back}'"
+    if exit_["one_way"]:
+        return "", ""  # no return is meant: the target only has to exist
+    if (rooms[there][back]["target_room"], rooms[there][back]["target_exit"]) != (room, exit_id):
+        other = rooms[there][back]
+        return "exit.not_paired", f"{there} {back} leads to {other['target_room']} {other['target_exit']}, not back here"
+    return "", ""
 
 
 def pairing_findings(project: Project, assets: list[Asset], *, only: str | None = None,
@@ -268,15 +302,7 @@ def pairing_findings(project: Project, assets: list[Asset], *, only: str | None 
             continue
         for exit_id, exit_ in sorted(rooms[room].items()):
             there, back = exit_["target_room"], exit_["target_exit"]
-            code, why = "", ""
-            if there not in rooms:
-                code, why = "exit.no_room", f"there is no room '{there}'"
-            elif back not in rooms[there]:
-                code, why = "exit.no_exit", f"{there} has no Exit '{back}'"
-            elif rooms[there][back] != {"target_room": room, "target_exit": exit_id}:
-                other = rooms[there][back]
-                code, why = "exit.not_paired", (f"{there} {back} leads to {other['target_room']} "
-                                                f"{other['target_exit']}, not back here")
+            code, why = _pairing(rooms, room, exit_id)
             if code:
                 found.append(Finding(
                     code=code, severity=severity,
@@ -287,6 +313,45 @@ def pairing_findings(project: Project, assets: list[Asset], *, only: str | None 
                     owner_action=f"Place the Exit '{back}' in {there} with target_room = {room} and target_exit = "
                                  f"{exit_id}, or point {room} {exit_id} at an Exit that points back."))
     return found
+
+
+Pairing = Literal["paired", "one_way", "unpaired", "outside"]  
+
+
+@dataclass(frozen=True)
+class ExitPairing:
+    room: str
+    exit: str
+    target_room: str
+    target_exit: str
+    pairing: Pairing
+    code: str | None  # the finding's code when the Exit isn't sound
+    reason: str | None
+
+
+def exit_pairings(project: Project, assets: list[Asset], district: set[str]) -> tuple[list[ExitPairing], dict[str, list[dict[str, Any]]]]:
+    """The district's Exits with their pairing, by the rule `pairing_findings` uses, and its rooms' Links. `assets` is
+    every Asset of the Project: an Exit whose target is outside `district` is `outside`, checked against the whole Project
+    (its `reason` is set when the other side doesn't point back). A `one_way` Exit (no return meant, ticket 0352) is `one_way`
+    when its target is in the district and exists."""
+    placed = _placed(project, assets)
+    rooms = _exits_of(placed)
+    found: list[ExitPairing] = []
+    for room in sorted(rooms):
+        if room not in district:
+            continue
+        for exit_id, exit_ in sorted(rooms[room].items()):
+            there, back = exit_["target_room"], exit_["target_exit"]
+            code, why = _pairing(rooms, room, exit_id)
+            state: Pairing
+            if there not in district:
+                state = "outside"
+            elif not code:
+                state = "one_way" if exit_["one_way"] else "paired"
+            else:
+                state = "unpaired"
+            found.append(ExitPairing(room, exit_id, there, back, state, code or None, why or None))
+    return found, {room: [m for m in placed[room] if m["type"] == "link"] for room in sorted(placed) if room in district}
 
 
 def exits_naming(project: Project, assets: list[Asset], gone: set[str]) -> list[Finding]:

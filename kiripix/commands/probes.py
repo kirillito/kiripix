@@ -8,8 +8,9 @@ a cached embedding); in the CLI a Probe works too, only slower. A Probe is regis
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from kiripix.ops.lazy import lazy_module
 if TYPE_CHECKING:
@@ -20,17 +21,22 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, command
-from kiripix.checks import Finding
-from kiripix.core.assets import Asset, load_asset
+from kiripix.checks import Finding, Position
+from kiripix.core.assets import Asset, list_assets, load_asset
+from kiripix.core.match import select
+from kiripix.core.previews import NPC_FILE, npc_figure
 from kiripix.core import snapshots
-from kiripix.core.cast import NothingToDraw, cast_sheet
+from kiripix.core.cast import Figure, NothingToDraw, cast_sheet, read_colours
 from kiripix.core.errors import ExitCode, fail
 from kiripix.core.file_inspect import inspect_file
 from kiripix.core.layer_stats import layer_stats, piece_numbers
 from kiripix.core.look_probe import look_difference
-from kiripix.core.project import find_project
+from kiripix.core.mask_cells import half_cells
+from kiripix.core.project import Project, find_project
 from kiripix.core.reach_probe import reach_report
-from kiripix.core.graph import ProgressEvent
+from kiripix.core.style import probe_style
+from kiripix.core.graph import AssetGraph, ProgressEvent
+from kiripix.core.hashing import HashCache
 from kiripix.core.segmenting import click_preview, flood_preview, segment_preview
 from kiripix.ops import mask_runs
 from kiripix.recipes.base import BoxCorners, ClickPoint, Scalar
@@ -43,7 +49,7 @@ class ProbeInput(BaseModel):
     args: list[str] = Field([], description="The Probe's own arguments. segment-preview takes clicks in target pixels: "
                                             "x,y for a positive one and x,y,neg for a negative one, as does click-preview; or one box, x0,y0,x1,y1, "
                                             "the pixels from (x0, y0) to (x1, y1) both included. flood-preview takes "
-                                            "x,y,tolerance, one or more. look-difference takes a Look, x0,y0,x1,y1, then an optional tolerance and specks count. layer-stats and reach take none. inspect takes one file name.")
+                                            "x,y,tolerance, one or more. look-difference takes a Look, x0,y0,x1,y1, then an optional tolerance and specks count. layer-stats, reach and style take none. inspect takes one file name; half-cells one Mask's name.")
     cpu: bool = Field(False, description="Run any Runner on the CPU, without the GPU lock.")
     summary: bool = Field(False, description="Leave `runs` out of a Mask answer; `pixels` and `box` stay.")
 
@@ -210,6 +216,24 @@ def _reach(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, A
     return reach_report(find_project(context.cwd), asset)
 
 
+@probe("style", summary="The Asset's style measures (outline density, pixel scale), each style reference's, the range of the "
+                        "references and the findings `check` would give, as numbers: the UI's style scores.")
+def _style(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    if arguments.args:
+        raise fail("input.invalid", "style takes no arguments", fix=f"kiripix probe style {asset.id}")
+    project = find_project(context.cwd)
+    return probe_style(project, asset, HashCache(project.state_dir))
+
+
+@probe("half-cells", summary="The cells of the room's areas with a `cell` that one Mask, as built, half covers (a quarter to "
+                             "three quarters), each by its top-left pixel: the band of `area.ambiguous_cells`, for any "
+                             "painted Mask. Takes the Mask's name.")
+def _half_cells(asset: Asset, arguments: ProbeInput, context: Context) -> dict[str, Any]:
+    if len(arguments.args) != 1:
+        raise fail("input.invalid", "half-cells takes one Mask's name", fix=f"kiripix probe half-cells {asset.id} solid")
+    return half_cells(find_project(context.cwd), asset, arguments.args[0])
+
+
 @probe("inspect", summary="What a character's file holds: its armature, bone names, frame rate and actions with their frame "
                           "ranges. The file is a Model Variant, a clip source or `rigged`, by the name `show` gives it. "
                           "Runs Blender once per file; the answer is cached.")
@@ -255,14 +279,26 @@ def run_probe(arguments: ProbeInput, context: Context) -> Outcome[ProbeData]:
 class CastSheetInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    assets: str = Field(description="The Assets, comma-separated, left to right: characters or sprites, each with a "
-                                    "built `sheet` Stage, such as character.hero,character.elder.")
+    assets: str | None = Field(None, description="The figures, comma-separated, left to right: characters or sprites, each with a "
+                                    "built `sheet` Stage, such as character.hero,character.elder. A figure may be a "
+                                    "stack, a body and the Wearables made for it, joined by +: "
+                                    "character.hero+wearable.hair+wearable.coat. An npc is a figure too, drawn from its built "
+                                    "`choose`. Give this or --match.")
+    match: str | None = Field(None, description="Instead of a list: the characters, sprites and NPCs whose IDs match this glob, "
+                                                "such as npc.guards_*, in ID order: a crowd on one sheet (ticket 0359). An NPC "
+                                                "without a built `choose` is left out, with a finding.")
     clips: str | None = Field(None, description="The clips to draw, comma-separated; each Asset's first clip when left "
                                                 "out.")
     directions: str = Field("s", description="The directions to draw, comma-separated, such as s,sw.")
     frames: int = Field(1, ge=1, le=64, description="Frames per clip and direction, spread evenly from the first.")
     scale: int = Field(1, ge=1, le=8, description="Whole-number zoom, nearest neighbour; 1 is the game's size. The "
                                                   "labels aren't scaled.")
+    stack: Literal["order", "depth"] = Field("order", description="How a stack's Wearables go over the body: by their "
+                                             "`order` (default), or by the depth pass.")
+    colours: Path | None = Field(None, description="A TOML or JSON file that swaps Parts' ramps, one entry per figure in "
+                                                  "order, each {part = [[r, g, b], ...]}, dark to light, as long as the "
+                                                  "Part's ramp; TOML as [[figure]] tables. The game's rule: a pixel in the "
+                                                  "Part's ramp takes the colour at the same place.")
     snapshots: str | None = Field(None, description="Snapshot labels, comma-separated (`kiripix snapshot`): one row per "
                                                     "label, the same Assets in the same order, each row titled with its "
                                                     "label and the parameters that differ between rows. The Assets' "
@@ -280,6 +316,7 @@ class CastCellData(BaseModel):
     height: int
     pivot: dict[str, int] = Field(description="The pivot (the feet) in the cell, from its top left, in PNG pixels.")
     row: str | None = Field(None, description="With --snapshots: the label of the cell's row.")
+    swapped: list[str] = Field(default_factory=list, description="With --colours: the Parts whose ramps were swapped.")
 
 
 class CastRowData(BaseModel):
@@ -317,10 +354,35 @@ def _listed(text: str) -> list[str]:
     return [part.strip() for part in text.split(",") if part.strip()]
 
 
+def _matched_figures(project: Project, glob: str) -> tuple[list[Figure], list[Finding]]:
+    """The figures `cast-sheet --match` draws: each matched character, sprite or NPC, in ID order. An NPC is its base with its
+    Wearables stacked and its colours swapped, from its built `choose`; one that isn't built is left out with a finding."""
+    assets, _ = list_assets(project)
+    found = [a for a in select(assets, glob) if a.kind in ("character", "sprite", "npc")]
+    if not found:
+        raise fail("match.none", f"no character, sprite or npc matches '{glob}'", fix="kiripix status")
+    figures: list[Figure] = []
+    findings: list[Finding] = []
+    cache = HashCache(project.state_dir)
+    for asset in found:
+        if asset.kind != "npc":
+            figures.append(Figure((asset,)))
+            continue
+        graph = AssetGraph(project, asset, cache)
+        path = graph.output_dir(graph.spec("choose")) / NPC_FILE
+        if graph.built_hash(graph.spec("choose")) is None:
+            findings.append(Finding(code="cast.npc_not_built", severity="warning", message=f"{asset.id} has no built choose, so it is left out",
+                                    position=Position(asset=asset.id, stage="choose"), fix=f"kiripix run {asset.id} choose"))
+            continue
+        figures.append(npc_figure(project, asset, path))
+    return figures, findings
+
+
 @command(
     "cast-sheet",
     summary="Draw several characters side by side, each at its pivot on one ground line, from their built sheets, to "
-            ".kiripix/previews/. A Probe: records nothing.",
+            ".kiripix/previews/. A figure may be a body with Wearables stacked on it (a+b), and --colours swaps Parts' "
+            "ramps. A Probe: records nothing.",
     input=CastSheetInput,
     output=CastSheetData,
     kind="probe",
@@ -329,32 +391,61 @@ def _listed(text: str) -> list[str]:
 )
 def run_cast_sheet(arguments: CastSheetInput, context: Context) -> Outcome[CastSheetData]:
     project = find_project(context.cwd)
-    ids = _listed(arguments.assets)
-    if not ids:
-        raise fail("input.invalid", "name at least one Asset", fix="kiripix cast-sheet character.a,character.b")
-    assets = [load_asset(project, asset_id) for asset_id in dict.fromkeys(ids)]
+    if (arguments.assets is None) == (arguments.match is None):
+        raise fail("input.invalid", "give the figures or --match, one of them", fix="kiripix cast-sheet character.a,character.b")
+    shown = arguments.assets if arguments.assets is not None else arguments.match
+    pre: list[Finding] = []
+    if arguments.match is not None:
+        figures, pre = _matched_figures(project, arguments.match)
+        if arguments.colours is not None:
+            entries = read_colours(context.cwd / arguments.colours, str(arguments.colours), len(figures))
+            figures = [replace(f, colours=entries[n]) if n < len(entries) else f for n, f in enumerate(figures)]
+    else:
+        assert arguments.assets is not None
+        ids = _listed(arguments.assets)
+        if not ids:
+            raise fail("input.invalid", "name at least one Asset", fix="kiripix cast-sheet character.a,character.b")
+        stacks = [[part.strip() for part in item.split("+")] for item in dict.fromkeys(ids)]
+        if any(not all(part) for part in stacks):
+            raise fail("input.invalid", "a stack names a body and Wearables joined by +, such as character.a+wearable.b",
+                       fix="kiripix cast-sheet character.a+wearable.b")
+        entries = read_colours(context.cwd / arguments.colours, str(arguments.colours), len(stacks)) if arguments.colours is not None else []
+        figures = []
+        for number, stack in enumerate(stacks):
+            assets = tuple(load_asset(project, asset_id) for asset_id in dict.fromkeys(stack))
+            colours = entries[number] if number < len(entries) else {}
+            if len(assets) == 1 and assets[0].kind == "npc":  # an NPC is drawn from its built `choose`
+                graph = AssetGraph(project, assets[0], HashCache(project.state_dir))
+                figure = npc_figure(project, assets[0], graph.output_dir(graph.spec("choose")) / NPC_FILE)
+                figures.append(replace(figure, colours={**figure.colours, **colours}))
+            else:
+                figures.append(Figure(assets, colours))
     clips = _listed(arguments.clips) if arguments.clips is not None else None
     directions = _listed(arguments.directions)
     if arguments.snapshots is not None and not _listed(arguments.snapshots):
         raise fail("input.invalid", "--snapshots names at least one label", fix="kiripix snapshot --list")
     if clips == [] or not directions:
         raise fail("input.invalid", "--clips and --directions each name at least one",
-                   fix=f"kiripix cast-sheet {arguments.assets} --clips idle --directions s")
+                   fix=f"kiripix cast-sheet {shown} --clips idle --directions s")
+    if not figures:
+        return Outcome(None, [*pre, Finding(code="cast.empty", message="no figure has a built choose to draw; the findings before "
+                                                                       "this say why", fix="kiripix status")], ExitCode.ERROR)
     try:
-        made = cast_sheet(project, assets, clips, directions, arguments.frames, arguments.scale,
-                          _listed(arguments.snapshots) if arguments.snapshots is not None else None)
+        made = cast_sheet(project, figures, clips, directions, arguments.frames, arguments.scale,
+                          _listed(arguments.snapshots) if arguments.snapshots is not None else None, arguments.stack)
     except NothingToDraw as empty:
         finding = Finding(code="cast.empty", message="no Asset has a cell to draw; the findings before this say why",
                           fix="kiripix status")
-        return Outcome(None, [*empty.findings, finding], ExitCode.ERROR)
+        return Outcome(None, [*pre, *empty.findings, finding], ExitCode.ERROR)
     cells = [CastCellData(asset=c.asset, clip=c.clip, direction=c.direction, index=c.index, x=c.x, y=c.y,
-                          width=c.width, height=c.height, pivot={"x": c.pivot[0], "y": c.pivot[1]}, row=c.row)
+                          width=c.width, height=c.height, pivot={"x": c.pivot[0], "y": c.pivot[1]}, row=c.row,
+                          swapped=list(c.swapped))
              for c in made.cells]
     rows = [CastRowData(label=r.label, title=r.title, y=r.y, height=r.height, ground=r.ground) for r in made.rows]
     differing = [DifferingParamData(stage=d.stage, param=d.param, values=d.values) for d in made.differing]
     return Outcome(CastSheetData(path=project.relative(made.path), width=made.width, height=made.height,
                                  scale=made.scale, ground=made.ground, cells=cells, rows=rows,
-                                 differing=differing), list(made.findings))
+                                 differing=differing), [*pre, *made.findings])
 
 
 class SnapshotInput(BaseModel):

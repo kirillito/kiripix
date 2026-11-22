@@ -6,9 +6,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
-from kiripix.commands.decisions import DecisionOut, current_decisions
+from kiripix.commands.decisions import DecisionOut, NoteOut, current_decisions
 from kiripix.commands.registry import CliMeta, command
-from kiripix.core import emotions, sheets, sources, things
+from kiripix.core import emotions, notes, sheets, sources, things
 from kiripix.core.assets import Asset, load_asset, wearables_of
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
@@ -119,6 +119,8 @@ class StageDetail(BaseModel):
                     "on `clips`, one `clip` and one `transition` per name, the latest winning, without the ones a "
                     "`remove` took away, and each `remove` that found nothing first. Each keeps `from_base`: a clip "
                     "the Asset decided again over the base's is its own.")
+    notes: list[NoteOut] = Field(default_factory=list, description="The Stage's hand-over notes (`note`), oldest first, "
+                                                                  "each with `live`: no newer Decision or `accept` yet.")
     image: str | None = Field(description="The Stage's built image, relative to the Project.")
     input_image: str | None = Field(description="The built image this Stage is made from, relative to the Project.")
     outputs: list[str] = Field(description="The files of the Stage's built output, relative to the Project.")
@@ -318,6 +320,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
     graph = AssetGraph(project, asset, cache)
     stages = []
     states = graph.states()
+    held = notes.held_notes(asset)
     for state in states:
         spec = graph.spec(state.stage)
         image = graph.output_dir(spec) / spec.image if spec.image is not None else None
@@ -336,6 +339,8 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
             decisions=[*current_decisions(theirs, from_base=True), *current_decisions(graph.replay(state.stage).current)],
             decisions_as_read=[DecisionOut(id=d.id, name=d.name, data=d.data, image_hash=d.image_hash,
                                            from_base=d.id in base_ids) for d in graph.decisions(spec)],
+            notes=[NoteOut(id=h.note.id, stage=h.note.stage, text=h.note.text, input_hash=h.note.input_hash, live=h.live)
+                   for h in held if h.note.stage == state.stage],
             image=project.relative(image) if image is not None and image.is_file() else None,
             input_image=project.relative(source[1]) if source is not None and source[1].is_file() else None,
             outputs=_outputs(project, graph.output_dir(spec)),

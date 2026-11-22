@@ -23,6 +23,7 @@ from kiripix.commands.files import FileInputs, project_root, served_file
 from kiripix.commands.jobs import Job
 from kiripix.commands.registry import Command
 from kiripix.core import warm
+from kiripix.core.memory import Memory
 from kiripix.core.errors import fail
 
 JobProgress = Callable[[str, str, ProgressEvent], None]  # (job id, Command name, event)
@@ -65,6 +66,7 @@ class Session:
         self._token = secrets.token_urlsafe(24)
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self.memory = Memory(root)  # each Asset's derived state, worked out once (ticket 0373)
 
     @classmethod
     def open(cls, cwd: Path, warm_idle: float) -> "Session":
@@ -127,7 +129,7 @@ class Session:
                job_id: str | None, progress: JobProgress) -> Job:
         name = job_id or uuid.uuid4().hex[:12]
         job = Job(command, raw, id=name, cwd=self.root, wait=seconds, owner=self._is_owner(token),
-                  progress=lambda event: progress(name, command.name, event))
+                  progress=lambda event: progress(name, command.name, event), memory=self.memory)
         with self._lock:
             if name in self._jobs:
                 raise fail("job.duplicate", f"a job '{name}' is already running",

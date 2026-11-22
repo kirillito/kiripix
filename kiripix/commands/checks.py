@@ -14,6 +14,7 @@ from kiripix.core.errors import KiripixError
 from kiripix.core.hashing import HashCache
 from kiripix.core.previews import write_preview
 from kiripix.core.project import find_project
+from kiripix.core.style import style_findings
 from kiripix.core.project_checks import check_all, check_asset
 from kiripix.export import frozen_findings, pairing_findings
 
@@ -23,11 +24,14 @@ class CheckInput(BaseModel):
 
     asset: str | None = Field(None, description="The Asset ID. Omit with --all.")
     all: bool = Field(False, description="Check every Asset, then the Project checks.")
+    match: str | None = Field(None, description="Check the Assets whose IDs match this glob, such as room.ch01_dungeon_*; "
+                                                "alone it means --all --match. The Project checks run against the whole "
+                                                "Project and report only findings that name a matched Asset.")
 
     @model_validator(mode="after")
     def _asset_or_all(self) -> Self:
-        if self.all == (self.asset is not None):
-            raise ValueError("give an Asset ID or --all, not both")
+        if (self.all or self.match is not None) == (self.asset is not None):
+            raise ValueError("give an Asset ID or --all/--match, not both")
         return self
 
 
@@ -75,14 +79,16 @@ def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
     project = find_project(context.cwd)
     cache = HashCache(project.state_dir)
     broken = False
-    if arguments.all:
-        assets, stages, findings, broken, late = check_all(project, cache)
+    scoped = arguments.all or arguments.match is not None
+    if scoped:
+        assets, stages, findings, broken, late = check_all(project, cache, arguments.match)
     else:
         assert arguments.asset is not None
         asset = load_asset(project, arguments.asset)
         done, findings, old = check_asset(project, asset, cache)
         late = [(asset.id, state) for state in old]
         findings += frozen_findings(project, asset, cache)  # the Exporter's: it reads the game's Manifest
+        findings += style_findings(project, cache, [asset])  # against `[style] references` (ticket 0334)
         # Exit pairing is a Project check (spec §6.1): for one room it only warns, as `export <id>` does; `check --all` fails.
         every, _ = list_assets(project)
         findings += pairing_findings(project, every, only=asset.id, severity="warning")
@@ -95,8 +101,8 @@ def check(arguments: CheckInput, context: Context) -> Outcome[CheckData]:
     else:
         code = ExitCode.OK
     out_of_date = [OutOfDate(asset=a, stage=s.stage, status=s.status, reason=s.reason) for a, s in late]
-    unfinished = _unfinished(assets, context) if arguments.all else []
-    return Outcome(CheckData(assets=assets, stages=stages, project_checks=arguments.all, out_of_date=out_of_date,
+    unfinished = _unfinished(assets, context) if scoped else []
+    return Outcome(CheckData(assets=assets, stages=stages, project_checks=scoped, out_of_date=out_of_date,
                              unfinished=unfinished), findings, code)
 
 
@@ -119,10 +125,11 @@ class PreviewInput(BaseModel):
 
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley.")
     stage: str | None = Field(None, description="The Stage to preview; default is the last done Stage with an image.")
-    overlay: Literal["masks", "walkable", "reachable", "layers"] | None = Field(
+    overlay: Literal["masks", "walkable", "reachable", "layers", "lit"] | None = Field(
         None, description="Tint each Mask over the image, or the walkable ground (the place Stage's output), or the "
                           "ground the Body can reach (the reach Stage's), or each Layer's alpha (the layers Stage's "
-                          "output as built, one awaiting review too).")
+                          "output as built, one awaiting review too); or `lit`: the image lit from a fixed corner "
+                          "over the room's normal map (the normals Stage's), to judge the normals without Godot.")
     layer: str | None = Field(None, description="With --overlay layers: tint only this Layer.")
     brighten: float = Field(1.0, description="Multiply the image's colour by this before any tint, clipped; for looking "
                                              "at a dark room. 1 changes nothing. Only the preview file sees it.")

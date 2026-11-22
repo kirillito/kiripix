@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  assetFolder,
   call,
   callWithFile,
   callWithFiles,
   cancelJob,
   events,
   fileUrl,
+  noteChange,
+  pathsRelated,
   type DescribeData,
   type Envelope,
   type Finding,
   type NextData,
+  type QueueData,
   type Scalar,
   type ShowData,
   type StageDescription,
   type StatusData,
+  type StyleProbe,
 } from "./api";
 import {
   AssetList,
@@ -31,6 +36,7 @@ import {
 import { isTyping, type PixelCanvas } from "./pixelCanvas";
 import { useActiveTime } from "./activeTime";
 import { MASKS_STAGE, MasksPanel } from "./maskScreen";
+import { NORMALS_STAGE, NormalsPanel } from "./normalsScreen";
 import { LOOKS_DECISION, LOOKS_STAGE, LooksPanel, roomImageOf } from "./lookScreen";
 import { LOOPS_DECISION, LOOPS_STAGE, LoopsPanel } from "./loopScreen";
 import { ambiguousCells } from "./markerTool";
@@ -54,11 +60,28 @@ import { CHARACTER_KIND, CHARACTER_SCREENS, CharacterScreen, type ImportRole } f
 import { SPRITE_FRAMES_STAGE, SPRITE_KIND, SpriteFramesScreen } from "./spriteScreens";
 import { FRAME_STAGES, FrameScreen, frameOf, type FrameFocus } from "./frameScreen";
 import { costText, StackPreview, useWearables } from "./wearableScreens";
+import { NPC_KIND, NPC_STAGE, NpcCrowds, NpcScreen, npcFocusOf, type NpcFocus } from "./npcScreen";
+import { DistrictOpen, DistrictView } from "./districtView";
+import { WaitingRooms } from "./waitingRooms";
+import { StylePanel } from "./styleScreen";
+import { stopFinding, stopKey, QueueButton, QueueStrip } from "./queueMode";
 import { WorkStrip, type Working } from "./workStrip";
+import { assetOfPath, Rows } from "./rows";
 import { EMOTION_DECISION, EmotionStrip, FACE_DECISION, FACE_STAGE, PORTRAIT_KIND, PortraitPanel } from "./portraitScreens";
 
 const PICK = "pick"; // the Decision that makes a Stage's screen the Variant grid
 const REFRESH_DELAY_MS = 100; // one refresh for a burst of "changed" events
+const FOCUS_REFRESH_MS = 5000; // the window getting the focus reads everything again, at most this often
+
+interface Scope {
+  list: boolean; // the cheap list, and the status of `rows` and the queue
+  queue: boolean; // the queue alone (a new match)
+  rows: string[] | null; // the rows to ask again (null: every row)
+  full: boolean; // a new token: the server reads everything again, as it is on disk
+  asset: boolean; // `show`, `next`, `check` and `probe style` of the open Asset
+  style: boolean; // the Project's style references may have changed
+}
+
 
 // An action the Owner started, from the click until its result has landed (ticket 0083).
 interface Work {
@@ -73,8 +96,14 @@ interface Selected {
   show: ShowData | null;
   next: NextData | null;
   checks: Finding[];
+  queue: QueueData | null; // what waits on the Owner, narrowed by the session's match
+  queueMatch: string; // the match `queue` was asked with
+  queueFindings: Finding[];
+  style: StyleProbe | null; // `probe style` of the Asset (or, with none open, of any: the references are the Project's)
   problems: Finding[]; // why the Project or the Asset can't be read
-  refreshes: number;
+  refreshes: number; // the open Asset's calls have answered again: what its screen reads from files follows it
+  coreFor: string | null; // the Asset whose `show` and `next` have both answered: only then is it known which Stage it opens on
+  listRefreshes: number; // `status` has answered again: the views of the Project's rooms follow it
 }
 
 function distinct(findings: Finding[]): Finding[] {
@@ -85,6 +114,22 @@ function distinct(findings: Finding[]): Finding[] {
     seen.add(key);
     return true;
   });
+}
+
+const MATCH_KEY = "kiripix.queue.match";
+function readMatch(): string {
+  try {
+    return sessionStorage.getItem(MATCH_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+function saveMatch(value: string): void {
+  try {
+    sessionStorage.setItem(MATCH_KEY, value);
+  } catch {
+    // Without storage the match lasts until a reload.
+  }
 }
 
 function initialParam(name: string): string | null {
@@ -99,8 +144,14 @@ export function App() {
     show: null,
     next: null,
     checks: [],
+    queue: null,
+    queueMatch: "",
+    queueFindings: [],
+    style: null,
     problems: [],
     refreshes: 0,
+    listRefreshes: 0,
+    coreFor: null,
   });
   const [imageVersion, setImageVersion] = useState(0);
   const [refusals, setRefusals] = useState(0);
@@ -112,7 +163,7 @@ export function App() {
   const [progress, setProgressText] = useState<string | null>(null);
   const [fraction, setFraction] = useState<number | null>(null);
   const [works, setWorks] = useState<Work[]>([]);
-  const [reading, setReading] = useState<{ label: string; since: number } | null>({
+  const [reading, setReading] = useState<{ label: string; since: number; left?: string[] } | null>({
     label: asset ? `Opening ${asset}` : "Reading the Project",
     since: Date.now(),
   });
@@ -123,6 +174,7 @@ export function App() {
   const [connected, setConnected] = useState(true);
   const [gameFrame, setGameFrame] = useState(false);
   const [rebuild, setRebuild] = useState(true);
+  const [normalsRebuild, setNormalsRebuild] = useState(true); // a flatten replays with no Runner call
   const [layersRebuild, setLayersRebuild] = useState(false); // each rebuild is a Runner call, so it's the Owner's to ask for
   const [looksRebuild, setLooksRebuild] = useState(true); // a Look is built with no Runner, so a rebuild is cheap
   const [loopsRebuild, setLoopsRebuild] = useState(true); // so is a colour-cycle Loop
@@ -131,64 +183,267 @@ export function App() {
   const [, setRefocus] = useState(0); // one more render, to run the focus effect when a finding is on this Stage
   const [selectedState, setSelectedState] = useState<string | null>(null); // a Prop's state; null: the default state
   const [sideBySide, setSideBySide] = useState(false);
+  const [styleFocus, setStyleFocus] = useState(0); // a `style.*` finding's jump
+  const [npcFocus, setNpcFocus] = useState<NpcFocus | null>(null); // an `npc.*` finding's jump
   const [selectedEmotion, setSelectedEmotion] = useState<string | null>(null); // a portrait's emotion; null: the neutral
   const [faceRebuild, setFaceRebuild] = useState(true); // register again after each face edit, so the region shown is the Stage's
+  // Queue mode (ticket 0329): `?queue=<glob>` opens it, as a district view's "Review this district" does. The match lasts the session.
+  const [queueOn, setQueueOn] = useState(initialParam("queue") !== null);
+  const [match, setMatch] = useState(initialParam("queue") ?? readMatch());
+  // The district view (ticket 0330): the glob it shows, or null. `?district=<glob>` opens it.
+  const [district, setDistrict] = useState<string | null>(initialParam("district"));
+  const [cursorKey, setCursorKey] = useState<string | null>(null);
+  const matchRef = useRef(match);
+  matchRef.current = match;
+  const lastIndex = useRef(0);
   const canvas = useRef<PixelCanvas>(null);
-  const wearables = useWearables(data.status, data.refreshes);
+  const wearables = useWearables(data.status, data.listRefreshes);
 
-  // One refresh at a time, in order, and one more if something changed meanwhile: what shows is never older than a change.
+  // One refresh at a time, and one more if something changed meanwhile: what shows is never older than a change. The calls of a refresh
+  // are asked together and each answer shows as it lands (ticket 0369). A refresh asked for while one runs is merged into one more.
   const selection = useRef(asset);
   selection.current = asset;
-  const refreshing = useRef<"idle" | "busy" | "again">("idle");
-  const refresh = useCallback(async () => {
-    if (refreshing.current !== "idle") {
-      refreshing.current = "again";
-      return;
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const wearablesRef = useRef(wearables);
+  wearablesRef.current = wearables;
+  const rows = useRef<Rows | null>(null);
+  if (!rows.current) {
+    rows.current = new Rows(
+      () => setData((before) => ({ ...before, status: rows.current!.snapshot(), problems: distinct([...rows.current!.problems, ...problemParts.current.show]) })),
+      () => setConnected(false),
+    );
+  }
+  const refreshing = useRef<Promise<void> | null>(null);
+  const pending = useRef<Scope | null>(null);
+  const styleFresh = useRef(false); // `probe style` has answered, and the references have not changed since
+  const problemParts = useRef<{ show: Finding[] }>({ show: [] });
+
+  // The folders whose change is the open Asset's: its own, its base's, its body's and its Wearables'.
+  const openFolders = useCallback((): string[] => {
+    const id = selection.current;
+    if (!id) return [];
+    const ids = new Set([id]);
+    const shown = dataRef.current.show?.asset === id ? dataRef.current.show : null;
+    if (shown?.base) ids.add(shown.base);
+    for (const one of shown?.wearables ?? []) ids.add(one.asset);
+    for (const one of Object.values(wearablesRef.current)) {
+      if (one.id === id && one.body) ids.add(one.body);
+      if (one.body === id) ids.add(one.id);
     }
-    do {
-      refreshing.current = "busy";
-      const chosen = selection.current;
-      try {
-        const status = await call<StatusData>("status", {});
-        let [show, next, checks]: [ShowData | null, NextData | null, Finding[]] = [null, null, []];
-        const problems = [...status.findings];
-        if (chosen) {
-          const shown = await call<ShowData>("show", { asset: chosen });
-          show = shown.data;
-          problems.push(...shown.findings);
-          next = (await call<NextData>("next", { asset: chosen })).data;
-          checks = (await call<unknown>("check", { asset: chosen })).findings;
+    return [...ids].map(assetFolder);
+  }, []);
+  const scopeOf = useCallback(
+    (paths: string[] | null): Scope => {
+      if (paths === null) return { list: true, queue: true, rows: null, full: true, asset: true, style: true };
+      const folders = openFolders();
+      // Outside `assets/` is the Project's (`kiripix.toml`, the style references), which every Asset's calls may read.
+      const project = paths.some((path) => !path.startsWith("assets/"));
+      const mine = paths.some((path) => folders.some((folder) => pathsRelated(path, folder)));
+      // Per row (ticket 0374): the Assets the paths name, and those that name them (a base's characters, a body's Wearables).
+      const named = [...new Set(paths.flatMap((path) => assetOfPath(path) ?? []))];
+      return { list: true, queue: true, rows: project ? null : rows.current!.related(named), full: false, asset: project || mine, style: project };
+    },
+    [openFolders],
+  );
+  // What an action may have changed: the open Asset and its dependants, or (a batch action, a new Asset) every row.
+  const scopeAfterAction = useCallback(
+    (everything: boolean): Scope => ({
+      list: true,
+      queue: true,
+      rows: everything || !selection.current ? null : rows.current!.related([selection.current]),
+      full: false,
+      asset: true,
+      style: true,
+    }),
+    [],
+  );
+
+  const readOnce = useCallback(async (scope: Scope) => {
+    const chosen = selection.current;
+    const alive = () => chosen === selection.current;
+    const asked = matchRef.current;
+    const left = new Set<string>();
+    const reads: Promise<void>[] = [];
+    const note = () => setReading((now) => (now ? { ...now, left: [...left] } : now));
+    const read = (name: string, task: () => Promise<void>) => {
+      left.add(name);
+      note();
+      reads.push(
+        task()
+          .then(() => setConnected(true))
+          .catch(() => setConnected(false))
+          .finally(() => {
+            left.delete(name);
+            note();
+          }),
+      );
+    };
+    const publish = (part: Partial<Selected> | ((before: Selected) => Partial<Selected>)) => {
+      if (alive()) setData((before) => ({ ...before, ...(typeof part === "function" ? part(before) : part) }));
+    };
+    const problems = () => distinct([...rows.current!.problems, ...problemParts.current.show]);
+    // The list is cheap and paints at once; each row's status, then the queue, fill in after it (ticket 0374).
+    const store = rows.current!;
+    let listed: Promise<void> = Promise.resolve();
+    let firstRows: Promise<void> = Promise.resolve();
+    if (scope.list) {
+      if (scope.full) store.newToken();
+      store.invalidate();
+      listed = new Promise<void>((done) => {
+        read("the list", async () => {
+          try {
+            await store.read();
+          } finally {
+            done();
+          }
+        });
+      });
+      firstRows = new Promise<void>((landed) => {
+        read("the status", async () => {
+          try {
+            await listed;
+            await store.start(scope.rows, landed);
+            publish((before) => ({ problems: problems(), listRefreshes: before.listRefreshes + 1 }));
+          } finally {
+            landed();
+          }
+        });
+      });
+    }
+    if (scope.list || scope.queue) {
+      read("the queue", async () => {
+        await listed;
+        await firstRows;
+        const waiting = await store.queue(scope.list ? scope.rows : null, asked, () => true);
+        if (waiting) publish({ queue: waiting.data, queueMatch: asked, queueFindings: waiting.findings });
+      });
+    }
+    if (chosen && scope.asset) {
+      const core = [
+        new Promise<void>((done) =>
+          read("the Asset", async () => {
+            try {
+              const shown = await call<ShowData>("show", { asset: chosen });
+              problemParts.current.show = shown.findings;
+              publish({ show: shown.data, problems: problems() });
+            } finally {
+              done();
+            }
+          }),
+        ),
+        new Promise<void>((done) =>
+          read("what is next", async () => {
+            try {
+              const answer = await call<NextData>("next", { asset: chosen });
+              publish({ next: answer.data });
+            } finally {
+              done();
+            }
+          }),
+        ),
+      ];
+      void Promise.all(core).then(() => publish((before) => ({ refreshes: before.refreshes + 1, coreFor: chosen })));
+      read("the checks", async () => {
+        const answer = await call<unknown>("check", { asset: chosen });
+        publish({ checks: answer.findings });
+      });
+    }
+    // The references are the Project's, so with no Asset open one ask is enough until they change.
+    if (chosen ? scope.asset : scope.style || !styleFresh.current) {
+      read("the style", async () => {
+        if (!chosen) {
+          await listed;
+          await firstRows;
         }
-        if (chosen === selection.current) {
-          setData((before) => ({
-            status: status.data,
-            show,
-            next,
-            checks,
-            problems: distinct(problems),
-            refreshes: before.refreshes + 1,
-          }));
-        }
-        setConnected(true);
-      } catch {
-        setConnected(false);
-      }
-    } while ((refreshing.current as string) === "again");
-    refreshing.current = "idle";
-    setReading(null);
+        const styled = chosen ?? store.list[0]?.asset;
+        if (!styled) return;
+        const answer = await call<{ result: StyleProbe }>("probe", { name: "style", asset: styled });
+        styleFresh.current = true;
+        publish({ style: answer.data?.result ?? null });
+      });
+    }
+    await Promise.all(reads);
   }, []);
 
+  const ask = useCallback(
+    (scope: Scope): Promise<void> => {
+      if (scope.style) styleFresh.current = false;
+      const before = pending.current;
+      const union = (a: string[] | null, b: string[] | null) => (a === null || b === null ? null : [...new Set([...a, ...b])]);
+      pending.current = before
+        ? {
+            list: before.list || scope.list,
+            queue: before.queue || scope.queue,
+            rows: before.list && scope.list ? union(before.rows, scope.rows) : before.list ? before.rows : scope.rows,
+            full: before.full || scope.full,
+            asset: before.asset || scope.asset,
+            style: before.style || scope.style,
+          }
+        : scope;
+      if (!refreshing.current) {
+        refreshing.current = (async () => {
+          while (pending.current) {
+            const next = pending.current;
+            pending.current = null;
+            await readOnce(next);
+          }
+          refreshing.current = null;
+          setReading(null);
+        })();
+      }
+      return refreshing.current;
+    },
+    [readOnce],
+  );
+  // A refresh for the paths that changed (null: everything may have, and the server reads it all again).
+  const refresh = useCallback((paths: string[] | null) => ask(scopeOf(paths)), [ask, scopeOf]);
+
+  // Opening an Asset reads the Asset's calls; the list and the queue are asked only before they have ever answered.
+  const refreshOpened = useCallback(() => {
+    // The page's first read keeps what `serve` remembers (no new token): it is in step with every write Kiripix recorded.
+    if (dataRef.current.status === null) return ask({ list: true, queue: true, rows: null, full: false, asset: true, style: true });
+    return ask({ list: false, queue: false, rows: null, full: false, asset: true, style: false });
+  }, [ask]);
+
+  const lastRead = useRef(Date.now());
   useEffect(() => {
     let timer: number | undefined;
+    let waiting: string[] | null = []; // what an agent changed since the last refresh (null: not known)
+    let ours: string[] = []; // what `serve`'s own Commands changed since then
+    let heard = false;
+    let lost = false; // the stream failed before it connected: its first hello is a reconnect's
     const close = events({
-      onChange: (paths) => {
-        // Only a changed image is fetched again: the browser reuses an image URL it has already shown.
-        if (!paths || paths.some((path) => path.endsWith(".png"))) setImageVersion((version) => version + 1);
+      onChange: ({ paths, own, hello }) => {
+        const first = hello && !heard && !lost; // the first connection: the page's own first refresh covers it
+        if (hello) heard = true;
+        if (first) return;
+        // Only an image whose own file changed is fetched again.
+        if (noteChange(paths)) setImageVersion((version) => version + 1);
+        // A change `serve`'s own Commands made is read by the refresh of the action that made it: it starts none of its own, unless
+        // an action is still running (a Decision's rebuild, say), whose half-way state is shown.
+        const theirs = paths === null ? null : paths.filter((path) => !own.includes(path));
+        if (paths !== null) ours = [...ours, ...paths.filter((path) => own.includes(path))];
+        if (theirs !== null && theirs.length === 0 && ours.length === 0) return;
+        waiting = theirs === null || waiting === null ? null : [...waiting, ...theirs];
         window.clearTimeout(timer);
-        timer = window.setTimeout(() => void refresh(), REFRESH_DELAY_MS);
+        timer = window.setTimeout(() => {
+          const mine = ours;
+          const agents = waiting;
+          ours = [];
+          waiting = [];
+          if (agents !== null && agents.length === 0) {
+            if (mine.length > 0 && running.current > 0) void refresh(mine);
+            return;
+          }
+          void refresh(agents === null ? null : running.current > 0 ? [...agents, ...mine] : agents);
+        }, REFRESH_DELAY_MS);
       },
       onProgress: setProgress,
-      onLost: () => setConnected(false),
+      onLost: () => {
+        lost = true;
+        setConnected(false);
+      },
     });
     return () => {
       window.clearTimeout(timer);
@@ -196,11 +451,43 @@ export function App() {
     };
   }, [refresh, setProgress]);
 
+  // A file changed outside Kiripix is never reported: the Reload button reads everything again, and the window getting the focus back
+  // reads again what is on screen (the rows shown and the open Asset), which `serve` forgets first; every other row is kept, so a
+  // Project of hundreds of Assets isn't worked out again on every switch of windows.
+  const reload = useCallback(() => {
+    lastRead.current = Date.now();
+    noteChange(null);
+    setImageVersion((version) => version + 1);
+    setReading({ label: "Reading the Project", since: Date.now() });
+    return refresh(null);
+  }, [refresh]);
   useEffect(() => {
-    void refresh();
-  }, [asset, refresh]);
+    const onFocus = () => {
+      if (Date.now() - lastRead.current < FOCUS_REFRESH_MS) return;
+      lastRead.current = Date.now();
+      const store = rows.current!;
+      const shown = [...new Set([...store.shown(), ...(selection.current ? [selection.current] : [])])];
+      store.forgetOnce(shown);
+      // An image's URL carries the number of the last change to its file (`fileUrl`): those Assets' files are taken as changed.
+      noteChange(shown.map(assetFolder));
+      setImageVersion((version) => version + 1);
+      void ask({ list: true, queue: true, rows: shown, full: false, asset: true, style: false });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [ask]);
+
+  useEffect(() => {
+    void refreshOpened();
+  }, [asset, refreshOpened]);
+
 
   const show = data.show?.asset === asset ? data.show : null;
+  // The board's rows are asked for only while it is on screen.
+  const boardShown = (!asset || !show) && district === null;
+  useEffect(() => {
+    if (!boardShown) rows.current!.see("board", []);
+  }, [boardShown]);
   const kind = show?.kind;
   const isProp = kind === "prop";
   const stateShown = isProp ? show?.states?.find((entry) => entry.state === selectedState) : undefined;
@@ -224,7 +511,7 @@ export function App() {
   // An Asset opens on what it needs next: `next` says which Stage. After that the view stays where the Owner put it,
   // whatever an agent or a Run does.
   const next = data.next?.asset === asset ? data.next : null;
-  const current = stage ?? next?.stage ?? show?.stages[0]?.stage ?? null;
+  const current = stage ?? next?.stage ?? (data.coreFor === asset ? show?.stages[0]?.stage : undefined) ?? null;
   useEffect(() => {
     if (stage === null && show && current) setStage(current);
   }, [stage, show, current]);
@@ -233,9 +520,11 @@ export function App() {
     const query = new URLSearchParams();
     if (asset) query.set("asset", asset);
     if (asset && current) query.set("stage", current);
+    if (queueOn) query.set("queue", match);
+    if (district !== null) query.set("district", district);
     const search = query.toString();
     history.replaceState(null, "", window.location.pathname + (search ? `?${search}` : ""));
-  }, [asset, current]);
+  }, [asset, current, queueOn, match, district]);
 
   useActiveTime(asset, show ? current : null);
 
@@ -246,6 +535,8 @@ export function App() {
   const isPlace = description?.decisions.some((decision) => decision.name === PLACE_DECISION) ?? false;
   const isMasks =
     current === MASKS_STAGE && (description?.decisions.some((decision) => decision.name === "brush") ?? false);
+  const isNormals =
+    current === NORMALS_STAGE && show?.kind === "room" && (description?.decisions.some((decision) => decision.name === "flatten") ?? false);
   const isLayers =
     current === LAYERS_STAGE && (description?.decisions.some((decision) => decision.name === LAYERS_DECISION) ?? false);
   const isLooks =
@@ -260,12 +551,15 @@ export function App() {
   const isFrames = hasFrames && current !== null && FRAME_STAGES.includes(current) && description !== undefined;
   const isSpriteFrames = show?.kind === SPRITE_KIND && current === SPRITE_FRAMES_STAGE && description !== undefined;
   const isPivot = show?.kind === SPRITE_KIND && current === "fit";
+  const isNpcChoose = show?.kind === NPC_KIND && current === NPC_STAGE && detail !== undefined;
   const isFace = isPortrait && current === FACE_STAGE && (description?.decisions.some((decision) => decision.name === FACE_DECISION) ?? false);
+  const styleShown = data.style !== null && data.style.asset === asset && data.style.stage !== null && data.style.stage === current;
   const isFootprint = description?.decisions.some((decision) => decision.name === FOOTPRINT_DECISION) ?? false;
 
   // Each user action is one Command (a Mask edit may add a `run`, ADR 0006); its findings show until the next action. They
   // go one at a time, in the order they were made: a Run straight after a `set` must see that `set`, not find its lock held.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const running = useRef(0); // the actions whose Commands are being answered (not yet their refresh)
   const workIds = useRef(0);
   const perform = useCallback(
     <T,>(
@@ -273,6 +567,7 @@ export function App() {
       label = "Working",
       kind: string | null = null,
       settled?: () => void,
+      everything = false, // a batch action or a new Asset: every row is asked again, not the open Asset's and its dependants
     ): Promise<void> => {
       // Registered at once, so the strip and the marks show before the server has answered; it stays until its result landed.
       const id = ++workIds.current;
@@ -280,10 +575,16 @@ export function App() {
       const done = queue.current.then(async () => {
         setWorks((now) => now.map((work) => (work.id === id ? { ...work, since: Date.now() } : work)));
         try {
-          const result = await action();
+          running.current += 1;
+          let result: Envelope<T>;
+          try {
+            result = await action();
+          } finally {
+            running.current -= 1;
+          }
           setNotice(result.findings);
           setConnected(true);
-          await refresh();
+          await ask(scopeAfterAction(everything));
         } catch {
           setConnected(false);
         } finally {
@@ -294,8 +595,41 @@ export function App() {
       queue.current = done;
       return done;
     },
-    [refresh],
+    [ask, scopeAfterAction],
   );
+
+  // A batch action of the district view: one Command with `--match`, through the same queue of actions as every other. A Run is
+  // cancellable, as `run` is on a room.
+  const batch = (command: string, input: object, label: string, cancellable: boolean) =>
+    new Promise<Envelope<unknown> | null>((resolve) => {
+      let result: Envelope<unknown> | null = null;
+      void perform(async () => {
+        const id = cancellable ? crypto.randomUUID() : undefined;
+        if (id) setJob(id);
+        try {
+          result = await call<unknown>(command, input, id);
+          return result;
+        } finally {
+          if (id) {
+            setJob(null);
+            setProgress(null);
+          }
+        }
+      }, label, null, undefined, true).then(() => resolve(result));
+    });
+
+  // One file-carrying Command of the rooms waiting for a Source (ticket 0351), through the same queue of actions.
+  const work = <T,>(label: string, action: () => Promise<Envelope<T>>) =>
+    new Promise<Envelope<T> | null>((resolve) => {
+      let result: Envelope<T> | null = null;
+      void perform(async () => {
+        result = await action();
+        return result;
+      }, label, null, undefined, true).then(() => resolve(result));
+    });
+
+  // `style-add` and `style-remove` are the Owner's: `call` sends the session token.
+  const setReference = (add: boolean) => void perform(() => call(add ? "style-add" : "style-remove", { asset }), add ? "Making a style reference" : "Removing a style reference", null, undefined, true);
 
   // A Run holds the Asset's lock, and what is done meanwhile would be refused or make its output stale at once.
   const busy = job !== null;
@@ -305,6 +639,17 @@ export function App() {
       if (!result.ok) setRefusals((count) => count + 1); // The control goes back to the value that stands.
       return result;
     }, `Setting ${name}`);
+  // A change of an NPC's choice is one `set` of one `choose` parameter, then `choose` again (no Runner) so the figure shows it.
+  const setChoice = (name: string, value: string) =>
+    void perform(async () => rebuilt(await call("set", { asset, stage: current, assignments: [`${name}=${value}`] }), false, true), `Setting ${name}`);
+  // "re-roll" on the board: `new --reroll`, then the NPC's `choose` again, which is how a crowd is built.
+  const rerollNpc = (id: string) =>
+    work("Re-rolling " + id, async () => {
+      const made = await call("new", { kind: NPC_KIND, name: id, reroll: true });
+      if (!made.ok) return made;
+      const ran = await call("run", { asset: id, stage: NPC_STAGE });
+      return { ...ran, findings: [...made.findings, ...ran.findings] };
+    });
   const decideMarker = useCallback(
     (marker: Record<string, unknown>) => {
       const decision = JSON.stringify({ decision: PLACE_DECISION, data: marker });
@@ -361,6 +706,7 @@ export function App() {
     [isLoops, loopsRebuild],
     [isFace, faceRebuild],
     [isLayers, layersRebuild],
+    [isNormals, normalsRebuild],
   ].find(([screen]) => screen)?.[1] ?? false;
   const rebuilt = useCallback(
     async <T,>(result: Envelope<T>, rerun = false, force = false): Promise<Envelope<unknown>> => {
@@ -400,6 +746,7 @@ export function App() {
         frames: "Setting the frames of",
         hold: "Holding a part of",
         face: "Drawing the face region",
+        flatten: "Flattening",
       };
       const label =
         name === "click" && isLayers
@@ -431,6 +778,12 @@ export function App() {
   const importMask = useCallback(
     (file: File) => void perform(async () => rebuilt(await callWithFile("mask-import", { asset }, "png", file)), "Importing a Mask image"),
     [asset, perform, rebuilt],
+  );
+  // An Override painted on the normals' image: one `override`, then the Stage again so the picture shows it (ticket 0343).
+  const overrideNormals = useCallback(
+    (file: File, settled?: () => void) =>
+      void perform(async () => rebuilt(await callWithFile("override", { asset, stage: current }, "png", file)), "Painting the normals", null, settled),
+    [asset, current, perform, rebuilt],
   );
   const importPlate = useCallback(
     (file: File) => void perform(async () => rebuilt(await callWithFile("plate-import", { asset }, "png", file)), "Importing a Plate image"),
@@ -545,7 +898,7 @@ export function App() {
         : await call<{ asset: string }>("new", input);
       if (result.ok && result.data) open(result.data.asset, null);
       return result;
-    }, `Creating ${name}`);
+    }, `Creating ${name}`, null, undefined, true);
   // A character's Decisions (a `bone`, a `clip`): one `decide` each, nothing run after it.
   const decideCharacter = useCallback(
     (name: string, data: Record<string, unknown>, label: string) => {
@@ -622,14 +975,16 @@ export function App() {
   }, [description, isSource, pick, step, variants]);
 
   function goHome() {
+    setQueueOn(false);
+    setDistrict(null);
     setReading({ label: "Opening the room list", since: Date.now() });
-    if (selection.current === null) void refresh();
+    if (selection.current === null) void ask(scopeAfterAction(true));
     setAsset(null);
   }
 
   function open(assetId: string, stageName: string | null) {
     setReading({ label: `Opening ${assetId}`, since: Date.now() });
-    if (assetId === selection.current) void refresh(); // the effect runs only when the Asset changes
+    if (assetId === selection.current) void ask(scopeAfterAction(false)); // the effect runs only when the Asset changes
     setAsset(assetId);
     setStage(stageName);
     setNotice([]);
@@ -656,10 +1011,92 @@ export function App() {
     const layer = finding.code === "layer.no_ysort" ? layerIdOf(finding.position?.file ?? "") : undefined;
     const framed = hasFrames ? frameOf(finding) : null;
     if (framed) setFocusFrame((before) => ({ ...framed, count: (before?.count ?? 0) + 1 }));
+    if (finding.code.startsWith("style.")) setStyleFocus((count) => count + 1);
+    const npc = npcFocusOf(finding);
+    if (npc) setNpcFocus((before) => ({ ...npc, count: (before?.count ?? 0) + 1 }));
     if (layer) setFocusLayer((before) => ({ layer, count: (before?.count ?? 0) + 1 }));
     if (where && where !== current) setStage(where);
     else setRefocus((count) => count + 1);
   }
+
+  // Queue mode: each stop opens its Asset on its Stage, as clicking the Stage does; a finding jumps to its place.
+  const stops = data.queue?.stops ?? [];
+  const goTo = (index: number, list: QueueData["stops"] = stops) => {
+    const stop = list[index];
+    if (!stop) return;
+    lastIndex.current = index;
+    setCursorKey(stopKey(stop));
+    open(stop.asset, stop.stage);
+    if (stop.type === "finding" && stop.position) jump(stopFinding(stop));
+  };
+  const leaveQueue = () => setQueueOn(false);
+  const openQueue = (glob?: string) => {
+    if (glob !== undefined && glob !== match) changeMatch(glob);
+    lastIndex.current = 0;
+    setCursorKey(null);
+    setQueueOn(true);
+  };
+  const changeMatch = (value: string) => {
+    saveMatch(value);
+    matchRef.current = value;
+    setMatch(value);
+    setCursorKey(null);
+    lastIndex.current = 0;
+    void ask({ list: false, queue: true, rows: null, full: false, asset: false, style: false });
+  };
+  const references = (data.status?.assets ?? []).filter((row) => row.reference).map((row) => row.asset);
+  const queueIndex = stops.findIndex((stop) => stopKey(stop) === cursorKey);
+  // Once the queue for the match in force has landed: the current stop stays while it waits, else the one now at its place.
+  useEffect(() => {
+    if (!queueOn || data.queueMatch !== match) return;
+    if (stops.length === 0) {
+      setCursorKey(null);
+      return;
+    }
+    const found = cursorKey === null ? -1 : stops.findIndex((stop) => stopKey(stop) === cursorKey);
+    if (found >= 0) lastIndex.current = found;
+    else goTo(Math.min(lastIndex.current, stops.length - 1));
+  }, [queueOn, data.queue, data.queueMatch, match, cursorKey]);
+
+  // `A` accepts a review, `→` or `N` the next stop, `←` or `P` the previous. In the capture phase, so that in queue mode they win
+  // over a Stage's own use of the same key (panning by arrow, a Mask named `a`); `Esc` leaves unless a tool took it first.
+  const queueKeys = useRef({ goTo, accept, leaveQueue, stops, index: queueIndex, review: false });
+  queueKeys.current = {
+    goTo,
+    accept,
+    leaveQueue,
+    stops,
+    index: queueIndex,
+    review: queueIndex >= 0 && stops[queueIndex].type === "review" && stops[queueIndex].stage === current && detail?.status === "needs-review" && job === null && rebuilding === null,
+  };
+  useEffect(() => {
+    if (!queueOn) return;
+    const onCapture = (event: KeyboardEvent) => {
+      if (isTyping(event.target) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      const now = queueKeys.current;
+      const key = event.key.toLowerCase();
+      const step = key === "arrowright" || key === "n" ? 1 : key === "arrowleft" || key === "p" ? -1 : 0;
+      if (step !== 0) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const at = now.index + step;
+        if (at >= 0 && at < now.stops.length) now.goTo(at);
+      } else if (key === "a" && now.review) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        now.accept();
+      }
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented && !isTyping(event.target)) queueKeys.current.leaveQueue();
+    };
+    window.addEventListener("keydown", onCapture, true);
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("keydown", onCapture, true);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [queueOn]);
 
   const stageChecks = readable(
     data.checks.filter((finding) => (finding.position?.stage ?? current) === current),
@@ -698,7 +1135,7 @@ export function App() {
   const working: Working | null = front
     ? { label: front.label, since: front.since ?? Date.now(), waiting: works.length - 1, progress, fraction }
     : reading
-      ? { label: reading.label, since: reading.since, waiting: 0, progress: null, fraction: null }
+      ? { label: reading.left?.length ? `${reading.label}: reading ${reading.left.join(", ")}` : reading.label, since: reading.since, waiting: 0, progress: null, fraction: null }
       : null;
   useEffect(() => {
     if (works.length === 0) setProgress(null);
@@ -739,6 +1176,20 @@ export function App() {
         </button>
         <span className="project">{data.status?.project}</span>
         <WorkStrip working={working} />
+        <QueueButton
+          testid="queue-open"
+          count={data.queue ? data.queue.counts.total : null}
+          active={queueOn}
+          onClick={() => (queueOn ? leaveQueue() : openQueue())}
+        />
+        {district !== null && asset && (
+          <button data-testid="district-back" onClick={() => setAsset(null)} title="Back to the district">
+            District {district}
+          </button>
+        )}
+        <button data-testid="reload" onClick={() => void reload()} title="Read the Project again, as it is on disk">
+          Reload
+        </button>
         <FilterBar filter={filter} onChange={setFilter} />
         {!connected && (
           <span className="offline" role="alert">
@@ -746,15 +1197,68 @@ export function App() {
           </span>
         )}
       </header>
-      <AssetList status={data.status} selected={asset} filter={filter} onSelect={(id) => open(id, null)} />
+      {queueOn && (
+        <QueueStrip
+          queue={data.queueMatch === match ? data.queue : null}
+          findings={data.queueMatch === match ? data.queueFindings : []}
+          index={queueIndex}
+          match={match}
+          onMatch={changeMatch}
+          onGo={goTo}
+          onLeave={leaveQueue}
+        />
+      )}
+      <AssetList
+        status={data.status}
+        selected={asset}
+        filter={filter}
+        references={references}
+        onSelect={(id) => open(id, null)}
+        onSee={(ids) => rows.current!.see("list", ids)}
+      />
       <main>
-        {!asset || !show ? (
+        {(!asset || !show) && district !== null ? (
+          <DistrictView
+            glob={district}
+            refreshes={data.listRefreshes}
+            imageVersion={imageVersion}
+            job={job}
+            progress={progress}
+            onOpen={open}
+            onReview={openQueue}
+            onClose={() => setDistrict(null)}
+            batch={batch}
+            extra={() => <WaitingRooms glob={district!} refreshes={data.listRefreshes} imageVersion={imageVersion} work={work} onOpen={open} />}
+          />
+        ) : !asset || !show ? (
           <StatusBoard
             status={data.status}
             filter={filter}
+            references={references}
             onOpen={open}
+            onSee={(ids) => rows.current!.see("board", ids)}
+            queue={
+              <QueueButton testid="board-queue" count={data.queue ? data.queue.counts.total : null} active={queueOn} onClick={() => openQueue()} />
+            }
+            district={<DistrictOpen assets={data.status?.assets ?? []} onOpen={setDistrict} />}
             onCreateCharacter={createCharacter}
             worn={Object.fromEntries(Object.values(wearables).map((one) => [one.id, { body: one.body, cost: costText(one) }]))}
+            crowds={
+              <NpcCrowds status={data.status} refreshes={data.listRefreshes} imageVersion={imageVersion} disabled={busy} onOpen={open} onReroll={rerollNpc} />
+            }
+          />
+        ) : isNpcChoose && detail ? (
+          <NpcScreen
+            key={asset}
+            show={show}
+            detail={detail}
+            wearables={Object.values(wearables).filter((one) => one.body === show.base)}
+            findings={stageChecks}
+            focus={npcFocus}
+            refreshes={data.refreshes}
+            imageVersion={imageVersion}
+            disabled={busy}
+            onSet={setChoice}
           />
         ) : isCharacterScreen && detail && description ? (
           <CharacterScreen
@@ -840,6 +1344,19 @@ export function App() {
                   </button>
                 )}
               </div>
+            )}
+            {styleShown && data.style && (
+              <StylePanel
+                key={asset}
+                probe={data.style}
+                show={show}
+                findings={stageChecks}
+                focus={styleFocus}
+                refreshes={data.refreshes}
+                imageVersion={imageVersion}
+                disabled={busy}
+                setReference={setReference}
+              />
             )}
             {isProp && (
               <StateStrip
@@ -929,6 +1446,26 @@ export function App() {
                 onRebuild={setRebuild}
                 decide={decideMask}
                 importPng={importMask}
+                view={String(show?.params.view ?? "top")}
+                place={show?.stages.find((entry) => entry.stage === "place")}
+                refreshes={data.refreshes}
+              />
+            )}
+            {isNormals && (
+              <NormalsPanel
+                key={asset}
+                canvas={canvas}
+                asset={asset ?? ""}
+                show={show}
+                detail={detail}
+                decisions={description.decisions}
+                imageVersion={imageVersion}
+                disabled={busy}
+                rebuild={normalsRebuild}
+                onRebuild={setNormalsRebuild}
+                findings={stageChecks}
+                decide={decideMask}
+                overridePng={overrideNormals}
               />
             )}
             {isLayers && (
@@ -998,7 +1535,7 @@ export function App() {
               />
             )}
             <fieldset disabled={busy}>
-              {description.params.map((param) => (
+              {description.params.filter((param) => !isNpcChoose || (param.name !== "wearables" && param.name !== "colours")).map((param) => (
                 <ParamControl
                   key={`${detail.stage}.${param.name}.${refusals}`}
                   spec={param}

@@ -165,7 +165,7 @@ def _run_sheet(run: StageRun, source: str, depth: bool = False) -> dict[str, Any
     if depth:
         layers.append(_depth_cells(run, frames, own))
     run.progress(1, 2, "packing the atlases")
-    atlases, rects, offsets = pack_trimmed(layers)
+    atlases, rects, offsets = pack_trimmed(layers, share=True)  # a repeated cell once (ticket 0375)
     colour = atlases[0]
     write_colour_atlas(run.output_dir / COLOR_ATLAS, colour)  # indexed when it fits (ticket 0310)
     write_rgba(run.output_dir / NORMAL_ATLAS, atlases[1])
@@ -190,6 +190,7 @@ def _run_sheet(run: StageRun, source: str, depth: bool = False) -> dict[str, Any
         clips.append({"name": entry["name"], "fps": int(entry["fps"]), "loop": bool(entry["loop"]),
                       "stationary": bool(entry["stationary"]),
                       "cell": {"width": own_width, "height": own_height}, "pivot": {"x": own_pivot[0], "y": own_pivot[1]},
+                      **({"ticks": [int(t) for t in entry["ticks"]]} if "ticks" in entry else {}),  # a sprite clip's (ticket 0362)
                       "directions": directions})
     sheet = {
         "schema_version": SHEET_SCHEMA_VERSION,
@@ -198,6 +199,7 @@ def _run_sheet(run: StageRun, source: str, depth: bool = False) -> dict[str, Any
         "pivot": {"x": cell_pivot[0], "y": cell_pivot[1]},
         "atlas": {"width": int(colour.shape[1]), "height": int(colour.shape[0])},
         "directions": list(document["directions"]),
+        **({"effect": True} if document.get("effect") else {}),  # a sprite's effect mode (ticket 0362): the export is flat
         "clips": clips,
     }
     (run.output_dir / SHEET_FILE).write_text(json.dumps(sheet, indent=1) + "\n", encoding="utf-8")
@@ -234,8 +236,12 @@ def _check_sheet(run: StageRun, source: str) -> list[Finding]:
     for entry in document["clips"]:
         clip_cell, clip_pivot = _render_clip_cell(document, entry)
         overflow += check_frame_overflow([f for f in frames if f.clip == entry["name"]], clip_cell, rerender, clip_pivot)
+    blank = check_empty_frame(frames, fix)
+    if document.get("effect"):  # an effect's one-shot may end on a blank frame (ticket 0362)
+        for finding in blank:
+            finding.severity = "warning"
     findings = (check_pivot_drift(frames, stationary, drift) + overflow
-                + check_frame_count(frames, expected, fix, list(document["directions"])) + check_empty_frame(frames, fix))
+                + check_frame_count(frames, expected, fix, list(document["directions"])) + blank)
     for finding in findings:
         if finding.position is None:
             finding.position = Position()
@@ -254,7 +260,9 @@ def _check_colour_atlas(run: StageRun) -> list[Finding]:
         with Image.open(run.output_dir / COLOR_ATLAS) as atlas:
             if atlas.mode == "P":
                 return []
-            count = len(np.unique(np.asarray(atlas.convert("RGBA")).reshape(-1, 4), axis=0))
+            rgba = np.ascontiguousarray(np.asarray(atlas.convert("RGBA")))
+            # one uint32 per pixel: counting 1-D values is far cheaper than sorting 4-column rows
+            count = len(np.unique(rgba.reshape(-1, 4).view("<u4")))
     except OSError:
         return []
     return [Finding(code="sheet.colour_atlas_rgba", severity="info",

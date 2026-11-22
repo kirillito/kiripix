@@ -123,11 +123,11 @@ def test_describe_lists_the_stages_decisions_and_checks(project: Kiripix) -> Non
     assert [d["name"] for d in stages["frames"]["decisions"]] == ["sheet", "clip"]
     assert [d["name"] for d in stages["fit"]["decisions"]] == ["pivot"]
     assert [c["code"] for c in stages["frames"]["checks"]] == [
-        "frames.direction_missing", "frames.frame_count", "frames.unknown_direction", "clips.bad_name", "clips.duplicate_name"]
+        "frames.direction_missing", "frames.frame_count", "frames.unknown_direction", "clips.bad_name", "clips.duplicate_name", "clips.ticks_count"]
     assert [c["code"] for c in stages["fit"]["checks"]] == ["fit.grid_differs", "fit.alpha_partial", "fit.height", "fit.cell_grew"]
     finish = {p["name"]: p for p in stages["finish"]["params"]}
     assert finish["normals"]["default"] == "height" and finish["placement"]["default"] == "edge"
-    assert {p["name"] for p in stages["fit"]["params"]} == {"mode", "height", "chroma", "align_feet"}
+    assert {p["name"] for p in stages["fit"]["params"]} == {"mode", "height", "chroma", "align_feet", "anchor", "effect", "alpha", "alpha_pattern"}
 
 
 def test_a_png_sheet_needs_a_sheet_decision_and_then_runs_to_the_sheet(project: Kiripix) -> None:
@@ -633,3 +633,249 @@ def test_a_sheet_that_does_not_divide_evenly_fails_the_stage_with_the_sizes(proj
 
     [finding] = [f for f in result["findings"] if f["code"] == "frames.sheet_size"]
     assert "32 x 80" in finding["message"]
+
+
+# --- effect parameters (ticket 0362) ---------------------------------------------------------------------------------
+
+
+def spark(size: int = 24, frames: int = 3, blank_last: bool = True) -> np.ndarray:
+    """`frames` frames of `size` px across in one row: a cross of 1 px arms from the middle, longer each frame, fully inside
+    the frame so the box is smaller than the frame. The last frame is blank when `blank_last`."""
+    middle = size // 2
+    row = []
+    for f in range(frames):
+        image = np.zeros((size, size, 4), dtype=np.uint8)
+        arm = 2 + 2 * f
+        image[middle - arm:middle + arm + 1, middle] = (240, 220, 80, 255)
+        image[middle, middle - arm:middle + arm + 1] = (240, 220, 80, 255)
+        if blank_last and f == frames - 1:
+            image[:] = 0
+        row.append(image)
+    return np.concatenate(row, axis=1)
+
+
+def effect_sprite(project: Kiripix, *settings: str, size: int = 24, frames: int = 3, blank_last: bool = True,
+                  expect: int = 0) -> Path:
+    folder = new_sprite(project)
+    png_sheet(project, spark(size, frames, blank_last), frames, directions=["s"])
+    project.json("set", SPRITE, "frames", "directions=1")
+    for setting in settings:
+        stage, _, assignment = setting.partition(" ")
+        project.json("set", SPRITE, stage, *assignment.split())
+    project.json("run", SPRITE, expect=expect)
+    return folder
+
+
+def test_a_centred_effect_keeps_its_size_and_the_pivot_is_the_anchor(project: Kiripix) -> None:
+    folder = effect_sprite(project, "fit anchor=centre effect=true", "finish outline=false")
+
+    sheet = load(folder / "work" / "sheet" / "sheet.json")
+    character = load(folder / "out" / "export" / "character.json")
+
+    assert sheet["cell"] == {"width": 24, "height": 24} and sheet["pivot"] == {"x": 12, "y": 12}
+    assert character["cell"] == {"width": 24, "height": 24} and character["pivot"] == {"x": 12, "y": 12}
+    assert [c["pivot"] for c in character["clips"]] == [{"x": 12, "y": 12}]
+    assert read(folder / "work" / "finish" / "color" / "idle" / "s" / "000.png").shape == (24, 24, 4)
+
+
+def test_an_effect_with_an_outline_keeps_its_spare_pixel(project: Kiripix) -> None:
+    folder = effect_sprite(project, "fit anchor=centre effect=true")  # finish's outline is on
+
+    sheet = load(folder / "work" / "sheet" / "sheet.json")
+
+    assert sheet["cell"] == {"width": 26, "height": 26} and sheet["pivot"] == {"x": 13, "y": 13}
+
+
+def test_the_anchor_can_be_a_point_of_the_frame(project: Kiripix) -> None:
+    folder = effect_sprite(project, "fit anchor=5,7 effect=true", "finish outline=false")
+
+    sheet = load(folder / "work" / "sheet" / "sheet.json")
+
+    assert sheet["cell"] == {"width": 24, "height": 24} and sheet["pivot"] == {"x": 5, "y": 7}
+    assert load(folder / "out" / "export" / "character.json")["pivot"] == {"x": 5, "y": 7}
+
+
+def test_a_telegraph_keeps_its_32_px_cell_whatever_its_pixels_cover(project: Kiripix) -> None:
+    folder = effect_sprite(project, "fit anchor=centre effect=true", "finish outline=false", size=32, frames=2, blank_last=False)
+
+    sheet = load(folder / "work" / "sheet" / "sheet.json")
+
+    assert sheet["cell"] == {"width": 32, "height": 32} and sheet["pivot"] == {"x": 16, "y": 16}
+
+
+def test_a_bad_anchor_fails_fit_with_a_fix(project: Kiripix) -> None:
+    effect_sprite(project, "fit anchor=middle", expect=1)
+    project.json("run", SPRITE, "frames")
+    result = project.json("run", SPRITE, "fit", expect=1)
+
+    [finding] = [f for f in result["findings"] if f["code"] == "fit.anchor_invalid"]
+    assert finding["fix"] == f"kiripix set {SPRITE} fit anchor=feet"
+
+
+def test_an_effect_ends_on_a_blank_frame_with_a_warning_and_is_flat(project: Kiripix) -> None:
+    folder = effect_sprite(project, "fit anchor=centre effect=true", "finish outline=false")
+
+    findings = project.json("check", SPRITE)["findings"]
+
+    blank = [f for f in findings if f["code"] == "sheet.empty_frame"]
+    assert [(f["severity"], f["position"]["field"]) for f in blank] == [("warning", "idle/s/2")]
+    codes = {f["code"] for f in findings}
+    assert "fit.height" not in codes and "palette.sprite_regions" not in codes
+    exported = folder / "out" / "export"
+    assert not (exported / "normal.png").exists() and (exported / "color.png").is_file()
+    assert load(exported / "character.json")["files"] == {"color": "color.png"}
+
+    written = project.json("export", SPRITE)["data"]["written"]
+
+    assert not [w for w in written if w.endswith("normal.png")] and any(w.endswith("frames.tres") for w in written)
+    texture = (project.cwd / "game" / "kiripix" / "sprite" / "npc" / "texture.tres").read_text("utf-8")
+    assert "normal" not in texture and "diffuse_texture" in texture
+    assert not (project.cwd / "game" / "kiripix" / "sprite" / "npc" / "normal.png").exists()
+
+
+def test_without_effect_a_blank_frame_is_still_an_error_and_a_figure_keeps_its_normal(project: Kiripix) -> None:
+    folder = effect_sprite(project, expect=2)
+
+    codes = {(f["code"], f["severity"]) for f in project.json("check", SPRITE, expect=2)["findings"]}
+
+    assert ("sheet.empty_frame", "error") in codes
+    assert (folder / "out" / "export" / "normal.png").is_file()
+
+
+def test_the_new_parameters_at_their_defaults_change_nothing(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    png_sheet(project, sheet_of(FOUR, 2), 2)
+    project.json("run", SPRITE)
+    before = {p: p.read_bytes() for p in sorted((folder / "work").rglob("*")) if p.is_file() and p.name != "stamp.json"}
+
+    project.json("set", SPRITE, "fit", "anchor=feet", "effect=false")
+
+    stages = project.json("status", "--kind", "sprite")["data"]["assets"][0]["stages"]
+    assert {s["stage"]: s["status"] for s in stages}["fit"] == "done"
+    after = {p: p.read_bytes() for p in sorted((folder / "work").rglob("*")) if p.is_file() and p.name != "stamp.json"}
+    assert before == after
+    assert "anchor" not in load(folder / "work" / "fit" / "fit.json") and "effect" not in load(folder / "work" / "fit" / "fit.json")
+    assert "ticks" not in json.dumps(load(folder / "out" / "export" / "character.json"))
+
+
+def test_a_clip_decision_takes_ticks_that_reach_the_export(project: Kiripix) -> None:
+    folder = effect_sprite(project, "fit anchor=centre effect=true", "finish outline=false")
+
+    decide(project, "frames", "clip", {"name": "idle", "loop": False, "ticks": [4, 6, 12]})
+    project.json("run", SPRITE)
+
+    [clip] = load(folder / "out" / "export" / "character.json")["clips"]
+    assert clip["ticks"] == [4, 6, 12] and clip["fps"] == 8 and clip["loop"] is False
+
+
+def test_ticks_must_have_one_duration_per_frame(project: Kiripix) -> None:
+    effect_sprite(project, "fit anchor=centre effect=true")
+
+    decide(project, "frames", "clip", {"name": "idle", "ticks": [4, 6]})
+    result = project.json("run", SPRITE, "frames", expect=2)
+
+    [finding] = [f for f in result["findings"] if f["code"] == "clips.ticks_count"]
+    assert finding["position"]["stage"] == "frames" and finding["owner_action"] and finding["fix"] is None
+
+
+# --- partial alpha: the vote, the dither and the finding on the input (ticket 0363) ----------------------------------------
+
+GLOW = Path(__file__).parent.parent.parent / "backlog" / "m6" / "0347-trial" / "sheets" / "buff_glow.png"
+
+
+def haze(size: int = 16, frames: int = 2) -> np.ndarray:
+    """A solid 4 px core in the middle of an alpha 102 square haze (a glow's body), `frames` frames in one row."""
+    one = np.zeros((size, size, 4), dtype=np.uint8)
+    one[2:size - 2, 2:size - 2] = (80, 200, 255, 102)
+    ys, xs = np.mgrid[2:size - 2, 2:size - 2]
+    one[2:size - 2, 2:size - 2, 0] = 60 + (xs * 7 + ys * 13) % 40  # every pixel its own colour, so the pixel grid is 1:1
+    one[size // 2 - 2:size // 2 + 2, size // 2 - 2:size // 2 + 2] = (255, 255, 255, 255)
+    return np.concatenate([one] * frames, axis=1)
+
+
+def haze_sprite(project: Kiripix, *settings: str, sheet: np.ndarray | None = None, frames: int = 2) -> Path:
+    folder = new_sprite(project)
+    png_sheet(project, haze(frames=frames) if sheet is None else sheet, frames, directions=["s"])
+    project.json("set", SPRITE, "frames", "directions=1")
+    project.json("set", SPRITE, "fit", "anchor=centre", "effect=true", *settings)
+    project.json("set", SPRITE, "finish", "outline=false")
+    project.json("run", SPRITE, "frames")
+    project.json("run", SPRITE, "fit")
+    return folder
+
+
+def fit_alpha(folder: Path) -> np.ndarray:
+    return read(folder / "work" / "fit" / "color" / "idle" / "s" / "000.png")[..., 3]
+
+
+def test_by_default_partial_alpha_is_voted_away_and_the_finding_says_how_much(project: Kiripix) -> None:
+    folder = haze_sprite(project)
+
+    alpha = fit_alpha(folder)
+    assert set(np.unique(alpha)) == {0, 255} and int((alpha == 255).sum()) == 16, "only the core is left; the haze is under half"
+    findings = [f for f in project.json("check", SPRITE)["findings"] if f["code"] == "fit.alpha_partial"]
+    assert [f["severity"] for f in findings] == ["warning"]
+    assert "alpha=vote" in findings[0]["message"] and "alpha=dither" in findings[0]["message"]
+    assert "%" in findings[0]["message"] and findings[0]["fix"] == f"kiripix set {SPRITE} fit alpha=dither"
+    assert findings[0]["position"]["field"] == "idle/s/0"
+
+
+def test_alpha_dither_keeps_the_haze_as_a_pattern_of_about_its_density(project: Kiripix) -> None:
+    folder = haze_sprite(project, "alpha=dither", "alpha_pattern=4")
+
+    alpha = fit_alpha(folder)
+    image = read(folder / "work" / "fit" / "color" / "idle" / "s" / "000.png")
+    assert set(np.unique(alpha)) == {0, 255} and (image[alpha == 0] == 0).all()
+    assert (alpha[:2] == 0).all() and (alpha[7:11, 7:11] == 255).all(), "outside the haze is clear, the core stays solid"
+    inner = alpha[3:15, 3:15]  # the 12 px haze square in the cell (fit leaves 1 px to spare around the frame)
+    ring = np.ones((12, 12), dtype=bool)
+    ring[4:8, 4:8] = False  # the core
+    share = float((inner[ring] == 255).mean())
+    assert 0.3 < share < 0.6, share
+    assert (read(folder / "work" / "fit" / "color" / "idle" / "s" / "001.png")[..., 3] == alpha).all(), "the same pattern in every frame"
+    findings = [f for f in project.json("check", SPRITE)["findings"] if f["code"] == "fit.alpha_partial"]
+    assert [f["severity"] for f in findings] == ["warning"] and "owner_action" in findings[0] and "Bayer 4" in findings[0]["message"]
+
+
+def test_a_sprite_with_binary_alpha_has_no_finding_and_writes_the_same_fit_json(project: Kiripix) -> None:
+    folder = effect_sprite(project, "fit anchor=centre effect=true", "finish outline=false")
+    before = (folder / "work" / "fit" / "fit.json").read_bytes()
+    project.json("set", SPRITE, "fit", "alpha=dither")
+    project.json("run", SPRITE, expect=0)
+
+    record = load(folder / "work" / "fit" / "fit.json")
+    assert "alpha_partial" not in record and "alpha" not in record
+    assert not [f for f in project.json("check", SPRITE)["findings"] if f["code"] == "fit.alpha_partial"]
+    assert b"alpha" not in before
+
+
+def test_the_buff_glow_builds_with_dither_and_keeps_its_haze(project: Kiripix) -> None:
+    sheet = np.asarray(Image.open(GLOW).convert("RGBA"), dtype=np.uint8)
+    folder = haze_sprite(project, "alpha=dither", sheet=sheet, frames=sheet.shape[1] // sheet.shape[0])
+
+    first = read(folder / "work" / "fit" / "color" / "idle" / "s" / "000.png")[..., 3]
+    assert set(np.unique(first)) == {0, 255}
+    kept = sum(int((read(f)[..., 3] == 255).sum()) for f in (folder / "work" / "fit" / "color" / "idle" / "s").glob("*.png"))
+    assert kept > int((sheet[..., 3] == 255).sum()), "the 102 haze came through as opaque pixels"
+    findings = [f for f in project.json("check", SPRITE)["findings"] if f["code"] == "fit.alpha_partial"]
+    assert findings and all(f["severity"] == "warning" for f in findings)
+
+
+def test_the_buff_glow_builds_with_vote_and_carries_the_finding(project: Kiripix) -> None:
+    sheet = np.asarray(Image.open(GLOW).convert("RGBA"), dtype=np.uint8)
+    haze_sprite(project, sheet=sheet, frames=sheet.shape[1] // sheet.shape[0])
+
+    findings = [f for f in project.json("check", SPRITE)["findings"] if f["code"] == "fit.alpha_partial"]
+    assert len(findings) == 1 and findings[0]["severity"] == "warning" and "alpha=dither" in findings[0]["message"]
+
+
+def test_a_bad_alpha_pattern_fails_fit_with_a_fix(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    png_sheet(project, haze(), 2, directions=["s"])
+    project.json("set", SPRITE, "frames", "directions=1")
+    project.json("set", SPRITE, "fit", "alpha=dither", "alpha_pattern=5")
+
+    project.json("run", SPRITE, "frames")
+    result = project.json("run", SPRITE, "fit", expect=1)
+
+    assert any(f["code"] == "fit.alpha_pattern_invalid" for f in result["findings"]), folder

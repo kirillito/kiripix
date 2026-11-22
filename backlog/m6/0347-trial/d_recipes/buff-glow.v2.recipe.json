@@ -1,0 +1,436 @@
+{
+  "version": 1,
+  "name": "buff_glow",
+  "width": 48,
+  "height": 64,
+  "palette": { "W": "#FAFEEB", "y": "#FEDA43", "o": "#E1A441", "h": "#7D5C22", "g": "#FEDA4366" },
+  "symbols": {
+    "mote": ["y"],
+    "hot": ["W"],
+    "glint": [
+      ".W.",
+      "WyW",
+      ".W."
+    ]
+  },
+  "anchor": [24, 56],
+  "frames": [
+    {
+      "name": "buff_glow-0",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 10,
+          "y": 50,
+          "rows": [
+            "......ggggggggggggggggg......",
+            "...ggggggggggggggggggggggg...",
+            ".ggggggggggggggggggggggggggg.",
+            "ggggggggggggggggggggggggggggg",
+            "ggggggggggggggggggggggggggggg",
+            "ggggggggggggggggggggggggggggg",
+            ".ggggggggggggggggggggggggggg.",
+            "...ggggggggggggggggggggggg...",
+            "......ggggggggggggggggg......"
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 28, "y": 49 },
+        { "op": "stamp", "symbol": "glint", "x": 34, "y": 60 },
+        { "op": "stamp", "symbol": "hot", "x": 21, "y": 51 },
+        { "op": "stamp", "symbol": "hot", "x": 9, "y": 57 },
+        { "op": "stamp", "symbol": "mote", "x": 38, "y": 59 },
+        { "op": "stamp", "symbol": "mote", "x": 13, "y": 53 }
+      ]
+    },
+    {
+      "name": "buff_glow-1",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 10,
+          "y": 50,
+          "rows": [
+            "......ggggggggggggggggg......",
+            "...ggggggggggggggggggggggg...",
+            ".ggggggggggggggggggggggggggg.",
+            "ggggggggggggggggggggggggggggg",
+            "ggggggggggggggggggggggggggggg",
+            "ggggggggggggggggggggggggggggg",
+            ".ggggggggggggggggggggggggggg.",
+            "...ggggggggggggggggggggggg...",
+            "......ggggggggggggggggg......"
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 28, "y": 50 },
+        { "op": "stamp", "symbol": "glint", "x": 34, "y": 61 },
+        { "op": "stamp", "symbol": "hot", "x": 21, "y": 52 },
+        { "op": "stamp", "symbol": "hot", "x": 9, "y": 58 },
+        { "op": "stamp", "symbol": "mote", "x": 38, "y": 59 },
+        { "op": "stamp", "symbol": "mote", "x": 13, "y": 54 },
+        { "op": "stamp", "symbol": "mote", "x": 30, "y": 54 }
+      ]
+    },
+    {
+      "name": "buff_glow-2",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 10,
+          "y": 49,
+          "rows": [
+            "............hhhhh............",
+            ".....hgggggggggggggggggh.....",
+            "...gggggggggggggggggggggggh..",
+            ".ggggggggggggggggggggggggggg.",
+            "ggggggggggggggggggggggggggggg",
+            "ggggggggggggggggggggggggggggg",
+            "ggggggggggggggggggggggggggggg",
+            ".ggggggggggggggggggggggggggg.",
+            "..hgggggggggggggggggggggggh..",
+            ".....hgggggggggggggggggh.....",
+            "............hoooh............"
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 28, "y": 51 },
+        {
+          "op": "grid",
+          "x": 34,
+          "y": 62,
+          "rows": [
+            ".W.",
+            "WyW"
+          ]
+        },
+        { "op": "stamp", "symbol": "hot", "x": 21, "y": 54 },
+        { "op": "stamp", "symbol": "glint", "x": 8, "y": 58 },
+        { "op": "stamp", "symbol": "mote", "x": 38, "y": 60 },
+        { "op": "stamp", "symbol": "mote", "x": 13, "y": 55 },
+        { "op": "stamp", "symbol": "mote", "x": 30, "y": 55 }
+      ]
+    },
+    {
+      "name": "buff_glow-3",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 7,
+          "y": 49,
+          "rows": [
+            ".........yyoohhhhhhhhoooyy.........",
+            ".....ooohggggggggggggggggghooo.....",
+            "...yohggggggggggggggggggggggghoy...",
+            ".hohggggggggggggggggggggggggggghoh.",
+            ".yogggggggggggggggggggggggggggggoy.",
+            "hyhggggggggggggggggggggggggggggghoh",
+            ".yogggggggggggggggggggggggggggggho.",
+            ".hyoggggggggggggggggggggggggggghoh.",
+            "...yohggggggggggggggggggggggghoy...",
+            ".....ooohggggggggggggggggghooo.....",
+            ".........oyoohhhhhhhhhooyy........."
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 28, "y": 52 },
+        { "op": "stamp", "symbol": "hot", "x": 21, "y": 55 },
+        { "op": "stamp", "symbol": "glint", "x": 8, "y": 58 },
+        { "op": "stamp", "symbol": "hot", "x": 38, "y": 61 },
+        { "op": "stamp", "symbol": "mote", "x": 13, "y": 56 },
+        { "op": "stamp", "symbol": "mote", "x": 30, "y": 56 },
+        { "op": "stamp", "symbol": "mote", "x": 29, "y": 42 },
+        { "op": "stamp", "symbol": "mote", "x": 23, "y": 60 }
+      ]
+    },
+    {
+      "name": "buff_glow-4",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 6,
+          "y": 48,
+          "rows": [
+            "............oooooooooooyo............",
+            ".......oooh...............hooy.......",
+            "....ooh...ggggggggggggggggg...hoy....",
+            "..ohh..ggggggggggggggggggggggg..hoo..",
+            "hoh..ggggggggggggggggggggggggggg..hoh",
+            "oo..ggggggggggggggggggggggggggggg..oy",
+            "oh..ggggggggggggggggggggggggggggg..ho",
+            "oh..ggggggggggggggggggggggggggggg..ho",
+            "hoh..ggggggggggggggggggggggggggg..hoh",
+            "..oh...ggggggggggggggggggggggg..hoo..",
+            "....ohh...ggggggggggggggggg...hoy....",
+            ".......ohhh...............hhoy.......",
+            "............oyyoooooooyyo............"
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 20, "y": 55 },
+        { "op": "stamp", "symbol": "glint", "x": 8, "y": 59 },
+        { "op": "stamp", "symbol": "hot", "x": 38, "y": 62 },
+        { "op": "stamp", "symbol": "hot", "x": 13, "y": 58 },
+        { "op": "stamp", "symbol": "mote", "x": 30, "y": 57 },
+        { "op": "stamp", "symbol": "mote", "x": 29, "y": 43 },
+        { "op": "stamp", "symbol": "mote", "x": 23, "y": 61 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 53 }
+      ]
+    },
+    {
+      "name": "buff_glow-5",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 4,
+          "y": 48,
+          "rows": [
+            "..........hoohhhhh......hhhhooh..........",
+            ".......ohh.....................hho.......",
+            "....ooh.....ggggggggggggggggg.....hoo....",
+            "..hhh....ggggggggggggggggggggggg....hoh..",
+            ".oo....ggggggggggggggggggggggggggg....hh.",
+            "hoh...ggggggggggggggggggggggggggggg...hoh",
+            "hhh...ggggggggggggggggggggggggggggg...hoh",
+            "hoh...ggggggggggggggggggggggggggggg...ho.",
+            ".oh....ggggggggggggggggggggggggggg...hoh.",
+            "..hoh....ggggggggggggggggggggggg....hoh..",
+            "....ohh.....ggggggggggggggggg.....hoo....",
+            ".......ohh.....................hoo.......",
+            "..........hooohhhhh.....hhhhooh.........."
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 20, "y": 56 },
+        { "op": "stamp", "symbol": "hot", "x": 38, "y": 63 },
+        { "op": "stamp", "symbol": "hot", "x": 13, "y": 59 },
+        { "op": "stamp", "symbol": "mote", "x": 30, "y": 58 },
+        { "op": "stamp", "symbol": "mote", "x": 29, "y": 44 },
+        { "op": "stamp", "symbol": "mote", "x": 23, "y": 62 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 54 },
+        { "op": "stamp", "symbol": "mote", "x": 11, "y": 61 }
+      ]
+    },
+    {
+      "name": "buff_glow-6",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 3,
+          "y": 47,
+          "rows": [
+            "................hhooooohhh.................",
+            "..........oohhh.............hhhoo..........",
+            "......hohh.......................hhoh......",
+            "....ooh......ggggggggggggggggg......hoo....",
+            "..hhh.....ggggggggggggggggggggggg.....hhh..",
+            ".ohh....ggggggggggggggggggggggggggg.....hh.",
+            "hoh....ggggggggggggggggggggggggggggg....hoh",
+            "hhh....ggggggggggggggggggggggggggggg.....hh",
+            "hhh....ggggggggggggggggggggggggggggg....hh.",
+            ".oh.....ggggggggggggggggggggggggggg....hhh.",
+            "..hhh.....ggggggggggggggggggggggg.....hhh..",
+            "....ohh......ggggggggggggggggg......hho....",
+            "......hhh.........................hoh......",
+            "..........hohhh.............hhhoo..........",
+            "................hhooooooohh................"
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 20, "y": 57 },
+        { "op": "stamp", "symbol": "hot", "x": 13, "y": 60 },
+        { "op": "stamp", "symbol": "hot", "x": 30, "y": 59 },
+        { "op": "stamp", "symbol": "mote", "x": 29, "y": 45 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 55 },
+        { "op": "stamp", "symbol": "mote", "x": 11, "y": 62 },
+        { "op": "stamp", "symbol": "mote", "x": 14, "y": 63 },
+        { "op": "stamp", "symbol": "mote", "x": 21, "y": 45 }
+      ]
+    },
+    {
+      "name": "buff_glow-7",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 3,
+          "y": 47,
+          "rows": [
+            "..............hhohohhhhhhhohh..............",
+            ".........oooh.................hhho.........",
+            ".....hoh...........................hoh.....",
+            "...ohh.......ggggggggggggggggg.......hho...",
+            "..oh......ggggggggggggggggggggggg......ho..",
+            ".oh.....ggggggggggggggggggggggggggg......h.",
+            "oh.....ggggggggggggggggggggggggggggg.....ho",
+            "hh.....ggggggggggggggggggggggggggggg.....hh",
+            "oh.....ggggggggggggggggggggggggggggg.....ho",
+            ".hh.....ggggggggggggggggggggggggggg.....hh.",
+            "..oh......ggggggggggggggggggggggg......ho..",
+            "...hhh.......ggggggggggggggggg.......hho...",
+            "......hh...........................hoh.....",
+            ".........ohhh.................hhho.........",
+            "..............hhooohhhhhooooh.............."
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 20, "y": 58 },
+        { "op": "grid", "x": 37, "y": 63, "rows": [".W."] },
+        { "op": "stamp", "symbol": "hot", "x": 13, "y": 61 },
+        { "op": "stamp", "symbol": "hot", "x": 30, "y": 60 },
+        { "op": "stamp", "symbol": "mote", "x": 29, "y": 46 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 56 },
+        { "op": "stamp", "symbol": "mote", "x": 11, "y": 63 },
+        { "op": "stamp", "symbol": "mote", "x": 21, "y": 46 },
+        { "op": "stamp", "symbol": "mote", "x": 9, "y": 52 }
+      ]
+    },
+    {
+      "name": "buff_glow-8",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 2,
+          "y": 47,
+          "rows": [
+            "...............hhohhhhhhhhhohh...............",
+            ".........hohh...................hhoh.........",
+            "......ooh............................hh......",
+            "....oh........ggggggggggggggggg........ho....",
+            "..hh.......ggggggggggggggggggggggg.......oh..",
+            ".hh......ggggggggggggggggggggggggggg......hh.",
+            ".o......ggggggggggggggggggggggggggggg......o.",
+            "hh......ggggggggggggggggggggggggggggg......hh",
+            ".o......ggggggggggggggggggggggggggggg.....hh.",
+            ".hh......ggggggggggggggggggggggggggg......hh.",
+            "..ho.......ggggggggggggggggggggggg.......oh..",
+            "....hh........ggggggggggggggggg........ho....",
+            "......hhh...........................hoo......",
+            ".........hohh...................hhoh.........",
+            "..............hohohhhhhhhhhoooh.............."
+          ]
+        },
+        { "op": "stamp", "symbol": "glint", "x": 20, "y": 59 },
+        { "op": "stamp", "symbol": "glint", "x": 12, "y": 61 },
+        { "op": "stamp", "symbol": "hot", "x": 30, "y": 61 },
+        { "op": "stamp", "symbol": "hot", "x": 29, "y": 47 },
+        { "op": "stamp", "symbol": "hot", "x": 35, "y": 57 },
+        { "op": "stamp", "symbol": "mote", "x": 21, "y": 47 },
+        { "op": "stamp", "symbol": "mote", "x": 9, "y": 53 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 59 }
+      ]
+    },
+    {
+      "name": "buff_glow-9",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 2,
+          "y": 47,
+          "rows": [
+            "..............hhhhhhhhhh.hhhhhh..............",
+            ".........oohh...................hhoo.........",
+            "......oh.............................hh......",
+            "...hoh........ggggggggggggggggg........hoh...",
+            "..oh.......ggggggggggggggggggggggg.......ho..",
+            ".oh......ggggggggggggggggggggggggggg......hh.",
+            "hh......ggggggggggggggggggggggggggggg......oh",
+            "oh......ggggggggggggggggggggggggggggg......ho",
+            "hh......ggggggggggggggggggggggggggggg......hh",
+            ".hh......ggggggggggggggggggggggggggg......hh.",
+            "..oh.......ggggggggggggggggggggggg.......ho..",
+            "....h.........ggggggggggggggggg........hoh...",
+            "......hh.............................ho......",
+            ".........hhhh....................hoo.........",
+            "..............hohohhhhhhhhhohoh.............."
+          ]
+        },
+        {
+          "op": "grid",
+          "x": 12,
+          "y": 62,
+          "rows": [
+            ".W.",
+            "WyW"
+          ]
+        },
+        { "op": "stamp", "symbol": "hot", "x": 30, "y": 62 },
+        { "op": "stamp", "symbol": "hot", "x": 29, "y": 48 },
+        { "op": "stamp", "symbol": "hot", "x": 35, "y": 58 },
+        { "op": "stamp", "symbol": "mote", "x": 21, "y": 48 },
+        { "op": "stamp", "symbol": "mote", "x": 9, "y": 54 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 60 },
+        { "op": "stamp", "symbol": "mote", "x": 23, "y": 63 }
+      ]
+    },
+    {
+      "name": "buff_glow-10",
+      "duration": 80,
+      "ops": [
+        {
+          "op": "grid",
+          "x": 2,
+          "y": 47,
+          "rows": [
+            "..............hhhhhhhhhh.hhhhhh..............",
+            ".........ooh.....................hoo.........",
+            ".....hoh.............................hh......",
+            "...hoh........ggggggggggggggggg........hoh...",
+            "..oh.......ggggggggggggggggggggggg.......ho..",
+            ".oh......ggggggggggggggggggggggggggg......hh.",
+            "hh......ggggggggggggggggggggggggggggg......hh",
+            "oh......ggggggggggggggggggggggggggggg......ho",
+            "hh......ggggggggggggggggggggggggggggg......hh",
+            ".hh......ggggggggggggggggggggggggggg......hh.",
+            "..oh.......ggggggggggggggggggggggg.......ho..",
+            "...hh.........ggggggggggggggggg........hoh...",
+            "......hh.............................hoh.....",
+            ".........hhh.....................hooh........",
+            ".............hhohohhhhhhhhhohoh.............."
+          ]
+        },
+        { "op": "grid", "x": 12, "y": 63, "rows": [".W."] },
+        { "op": "stamp", "symbol": "hot", "x": 30, "y": 63 },
+        { "op": "stamp", "symbol": "hot", "x": 29, "y": 49 },
+        { "op": "stamp", "symbol": "hot", "x": 35, "y": 59 },
+        { "op": "stamp", "symbol": "mote", "x": 21, "y": 49 },
+        { "op": "stamp", "symbol": "mote", "x": 9, "y": 55 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 61 },
+        { "op": "stamp", "symbol": "mote", "x": 38, "y": 57 }
+      ]
+    },
+    {
+      "name": "buff_glow-11",
+      "duration": 80,
+      "ops": [
+        { "op": "grid", "x": 29, "y": 63, "rows": [".W."] },
+        { "op": "stamp", "symbol": "hot", "x": 29, "y": 50 },
+        { "op": "stamp", "symbol": "hot", "x": 35, "y": 60 },
+        { "op": "stamp", "symbol": "hot", "x": 21, "y": 50 },
+        { "op": "stamp", "symbol": "hot", "x": 9, "y": 56 },
+        { "op": "stamp", "symbol": "mote", "x": 35, "y": 62 },
+        { "op": "stamp", "symbol": "mote", "x": 38, "y": 58 },
+        { "op": "stamp", "symbol": "mote", "x": 13, "y": 52 }
+      ]
+    }
+  ],
+  "animations": {
+    "buff_glow": {
+      "frames": [
+        "buff_glow-0",
+        "buff_glow-1",
+        "buff_glow-2",
+        "buff_glow-3",
+        "buff_glow-4",
+        "buff_glow-5",
+        "buff_glow-6",
+        "buff_glow-7",
+        "buff_glow-8",
+        "buff_glow-9",
+        "buff_glow-10",
+        "buff_glow-11"
+      ]
+    }
+  }
+}

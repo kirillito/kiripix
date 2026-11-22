@@ -3,7 +3,7 @@
 // hover only asks the `segment-preview` Probe, which records nothing.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { call, fileUrl, type Envelope, type StageDescription, type StageDetail } from "./api";
+import { call, fileUrl, type DescribeData, type Envelope, type MaskRow, type StageDescription, type StageDetail } from "./api";
 import { MAX_RADIUS, MaskTool, MIN_RADIUS, tintOf, type MaskToolName, type PreviewRuns } from "./maskTool";
 import { isTyping, type CanvasPixel, type PixelCanvas } from "./pixelCanvas";
 import { loadMask } from "./walkTest";
@@ -72,6 +72,9 @@ export function MasksPanel(props: {
   onRebuild: (rebuild: boolean) => void;
   decide: (decision: string, data: Record<string, unknown>, settled?: () => void) => void;
   importPng: (file: File) => void;
+  view?: string; // the room's view: its Masks are the picker's
+  place?: StageDetail; // the Place Stage, for the areas that have a cell
+  refreshes?: number;
 }) {
   const { canvas, asset, detail, imageVersion, disabled, rebuild, onRebuild } = props;
   const [tool, setTool] = useState<MaskToolName>("brush");
@@ -88,8 +91,53 @@ export function MasksPanel(props: {
   const [tolerance, setTolerance] = useState(TOLERANCE_DEFAULT);
   const toleranceNow = Math.min(highest, Math.max(lowest, tolerance));
   const files = maskFiles(detail);
-  const names = files.map((entry) => entry.name);
+  const [rows, setRows] = useState<MaskRow[] | null>(null);
+  const [hidden, setHidden] = useState<string[]>([]);
+  // The painted Masks of the room's view as the Project lists them (`describe room`); until that answers, the built files.
+  const listed = rows?.filter((row) => row.view === (props.view ?? "top") && !row.derived) ?? null;
+  const names = listed ? listed.map((row) => row.name) : files.map((entry) => entry.name);
   const shown = JSON.stringify(files);
+  const colours = JSON.stringify(Object.fromEntries((listed ?? []).map((row) => [row.name, row.colour])));
+  const areas = JSON.stringify(
+    (props.place?.markers ?? [])
+      .filter((marker) => marker.type === "area" && typeof marker.cell === "number" && marker.cell > 0)
+      .map((marker) => ({
+        x: marker.x as number,
+        y: marker.y as number,
+        x2: (marker.x2 as number | undefined) ?? (marker.x as number),
+        y2: (marker.y2 as number | undefined) ?? (marker.y as number),
+        cell: marker.cell as number,
+      })),
+  );
+
+  useEffect(() => {
+    let current = true;
+    call<DescribeData>("describe", { target: "room" })
+      .then((result) => {
+        if (current && result.ok && result.data?.masks) setRows(result.data.masks);
+      })
+      .catch(() => undefined); // The connection banner says so.
+    return () => {
+      current = false;
+    };
+  }, [props.refreshes, imageVersion]);
+
+  // The cells the picked Mask half covers in the room's areas with a cell: the `half-cells` Probe counts them.
+  useEffect(() => {
+    if ((JSON.parse(areas) as unknown[]).length === 0) return;
+    let current = true;
+    call("probe", { name: "half-cells", asset, args: [mask] })
+      .then((result) => {
+        const answer = (result as Envelope<{ result: { mask: string; cells: { x: number; y: number; cell: number }[] } }>).data?.result;
+        if (!current || !answer) return;
+        painter.current?.setHalfCells(answer.mask, answer.cells);
+        canvas.current?.redraw();
+      })
+      .catch(() => undefined); // The connection banner says so.
+    return () => {
+      current = false;
+    };
+  }, [canvas, asset, mask, areas, imageVersion, props.refreshes]);
 
   // The tool's gestures read the latest props through a ref, so the tool is made once.
   const latest = useRef({ ...props, mask, names, tolerance: toleranceNow });
@@ -148,13 +196,19 @@ export function MasksPanel(props: {
     painting.mask = mask;
     painting.radius = radius;
     painting.opacity = opacity / 100;
+    painting.hidden = new Set(hidden);
     canvas.current?.redraw();
-  }, [canvas, tool, mask, radius, opacity]);
+  }, [canvas, tool, mask, radius, opacity, hidden]);
 
   // The Masks as built, tinted over the Plate; a refresh brings the new ones.
   useEffect(() => {
     let current = true;
     const read = JSON.parse(shown) as { name: string; file: string }[];
+    painter.current?.maskColours.clear();
+    for (const [name, colour] of Object.entries(JSON.parse(colours) as Record<string, string | null>)) {
+      if (colour) painter.current?.maskColours.set(name, colour);
+    }
+    painter.current?.setAreas(JSON.parse(areas));
     void Promise.all(read.map(async (entry) => ({ name: entry.name, pixels: await loadMask(fileUrl(entry.file, imageVersion)) })))
       .then((loaded) => {
         if (!current) return;
@@ -165,13 +219,15 @@ export function MasksPanel(props: {
     return () => {
       current = false;
     };
-  }, [canvas, shown, imageVersion]);
+  }, [canvas, shown, colours, areas, imageVersion]);
 
   useEffect(() => {
     if (names.length > 0 && !names.includes(mask)) setMask(names[0]);
   }, [names, mask]);
 
   const keys = maskKeys(names);
+  const listedNames = useRef(names);
+  listedNames.current = names;
   const keyed = useRef(keys);
   keyed.current = keys;
   useEffect(() => {
@@ -182,6 +238,7 @@ export function MasksPanel(props: {
       const chosen = TOOLS.find((entry) => entry.key === key);
       if (chosen) setTool(chosen.name);
       else if (keyed.current[key]) setMask(keyed.current[key]);
+      else if (/^[1-9]$/.test(key) && listedNames.current[Number(key) - 1]) setMask(listedNames.current[Number(key) - 1]);
       else if (event.key === "[") setRadius((size) => Math.max(MIN_RADIUS, size - 1));
       else if (event.key === "]") setRadius((size) => Math.min(MAX_RADIUS, size + 1));
     }
@@ -243,11 +300,32 @@ export function MasksPanel(props: {
         <div className="tools" role="group" aria-label="Mask">
           {names.map((name, index) => {
             const letter = Object.keys(keys).find((key) => keys[key] === name);
+            const row = listed?.find((one) => one.name === name);
+            const meaning = row?.meaning ?? undefined;
             return (
-              <button key={name} data-testid={`mask-${name}`} aria-pressed={mask === name} onClick={() => setMask(name)}>
-                <span className="swatch" style={{ background: tintOf(index) }} /> {name}
-                {letter && <kbd>{letter.toUpperCase()}</kbd>}
-              </button>
+              <span key={name} className="mask-choice">
+                <button
+                  data-testid={`mask-${name}`}
+                  aria-pressed={mask === name}
+                  title={meaning ? `${name}: ${meaning}` : name}
+                  onClick={() => setMask(name)}
+                >
+                  <span className="swatch" style={{ background: row?.colour ?? tintOf(index) }} /> {name}
+                  {index < 9 && <kbd>{index + 1}</kbd>}
+                  {letter && <kbd>{letter.toUpperCase()}</kbd>}
+                </button>
+                <label className="toggle" title={`Show the ${name} overlay`}>
+                  <input
+                    type="checkbox"
+                    data-testid={`mask-show-${name}`}
+                    aria-label={`Show ${name}`}
+                    checked={!hidden.includes(name)}
+                    onChange={(event) =>
+                      setHidden((now) => (event.target.checked ? now.filter((one) => one !== name) : [...now, name]))
+                    }
+                  />
+                </label>
+              </span>
             );
           })}
         </div>

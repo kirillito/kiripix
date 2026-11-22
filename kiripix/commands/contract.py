@@ -12,6 +12,7 @@ from kiripix.core.cancel import CancelToken
 from kiripix.core.errors import ExitCode
 from kiripix.core.graph import ProgressEvent
 from kiripix.core.locks import Busy
+from kiripix.core.memory import Memory
 
 API_VERSION: Literal[1] = 1
 
@@ -53,6 +54,8 @@ class Context:
     interactive: bool = False
     via: Literal["cli", "rest"] = "cli"  # how the Owner proves presence: a terminal, or the session token
     cancel: CancelToken = field(default_factory=CancelToken)
+    # What `serve` remembers of the Project (ticket 0373); None for the CLI, which is one process and one call.
+    memory: Memory | None = None
 
 
 # The HTTP status REST answers with for each exit code, and for the findings that name a more exact one. `schema`

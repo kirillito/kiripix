@@ -85,7 +85,7 @@ def test_a_painted_mask_leaves_next_without_the_advice(project: Kiripix) -> None
 
     assert "mask.none_painted" not in [f["code"] for f in result["findings"]]
     advice = project.json("next", ROOM)
-    assert advice["data"]["stage"] == "looks"  # the flood made it stale, and `looks` reads the Masks (a Look's solid)
+    assert advice["data"]["stage"] == "normals"  # the flood made it stale, and `normals` reads the Masks first (then `looks`)
     assert "mask.none_painted" not in [f["code"] for f in advice["findings"]]
 
 
@@ -189,7 +189,7 @@ def test_a_flood_naming_a_derived_or_unknown_mask_fails_the_stage_with_the_undo(
     assert "derived" in result["findings"][-1]["message"] and "never painted" in result["findings"][-1]["message"]
     project.json("undo", ROOM, "masks")
     decide(project, "flood", {"x": 0, "y": 0, "mask": "oneway"})
-    result = project.json("run", ROOM, "masks", expect=1)
+    result = project.json("run", ROOM, "masks", expect=3)  # masks.unknown: the Owner's to settle (ticket 0344)
     assert "not a painted Mask" in result["findings"][-1]["message"]
 
 

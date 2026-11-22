@@ -1,0 +1,93 @@
+{
+ "schema_version": 4,
+ "kind": "sprite",
+ "height": 52,
+ "frame": {
+  "width": 34,
+  "height": 34
+ },
+ "pivot": [
+  16.0,
+  29.0
+ ],
+ "materials": [],
+ "passes": [
+  "color"
+ ],
+ "directions": [
+  "s"
+ ],
+ "clips": [
+  {
+   "name": "idle",
+   "fps": 8,
+   "loop": true,
+   "stationary": false,
+   "root_motion": false,
+   "directions": {
+    "s": [
+     {
+      "index": 0,
+      "source_frame": 0,
+      "files": {
+       "color": "color/idle/s/000.png"
+      },
+      "pivot": [
+       16.0,
+       29.0
+      ],
+      "feet": [
+       16.0,
+       32.0
+      ]
+     },
+     {
+      "index": 1,
+      "source_frame": 1,
+      "files": {
+       "color": "color/idle/s/001.png"
+      },
+      "pivot": [
+       16.0,
+       29.0
+      ],
+      "feet": [
+       16.0,
+       31.0
+      ]
+     },
+     {
+      "index": 2,
+      "source_frame": 2,
+      "files": {
+       "color": "color/idle/s/002.png"
+      },
+      "pivot": [
+       16.0,
+       29.0
+      ],
+      "feet": [
+       16.0,
+       30.0
+      ]
+     },
+     {
+      "index": 3,
+      "source_frame": 3,
+      "files": {
+       "color": "color/idle/s/003.png"
+      },
+      "pivot": [
+       16.0,
+       29.0
+      ],
+      "feet": [
+       16.0,
+       31.0
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

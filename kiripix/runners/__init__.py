@@ -4,10 +4,12 @@ from kiripix.runners.base import (
     CheckCancel, Device, EmbeddingRunner, Runner, RunnerError, WeightFile, register_runner, runners,
 )
 from kiripix.runners.birefnet import BiRefNet
+from kiripix.runners.depth import DepthAnythingV2Small
 from kiripix.runners.lama import Lama
 from kiripix.runners.sam2 import Sam2
 from kiripix.runners.weights import RECORD, missing_weights, pull, remove, weights_dir
 
+DEPTH = DepthAnythingV2Small.id  # the Runner behind depth (ADR 0014): an image in, a float32 (H, W) depth in 0 to 1 out; `params` hold `size`
 SEGMENTER = Sam2.id  # the Runner behind `click` Decisions
 MATTER = BiRefNet.id  # the Runner behind matting: an RGBA image in, the same image with the matte as alpha out
 INPAINTER = Lama.id
@@ -19,9 +21,11 @@ pixel the input's). Nothing outside the Runner knows its engine or input size.""
 register_runner(Sam2())
 register_runner(Lama())
 register_runner(BiRefNet())
+register_runner(DepthAnythingV2Small())
 
 __all__ = [
     "CheckCancel",
+    "DEPTH",
     "Device",
     "EmbeddingRunner",
     "INPAINTER",

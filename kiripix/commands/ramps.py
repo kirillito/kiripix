@@ -8,7 +8,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kiripix.commands.contract import Context, Outcome
-from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow
+from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow, ramp_row
 from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import ramps as core_ramps  # noqa: F401 - registers the Project check `palette.parts_differ`
 from kiripix.core.assets import load_asset
@@ -56,7 +56,7 @@ class RampsAddData(BaseModel):
 
 
 def _row(ramp: RampSpec) -> RampRow:
-    return RampRow(name=ramp.name, length=ramp.length, rgb=[list(c) for c in ramp.rgb] if ramp.rgb is not None else None)
+    return ramp_row(ramp)
 
 
 @command(

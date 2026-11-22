@@ -68,6 +68,7 @@ def _stages() -> tuple[StageSpec, ...]:
                                                                        "warning)."),
                 CheckSpec(code="clips.bad_name", description="A clip name is lower-case snake_case with no direction suffix."),
                 CheckSpec(code="clips.duplicate_name", description="No clip gets the same direction and frame from two sources."),
+                CheckSpec(code="clips.ticks_count", description="A clip's `ticks` has one duration per frame."),
             ),
             run=run_frames,
             check=check_frames,
@@ -78,14 +79,17 @@ def _stages() -> tuple[StageSpec, ...]:
         ),
         StageSpec(
             name="fit",
-            version=2,  # the pivot at the ground point, 0.08 of the figure above the feet; fit.json's `ground` (ticket 0318)
+            # 2: the pivot at the ground point, 0.08 of the figure above the feet; fit.json's `ground` (ticket 0318).
+            # 3: fit.json records the source's partial alpha (`alpha`, `alpha_partial`), read by fit.alpha_partial (ticket 0363)
+            version=3,
             description="Every frame onto the target pixel grid, its feet found, all placed on one cell around one pivot.",
             inputs=StageInputs(upstream=["frames"], settings=["character.height"]),
             params=FIT_PARAMS,
             decisions=(PIVOT,),
             checks=(
                 CheckSpec(code="fit.grid_differs", description="Every frame has the same pixel scale."),
-                CheckSpec(code="fit.alpha_partial", description="Every pixel is opaque or clear."),
+                CheckSpec(code="fit.alpha_partial", description="Every pixel is opaque or clear; and a warning when the source had "
+                                                                 "partial alpha, with its share (the vote or the dither changed it)."),
                 CheckSpec(code="fit.height", description="The tallest figure's height against the target and the game's "
                                                           "band (info)."),
                 CheckSpec(code="fit.cell_grew", description="A frame far from the others that widened the cell (info)."),
@@ -110,6 +114,14 @@ def _stages() -> tuple[StageSpec, ...]:
         replace(_CHARACTER["sheet"], inputs=StageInputs(upstream=["finish"]), run=sheet_run, check=sheet_check,
                 available_from="M4"),
         replace(_CHARACTER["export"], inputs=StageInputs(upstream=["sheet", "palette"], settings=["export.godot"]),
+                params=(
+                    ParamSpec(name="blend", type="choice", choices=["mix", "add"], default="mix",
+                              description="How the game draws the sprite: `mix` (normal) or `add` (additive, for glows and "
+                                          "sparks). At `add` the scene's AnimatedSprite2D takes a shared CanvasItemMaterial."),
+                    ParamSpec(name="lit", type="bool", default=True,
+                              description="Whether the room's lights touch the sprite. False draws it unshaded (the scene's "
+                                          "material has light_mode unshaded), as a room's Loops are."),
+                ),
                 run=run_character_export, available_from="M4"),
     )
 

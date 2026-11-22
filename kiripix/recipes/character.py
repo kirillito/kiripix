@@ -547,7 +547,7 @@ CHARACTER = KindSpec(
         StageSpec(
             name="sheet",
             description="Packs frames into colour, normal and depth atlases with a fixed pivot per frame.",
-            version=5,  # frames cut to their opaque boxes, `rect` plus `offset` (ticket 0308); 4: color.png an indexed PNG when it fits 256 colours (ticket 0310); 3: a cell and pivot per clip, the atlas laid out by cell (0303); 2: depth.png (0296)
+            version=6,  # a repeated cell packed once, frames sharing a `rect` (ticket 0375); 5: frames cut to their opaque boxes, `rect` plus `offset` (ticket 0308); 4: color.png an indexed PNG when it fits 256 colours (ticket 0310); 3: a cell and pivot per clip, the atlas laid out by cell (0303); 2: depth.png (0296)
             inputs=StageInputs(upstream=["finish", "clips", "render"]),
             checks=(
                 CheckSpec(code="sheet.pivot_drift", description="The feet don't move in a stationary clip."),

@@ -2,7 +2,7 @@
 `sheet`'s `sheet.json` and atlases only, and leaves in `out/export/`:
 
     color.png, normal.png   the two atlases, copied
-    character.json          {"schema_version": 7, "asset": "character.hero",
+    character.json          {"schema_version": 7 (8 with "blend" and "lit", below), "asset": "character.hero",
                              "files": {"color": "color.png", "normal": "normal.png"},
                              "cell": {"width": 78, "height": 78}, "pivot": {"x": 39, "y": 72},   # the body's; from the cell's top left
                              "atlas": {"width": 858, "height": 936},
@@ -50,8 +50,15 @@ from kiripix.recipes.character_sheet import COLOR_ATLAS, NORMAL_ATLAS, SHEET_FIL
 #    and 5 files migrate (`kiripix.core.settings.migrate_character_record`: each clip gets the top-level cell and pivot)
 # 7: each frame is cut to its opaque box (ticket 0308): `rect` is the box's place in the atlas and `offset` ({"x", "y"}) its place in
 #    the clip's `cell`, so a reader restores the cell exactly. Version 4 to 6 files migrate (offset 0, 0: their rect is the cell)
-CHARACTER_SCHEMA_VERSION = 7
-CHARACTER_SCHEMA_VERSIONS = (4, 5, 6, 7)
+# Optional keys that change no version (written only for the sprite that asks, so every other file stays byte for byte): a clip's
+# `ticks` (ticket 0362: one duration per frame, 60 a second, from a `clip` Decision), and for an effect (`fit` `effect`) `files`
+# has no `normal` and there is no normal.png. A reader takes both.
+# 8: `blend` ("mix" or "add") and `lit` (bool), a sprite's export parameters (ticket 0364). Written, with this version, only when
+#    either is not its default, so every other file stays a version 7 file byte for byte; a reader takes both. Version 7 and older
+#    files migrate to `mix` and lit, which is how they were drawn
+CHARACTER_SCHEMA_VERSION = 8
+CHARACTER_SCHEMA_VERSIONS = (4, 5, 6, 7, 8)
+_WRITTEN_BASE_VERSION = 7  # the version of a file with no `blend` or `lit`
 CHARACTER_FILE = "character.json"
 _NO_TARGET = "Set project under [export.godot] in kiripix.toml to the Godot project's folder."
 
@@ -97,13 +104,17 @@ def run_character_export(run: StageRun) -> None:
             raise StageFailure(f"clips.json has schema_version {built.get('schema_version')}; this Kiripix reads "
                                f"{CLIPS_SCHEMA_VERSION}", fix=f"kiripix run {run.asset_id} clips --force")
         events = {str(c["name"]): c["events"] for c in built["clips"]}
-    for name in (COLOR_ATLAS, NORMAL_ATLAS):
+    flat = bool(sheet.get("effect"))  # a sprite's effect mode (ticket 0362): flat, so no normal atlas to export
+    for name in (COLOR_ATLAS,) if flat else (COLOR_ATLAS, NORMAL_ATLAS):
         run.check_cancel()
         shutil.copyfile(folder / name, run.output_dir / name)
+    blend = str(run.params.get("blend", "mix"))  # a sprite's parameters (ticket 0364); a character has neither
+    lit = bool(run.params.get("lit", True))
+    drawn = {} if (blend, lit) == ("mix", True) else {"blend": blend, "lit": lit}
     character = {
-        "schema_version": CHARACTER_SCHEMA_VERSION,
+        "schema_version": CHARACTER_SCHEMA_VERSION if drawn else _WRITTEN_BASE_VERSION,
         "asset": run.asset_id,
-        "files": {"color": COLOR_ATLAS, "normal": NORMAL_ATLAS},
+        "files": {"color": COLOR_ATLAS} if flat else {"color": COLOR_ATLAS, "normal": NORMAL_ATLAS},
         "cell": sheet["cell"],
         "pivot": sheet["pivot"],
         "atlas": sheet["atlas"],
@@ -112,6 +123,7 @@ def run_character_export(run: StageRun) -> None:
         "parts": [{"name": p["name"], "materials": p["materials"], "row": p["row"], "shared": p["shared"],
                    "indexes": p["indexes"], "rgb": p["rgb"]} for p in sorted(palette["parts"], key=lambda p: int(p["row"]))],
         "rows": _rows(palette),
+        **drawn,
     }
     (run.output_dir / CHARACTER_FILE).write_text(json.dumps(character, indent=2) + "\n", encoding="utf-8")
 

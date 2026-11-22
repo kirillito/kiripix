@@ -1,0 +1,103 @@
+schema_version = 7
+
+[project]
+name = "urban-mystery-club-art"
+resolution = [640, 360]        # internal resolution
+tile = 16
+palette = "style/palette.gpl"
+
+[body]                         # the stand-in player for walkable, reachability and walk tests
+size = [12, 8]                 # feet footprint in px
+dash = 0                       # the widest pit it can dash over, px (0: none)
+
+[masks.top]                    # Masks for top-down rooms; colours are for display and import only
+solid      = { colour = "#FF0000", meaning = "blocks movement" }
+pit        = { colour = "#0000FF", meaning = "no walking on it, but the Body can dash over it" }
+walkable   = { derived = true }   # where the Body's footprint fits without touching solid or a pit
+foreground = { derived = true }   # the union of the foreground Layers' alpha
+
+[masks.top.import]             # extra colours accepted from a single painted image
+"#FFFF00" = ["solid"]
+
+[masks.side]                   # Masks for side-view rooms
+solid      = { colour = "#FF0000" }
+oneway     = { colour = "#00FFFF", meaning = "platform passable from below" }
+ladder     = { colour = "#00FF00" }
+foreground = { derived = true }
+
+[export.godot]
+project = "../godot_project"
+root = "res://art/kiripix"
+version = "4.7"                # the pinned Godot version (docs/versions.md in Kiripix)
+
+[providers]
+default = "import"             # import | openai | gemini | pixellab | local-sd
+budget_usd_month = 0           # hard cap; calls fail beyond it ($0: DEC-004, founder 2026-11-05)
+
+[character]
+height = 52                    # target height in px; a character's own `height` parameter overrides it
+ramps = [                      # the Project ramp table: each part's row and length (ramps-add writes it)
+    { name = "skin", length = 3 },
+    { name = "hair", length = 3 },
+    { name = "top", length = 2 },
+    { name = "under", length = 2 },
+    { name = "bottom", length = 2 },
+    { name = "shoes", length = 2 },
+]
+blender = "C:/Program Files/Blender Foundation/Blender 5.2/blender.exe"
+
+[character.camera.top34_8]     # a camera preset, picked by name by a character's `camera` parameter
+elevation = 30                 # degrees above the ground plane
+directions = 8
+light_angle = -45              # the toon key light: degrees round the view from the top, -45 = upper left
+light_tilt = 35                # and toward the camera
+
+[[character.clips]]
+name = "idle"
+frames = 16
+fps = 8
+loop = true
+foot = false
+
+[[character.clips]]
+name = "walk"
+frames = 8
+fps = 10
+loop = true
+foot = true
+
+[[character.clips]]
+name = "run"
+frames = 8
+fps = 12
+loop = true
+foot = true
+
+[[character.clips]]
+name = "phone_in"
+frames = 13
+fps = 8
+loop = false
+foot = false
+
+[[character.clips]]
+name = "phone"
+frames = 27
+fps = 8
+loop = true
+foot = false
+
+[[character.clips]]
+name = "phone_out"
+frames = 17
+fps = 8
+loop = false
+foot = false
+
+[[character.clips]]
+name = "attack"
+frames = 19
+fps = 12
+loop = false
+foot = false
+

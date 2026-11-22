@@ -103,3 +103,17 @@ def test_a_palette_syntax_error_names_the_line(project: Kiripix) -> None:
 
     assert finding["code"] == "palette.syntax"
     assert finding["position"]["line"] == 4
+
+
+def test_op_dither_alpha_writes_a_binary_alpha_pattern(project: Kiripix) -> None:
+    import numpy as np
+
+    image = np.zeros((8, 8, 4), dtype=np.uint8)
+    image[...] = (255, 0, 77, 102)
+    Image.fromarray(image, "RGBA").save(project.cwd / "haze.png")
+
+    data = project.json("op", "dither-alpha", "haze.png", "out.png", "--pattern", "bayer4")["data"]
+
+    result = np.asarray(Image.open(project.cwd / "out.png").convert("RGBA"))
+    assert set(np.unique(result[..., 3])) == {0, 255} and data["partial"] == 64 and data["opaque"] == int((result[..., 3] == 255).sum())
+    assert 16 <= data["opaque"] <= 32 and (result[result[..., 3] == 255][:, :3] == (255, 0, 77)).all()

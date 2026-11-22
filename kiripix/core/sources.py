@@ -14,7 +14,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from kiripix.checks import Position
-from kiripix.core import atomic, editing, journal, sheets
+from kiripix.core import atomic, changes, editing, journal, sheets
 from kiripix.core.assets import Asset
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
@@ -99,7 +99,7 @@ def _import_parameters(asset: Asset, file: Path, shown: str, data: bytes) -> tup
         atomic.write_bytes(path, data)
     for old in folder.glob("*"):
         if old != path and old.is_file():
-            old.unlink()
+            changes.remove(old)
     return file.name, path, created
 
 
@@ -239,7 +239,7 @@ def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path,
         if created:
             for old in (asset.dir / "src" / "rigged").glob("*"):
                 if old != path and old.suffix in MODEL_SUFFIXES:
-                    old.unlink()
+                    changes.remove(old)
         return name, path, created
     name = file.stem
     folder = asset.dir / "src" / "clips"
@@ -249,7 +249,7 @@ def _import(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, Path,
     atomic.write_bytes(path, data)
     for old in folder.glob("*"):  # the same name with other content replaces the earlier file
         if old != path and old.suffix in MODEL_SUFFIXES and Path(old.stem).stem == name:
-            old.unlink()
+            changes.remove(old)
     return name, path, True
 
 

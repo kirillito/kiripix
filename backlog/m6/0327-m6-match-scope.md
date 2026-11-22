@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: core-engineer
 type: ticket
@@ -32,9 +32,33 @@ districts (`room.ch01_dungeon_r01` to `r0N`). Working on one district means list
 
 ## Acceptance criteria
 
-- [ ] CLI seam: each of the five Commands with `--match` touches only the matched Assets, and a glob matching nothing is
+- [x] CLI seam: each of the five Commands with `--match` touches only the matched Assets, and a glob matching nothing is
       `match.none`.
-- [ ] CLI seam: an `exit.not_paired` for a matched room pointing at an unmatched one is reported; one between two unmatched
+- [x] CLI seam: an `exit.not_paired` for a matched room pointing at an unmatched one is reported; one between two unmatched
       rooms isn't.
-- [ ] CLI seam: `run --match` on characters made from an unmatched base builds the base first.
-- [ ] The contract samples cover the new option.
+- [x] CLI seam: `run --match` on characters made from an unmatched base builds the base first.
+- [x] The contract samples cover the new option.
+
+## Result
+
+`--match <glob>` is on `status`, `check`, `run`, `export` and `stats`. The matching is one module, `kiripix/core/match.py`
+(`matches`, `select`, `no_match`, `only_named`), for `queue` and `district` to call too. `fnmatch`, case-sensitive; alone it
+means `--all --match`; with an Asset ID it is refused. A glob matching no Asset is `match.none` (exit 1, `fix` is
+`kiripix status`).
+
+- `check --match`: `check_all(..., match)` checks the matched Assets; Project checks run over the whole Project and keep only
+  findings whose position names a matched Asset, so a matched room's Exit to an unmatched one is reported and one between two
+  unmatched rooms isn't. Findings that name no Asset are left out under `--match`.
+- `run --match`: `run_all(..., match)`; a base of a matched Asset is built first even when it doesn't match, with an info
+  finding `match.base_built`. `--kind` narrows a match further.
+- `export --match`: `export_assets(..., match)` applies the `--all` rules (pairing, clip table) to the matched Assets; with
+  `--prune` only deleted Assets whose IDs match are pruned (`plan_prune(..., match)`). `match.none` also for a glob that names
+  no existing Asset and no deleted one.
+- `stats --match`, `status --match` filter the list.
+- Spec §10.5 and the glossary ("district") updated. No Stage `version` bump.
+
+Tests: `tests/cli/test_match.py`; contract samples for `status`, `check` and `stats` use `--match`.
+Left for the Owner: nothing measured; the district words in the skill docs (`docs/` guides) are not touched.
+
+
+**Review fixes (2026-11-20):** The `export` contract sample (and its REST body in `test_serve.py`) is now `export --match room.*`, so a `--match` input is in the contract. `run`'s keeps `--from`; `test_match.py` covers `run --match`.

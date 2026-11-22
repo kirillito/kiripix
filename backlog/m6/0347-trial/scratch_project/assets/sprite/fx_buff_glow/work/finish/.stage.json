@@ -1,0 +1,11 @@
+{
+  "stage": "finish",
+  "input_hash": "f6a92c4fb47d4227ee0f513c5e09ad21ea31e3b91ff73f13e79fb1604e8ab8bd",
+  "version": 5,
+  "upstream_versions": {
+    "frames": 1,
+    "fit": 2,
+    "palette": 3
+  },
+  "finished": "2026-11-20T19:37:29+00:00"
+}

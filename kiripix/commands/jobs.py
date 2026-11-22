@@ -19,6 +19,7 @@ from kiripix.checks import Finding
 from kiripix.commands.contract import Context, Envelope, ExitCode, ProgressEvent
 from kiripix.commands.calling import invoke
 from kiripix.commands.registry import Command
+from kiripix.core.memory import Memory
 
 _BACKSTOP_SECONDS = 2.0
 
@@ -62,6 +63,7 @@ class Job:
         wait: float = 0.0,
         owner: bool = False,
         progress: Callable[[ProgressEvent], None] = _ignore,
+        memory: Memory | None = None,
     ) -> None:
         """`owner` says the caller proved the Owner is present (the session token): the REST half of spec §10.3."""
         self.id = id
@@ -70,7 +72,7 @@ class Job:
         self.result: Future[tuple[Envelope[Any], ExitCode]] = Future()
         line = call_line(command, raw) if isinstance(raw, dict) else f"kiripix {command.name}"
         self._context = Context(cwd=cwd, command_line=line, wait=wait, progress=progress, interactive=owner,
-                                via="rest")
+                                via="rest", memory=memory)
         self._thread = threading.Thread(target=self._body, name=f"job-{command.name}", daemon=True)
         self._lock = threading.Lock()
         self._finished = False

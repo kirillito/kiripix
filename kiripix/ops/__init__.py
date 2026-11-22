@@ -38,6 +38,8 @@ from kiripix.ops.cycle import (
     seam_ratio,
 )
 from kiripix.ops.stack import stack_by_depth, stack_by_order, stack_difference
+from kiripix.ops.swap import swap_ramps
+from kiripix.ops.depth import u16_to_unit, unit_to_u16
 from kiripix.ops.chroma import (
     border_colour,
     chroma_key,
@@ -110,6 +112,7 @@ from kiripix.ops.palette import (
     parse_hex,
     suggest_palette,
 )
+from kiripix.ops.style import OutlineMeasure, ScaleMeasure, outline_density, pixel_scale
 from kiripix.ops.sheet import Rect, blit_trimmed, default_cell_pivot, opaque_box, pack_atlas, pack_trimmed, place_in_cell, shelf_layout
 from kiripix.ops.sprite import (
     ColourRegions,
@@ -124,7 +127,9 @@ from kiripix.ops.reach import Gap, Island, Link, narrowest_gaps, reachable, reac
 from kiripix.ops.resample import (
     Grid,
     alpha_by_vote,
+    alpha_coverage,
     detect_grid,
+    dither_alpha,
     downscale,
     mask_to_source,
     mask_to_target,
@@ -136,6 +141,10 @@ from kiripix.ops.resample import (
 )
 
 __all__ = [
+    "OutlineMeasure",
+    "ScaleMeasure",
+    "outline_density",
+    "pixel_scale",
     "SetReport",
     "map_set",
     "set_colours",
@@ -186,6 +195,7 @@ __all__ = [
     "Seam",
     "add_outline",
     "alpha_by_vote",
+    "alpha_coverage",
     "bayer_matrix",
     "chroma_key",
     "collision_shapes",
@@ -201,6 +211,7 @@ __all__ = [
     "place_in_cell",
     "shelf_layout",
     "detect_grid",
+    "dither_alpha",
     "downscale",
     "enclosed_holes",
     "EyeAnchor",
@@ -276,6 +287,9 @@ __all__ = [
     "stack_by_order",
     "stack_difference",
     "suggest_palette",
+    "swap_ramps",
+    "u16_to_unit",
+    "unit_to_u16",
     "target_centre",
     "upscale",
     "walkable",

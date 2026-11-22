@@ -11,7 +11,10 @@ from kiripix.core.assets import Asset, list_assets
 from kiripix.core.errors import KiripixError
 from kiripix.core.graph import AssetGraph, StageState
 from kiripix.core.hashing import HashCache
+from kiripix.core.lightangle import check_light_angle
+from kiripix.core.match import only_named, select
 from kiripix.core.project import Project
+from kiripix.core.style import References, reference_findings, style_findings
 
 ProjectCheck = Callable[[Project, list[Asset]], list[Finding]]
 
@@ -24,11 +27,22 @@ def register_project_check(check: ProjectCheck) -> ProjectCheck:
     return check
 
 
+register_project_check(check_light_angle)  # `style.light_angle_differs` (ticket 0361)
+
+
 def _located(finding: Finding, asset: str, stage: str) -> Finding:
     """The finding with its Asset and Stage filled in where its Check left them out."""
     position = finding.position or Position()
     return finding.model_copy(update={"position": position.model_copy(update={
         "asset": position.asset or asset, "stage": position.stage or stage})})
+
+
+def run_project_checks(project: Project, every: list[Asset]) -> list[Finding]:
+    """Every registered Project check against all the Assets. The caller narrows them (`only_named`)."""
+    found: list[Finding] = []
+    for project_check in _PROJECT_CHECKS:
+        found.extend(project_check(project, every))
+    return found
 
 
 def check_asset(project: Project, asset: Asset, cache: HashCache) -> tuple[list[str], list[Finding], list[StageState]]:
@@ -49,12 +63,17 @@ def check_asset(project: Project, asset: Asset, cache: HashCache) -> tuple[list[
     return checked, findings, out_of_date
 
 
-def check_all(project: Project, cache: HashCache) -> tuple[
+def check_all(project: Project, cache: HashCache, match: str | None = None) -> tuple[
         list[str], list[str], list[Finding], bool, list[tuple[str, StageState]]]:
     """Check every Asset, then run the Project checks. Returns the Assets and `asset stage` pairs checked, the
     findings, whether anything beyond a Check's own finding went wrong (an Asset that couldn't be loaded), and the out-of-date
-    Stages with their Asset."""
-    assets, findings = list_assets(project)
+    Stages with their Asset. With `match` (a glob, ticket 0327) only the matching Assets are checked, and the Project checks,
+    which still look at every Asset, report only the findings that name a matched one."""
+    every, findings = list_assets(project)
+    assets = every if match is None else select(every, match)
+    ids = {asset.id for asset in assets}
+    if match is not None:
+        findings = only_named(findings, ids)
     broken = bool(findings)
     names: list[str] = []
     stages: list[str] = []
@@ -71,5 +90,8 @@ def check_all(project: Project, cache: HashCache) -> tuple[
         findings.extend(found)
         late.extend((asset.id, state) for state in old)
     for project_check in _PROJECT_CHECKS:
-        findings.extend(project_check(project, assets))
+        found = project_check(project, every)
+        findings.extend(found if match is None else only_named(found, ids))
+    found = reference_findings(project) + style_findings(project, cache, assets, References(project, cache))  # ticket 0334
+    findings.extend(found if match is None else only_named(found, ids))
     return names, stages, findings, broken, late

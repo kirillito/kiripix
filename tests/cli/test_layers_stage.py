@@ -427,6 +427,23 @@ def test_an_override_outside_the_hole_fails_recompose_and_says_to_paint_on_fit(p
     assert (finding["position"]["x"], finding["position"]["y"]) == (30, 30)
 
 
+def test_a_fit_image_of_another_size_is_a_finding_with_a_fix_not_a_crash(project: Kiripix) -> None:
+    folder = built_room(project)
+    fit = folder / ".kiripix" / "stages" / "fit" / "fit.png"
+    if not fit.is_file():
+        [fit] = list(folder.rglob("fit/fit.png"))
+    Image.fromarray(np.zeros((2 * HEIGHT, 2 * WIDTH, 4), dtype=np.uint8), "RGBA").save(fit)
+
+    result = project.json("check", ROOM, expect=2)
+
+    [finding] = [f for f in result["findings"] if f["code"] == "layers.stale_size"]
+    assert finding["fix"] == f"kiripix run {ROOM} layers --force" and finding["owner_action"] is None
+    assert all(f["code"] != "internal.error" for f in result["findings"])
+    project.json("run", ROOM, "layers", "--force")
+    after = project.json("check", ROOM)
+    assert all(f["code"] != "layers.stale_size" for f in after["findings"])
+
+
 def test_an_override_inside_the_hole_is_a_fix_to_the_fill_and_still_recomposes(project: Kiripix) -> None:
     folder = built_room(project)
     click(project, "lamp", 8, 8)

@@ -17,14 +17,21 @@ from test_cell_per_clip import BODY, built, by_name, exported
 from test_export import godot_project, node, set_target
 from test_export_character import FRAMES, HERO, RES, SCENE
 
-FRAME = re.compile(r'\[sub_resource type="AtlasTexture" id="([a-z_]+)_(\d+)"\]\natlas = ExtResource\("texture"\)\n'
+FRAME = re.compile(r'\[sub_resource type="AtlasTexture" id="([a-z_0-9]+)"\]\natlas = ExtResource\("texture"\)\n'
                    r'region = Rect2\(([^)]*)\)(?:\nmargin = Rect2\(([^)]*)\))?')
 
 
 def parsed(project: Kiripix) -> dict[tuple[str, int], tuple[list[int], list[int] | None]]:
+    """Each animation's frame (name, position) with its AtlasTexture's region and margin; frames that share a cell (ticket 0375)
+    name the same texture."""
     text = (project.cwd / FRAMES).read_text("utf-8")
-    return {(name, int(index)): ([int(v) for v in region.split(",")], [int(v) for v in margin.split(",")] if margin else None)
-            for name, index, region, margin in FRAME.findall(text)}
+    textures = {ident: ([int(v) for v in region.split(",")], [int(v) for v in margin.split(",")] if margin else None)
+                for ident, region, margin in FRAME.findall(text)}
+    found: dict[tuple[str, int], tuple[list[int], list[int] | None]] = {}
+    for body, name in re.findall(r'"frames": \[(.*?)\],\n"loop": \w+,\n"name": &"([a-z_]+)"', text, flags=re.S):
+        for position, ident in enumerate(re.findall(r'SubResource\("([^"]+)"\)', body)):
+            found[(name, position)] = textures[ident]
+    return found
 
 
 def logical(character: dict[str, Any]) -> tuple[int, int, int, int]:

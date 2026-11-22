@@ -43,6 +43,7 @@ def codes(project: Kiripix) -> list[str]:
 
 def run_loops(project: Kiripix, expect: int = 0) -> dict[str, Any]:
     project.json("run", ROOM, "masks")
+    project.json("run", ROOM, "normals")  # off: a no-op, so `next` speaks of the Loops, not the unbuilt `normals`
     project.json("run", ROOM, "palette")
     return project.json("run", ROOM, "looks")  # `loops` is built on it
 
@@ -500,3 +501,20 @@ def test_rest_on_a_two_frame_loop_or_with_a_ticks_list_of_the_wrong_length_is_he
     decide(project, "timing", {"loop": LOOP, "rest": True, "ticks": [4, 4, 4]})
     project.json("run", ROOM, "loops", expect=2)
     assert "ticks lists 3" in held(project)[0]["message"]
+
+
+def test_a_palette_image_of_another_size_is_a_finding_with_a_fix_not_a_crash(project: Kiripix) -> None:
+    """Ticket 0376: a hand-written `palette.png` smaller than the one the Loop was built from can't be compared with frame 0."""
+    folder = a_rotating_loop(project)
+    build(project)
+    from PIL import Image
+
+    image = folder / "work" / "palette" / "palette.png"
+    Image.fromarray(rgba(image)[:16, :16]).save(image)  # the region, 30x30 at (1, 1), no longer fits
+
+    result = project.json("check", ROOM, expect=2)
+    stale = [f for f in result["findings"] if f["code"] == "loop.stale_size"]
+    assert [f["fix"] for f in stale] == [f"kiripix run {ROOM} loops --force"] and stale[0].get("owner_action") is None
+    assert not any(f["code"] == "internal.error" for f in result["findings"])
+    assert "palette.stale_size" in {f["code"] for f in result["findings"]}  # `palette`'s own Check sees it too
+    assert "loop.frame0" not in codes(project)

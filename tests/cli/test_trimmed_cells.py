@@ -59,7 +59,7 @@ def test_the_atlas_shrinks_and_every_frame_is_restored_byte_identical_from_rect_
         assert (restore(normal, clip, frame) == np.array(Image.open(folder / "work" / "finish" / "normal" / name))).all()
         boxes.append((r["x"], r["y"], r["x"] + r["width"], r["y"] + r["height"]))
     taken = np.zeros(colour.shape[:2], dtype=bool)
-    for x0, y0, x1, y1 in boxes:
+    for x0, y0, x1, y1 in sorted(set(boxes)):  # a cell that repeats shares its region (ticket 0375)
         assert not taken[y0:y1, x0:x1].any()  # no two frames overlap
         taken[y0:y1, x0:x1] = True
     assert project.json("check", HERO)["findings"] == []  # the Checks read the logical cell

@@ -26,7 +26,13 @@ CheckCancel = Callable[[], None]
 
 
 class RunnerError(Exception):
-    """A Runner couldn't load or finish: bad weights, no network, an engine error. Its message says why."""
+    """A Runner couldn't load or finish: bad weights, no network, an engine error. Its message says why. `set_param` is a
+    call parameter and the value that would let it finish, when there is one (the depth Runner's `size`): the finding's `fix`
+    sets it on the Stage that made the call."""
+
+    def __init__(self, message: str = "", *, set_param: tuple[str, int | float | str] | None = None) -> None:
+        super().__init__(message)
+        self.set_param = set_param
 
 
 @dataclass(frozen=True)

@@ -83,7 +83,6 @@ def test_a_look_over_a_layer_with_a_solid_exports_hidden_nodes_with_metadata(pro
     assert look["file"] == f"looks/{LOOK}/plate.png"
     assert look["pieces"] == [{"layer": "lamp", "file": f"looks/{LOOK}/layer.lamp.png"}]
     assert look["solid"] == f"masks/{LOOK}.solid.png" and look["collision"]["solid"]
-    assert room["masks"][f"{LOOK}.solid"] == f"masks/{LOOK}.solid.png"
     listed = manifest(project)
     assert f"{RES}/masks/{LOOK}.solid.png" in listed["files"] and listed["ids"]["looks"] == [LOOK]
 

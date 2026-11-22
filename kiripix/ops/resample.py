@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 else:
     npt = lazy_module("numpy.typing")
 
-from kiripix.ops.colour import U8, srgb_to_oklab
+from kiripix.ops.colour import U8, bayer_matrix, srgb_to_oklab
 
 if TYPE_CHECKING:
     BoolMask = npt.NDArray[np.bool_]
@@ -305,6 +305,44 @@ def alpha_by_vote(fitted: U8, source: U8, grid: Grid) -> U8:
         result[refill] = downscale(source, grid)[refill]
     result[~opaque] = 0
     return result
+
+
+def alpha_coverage(source: U8, grid: Grid) -> U8:
+    """The share of each cell's Source pixels that is opaque, as an alpha plane (grid.height, grid.width): the mean of the
+    cell's alpha, rounded half up, so a cell of alpha 102 is 102 and a cell of one clear pixel in four opaque ones is 191.
+    Padding cells (outside the Source or the grid) are 0. Exact integer arithmetic."""
+    _check_size(source, grid)
+    index_x, index_y = _cell_index(grid.edges_x(), source.shape[1]), _cell_index(grid.edges_y(), source.shape[0])
+    cell = index_y[:, None] * grid.width + index_x[None, :]
+    inside = (index_y[:, None] >= 0) & (index_x[None, :] >= 0)
+    cells = grid.width * grid.height
+    total = np.bincount(cell[inside], weights=source[..., 3][inside].astype(np.float64), minlength=cells).astype(np.int64)
+    sizes = np.maximum(np.bincount(cell[inside], minlength=cells).astype(np.int64), 1)
+    result: U8 = ((total * 2 + sizes) // (sizes * 2)).astype(np.uint8).reshape(grid.height, grid.width)
+    return result
+
+
+def dither_alpha(image: U8, pattern: int = 4) -> U8:
+    """`image` with partial alpha turned into a fixed pattern of 0 and 255: an ordered Bayer dither (`pattern` 2, 4 or 8).
+
+    A pixel at (x, y) is opaque when its alpha is above the threshold `(2 * M + 1) * 255 / (2 * n * n)` of the Bayer matrix M
+    (n = `pattern`) at (y mod n, x mod n), so alpha 0 is always clear, 255 always opaque, and alpha 102 of 255 is about 40 %
+    opaque, in the same places every time. The comparison is in integers, and the
+    position alone picks the pixel, so there is no tie to break. RGB is copied unchanged (a clear pixel keeps its colour). The input is
+    not modified.
+    """
+    if image.ndim != 3 or image.shape[2] != 4 or image.dtype != np.uint8:
+        raise ValueError("expected an (H, W, 4) uint8 RGBA image")
+    if pattern not in (2, 4, 8):
+        raise ValueError(f"the pattern is a Bayer matrix of side 2, 4 or 8, got {pattern}")
+    height, width = image.shape[:2]
+    cells = pattern * pattern
+    matrix = bayer_matrix(pattern)
+    tiled = np.tile(matrix, (height // pattern + 1, width // pattern + 1))[:height, :width]
+    alpha = image[..., 3].astype(np.int64)
+    out = image.copy()
+    out[..., 3] = np.where(alpha * cells * 2 > (2 * tiled + 1) * 255, 255, 0).astype(np.uint8)
+    return out
 
 
 def upscale(image: npt.NDArray[Any], factor: int) -> npt.NDArray[Any]:

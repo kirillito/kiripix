@@ -10,6 +10,7 @@ from kiripix.commands.registry import CliMeta, LockNeeds, command
 from kiripix.core import timespans
 from kiripix.core.assets import is_asset_id, list_assets, load_asset
 from kiripix.core.errors import KiripixError
+from kiripix.core.match import select
 from kiripix.core.project import find_project
 
 
@@ -69,13 +70,15 @@ class StatsInput(BaseModel):
 
     asset: str | None = Field(None, description="The Asset ID. Omit with --all.")
     all: bool = Field(False, description="Every Asset.")
+    match: str | None = Field(None, description="Only the Assets whose IDs match this glob, such as room.ch01_dungeon_*; "
+                                                "alone it means --all --match.")
     since: str | None = Field(None, description="Only what happened on or after this date, such as 2026-11-12 (local "
                                                 "time), by the ULID's time.")
 
     @model_validator(mode="after")
     def _asset_or_all(self) -> Self:
-        if self.all == (self.asset is not None):
-            raise ValueError("give an Asset ID or --all, not both")
+        if (self.all or self.match is not None) == (self.asset is not None):
+            raise ValueError("give an Asset ID or --all/--match, not both")
         return self
 
 
@@ -139,8 +142,10 @@ def stats(arguments: StatsInput, context: Context) -> Outcome[StatsData]:
     project = find_project(context.cwd)
     since = timespans.parse_since(arguments.since) if arguments.since else None
     findings: list[Finding] = []
-    if arguments.all:
+    if arguments.all or arguments.match is not None:
         assets, findings = list_assets(project)
+        if arguments.match is not None:
+            assets = select(assets, arguments.match)
     else:
         assert arguments.asset is not None
         assets = [load_asset(project, arguments.asset)]

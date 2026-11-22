@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 9
+PROJECT_TEMPLATE = """schema_version = 12
 
 [project]
 name = "{name}"
@@ -95,6 +95,12 @@ size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) o
 canvas = [192, 240]            # width and height in px; a portrait's own brief overrides it
 # anchor = [96, 239]           # the pixel the figure stands on; the bottom centre when unset
 
+[inbox]                        # `kiripix inbox`: the images made elsewhere, filed by their file names
+folder = "inbox"               # relative to the Project
+
+[style]                        # `kiripix style-add <id>`: the Assets whose look `check` measures every other Asset against
+references = []                # Asset IDs of any Kind with style Checks; the Owner adds them
+
 [character]
 height = 52                    # target height in px; a character's own `height` parameter overrides it
 # blender = "C:/Program Files/Blender Foundation/Blender 5.2/blender.exe"   # otherwise found on PATH
@@ -110,6 +116,7 @@ light_tilt = 35                # and toward the camera
 # name = "skin"                # a part name, lower-case snake_case
 # length = 3                   # steps, at least 2
 # rgb = [[171, 82, 54], [255, 163, 0], [255, 241, 232]]   # optional: shared colours, dark to light, of the Project palette
+# choices = {{ auburn = ["#ab5236", "#ffa300", "#fff1e8"] }}   # optional: named ramps of the Project palette, `length` colours each; an `npc` names one per part
 
 # The clip table: a clip named here plays the same frames, fps and loop on every body. Add rows with `kiripix clips-add`.
 # [[character.clips]]
@@ -168,6 +175,7 @@ GITATTRIBUTES = [
     "time.jsonl merge=union text eol=lf",
     "**/decisions/*.jsonl merge=union text eol=lf",
     "imported.jsonl merge=union text eol=lf",
+    "notes.jsonl merge=union text eol=lf",
 ]
 
 GITIGNORE = ["work/", ".kiripix/", ".env"]

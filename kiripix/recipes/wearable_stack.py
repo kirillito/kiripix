@@ -26,7 +26,7 @@ from kiripix.ops.looks import mask_box
 from kiripix.recipes.base import StageRun
 
 
-def _frames(folder: Path) -> dict[tuple[str, str, int], dict[str, str]]:
+def render_frames(folder: Path) -> dict[tuple[str, str, int], dict[str, str]]:
     """The files of each frame of a built `render`, by (clip, direction, index); empty when it can't be read."""
     try:
         document: dict[str, Any] = json.loads((folder / "render.json").read_text(encoding="utf-8"))
@@ -36,7 +36,7 @@ def _frames(folder: Path) -> dict[tuple[str, str, int], dict[str, str]]:
         return {}
 
 
-def _read(folder: Path, files: dict[str, str]) -> tuple[np.ndarray, np.ndarray] | None:
+def read_render_frame(folder: Path, files: dict[str, str]) -> tuple[np.ndarray, np.ndarray] | None:
     try:
         with Image.open(folder / files["color"]) as colour, Image.open(folder / files["depth"]) as depth:
             return np.asarray(colour.convert("RGBA"), dtype=np.uint8), np.asarray(depth, dtype=np.uint16)
@@ -48,18 +48,18 @@ def check_render_stack(run: StageRun) -> list[Finding]:
     """`wearable.stack_differs`, on the body's `render`, once at least one of its Wearables' `render` is built."""
     if not run.wearing:
         return []
-    body = _frames(run.output_dir)
-    worn = {name: _frames(folder) for name, folder in sorted(run.wearing.items(), key=lambda i: (run.wearing_order.get(i[0], 0), i[0]))}
+    body = render_frames(run.output_dir)
+    worn = {name: render_frames(folder) for name, folder in sorted(run.wearing.items(), key=lambda i: (run.wearing_order.get(i[0], 0), i[0]))}
     worn = {name: frames for name, frames in worn.items() if frames}
     if not body or not worn:
         return []
     results: list[StackFrame] = []
     for key in sorted(body):
         clip, direction, index = key
-        pairs = [_read(run.output_dir, body[key])]
+        pairs = [read_render_frame(run.output_dir, body[key])]
         for name, frames in worn.items():
             if key in frames:
-                pairs.append(_read(run.wearing[name], frames[key]))
+                pairs.append(read_render_frame(run.wearing[name], frames[key]))
         stacked = [p for p in pairs if p is not None]
         if len(stacked) < 2 or any(p[0].shape != stacked[0][0].shape for p in stacked):
             continue  # a Wearable built for another cell is stale: `status` says so

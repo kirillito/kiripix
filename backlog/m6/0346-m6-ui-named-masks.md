@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: ui-engineer
 type: ticket
@@ -31,3 +31,19 @@ The masks screen starts on `solid` (`web/src/maskScreen.tsx`) and offers the Mas
 - [ ] Playwright against a real `kiripix serve`: a Project with `cover` added shows it in the picker; a brush stroke on it
       records one Decision on `cover`, and `solid` is untouched.
 - [ ] `npm run build` passes.
+
+## Result
+
+- The masks screen's picker lists the room view's painted Masks from `describe room` (`masks`, view from the Asset's
+  `view` param, derived Masks left out), in Project order, each swatch and canvas overlay in its `colour`, its `meaning` as
+  the tooltip. Number keys 1-9 pick in that order; the letters still work. Until `describe` answers, the built files are listed.
+- Each Mask has an overlay checkbox (`mask-show-<name>`); a toggle records nothing.
+- When the room has an area with a `cell`, the cell grid highlights the 32 px cells (any cell size) the picked Mask half covers.
+  Gap: the backend only reports this for `solid` and `pit` (`area.ambiguous_cells`), so the UI counts the cells from the Mask pixels
+  it already draws, with the same quarter-to-three-quarters band. A pure Probe returning those cells for any Mask would remove that
+  duplicated constant; not added.
+- No Stage version bump (UI only). Files: `web/src/maskScreen.tsx`, `maskTool.ts`, `api.ts`, `App.tsx` (three props), `styles.css`,
+  `web/e2e/masks-named.spec.ts`.
+
+
+**Review fixes (2026-11-20):** The UI no longer counts half-covered cells (ADR 0008): the new Probe `half-cells <mask>` (`kiripix/core/mask_cells.py`, the band of `area.ambiguous_cells`, any painted Mask) answers them, and `maskTool.ts` only draws what it returns. The gap above is closed.

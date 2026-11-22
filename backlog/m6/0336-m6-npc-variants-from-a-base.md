@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: none
 type: spec
@@ -49,11 +49,32 @@ stacked figures.
 
 ## Acceptance criteria
 
-- [ ] The Owner's answers to Q1–Q5 recorded here, with the date.
-- [ ] The work tickets written, with `agent:` and `depends_on`, and listed here.
-- [ ] Spec §6.3 and §14 updated to the answers.
+- [x] The Owner's answers to Q1–Q5 recorded here, with the date.
+- [x] The work tickets written, with `agent:` and `depends_on`, and listed here.
+- [x] Spec §6.3 and §14 updated to the answers.
 
 ## Out of scope
 
 - The game's `CharacterSprite`, its shader and its actor data format (unless Q1 is (b), where the game's list is its own).
 - New renders for NPCs: never, by the direction.
+
+## Result
+
+**The Owner's answers, 2026-11-20:** every recommendation taken. Q1 (a): Kiripix holds an NPC's appearance, an Asset of a new
+Kind `npc` (an ADR first). Q2: Wearables and colours only. Q3: bulk from a seed, as a second step after one NPC works. Q4: named
+colour sets in the ramp table (`[[character.ramps]]` gains `choices`). Q5: background NPCs only; the speaking cast stay
+characters.
+
+**The work tickets**, in order:
+
+| Ticket | Agent | Depends on |
+|---|---|---|
+| [0355](0355-m6-adr-npc-kind.md) ADR: the `npc` Kind | reviewer | 0336 |
+| [0356](0356-m6-npc-kind-and-choose-stage.md) the Kind, `choose`, ramp `choices` | core-engineer | 0355 |
+| [0357](0357-m6-npc-checks.md) the NPC Checks | imaging-engineer | 0356 |
+| [0358](0358-m6-export-npc.md) export | godot-export | 0356, 0357 |
+| [0359](0359-m6-npc-crowd.md) NPCs in bulk from a seed | core-engineer | 0356, 0357 |
+| [0360](0360-m6-ui-npc-screen.md) UI: the NPC screen | ui-engineer | 0356, 0357 |
+
+0356 bumps `kiripix.toml`'s `schema_version`, so it takes turns with 0334. Spec §6.3 (an NPC paragraph, "proposed" until the
+ADR is accepted) and §14's M6 bullet say this.

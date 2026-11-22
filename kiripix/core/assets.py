@@ -62,6 +62,11 @@ def _load(project: Project, kind: str, name: str) -> Asset:
     return Asset(f"{kind}.{name}", kind, name, directory, settings)
 
 
+def load_listed(project: Project, kind: str, name: str) -> Asset:
+    """The Asset in `assets/<kind>/<name>/`, read as `list_assets` reads each one (a broken one raises its findings)."""
+    return _load(project, kind, name)
+
+
 def load_asset(project: Project, asset_id: str) -> Asset:
     kind, name = parse_asset_id(asset_id)
     if not (asset_dir(project, kind, name) / ASSET_FILE).is_file():
@@ -85,10 +90,13 @@ def list_assets(project: Project) -> tuple[list[Asset], list[Finding]]:
 def _check_base(project: Project, kind: str, asset_id: str, named: object, *, fix: str | None = None,
                 owner_action: str | None = None, file: str | None = None) -> Asset:
     """The Asset `named` as the base of `asset_id` (ADR 0012). It must be another Asset of the same Kind with no base of
-    its own; otherwise `asset.base_invalid`, with the reason."""
+    its own (or of the Kind's `base_kind`, an `npc`'s character); otherwise `asset.base_invalid` (or the Kind's `base_refusal`),
+    with the reason."""
+    spec = get_kind(kind)
+    wanted_kind = spec.base_kind or kind
 
     def refuse(reason: str) -> KiripixError:
-        return fail("asset.base_invalid", f"{asset_id} can't be made from the base {named!r}: {reason}", fix=fix,
+        return fail(spec.base_refusal, f"{asset_id} can't be made from the base {named!r}: {reason}", fix=fix,
                     owner_action=owner_action, position=Position(asset=asset_id, file=file, field=f"params.{BASE_PARAM}"))
 
     if not isinstance(named, str) or not is_asset_id(named):
@@ -96,14 +104,19 @@ def _check_base(project: Project, kind: str, asset_id: str, named: object, *, fi
     if named == asset_id:
         raise refuse("an Asset can't be its own base")
     base_kind, base_name = parse_asset_id(named)
-    if base_kind != kind:
-        raise refuse(f"it is a {base_kind}, and the base of a {kind} is a {kind}")
+    if base_kind != wanted_kind:
+        raise refuse(f"it is a {base_kind}, and the base of a {kind} is a {wanted_kind}")
     if not (asset_dir(project, base_kind, base_name) / ASSET_FILE).is_file():
         raise refuse("there is no such Asset in this Project")
     base = _load(project, base_kind, base_name)
     if BASE_PARAM in base.settings.params:
         raise refuse(f"it is itself made from {base.settings.params[BASE_PARAM]}, and a base has no base of its own")
     return base
+
+
+def check_base(project: Project, kind: str, asset_id: str, named: object, *, fix: str | None = None) -> Asset:
+    """`_check_base` for a caller that makes several Assets (the NPC crowd maker, ticket 0359): refuses before any is made."""
+    return _check_base(project, kind, asset_id, named, fix=fix)
 
 
 def _check_body(project: Project, kind: KindSpec, asset_id: str, named: object, *, fix: str | None = None,
@@ -152,7 +165,7 @@ def base_of(project: Project, asset: Asset) -> Asset | None:
         return None
     file = project.relative(asset.dir / ASSET_FILE)
     return _check_base(project, asset.kind, asset.id, asset.settings.params[BASE_PARAM], file=file,
-                       owner_action=f"Set {BASE_PARAM} under [params] in {file} to a {asset.kind} that has no base of "
+                       owner_action=f"Set {BASE_PARAM} under [params] in {file} to a {get_kind(asset.kind).base_kind or asset.kind} that has no base of "
                                     "its own, or remove it.")
 
 
@@ -219,7 +232,8 @@ def create_asset(project: Project, kind_name: str, name: str, params: Mapping[st
     if findings:
         raise KiripixError(findings)
     if kind.takes_base and BASE_PARAM in params:
-        _check_base(project, kind_name, asset_id, params[BASE_PARAM], fix=f"kiripix status --kind {kind_name}")
+        _check_base(project, kind_name, asset_id, params[BASE_PARAM],
+                    fix=f"kiripix status --kind {kind.base_kind or kind_name}")
     if kind.takes_body:
         _check_body(project, kind, asset_id, params[BODY_PARAM], fix=f"kiripix status --kind {kind.takes_body[0]}")
     settings = AssetSettings(kind=kind_name, params=dict(params))

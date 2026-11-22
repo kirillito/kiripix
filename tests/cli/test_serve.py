@@ -7,6 +7,7 @@ the SSE events and the files on disk.
 
 import http.client
 import json
+import os
 import queue
 import re
 import shutil
@@ -218,18 +219,26 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "redo": lambda a: {"asset": a[1], "stage": a[2]},
     "override": lambda a: {"asset": a[1], "stage": a[2], "png": a[3]},
     "accept": lambda a: {"asset": a[1], "stage": a[2]},
+    "note": lambda a: {"asset": a[1], "stage": a[2], "text": a[3]},
+    "style-add": lambda a: {"asset": a[1]},
+    "style-remove": lambda a: {"asset": a[1]},
+    "queue": lambda a: {"match": a[2], "kind": a[4], "assets": [a[6]]},
+    "assets": lambda a: {"match": a[2], "kind": a[4]},
+    "district": lambda a: {"glob": a[1]},
+    "to-paint": lambda a: {"match": a[2], "out": a[4]},
+    "inbox": lambda a: {"folder": a[2]},
     "import": lambda a: {"asset": a[1], "file": a[2], **({"role": a[a.index("--role") + 1]} if "--role" in a else {})},
     "thing-remove": lambda a: {"asset": a[1], "thing": a[2]},
     "clips copy": lambda a: {"asset": a[2], "source_asset": a[4]},
     "mask-import": lambda a: {"asset": a[1], "png": a[2]},
     "plate-import": lambda a: {"asset": a[1], "png": a[2]},
     "pick": lambda a: {"asset": a[1], "variant": a[2]},
-    "check": lambda a: {"asset": a[1]},
+    "check": lambda a: {"match": a[2]},
     "show": lambda a: {"asset": a[1]},
     "preview": lambda a: {"asset": a[1], "stage": a[3], "region": a[5], "grid": int(a[7])},
-    "export": lambda a: {"asset": a[1]},
+    "export": lambda a: {"match": a[2]},
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
-    "cast-sheet": lambda a: {"assets": a[1], "scale": int(a[3])},
+    "cast-sheet": lambda a: {"assets": a[1], "stack": a[3], "scale": int(a[5])},
     "snapshot": lambda a: {"assets": a[1], "label": a[3]},
     "loop kit": lambda a: {"asset": a[2], "loop": a[3], "folder": a[4], "frames": int(a[6])},
     "track": lambda a: {"asset": a[1], "stage": a[2], "seconds": int(a[4])},
@@ -237,9 +246,11 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "extend": lambda a: {"asset": a[1], "action": a[2], "side": a[4]},
     "ramps-add": lambda a: {"character": a[1], "parts": a[3]},
     "clips-add": lambda a: {"character": a[1], "clips": a[3]},
+    "masks-add": lambda a: {"name": a[1], "colour": a[3], "meaning": a[5]},
     "area-settle": lambda a: {"asset": a[1], "area": a[2]},
     "op quantize": lambda a: {"input": a[2], "output": a[3]},
     "op conformance": lambda a: {"image": a[2]},
+    "op dither-alpha": lambda a: {"input": a[2], "output": a[3]},
     "op palette-suggest": lambda a: {"image": a[2], "add": int(a[4]), "scale": float(a[6])},
     "op register-piece": lambda a: {"base": a[2], "piece": a[3], "overlap": a[5], "output": a[7]},
     "op match-tone": lambda a: {"base": a[2], "piece": a[3], "output": a[4], "overlap": a[6]},
@@ -283,7 +294,7 @@ def test_the_rest_response_equals_the_cli_json(project: Kiripix, tmp_path_factor
     arguments = SAMPLES[name](project)
     twin = tmp_path_factory.mktemp("twin") / "project"
     shutil.copytree(project.cwd, twin)  # the same Project, so each side starts from the same state
-    owner = name in {"accept", "palette-add", "ramps-add", "track"}
+    owner = name in {"accept", "palette-add", "ramps-add", "track", "style-add", "style-remove"}
 
     expected = project.json(*arguments, owner=owner)
     with serving(twin) as running:
@@ -682,7 +693,8 @@ def test_the_file_route_stays_inside_the_project(project: Kiripix, server: Serve
 
 # The Commands with file inputs, and those inputs. Over REST each is a multipart part of the Command's own request.
 FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file", "frames", "kit"], "mask-import": ["png"],
-                                     "plate-import": ["png"], "extend": ["piece"], "new": ["from_parameters"]}
+                                     "plate-import": ["png"], "extend": ["piece"], "new": ["from_parameters"],
+                                     "inbox": ["file"]}
 
 
 def test_every_file_input_has_a_multipart_test(server: Server) -> None:
@@ -701,7 +713,7 @@ def _as_parts(project: Kiripix, name: str, body: dict[str, Any]) -> list[tuple[s
     return parts
 
 
-@pytest.mark.parametrize("name", sorted(set(FILE_INPUTS) - {"extend", "new"}))  # extend's sample writes a canvas; new's
+@pytest.mark.parametrize("name", sorted(set(FILE_INPUTS) - {"extend", "new", "inbox"}))  # inbox's: below  # extend's sample writes a canvas; new's
 # sample has no file: both are below
 def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, tmp_path_factory: pytest.TempPathFactory,
                                                               name: str) -> None:
@@ -869,12 +881,111 @@ def test_the_state_folder_does_not_cause_changed_events(project: Kiripix, server
     try:
         (project.cwd / ".kiripix").mkdir(exist_ok=True)
         (project.cwd / ".kiripix" / "noise.txt").write_text("x", encoding="utf-8")
-        (project.cwd / "marker.txt").write_text("x", encoding="utf-8")
-        stream.wait_for(lambda e: e.name == "changed" and "marker.txt" in e.data["paths"])
+        project.json("new", "prop", "marker")  # a write by Kiripix: a file written by hand is no longer noticed
+        stream.wait_for(lambda e: e.name == "changed" and "assets/prop/marker/asset.toml" in e.data["paths"])
     finally:
         stream.close()
 
     assert all(".kiripix/noise.txt" not in e.data["paths"] for e in stream.named("changed"))
+
+
+def _changed_paths(stream: EventStream) -> set[str]:
+    return {p for e in stream.named("changed") for p in e.data["paths"]}
+
+
+def test_a_stage_run_from_the_cli_names_its_output_folder_and_nothing_in_the_state_folder(
+        project: Kiripix, server: Server) -> None:
+    make_demo(project)
+    stream = server.events()
+    try:
+        project.json("run", "demo.a")
+        stream.wait_for(lambda e: e.name == "changed" and "assets/demo/a/work/copy" in e.data["paths"])
+        time.sleep(1)  # anything else the run recorded arrives in a later tick
+    finally:
+        stream.close()
+
+    paths = _changed_paths(stream)
+    assert "assets/demo/a/work/copy" in paths
+    assert not [p for p in paths if p.startswith(".kiripix") or "/.tmp-" in p or "/.old-" in p or p.endswith("time.jsonl")]
+
+
+def test_two_cli_processes_writing_to_two_assets_lose_no_change(project: Kiripix, server: Server) -> None:
+    make_demo(project, "a")
+    make_demo(project, "b")
+    stream = server.events()
+
+    def loop(name: str) -> None:
+        for n in range(50):
+            project.json("decide", f"demo.{name}", "choose", "--decision", MARK.replace("door", f"label-{n}"), "--brief")
+
+    try:
+        threads = [threading.Thread(target=loop, args=(name,)) for name in "ab"]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        stream.wait_for(lambda e: e.name == "changed" and "assets/demo/b/decisions/choose.jsonl" in e.data["paths"])
+        time.sleep(1)
+    finally:
+        stream.close()
+
+    assert {"assets/demo/a/decisions/choose.jsonl", "assets/demo/b/decisions/choose.jsonl"} <= _changed_paths(stream)
+    recorded = [json.loads(line) for f in (project.cwd / ".kiripix" / "changes").glob("*.jsonl")
+                for line in f.read_text(encoding="utf-8").splitlines()]
+    for name in "ab":  # every one of the 50 CLI calls on each Asset recorded its write, in its own process's file
+        mine = [r for r in recorded if f"assets/demo/{name}/decisions/choose.jsonl" in r["paths"]]
+        assert len(mine) >= 50
+
+
+def test_a_change_by_the_servers_own_command_is_marked_own_and_a_cli_change_is_not(project: Kiripix, server: Server) -> None:
+    stream = server.events()
+    try:
+        assert server.call("/api/new", {"kind": "prop", "name": "mine"}).status == 200
+        project.json("new", "prop", "theirs")
+        mine = stream.wait_for(lambda e: e.name == "changed" and "assets/prop/mine/asset.toml" in e.data["paths"])
+        theirs = stream.wait_for(lambda e: e.name == "changed" and "assets/prop/theirs/asset.toml" in e.data["paths"])
+    finally:
+        stream.close()
+
+    assert "assets/prop/mine/asset.toml" in mine.data["own"]
+    assert set(mine.data["own"]) <= set(mine.data["paths"])
+    assert theirs.data["own"] == [] or not any(p.startswith("assets/prop/theirs") for p in theirs.data["own"])
+    assert all("theirs" not in p for e in stream.named("changed") for p in e.data["own"])
+
+
+def test_a_restart_deletes_the_change_files_of_dead_processes_over_a_day_old_and_keeps_live_ones(
+        project: Kiripix) -> None:
+    project.json("new", "prop", "bench")  # a CLI call: its own file is there, and its process is gone, but it is new
+    folder = project.cwd / ".kiripix" / "changes"
+    fresh = sorted(p.name for p in folder.glob("*.jsonl"))
+    assert fresh
+    old_dead = folder / "999999-1000.jsonl"
+    old_dead.write_text('{"t":1,"paths":["x"]}\n', encoding="utf-8")
+    live = folder / f"{psutil.Process().pid}-{round(psutil.Process().create_time() * 1000)}.jsonl"
+    live.write_text('{"t":1,"paths":["x"]}\n', encoding="utf-8")
+    long_ago = time.time() - 2 * 24 * 3600
+    for path in (old_dead, live):
+        os.utime(path, (long_ago, long_ago))
+
+    with serving(project.cwd, "--web", str(project.cwd / "no_web_app")) as running:
+        running.events().close()  # the app answers: it has started, and cleaned up
+
+    assert not old_dead.exists()
+    assert live.exists()
+    assert all((folder / n).exists() for n in fresh)  # a dead process's file under a day old stays for a serve to read
+
+
+def test_serve_starts_at_the_end_of_the_change_files(project: Kiripix) -> None:
+    project.json("new", "prop", "before")
+    with serving(project.cwd, "--web", str(project.cwd / "no_web_app")) as running:
+        stream = running.events()
+        try:
+            time.sleep(1)
+            project.json("new", "prop", "after")
+            stream.wait_for(lambda e: e.name == "changed" and "assets/prop/after/asset.toml" in e.data["paths"])
+        finally:
+            stream.close()
+    assert "assets/prop/before/asset.toml" not in _changed_paths(stream)
 
 
 # Static serving of web/
@@ -955,3 +1066,22 @@ def test_the_marker_decision_still_rejects_bad_data_over_rest(project: Kiripix, 
                                         "decision": MARK.replace("door", "x").replace('"label"', '"lable"')})
 
     assert reply.status == 400 and reply.json["ok"] is False
+
+
+def test_inbox_file_as_a_multipart_part_files_it_into_the_room(project: Kiripix,
+                                                                tmp_path_factory: pytest.TempPathFactory) -> None:
+    """The UI's drop on a waiting room (ticket 0351): `inbox` with the image as its `file` part and the room as `asset`."""
+    from test_contract import _room_image
+
+    _room_image(project)
+    temp = tmp_path_factory.mktemp("server_temp")
+    with serving(project.cwd, temp=temp) as running:
+        reply = running.call("/api/inbox", parts=[("input", None, json.dumps({"asset": "room.alley"}).encode()),
+                                                  ("file", "dropped.png", (project.cwd / "in.png").read_bytes())])
+        left = list(temp.iterdir())
+
+    assert reply.status == 200 and reply.headers["x-kiripix-exit-code"] == "0"
+    [filed] = reply.json["data"]["files"]
+    assert (filed["asset"], filed["action"], filed["outcome"]) == ("room.alley", "import", "imported")
+    assert [lone["asset"] for lone in reply.json["data"]["lone_variants"]] == ["room.alley"]
+    assert left == [], "the file inputs' temporary folder is deleted when the Command ends"

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from kiripix.checks import Position
-from kiripix.core import atomic, sources
+from kiripix.core import atomic, changes, sources
 from kiripix.core.assets import Asset
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
@@ -233,7 +233,7 @@ def remove_thing(project: Project, asset: Asset, thing: str) -> list[Path]:
                                 "the clip, then remove the thing.", position=position)
     removed = sorted(p for p in folder(asset, thing).glob("*") if p.is_file())
     for path in removed:
-        path.unlink()
+        changes.remove(path)
     try:
         folder(asset, thing).rmdir()
     except OSError:

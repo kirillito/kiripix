@@ -84,6 +84,31 @@ Stop when `next` answers with an `owner_action`, or exit code 3 (`needs-input`, 
 `layers` in `needs-review`. Keep going on what the Owner's answer doesn't change. After the Owner says to carry on, run `next`
 again: a Stage that reads `todo` after their Decisions is ready to run, not waiting on them.
 
+**At every stop, write a hand-over note on the Stage that waits:** `kiripix note <room> <stage> "<text>"` (at most 2,000
+characters): why you stopped, and what's left for the UI (doubtful Masks with their boxes, Layers not lifted, Exits to rooms
+that don't exist yet). The Owner reads it in `kiripix queue` beside the stop, long after this session is gone; a note stays
+live until the Stage gets a newer Decision or an `accept`.
+
+## Batch mode: many rooms, one session each
+
+A chapter is about 30 rooms; one session over all of them grows its context with every room. `batch.py`, beside this file,
+runs one fresh `claude -p` session per room, **in sequence** (the Runners share the GPU), and writes a report to
+`.kiripix/first-passes/<date>.md`: per room, where it stopped, its notes, its Decisions per Stage in this pass and its tokens
+(from each session's own usage), then `kiripix queue --match <glob>` as the Owner's starting point. From the art Project:
+
+```
+python .claude/skills/room-first-pass/batch.py --match "room.ch01_dungeon_*" --dry-run   # which rooms run, which are skipped
+python .claude/skills/room-first-pass/batch.py --match "room.ch01_dungeon_*"
+python .claude/skills/room-first-pass/batch.py room.ch01_dungeon_r01 room.ch01_dungeon_r02
+```
+
+A room with no Source is skipped with a line in the report, never guessed. `--timeout` (minutes, default 60) stops a session
+that runs away; `--allowed-tools` lists what each session may run without asking (Kiripix, and reading and writing files).
+
+When you are one of those sessions (the prompt says **batch mode**), nobody reads the conversation: never ask and never wait.
+At a stop, record every Decision you still can, write the note, and end. If you can't find the room's size and mood (no brief
+set and no design to read), write a note on `brief` saying what's missing and end: the report lists the room as skipped.
+
 A Command the workflow needs that Kiripix lacks: say so in the hand-over, for a ticket. Work only through Commands; a
 script that writes the Project's files by hand breaks the journal.
 

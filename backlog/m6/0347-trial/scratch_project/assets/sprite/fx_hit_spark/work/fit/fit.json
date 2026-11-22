@@ -1,0 +1,31 @@
+{
+ "schema_version": 1,
+ "mode": "grid",
+ "scale": "1",
+ "chroma": "",
+ "align_feet": false,
+ "target_height": 52,
+ "tallest": {
+  "height": 21,
+  "clip": "idle",
+  "direction": "s",
+  "index": 4
+ },
+ "grid_differs": [],
+ "grew": [],
+ "pivots": {
+  "s": [
+   12,
+   19
+  ]
+ },
+ "ground": {
+  "ratio": 0.08,
+  "figure": 19,
+  "offset": 2
+ },
+ "cell": [
+  23,
+  23
+ ]
+}

@@ -10,6 +10,8 @@ Manifest doesn't list. Every backup goes to `.kiripix/backups/<timestamp>/`, and
 before it writes anything.
 """
 
+import hashlib
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,11 +23,15 @@ from kiripix.core.assets import Asset, list_assets
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.cliptable import clip_timing_findings
 from kiripix.core.graph import AssetGraph, StageState
+from kiripix.core.lightangle import light_angle_findings
 from kiripix.core.hashing import HashCache, hash_bytes
+from kiripix.core.match import matches, only_named
 from kiripix.core.project import Project
 from kiripix.core.project_checks import check_asset
 from kiripix.export.checks import (
     EXPORTERS,
+    ExitPairing,
+    exit_pairings,
     exits_naming,
     frozen_findings,
     frozen_layer_findings,
@@ -38,12 +44,14 @@ from kiripix.export.checks import (
 from kiripix.export.character import COLOR_FILE, NORMAL_FILE, RAMPS_FILE, ramp_rows, ramps_png, read_character
 from kiripix.export.godot import (
     character_frames, character_ids, character_scene, character_texture, prop_ids, prop_scene, prop_state_files,
-    room_ids, room_scene,
+    canvas_file, normal_pairs, room_canvas_texture, room_ids, room_scene,
 )
 from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
 from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
 from kiripix.export.icon import ICON_FILE, ICON_RECORD, read_icon
+from kiripix.export.npc import exported_files as npc_file, read_npc
+from kiripix.recipes.npc import NPC_FILE
 from kiripix.export.portrait import PORTRAIT_FILE, emotion_ids, read_portrait
 from kiripix.export.prop import SPRITE_FILE, read_prop
 from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, ROOM_FILE, built_dir, read_room
@@ -106,8 +114,12 @@ def _room_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None
         plate: (built_dir(graph) / PLATE_FILE).read_bytes(),
         description: (built_dir(graph) / ROOM_FILE).read_bytes(),
     }
-    for file in room["masks"].values():  # the Masks beside the scene, with each Look's own `solid` (ticket 0131)
-        files[f"{folder}/{file}"] = (built_dir(graph) / str(file)).read_bytes()
+    for mask in room["masks"]:  # every painted Mask beside the scene (ticket 0345)
+        files[f"{folder}/{mask['file']}"] = (built_dir(graph) / str(mask["file"])).read_bytes()
+    for look in room["looks"]:  # each Look's own `solid`, and what it adds and clears (tickets 0131, 0316)
+        for file in [look["solid"]] + [look[key]["file"] for key in ("added", "cleared") if look[key]]:
+            if file:
+                files[f"{folder}/{file}"] = (built_dir(graph) / str(file)).read_bytes()
     for look in room["looks"]:  # a Look's pieces, hidden in the scene
         for file in ([look["file"]] if look["file"] else []) + [piece["file"] for piece in look["pieces"]]:
             files[f"{folder}/{file}"] = (built_dir(graph) / str(file)).read_bytes()
@@ -119,6 +131,10 @@ def _room_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None
         files[f"{folder}/{layer['file']}"] = (built_dir(graph) / str(layer["file"])).read_bytes()
         if layer.get("remainder"):  # what the Layer's Sprite2D shows when a frame Loop moves part of it
             files[f"{folder}/{layer['remainder']}"] = (built_dir(graph) / str(layer["remainder"])).read_bytes()
+    for diffuse, normal in normal_pairs(room).items():  # a normal map (ticket 0342) and the CanvasTexture over it and its picture
+        files[f"{folder}/{normal}"] = (built_dir(graph) / normal).read_bytes()
+        files[f"{folder}/{canvas_file(normal)}"] = room_canvas_texture(
+            f"{folder}/{diffuse}", f"{folder}/{normal}").encode("utf-8")
     return files, room_ids(room)
 
 
@@ -146,17 +162,19 @@ def _character_files(graph: AssetGraph, target: GodotTarget, planned: _Planned =
     name = graph.asset.id.split(".", 1)[1]
     folder = f"{target.root}/{graph.kind.name}/{name}"
     colour, normal = f"{folder}/{COLOR_FILE}", f"{folder}/{NORMAL_FILE}"
+    flat = "normal" not in character["files"]  # a sprite's effect (ticket 0362) is flat: no normal atlas
     texture, frames = f"{folder}/texture.tres", f"{folder}/frames.tres"
     rows = ramp_rows(character)
     ramps = f"{folder}/{RAMPS_FILE}"
     files = {
         f"{folder}/{name}.tscn": character_scene(character, name, frames, ramps if rows else None, rows).encode("utf-8"),
         frames: character_frames(character, texture).encode("utf-8"),
-        texture: character_texture(colour, normal).encode("utf-8"),
+        texture: character_texture(colour, None if flat else normal).encode("utf-8"),
         colour: (built_dir(graph) / COLOR_FILE).read_bytes(),
-        normal: (built_dir(graph) / NORMAL_FILE).read_bytes(),
         f"{folder}/{CHARACTER_FILE}": (built_dir(graph) / CHARACTER_FILE).read_bytes(),
     }
+    if not flat:
+        files[normal] = (built_dir(graph) / NORMAL_FILE).read_bytes()
     if rows:
         files[ramps] = ramps_png(character, rows)
     return files, character_ids(character)
@@ -209,17 +227,28 @@ def _portrait_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = 
     return files, ExportedIds(markers=[], layers=[], masks=[], emotions=emotion_ids(portrait))
 
 
+def _npc_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
+    """The one file of an NPC's export, by `res://` path: `npc/<name>/npc.json`, with no image and no scene. Refused until its
+    base and each Wearable are in the game (`npc.base_not_exported`, `npc.wearable_not_exported`). The NPC's ID is its Asset ID,
+    which the Manifest's name already freezes, so no other ID is exported."""
+    npc = read_npc(graph)
+    name = graph.asset.id.split(".", 1)[1]
+    files = {f"{target.root}/npc/{name}/{NPC_FILE}": npc_file(npc, target, graph.asset.id, planned)}
+    return files, ExportedIds(markers=[], layers=[], masks=[])
+
+
 _FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget, _Planned], tuple[dict[str, bytes], ExportedIds]]] = {
     "room": _room_files, "prop": _prop_files, "character": _character_files, "sprite": _character_files,
     "icon": _icon_files, "wearable": _wearable_files,
-    "portrait": _portrait_files}  # a sprite is exported as a character, under sprite/
+    "portrait": _portrait_files, "npc": _npc_files}  # a sprite is exported as a character, under sprite/
 
 
 # A Kind that is exported after the others of the same call, because it reads what they plan (a Wearable after its body).
-_EXPORT_RANK = {"wearable": 1}
+_EXPORT_RANK = {"wearable": 1, "npc": 2}  # an NPC last: it reads its base's and its Wearables' too
 
 
-_NOT_AVAILABLE = "a {} can't be exported yet; only rooms, props, characters, sprites, icons, Wearables and portraits can"
+_NOT_YET = frozenset({"wearable.body_not_exported", "npc.base_not_exported", "npc.wearable_not_exported"})
+_NOT_AVAILABLE ="a {} can't be exported yet; only rooms, props, characters, sprites, icons, Wearables, portraits and NPCs can"
 
 
 def _hashes(files: dict[str, bytes]) -> dict[str, str]:
@@ -384,18 +413,20 @@ def _commit(project: Project, target: GodotTarget, plans: list[_Plan], prunes: l
 
 
 def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache, options: ExportOptions,
-                  prune: bool = False) -> ExportRun:
+                  prune: bool = False, match: str | None = None) -> ExportRun:
     """Export `assets`, or every Asset with an exporter when None (`--all`). The caller holds the project and Asset locks.
 
     Every Asset is planned before any file is written: one refusal (an Asset not built, a frozen ID, a file the game
     owns) stops them all with nothing changed. With `--all`, Exit pairing must hold or nothing is exported; for one
     Asset it is only a warning. With `prune` (only with `--all`) the deleted Assets' files are planned too, and removed
-    after the exports are written. Returns the results and the findings of the call."""
+    after the exports are written. With `match` (a glob, with `assets` None; ticket 0327) the `--all` rules hold for the
+    matching Assets: Exit pairing and the clip table are checked across the Project, and only what names a matched Asset
+    refuses; `prune` removes only the deleted Assets that match. Returns the results and the findings of the call."""
     for asset in assets or []:
         if asset.kind not in _FILES_BY_KIND:
             raise fail("export.not_available", _NOT_AVAILABLE.format(asset.kind), fix="kiripix describe project")
     target = resolve_target(project)
-    prunes = plan_prune(project, target, None, options.force) if prune else []
+    prunes = plan_prune(project, target, None, options.force, match) if prune else []
     every, broken = list_assets(project)
     if broken and assets is None:
         raise KiripixError(broken)
@@ -406,8 +437,14 @@ def export_assets(project: Project, assets: list[Asset] | None, cache: HashCache
         assets = [asset for asset in every if asset.kind in EXPORTERS]
         errors = pairing_findings(project, every)
         timing = clip_timing_findings(project, every, cache)  # the Project's clip table (ticket 0239)
+        light = light_angle_findings(project, every, cache)  # one key light for every character (ticket 0361)
+        if match is not None:
+            named = {asset.id for asset in every if matches(asset.id, match)}
+            assets = [asset for asset in assets if asset.id in named]
+            errors, timing = only_named(errors, named), only_named(timing, named)
+            light = only_named(light, named)
         errors += [f for f in timing if f.severity == "error"]
-        warnings += [f for f in timing if f.severity != "error"]
+        warnings += [f for f in timing if f.severity != "error"] + light
         if errors:
             raise KiripixError(errors, ExitCode.CHECK_FAILED)
     else:
@@ -445,10 +482,34 @@ def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
     try:
         files, _ = _FILES_BY_KIND[asset.kind](AssetGraph(project, asset, cache), target, None)
     except KiripixError as error:
-        if all(f.code == "wearable.body_not_exported" for f in error.findings):
-            return True  # a Wearable whose body is not in the game yet: `export` says why
+        if all(f.code in _NOT_YET for f in error.findings):
+            return True  # a Wearable whose body, or an NPC whose base or Wearable, is not in the game yet: `export` says why
         raise  # anything else (a broken built record) is an error, not "pending"
     return manifest.files != _hashes(files) or bool(manifest.replacing)
+
+
+def export_stamp(project: Project) -> str:
+    """What the game holds that `export_command` answers from, as one string: the files under the export root by name,
+    time and size, or why the game can't be used. `core.changes` doesn't record writes outside the Project, so `serve` asks
+    this on every call and works an Asset's `export_command` out again when it changed (ticket 0373)."""
+    try:
+        target = resolve_target(project)
+    except KiripixError as error:
+        return "target:" + ",".join(f.code for f in error.findings)
+    digest = hashlib.blake2b(digest_size=16)
+    pending = [str(target.path(target.root))]
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                for entry in sorted(entries, key=lambda e: e.name):
+                    if entry.is_dir():
+                        pending.append(entry.path)
+                    else:
+                        found = entry.stat()
+                        digest.update(f"{entry.path}|{found.st_mtime_ns}|{found.st_size};".encode())
+        except OSError:
+            continue
+    return digest.hexdigest()
 
 
 def export_command(project: Project, asset: Asset, cache: HashCache, states: list[StageState] | None = None) -> str | None:
@@ -466,5 +527,5 @@ def export_command(project: Project, asset: Asset, cache: HashCache, states: lis
 
 
 __all__ = ["EXPORT_STAGE", "EXPORTERS", "ExportOptions", "ExportResult", "ExportRun", "PruneResult", "export_assets",
-           "export_command", "export_pending", "frozen_findings", "frozen_layer_findings", "frozen_loop_findings", "loop_edit_findings", "state_edit_findings", "emotion_freeze_findings", "install_driver", "merge_files", "pairing_findings",
+           "export_command", "export_stamp", "ExitPairing", "exit_pairings", "export_pending", "frozen_findings", "frozen_layer_findings", "frozen_loop_findings", "loop_edit_findings", "state_edit_findings", "emotion_freeze_findings", "install_driver", "merge_files", "pairing_findings",
            "apply_repairs", "plan_repairs", "prune_assets", "resolve_target"]

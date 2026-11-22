@@ -41,6 +41,15 @@ Notes:
   (the card says its result is identical to the original). The card is tagged Apache-2.0 and states no licence text of its
   own, like the other conversions. The `lama.onnx` (dynamo export) is not used. Not a lasting choice (spec §8). Places2
   attribution (above) still applies. The Owner accepted this (2026-11-04).
+- **Depth Anything V2 Small, as Kiripix downloads it:** `runners/depth.py` (ticket 0340) pins the ONNX conversion
+  `onnx-community/depth-anything-v2-small` at commit `4472b7362082ad9968fee890ca0f1e5aca36b93d`: the fp32
+  `onnx/model.onnx` (99,060,839 bytes, sha256 `afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c`, checked by
+  downloading it 2026-11-20; the same file as trial 0252's). The licence entry comes from the upstream repo: its `LICENSE`
+  file is the Apache License 2.0 (read 2026-11-20), and its README says "Depth-Anything-V2-Small model is under the Apache-2.0
+  license" while Base, Large and Giant are CC-BY-NC-4.0. The conversion's card is tagged Apache-2.0 and states no licence
+  text of its own, like the other conversions. Only Small is used. DA3-Small and DA3-Base (Apache-2.0 on their cards) were
+  compared on 2026-11-20 and not taken (ticket 0340); DA3 Large and larger are non-commercial. Not a lasting choice
+  (spec §8). The Owner accepted this (2026-11-20).
 - **BiRefNet:** a Hugging Face discussion asked for an explicit statement that MIT covers the weights; the model card is
   tagged MIT and nothing says otherwise.
 

@@ -105,7 +105,15 @@ def check_room_palette(run: StageRun) -> list[Finding]:
     if composite.shape == image.shape and not has_partial_alpha(image):
         fit = run.upstream["layers"].parent / "fit" / "fit.png"  # only to name the image `palette-suggest` reads
         findings += check_mapping(run, composite, image, fit)
-    differs = (recompose(plate, layers) != image).any(axis=2)
+    recomposed = recompose(plate, layers)
+    if recomposed.shape != image.shape:  # palette.png changed size (by hand): nothing in this folder lines up with it
+        findings.append(Finding(
+            code="palette.stale_size",
+            message=f"palette.png is {image.shape[1]}x{image.shape[0]} but the Plate and Layers are "
+                    f"{recomposed.shape[1]}x{recomposed.shape[0]}, so they were mapped from another image",
+            fix=fix))
+        return findings
+    differs = (recomposed != image).any(axis=2)
     if differs.any():
         ys, xs = np.nonzero(differs)
         findings.append(

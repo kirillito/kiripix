@@ -1,0 +1,98 @@
+{
+ "schema_version": 1,
+ "directions": [
+  "s"
+ ],
+ "sheets": [
+  "a8821d37dc5cc1e7"
+ ],
+ "clips": [
+  {
+   "name": "idle",
+   "fps": 8,
+   "loop": true,
+   "stationary": false,
+   "raw": [
+    "idle"
+   ],
+   "directions": {
+    "s": [
+     {
+      "index": 0,
+      "file": "color/idle/s/000.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 0"
+     },
+     {
+      "index": 1,
+      "file": "color/idle/s/001.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 1"
+     },
+     {
+      "index": 2,
+      "file": "color/idle/s/002.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 2"
+     },
+     {
+      "index": 3,
+      "file": "color/idle/s/003.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 3"
+     },
+     {
+      "index": 4,
+      "file": "color/idle/s/004.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 4"
+     },
+     {
+      "index": 5,
+      "file": "color/idle/s/005.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 5"
+     },
+     {
+      "index": 6,
+      "file": "color/idle/s/006.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 6"
+     },
+     {
+      "index": 7,
+      "file": "color/idle/s/007.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 7"
+     },
+     {
+      "index": 8,
+      "file": "color/idle/s/008.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 8"
+     },
+     {
+      "index": 9,
+      "file": "color/idle/s/009.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 9"
+     },
+     {
+      "index": 10,
+      "file": "color/idle/s/010.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 10"
+     },
+     {
+      "index": 11,
+      "file": "color/idle/s/011.png",
+      "sheet": "a8821d37dc5cc1e7",
+      "source": "row 0, column 11"
+     }
+    ]
+   }
+  }
+ ],
+ "unplaced": [],
+ "duplicates": []
+}

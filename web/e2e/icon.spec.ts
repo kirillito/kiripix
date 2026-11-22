@@ -21,8 +21,10 @@ test("an icon opens on the Prop's screens and draws its square on fit", async ({
   studio.run(ICON);
 
   await page.goto(studio.home);
-  // The status board lists it under its Kind.
-  await expect(page.locator("section", { has: page.getByTestId(`asset-${ICON}`) }).first().locator("h2")).toHaveText("icon");
+  // The status board lists it under its Kind: the Kind's heading, then its rows (a long list draws rows, not nested sections).
+  const board = page.getByTestId("board");
+  await expect(board.locator("h2", { hasText: /^icon$/ })).toBeVisible();
+  await expect(board.getByTestId(`board-${ICON}`)).toBeVisible();
   await page.getByTestId(`asset-${ICON}`).click();
 
   // The reused screens, and no footprint: an icon has none.

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from kiripix.checks import Position
-from kiripix.core import atomic, editing, sources
+from kiripix.core import atomic, changes, editing, sources
 from kiripix.core.assets import Asset, base_of
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
@@ -117,7 +117,7 @@ def apply(asset: Asset, other: Asset, project: Project, result: ClipCopy) -> lis
                 {"schema_version": sources.IMPORTED_SCHEMA_VERSION, "file": target.relative_to(asset.dir).as_posix(),
                  "imported_as": imported}])
     for old in result.stale:
-        old.unlink(missing_ok=True)
+        changes.remove(old)
     documents = [editing.DecisionDocument(decision=CLIP.name, data=dict(d.data)) for d in result.decisions]
     if documents:
         editing.record_decisions(project, asset, CLIPS_STAGE, documents)

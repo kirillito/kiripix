@@ -135,7 +135,7 @@ def test_each_marker_type_keeps_its_own_fields_in_the_markers_file(project: Kiri
     assert [f["code"] for f in findings(result, "ysort.unknown_layer")] == ["ysort.unknown_layer"]
     assert markers(folder) == [
         {"id": "spawn.main", "type": "spawn", "x": 30, "y": 16, "look": None},
-        {"id": "exit.east", "type": "exit", "x": 40, "y": 16, "target_room": "room.street", "target_exit": "exit.west", "look": None},
+        {"id": "exit.east", "type": "exit", "x": 40, "y": 16, "target_room": "room.street", "target_exit": "exit.west", "one_way": False, "look": None},
         {"id": "crate", "type": "interactable", "x": 30, "y": 20, "look": None},
         {"id": "lamp", "type": "light", "x": 30, "y": 8, "colour": "#FFCC88", "radius": 24, "energy": 1.5, "look": None},
         {"id": "steam", "type": "emitter", "x": 32, "y": 8, "name": "steam_vent", "shape": None,
@@ -478,7 +478,7 @@ def test_a_link_between_two_walkable_spots_is_recorded_built_and_shown(project: 
 
     assert findings(result, "link.outside") == [] and findings(result, "link.not_walkable") == []
     built = json.loads((folder / "work" / "place" / "markers.json").read_text("utf-8"))
-    assert built["schema_version"] == 3
+    assert built["schema_version"] == 4
     assert built["links"] == [{"id": "hop.down", "from": [24, 8], "to": [40, 24], "kind": "hop", "two_way": False}]
     shown = project.json("show", ROOM)["data"]["stages"]
     listed = next(s for s in shown if s["stage"] == "place")["markers"]

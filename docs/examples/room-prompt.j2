@@ -1,0 +1,13 @@
+{#- A STARTING POINT for style/prompts/room.j2 (ticket 0348), not the art Project's template. The Owner ports the game's
+    `room-brief` rules into it and into style/bible.md. Fields: see spec §4. -#}
+A {{ view }}-view pixel-art game room, {{ canvas_width }}x{{ canvas_height }} px (aspect {{ canvas_aspect }}), to be
+reduced to {{ width }}x{{ height }} px ({{ tiles_wide }}x{{ tiles_high }} tiles of {{ tile }} px).
+{% if mood %}Mood: {{ mood }}.
+{% endif %}{% for e in exits %}An exit, "{{ e.name }}"{% if e.side %}, on the {{ e.side }} side{% endif %}.
+{% endfor %}{% if notes %}{{ notes }}
+{% endif %}
+Scale: people are about {{ (canvas_width * 120 / 1376) | round | int }} px tall in this image (placeholder rule; replace
+with the game's own).
+
+Style:
+{{ bible }}

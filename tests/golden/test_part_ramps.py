@@ -184,6 +184,22 @@ def test_ramp_shared_is_silent_for_disjoint_ramps_and_flags_fixed_pixels() -> No
     assert check_ramp_shared(ok, ok_labels, PARTS, ramps, "f.png", fix="x") == []
 
 
+def test_ramp_shared_finds_a_part_pixel_in_another_ramp_and_a_fixed_pixel_in_one_frame() -> None:
+    # hair (1) has a boots colour at x=1; a fixed material (3) has a hair colour at x=3 and a boots colour at x=4;
+    # the findings come part by part, then the fixed pixels, each against the ramps in order, with the first pixel and count.
+    hair, boots, fixed = (28, 13, 8), (64, 32, 20), (235, 190, 160)
+    frame, labels = build([[1, 1, 2, 3, 3, 3]], {1: hair, 2: boots, 3: fixed})
+    frame[0, 1, :3] = boots
+    frame[0, 3, :3] = hair
+    frame[0, 4, :3] = boots
+    ramps = {"hair": np.array([hair], dtype=np.uint8), "boots": np.array([boots], dtype=np.uint8)}
+    findings = check_ramp_shared(frame, labels, PARTS, ramps, "f.png", fix="x")
+    assert [(f.message.split(" at ")[0].split("a pixel of ")[-1], f.message.split("ramp of ")[1].split(" ")[0],
+             f.position.x, f.position.y) for f in findings] == [  # type: ignore[union-attr]
+        ("hair", "boots", 1, 0), ("fixed colours", "hair", 3, 0), ("fixed colours", "boots", 4, 0)]
+    assert all("(1 such pixels)" in f.message for f in findings)
+
+
 # A part whose colours the Project's ramp table gives (ticket 0168): mapped by lightness order, not by nearest colour.
 GIVEN = np.array([[64, 32, 20], [120, 70, 45], [235, 190, 160]], dtype=np.uint8)  # dark to light
 

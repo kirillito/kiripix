@@ -28,11 +28,11 @@ def _light(marker_id: str, x: int) -> dict[str, Any]:
 
 def room() -> dict[str, Any]:
     return {
-        "schema_version": 12, "asset": "room.yard", "size": [64, 32],
+        "schema_version": 13, "asset": "room.yard", "size": [64, 32],
         "collision": {"pit": [], "solid": [_square(0, 0), _square(16, 0)]},
         "navigation": _navigation(32),
         "markers": [{"id": "spawn.main", "type": "spawn", "x": 40, "y": 8}, _light("lamp", 4)],
-        "links": [], "layers": [], "masks": {"solid": "masks/solid.png"}, "loops": [],
+        "links": [], "layers": [], "masks": [{"name": "solid", "file": "masks/solid.png", "meaning": "blocks movement", "collision": True}], "loops": [],
         "looks": [],
         "scene": {"solid": [_square(0, 0), _square(16, 0)], "cleared": {}, "shared": []},
     }

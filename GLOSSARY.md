@@ -12,6 +12,10 @@ One game's asset workspace, with its palette, resolution, tile size, style bible
 One thing in the game, with a Kind and a stable ID, such as `room.queen_west_alley`. Its ID is frozen once exported.
 _Avoid_: item, resource
 
+**District**:
+The Assets whose IDs an ID glob matches, such as the rooms `room.ch01_dungeon_*`. It is a word for that set, given as `--match <glob>` on `status`, `check`, `run`, `export` and `stats`; nothing about it is stored.
+_Avoid_: group, area, chapter folder
+
 **Kind**:
 An Asset's type, which fixes its Recipe: room, prop, icon, character, sprite.
 _Avoid_: type, category
@@ -41,6 +45,16 @@ _Avoid_: user (ambiguous with agents), admin
 
 **Decision journal**:
 A Stage's ordered, append-only record of Decisions, including undos and redos.
+
+**Hand-over note**:
+A note on a Stage in an Asset's `notes.jsonl`, written with `kiripix note`: why a pass stopped and what is left. It is not
+a Decision: it changes no output and no input hash, and `undo` doesn't reach it. It is live while its Stage has no newer
+Decision and no `accept`; that is derived, never stored.
+
+**Review queue**:
+What `kiripix queue` lists: every stop the Owner owns across the Assets (a `needs-review` Stage, an owner-only `needs-input`,
+a finding with an `owner_action`), each with its Stage's live hand-over notes. A finding with a `fix` is counted per Asset, not
+listed. Derived each time, never stored.
 
 **Decision**:
 Recorded human input that a Stage replays: a Pick, segmentation clicks, an Override, marker positions.
@@ -97,6 +111,12 @@ A committed result of a Runner or Provider, kept with its input hash so that a r
 **Grid transform**:
 The recorded scale and offset that map an Asset's Source onto its target pixel grid.
 
+**Normal map**:
+An image beside an Asset's colour image that gives each pixel's surface direction, so Godot's 2D lights can shade it. A
+character's comes from its render; a room's comes from its `normals` Stage, out of a depth Runner (ADR 0014).
+It is never palette-mapped. Flat means facing the camera.
+_Avoid_: bump map, height map, depth map (the depth Runner's output, which the Stage turns into normals)
+
 **Layer**:
 A visible image plane of a room: the Plate, a foreground Layer or a parallax plane.
 _Avoid_: mask (for anything visible)
@@ -107,6 +127,8 @@ _Avoid_: background (ambiguous), base
 
 **Mask**:
 A named binary gameplay region read by the engine, such as `solid` or `ladder`.
+Only `solid` and `pit` block anything in Kiripix. A Mask the Project names itself (`masks-add`, such as `cover` or `water`)
+has no meaning in Kiripix, as an area has none: `reach` and the walk test ignore it, and the game reads it.
 _Avoid_: layer, collision layer
 
 **Derived mask**:
@@ -242,6 +264,12 @@ _Avoid_: sprite for one frame (say frame), or for Godot's `Sprite2D`
 An Asset of Kind wearable: a hair style, an outfit, an accessory or a held thing, rendered over the character it names as
 its body, with the body as a holdout, so the game stacks it on the body pixel for pixel. Not a combination: each renders once.
 _Avoid_: layer (a room's image plane), outfit or costume for the Kind
+
+**NPC**:
+An Asset of Kind npc: a background figure that is a choice, not a render: a base character, Wearables rendered on that base in
+a stacking order, and a named colour choice per Part. The game draws it from the base's and the Wearables' exports (ADR 0015).
+Speaking characters are characters of their own, not NPCs.
+_Avoid_: NPC for any non-player character with its own Model or portraits (say character)
 
 ## Verification and output
 

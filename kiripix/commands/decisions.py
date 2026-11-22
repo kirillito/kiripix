@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import editing, journal
+from kiripix.core import editing, journal, notes
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.checks import Finding
 from kiripix.core.assets import Asset, is_asset_id, load_asset
@@ -418,3 +418,49 @@ def accept(arguments: _StageInput, context: Context) -> Outcome[AcceptData]:
     states = AssetGraph(project, asset, HashCache(project.state_dir)).states()
     return Outcome(AcceptData(asset=asset.id, stage=arguments.stage, recorded=[e.id for e in appended],
                               stages=states))
+
+
+# note
+
+
+class NoteInput(_StageInput):
+    text: str = Field(description='The hand-over note: why a pass stopped and what is left, at most 2,000 characters.')
+
+
+class NoteOut(BaseModel):
+    id: str = Field(description="The note's ID (a ULID).")
+    stage: str
+    text: str
+    input_hash: str = Field(description="The Stage's input hash when the note was written.")
+    live: bool = Field(description="True while its Stage has no Decision, undo, redo or `accept` newer than the note; "
+                                   "derived on each read, never stored.")
+
+
+class NoteData(BaseModel):
+    asset: str
+    stage: str
+    note: NoteOut
+
+    def text(self) -> str:
+        return f"{self.asset} {self.stage}: noted ({self.note.id})"
+
+
+@command(
+    "note",
+    summary="Write a hand-over note on a Stage: why a pass stopped and what is left. Not a Decision; live until the "
+            "Stage has a newer Decision or an accept.",
+    input=NoteInput,
+    output=NoteData,
+    kind="writing",
+    mcp="exposed",
+    cli=CliMeta(positional=("asset", "stage", "text")),
+    locks=LockNeeds(asset=_asset_lock),
+)
+def note(arguments: NoteInput, context: Context) -> Outcome[NoteData]:
+    project = find_project(context.cwd)
+    asset = load_asset(project, arguments.asset)
+    graph = AssetGraph(project, asset, HashCache(project.state_dir))
+    graph.spec(arguments.stage)  # an unknown Stage is refused
+    written = notes.add_note(asset, arguments.stage, arguments.text, graph.input_hash(arguments.stage))
+    return Outcome(NoteData(asset=asset.id, stage=written.stage, note=NoteOut(
+        id=written.id, stage=written.stage, text=written.text, input_hash=written.input_hash, live=True)))

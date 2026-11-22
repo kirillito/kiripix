@@ -168,7 +168,12 @@ def conformance(rgba: U8, palette_rgb: U8, limit: int = 10) -> ConformanceReport
     partial = (alpha != 0) & ~opaque
     packed = rgba[..., :3].astype(np.uint32) @ np.array([1 << 16, 1 << 8, 1], dtype=np.uint32)
     packed_palette = palette_rgb.astype(np.uint32) @ np.array([1 << 16, 1 << 8, 1], dtype=np.uint32)
-    off = opaque & ~np.isin(packed, packed_palette)
+    listed = np.unique(packed_palette)  # sorted, so a pixel is on the palette when the first entry >= it equals it
+    if listed.size:
+        on_palette = listed[np.minimum(np.searchsorted(listed, packed), listed.size - 1)] == packed
+    else:
+        on_palette = np.zeros(packed.shape, dtype=bool)
+    off = opaque & ~on_palette
     return ConformanceReport(
         width=int(rgba.shape[1]),
         height=int(rgba.shape[0]),

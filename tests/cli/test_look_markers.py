@@ -72,7 +72,7 @@ def test_a_light_with_a_look_is_written_with_it_and_every_other_marker_has_null(
     run_place(project)
 
     built = markers_file(folder)
-    assert built["schema_version"] == 3
+    assert built["schema_version"] == 4
     assert {m["id"]: m["look"] for m in built["markers"]} == {
         "lamp.main": None, "lamp.gate": LOOK, "chest": None, "torch": LOOK}
 

@@ -23,7 +23,7 @@ else:
     np = lazy_module("numpy")
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic, editing, sources
+from kiripix.core import atomic, changes, editing, sources
 from kiripix.core.assets import Asset
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
@@ -155,7 +155,7 @@ def write_kit(project: Project, asset: Asset, loop: str, folder: Path, shown: st
         swatches[:, n * SWATCH:(n + 1) * SWATCH] = (int(r), int(g), int(b), 255)
     for stale in found:  # a larger kit before: its extra frames would be imported with the rest
         if stale.name not in names:
-            stale.unlink()
+            changes.remove(stale)
     for name in names:
         atomic.write_bytes(folder / name, data)
     atomic.write_bytes(folder / "palette.png", png_bytes(swatches))

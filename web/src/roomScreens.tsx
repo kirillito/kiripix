@@ -42,6 +42,7 @@ const PLACE_STAGE = "place";
 interface Fields {
   target_room: string;
   target_exit: string;
+  one_way: boolean;
   colour: string;
   radius: number;
   energy: number;
@@ -59,6 +60,7 @@ const LOOK_TYPES = ["light", "emitter", "interactable"];
 const DEFAULTS: Fields = {
   target_room: "",
   target_exit: "",
+  one_way: false,
   colour: "#ffffff",
   radius: 32,
   energy: 1,
@@ -117,7 +119,7 @@ function ownFields(type: string, fields: Fields, layer: string): Record<string, 
 
 function typeFields(type: string, fields: Fields, layer: string): Record<string, unknown> {
   if (type === "ysort") return { layer };
-  if (type === "exit") return { target_room: fields.target_room, target_exit: fields.target_exit };
+  if (type === "exit") return { target_room: fields.target_room, target_exit: fields.target_exit, ...(fields.one_way ? { one_way: true } : {}) };
   if (type === "light") return { colour: fields.colour, radius: fields.radius, energy: fields.energy };
   if (type === "emitter") return { name: fields.name };
   if (type === "area") {
@@ -571,6 +573,16 @@ export function PlacePanel(props: {
                 <option key={exit} value={exit} />
               ))}
             </datalist>
+          </div>
+          <div className="param">
+            <label htmlFor="marker-one-way">One-way</label>
+            <input
+              id="marker-one-way"
+              data-testid="marker-one-way"
+              type="checkbox"
+              checked={fields.one_way}
+              onChange={(event) => update({ one_way: event.target.checked })}
+            />
           </div>
         </>
       )}

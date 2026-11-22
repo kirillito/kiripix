@@ -205,7 +205,9 @@ test("a click on fit sets the pivot for the Direction, Shift for all, and Ctrl+Z
   );
   studio.run(SPRITE);
   const measured = fit(studio).pivots;
-  expect(measured.s).toEqual([7, 14]);
+  // the feet are row 14; the pivot sits GROUND_RATIO of the 13 px figure (1 px) above them (ticket 0318)
+  expect(measured.s).toEqual([7, 13]);
+  const [x, y] = measured.s;
 
   await open(page, studio, "fit");
   await expect(view(page)).toBeVisible();
@@ -222,7 +224,7 @@ test("a click on fit sets the pivot for the Direction, Shift for all, and Ctrl+Z
   // Two pixels to the right of the measured feet, for s alone.
   await canvas.click({ position: { x: (cell[0] + 2) * zoom + 2, y: cell[1] * zoom + 2 } });
   await expect(page.getByTestId("decision-count")).toHaveText("1 Decision(s)");
-  await expect.poll(() => fit(studio).pivots.s).toEqual([9, 14]);
+  await expect.poll(() => fit(studio).pivots.s).toEqual([x + 2, y]);
   expect(fit(studio).pivots.w).toEqual(measured.w);
   await expect.poll(picture).not.toBe(before);
 
@@ -234,8 +236,8 @@ test("a click on fit sets the pivot for the Direction, Shift for all, and Ctrl+Z
 
   // With Shift every Direction takes it.
   await canvas.click({ position: { x: (cell[0] + 1) * zoom + 2, y: cell[1] * zoom + 2 }, modifiers: ["Shift"] });
-  await expect.poll(() => fit(studio).pivots.e).toEqual([8, 14]);
-  expect(fit(studio).pivots.n).toEqual([8, 14]);
+  await expect.poll(() => fit(studio).pivots.e).toEqual([x + 1, y]);
+  expect(fit(studio).pivots.n).toEqual([x + 1, y]);
 });
 
 test("a sheet.pivot_drift finding on a sprite jumps to its frame", async ({ page, studio }) => {

@@ -36,22 +36,21 @@ else:
 from pydantic import BaseModel
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic, cancel, journal, pinning, warm
+from kiripix.core import atomic, cancel, changes, checkcache, journal, pinning, warm
 from kiripix.core.assets import HISTORY_FILE, Asset, base_of, body_of, list_assets, load_asset, wearables_of
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.core.hashing import HashCache, hash_bytes, hash_json
 from kiripix.core.images import load_rgba, save_png
 from kiripix.core.kinds import get_kind
 from kiripix.core.locks import GPU_LOCK, asset_lock, hold
+from kiripix.core.match import select
 from kiripix.core.project import Project
 from kiripix.core.settings import settings_document
 from kiripix.ops import overlay
 from kiripix.recipes.base import (
-    BASE_PARAM, COMPUTED_SETTINGS, BaseInputs, BaseView, BodyView, CurrentDecision, LazyMap, NeedsInput, ParamSource, RunnerCall, Scalar,
-    StageFailure, StageRun, StageSpec,
+    BASE_PARAM, COMPUTED_SETTINGS, BaseInputs, BaseView, BodyView, ChosenView, CurrentDecision, LazyMap, NeedsInput, ParamSource, RunnerCall, Scalar,
+    StageFailure, StageRun, StageSpec, chosen_ids,
 )
-import kiripix.ops as ops_package
-import kiripix.recipes as recipes_package
 import kiripix.runners as runners_package
 from kiripix.runners import Device, RunnerError, pull, runners, weights_dir
 
@@ -174,14 +173,6 @@ def _lookup(document: dict[str, Any], known: Callable[[], dict[str, Any]], dotte
     return None
 
 
-def _recipes_code() -> list[list[Any]]:
-    """The recipes' and Ops' source files by name, size and time, so a changed Stage function or an Op it replays
-    never reads an old answer."""
-    folders = [Path(recipes_package.__file__).parent, Path(ops_package.__file__).parent]
-    return [[f"{p.parent.name}/{p.name}", p.stat().st_size, p.stat().st_mtime_ns]
-            for folder in folders for p in sorted(folder.glob("*.py"))]
-
-
 def _runner_roles() -> dict[str, str]:
     """Which Runner is behind each role (`runners.INPAINTER`...): a Stage reads it when it lists its calls."""
     return {name: value for name, value in vars(runners_package).items() if name.isupper() and isinstance(value, str)}
@@ -210,6 +201,7 @@ class AssetGraph:
         self._base: AssetGraph | None = None
         self._body_asset = body_of(project, asset)  # refuses a body that isn't one (`wearable.body_unknown`)
         self._body: AssetGraph | None = None
+        self._chosen: dict[str, AssetGraph | None] = {}
         unknown = sorted(set(asset.settings.stages) - {s.name for s in self.kind.stages})
         if unknown:
             file = project.relative(asset.dir / "asset.toml")
@@ -403,6 +395,59 @@ class AssetGraph:
         return BodyView(asset_id=body.asset.id, asset_dir=body.asset.dir, kind=body.asset.kind,
                         built={name: body.output_dir(body.spec(name)) for name in names}, files=files)
 
+    def _chosen_graphs(self, spec: StageSpec) -> dict[str, AssetGraph]:
+        """The graphs of the Assets the Stage's `StageInputs.chosen` parameter lists (ticket 0356), by ID, for those that exist.
+        Only read, never written or locked from here."""
+        wanted = spec.inputs.chosen
+        if wanted is None:
+            return {}
+        found: dict[str, AssetGraph] = {}
+        for asset_id in chosen_ids(self.params(spec).get(wanted.param)):
+            if asset_id not in self._chosen:
+                try:
+                    self._chosen[asset_id] = AssetGraph(self.project, load_asset(self.project, asset_id), self.cache)
+                except KiripixError:
+                    self._chosen[asset_id] = None  # missing or unreadable: the Stage's own `needs_input` names it
+            graph = self._chosen[asset_id]
+            if graph is not None:
+                found[asset_id] = graph
+        return found
+
+    def _chosen_stages(self, spec: StageSpec, graph: "AssetGraph") -> list[str]:
+        """The Stages `StageInputs.chosen.built` names that the chosen Asset's Kind has."""
+        assert spec.inputs.chosen is not None
+        return [name for name in spec.inputs.chosen.built if graph.kind.stage(name) is not None]
+
+    def _chosen_hashes(self, spec: StageSpec,
+                       hash_of: Callable[["AssetGraph", str], str] | None = None) -> dict[str, Any]:
+        """For each listed Asset: its Kind, its body and the input hash of each Stage of it that the Stage reads; None for one
+        that isn't there."""
+        wanted = spec.inputs.chosen
+        if wanted is None:
+            return {}
+        graphs = self._chosen_graphs(spec)
+        found: dict[str, Any] = {}
+        for asset_id in chosen_ids(self.params(spec).get(wanted.param)):
+            graph = graphs.get(asset_id)
+            found[asset_id] = None if graph is None else {
+                "kind": graph.asset.kind, "body": graph.asset.settings.params.get("body"),
+                "built": self._built_hashes(graph, self._chosen_stages(spec, graph), hash_of)}
+        return found
+
+    def _chosen_view(self, spec: StageSpec) -> dict[str, ChosenView]:
+        return {asset_id: ChosenView(asset_id=asset_id, kind=graph.asset.kind,
+                                     body=str(graph.asset.settings.params.get("body")) if "body" in graph.asset.settings.params else None,
+                                     built={name: graph.output_dir(graph.spec(name)) for name in self._chosen_stages(spec, graph)})
+                for asset_id, graph in self._chosen_graphs(spec).items()}
+
+    def _chosen_not_built(self, spec: StageSpec) -> NeedsInput | None:
+        """Why a Stage must wait for the Assets it lists: a Stage of one that it reads isn't done."""
+        for graph in self._chosen_graphs(spec).values():
+            waiting = self._unbuilt(graph, self._chosen_stages(spec, graph), "Wearable")
+            if waiting is not None:
+                return waiting
+        return None
+
     def worn_order(self) -> int:
         """This Wearable's default stacking order over its body, from the Stage whose recipe gives `StageSpec.worn_order`; a
         Wearable that can't be read is a finding naming its file, not a silent 0."""
@@ -487,6 +532,8 @@ class AssetGraph:
         body = self.body
         if body is not None and spec.inputs.body is not None:
             extra["body"] = {"asset": body.asset.id, "built": self.body_hashes(spec, hash_of)}
+        if spec.inputs.chosen is not None:
+            extra["chosen"] = self._chosen_hashes(spec, hash_of)
         files = self.project_files(spec)
         if files:
             extra["project_files"] = self._project_hashes(files)
@@ -609,6 +656,7 @@ class AssetGraph:
 
     def forget_hashes(self) -> None:
         """Forget the hashes worked out so far, after a Runner call added a pinned result or a Stage rebuilt its image."""
+        checkcache.forget_trees(self.cache)
         self._hashes.clear()
         self._legacy_hashes.clear()
         self._image_hashes.clear()
@@ -620,10 +668,16 @@ class AssetGraph:
             self._base.forget_hashes()  # the base may have been built again meanwhile, by another Command
         if self._body is not None:
             self._body.forget_hashes()
+        for chosen in self._chosen.values():
+            if chosen is not None:
+                chosen.forget_hashes()
+        self._chosen.clear()
 
     def _calls_key(self, spec: StageSpec) -> str:
         """What a Stage's Runner calls derive from: its own inputs, every file of its upstream outputs, and which
-        results are pinned (a call list can depend on whether an earlier call is pinned)."""
+        results are pinned (a call list can depend on whether an earlier call is pinned). The Stage's `version` stands for
+        its code (ticket 0372): a change to its `runner_calls`, or to an Op it replays, bumps it, so an update of Kiripix
+        that leaves the Stage alone doesn't replay every lift."""
         upstream: dict[str, str] = {}
         for name in spec.inputs.upstream:
             folder = self.output_dir(self.spec(name))
@@ -634,7 +688,7 @@ class AssetGraph:
         pins = self.asset.dir / pinning.PINNED_DIR
         pinned = sorted(p.name for p in pins.glob("*.png")) if pins.is_dir() else []
         return hash_json({
-            "code": _recipes_code(), "roles": _runner_roles(),
+            "version": spec.version, "roles": _runner_roles(),
             "kind": self.kind.name, "stage": spec.name, "asset_params": self.asset.settings.params,
             "params": self.params(spec), "decisions": journal.hashable(self.replay(spec.name)),
             "files": {name: self.cache.file_hash(path) for name, path in self.files(spec).items()},
@@ -780,6 +834,7 @@ class AssetGraph:
             upstream_params=LazyMap(spec.inputs.upstream, lambda name: self.params(self.spec(name))),
             base=self._base_view(spec),
             body=self._body_view(spec),
+            chosen=self._chosen_view(spec),
             wearing=(worn := self._wearing(spec))[0],
             wearing_order=worn[1],
             param_sources=self.param_sources(spec),
@@ -789,6 +844,9 @@ class AssetGraph:
         """Why the Stage can't run until the Owner acts, from its inputs alone, or until its Runner calls are made, or
         until a Stage of its base that it reads is built."""
         waiting = self._base_not_built(spec) or self._body_not_built(spec)
+        if waiting is None and spec.inputs.chosen is not None and spec.needs_input is not None:
+            waiting = spec.needs_input(self.stage_run(spec, self.output_dir(spec)))  # a list that is wrong, before waiting for builds
+        waiting = waiting or self._chosen_not_built(spec)
         if waiting is not None:
             return waiting
         if spec.needs_input is not None:
@@ -806,14 +864,18 @@ class AssetGraph:
         """The Stage's Checks on its built output; nothing when it has no output."""
         if spec.check is None or self.built_hash(spec) is None:
             return []
-        try:
-            found = spec.check(self.stage_run(spec, self.output_dir(spec)))
-        except StageFailure as failure:  # an output it can't read, such as one from an older Kiripix: rebuild it
-            command = failure.fix or f"kiripix run {self.asset.id} {spec.name} --force"
-            return [Finding(code=failure.code or "stage.output_unreadable", message=str(failure),
-                            position=Position(asset=self.asset.id, stage=spec.name),
-                            **({"owner_action": failure.owner_action} if failure.owner_action is not None
-                               else {"fix": command}))]
+        key, found = checkcache.lookup(self, spec)  # the Check's own findings, kept until what it reads changes (ticket 0367)
+        if found is None:
+            try:
+                found = spec.check(self.stage_run(spec, self.output_dir(spec)))
+            except StageFailure as failure:  # an output it can't read, such as one from an older Kiripix: rebuild it
+                command = failure.fix or f"kiripix run {self.asset.id} {spec.name} --force"
+                return [Finding(code=failure.code or "stage.output_unreadable", message=str(failure),
+                                position=Position(asset=self.asset.id, stage=spec.name),
+                                **({"owner_action": failure.owner_action} if failure.owner_action is not None
+                                   else {"fix": command}))]
+            if key is not None:
+                checkcache.keep(self, spec, key, found)
         for advise in _ADVISERS:
             found = advise(self, spec, found)
         return found
@@ -928,6 +990,7 @@ def _swap_into_place(built: Path, final: Path) -> None:
         old = final.with_name(f".old-{final.name}-{uuid.uuid4().hex[:8]}")
         _rename(final, old)
     _rename(built, final)
+    changes.record(final)
     if old is not None:
         shutil.rmtree(old, ignore_errors=True)
 
@@ -954,6 +1017,7 @@ class _Runner:
         self.gpu_unused: str | None = None  # a call just made left the GPU unused, and why
         self.runner_seconds: dict[str, float] = {}  # per Stage: what its Runner calls took, less any wait for a lock
         self.failure_findings: dict[str, tuple[str | None, str | None, str | None]] = {}  # per Stage: a failure's code, owner_action, fix
+        self.failed_param: tuple[str, int | float | str] | None = None  # the last failed call's `RunnerError.set_param`
         self._lock_wait = 0.0
         self._loaded_seconds: dict[str, float] = {}  # per Runner: its load, until its first call's history entry
 
@@ -975,6 +1039,7 @@ class _Runner:
         attempted: set[str] = set()
         started = time.monotonic()
         self._lock_wait = 0.0
+        self.failed_param = None  # a later Stage's failure never takes an earlier one's `set_param` fix
         try:
             while True:
                 missing = [c for c in graph.missing_calls(spec) if graph.pin_key(c) not in attempted]
@@ -984,6 +1049,7 @@ class _Runner:
                 self._make_round(spec, missing, device)
                 graph.forget_hashes()  # the pinned results just made can add calls and change keys
         except RunnerError as error:
+            self.failed_param = error.set_param
             return str(error)
         finally:
             graph.forget_hashes()
@@ -1098,6 +1164,8 @@ class _Runner:
         if spec.image is None:
             return None
         image_path = building / spec.image
+        if not image_path.is_file():
+            return None  # a Stage that is off writes no image (the room's `normals` with `mode` `off`): nothing to paint over
         unpainted = hash_bytes(image_path.read_bytes())
         overrides = [d for d in graph.replay(spec.name).current if d.name == journal.OVERRIDE]
         if not overrides:
@@ -1292,7 +1360,9 @@ def run_asset(
                         code="stage.failed",
                         message=f"{asset.id} {spec.name} failed: {problem}",
                         position=Position(asset=asset.id, stage=spec.name),
-                        fix=f"kiripix run {asset.id} {spec.name} --rerun",
+                        # a Runner that says which Stage parameter to change (the depth `size`) gets that as the fix
+                        fix=(f"kiripix set {asset.id} {spec.name} {runner.failed_param[0]}={runner.failed_param[1]}"
+                             if runner.failed_param is not None else f"kiripix run {asset.id} {spec.name} --rerun"),
                     )
                 )
                 exit_code = _worse(exit_code, ExitCode.ERROR)
@@ -1395,8 +1465,10 @@ def run_all(
     rerun: bool = False,
     cpu: bool = False,
     keep_warm: bool = False,
+    match: str | None = None,
 ) -> AssetRun:
-    """Run every Asset (of one Kind, if given), locking one Asset at a time. One Asset stopping doesn't stop the rest.
+    """Run every Asset (of one Kind, if given; the ones an ID glob matches, if `match` is), locking one Asset at a time. One
+    Asset stopping doesn't stop the rest. A matched Asset's base is built too, before it, matched or not (ticket 0327).
 
     The exit code is the most serious one (see `_worse`).
     """
@@ -1405,8 +1477,19 @@ def run_all(
     results: list[StageRunResult] = []
     # A base is built before the Assets made from it (ADR 0012); a base has no base, so two groups are the whole order.
     bases = {str(a.settings.params[BASE_PARAM]) for a in assets if BASE_PARAM in a.settings.params}
-    for asset in sorted(assets, key=lambda a: a.id not in bases):
-        if kind is not None and asset.kind != kind:
+    wanted = {a.id for a in assets if (kind is None or a.kind == kind)}
+    if match is not None:
+        wanted &= {a.id for a in select(assets, match)}
+        for asset in assets:
+            base = asset.settings.params.get(BASE_PARAM)
+            if asset.id in wanted and isinstance(base, str) and base not in wanted and any(a.id == base for a in assets):
+                wanted.add(base)
+                findings.append(Finding(
+                    code="match.base_built", severity="info",
+                    message=f"{base} doesn't match '{match}', but {asset.id} is made from it, so it is built first",
+                    position=Position(asset=base), fix=f"kiripix status {base}"))
+    for asset in sorted(assets, key=lambda a: (a.kind == "npc", a.id not in bases)):  # an NPC reads its base's and Wearables' builds
+        if asset.id not in wanted:
             continue
         cancel.check()
         progress(ProgressEvent(event="asset_start", stage=None, message=asset.id))

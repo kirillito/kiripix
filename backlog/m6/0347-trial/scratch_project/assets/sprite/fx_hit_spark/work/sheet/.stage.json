@@ -1,0 +1,12 @@
+{
+  "stage": "sheet",
+  "input_hash": "63233d4a7e46e22cf05992a2e1e31ff5b7be849f0dfa0d421aaedcd8f688ab43",
+  "version": 5,
+  "upstream_versions": {
+    "frames": 1,
+    "fit": 2,
+    "palette": 3,
+    "finish": 5
+  },
+  "finished": "2026-11-20T19:37:10+00:00"
+}

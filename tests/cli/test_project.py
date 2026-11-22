@@ -27,7 +27,7 @@ def test_init_writes_defaults_that_load(kpx: Kiripix) -> None:
     kpx.json("init")
     settings = tomllib.loads((kpx.cwd / "kiripix.toml").read_text(encoding="utf-8"))
 
-    assert settings["schema_version"] == 9
+    assert settings["schema_version"] == 12
     assert settings["character"]["height"] == 52
     assert settings["project"]["tile"] == 16
     assert settings["project"]["palette"] == "style/palette.gpl"
@@ -196,13 +196,14 @@ def test_describe_project_lists_the_kinds_and_recipes(kpx: Kiripix) -> None:
     kinds = {k["name"]: k["recipe"] for k in kpx.json("describe", "project", test_recipes=False)["data"]["kinds"]}
 
     assert kinds == {
-        "room": ["brief", "source", "fit", "layers", "masks", "palette", "looks", "loops", "place", "reach", "export"],
+        "room": ["brief", "source", "fit", "layers", "masks", "normals", "palette", "looks", "loops", "place", "reach", "export"],
         "prop": ["brief", "source", "cutout", "fit", "palette", "finish", "footprint", "export"],
         "icon": ["brief", "source", "cutout", "fit", "palette", "finish", "export"],
         "character": ["model", "rig", "clips", "render", "palette", "finish", "sheet", "export"],
         "sprite": ["frames", "fit", "palette", "finish", "sheet", "export"],
         "wearable": ["model", "rig", "render", "palette", "finish", "sheet", "export"],
         "portrait": ["brief", "source", "cutout", "register", "fit", "palette", "finish", "export"],
+        "npc": ["choose", "export"],
     }
 
 

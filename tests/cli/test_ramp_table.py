@@ -60,8 +60,8 @@ def codes(result: dict[str, object]) -> list[str]:
 def test_a_version_3_project_migrates_in_memory_to_an_empty_table(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
-    assert "schema_version = 9" in text
-    old = text.replace("schema_version = 9", "schema_version = 3")
+    assert "schema_version = 12" in text
+    old = text.replace("schema_version = 12", "schema_version = 3")
     path.write_text(old, encoding="utf-8")
 
     described = project.json("describe", "project")
@@ -75,8 +75,8 @@ def test_describe_shows_the_table_and_an_example(project: Kiripix) -> None:
 
     data = project.json("describe", "project")["data"]
 
-    assert data["ramps"] == [{"name": "skin", "length": 3, "rgb": [BLACK, NIGHT, STONE]},
-                             {"name": "top", "length": 2, "rgb": None}]
+    assert data["ramps"] == [{"name": "skin", "length": 3, "rgb": [BLACK, NIGHT, STONE], "choices": {}},
+                             {"name": "top", "length": 2, "rgb": None, "choices": {}}]
     assert "ramps-add" in data["ramps_example"]
     schema = project.json("schema")["data"]["commands"]["ramps-add"]
     assert "ramps-add" in json.dumps(schema["input"]) and schema["kind"] == "owner-only"
@@ -139,7 +139,7 @@ def test_ramps_add_writes_the_table_from_palette_json_and_a_repeat_writes_nothin
     assert all(line in kept for line in before.splitlines())  # every line of the Owner's file stays, in order
     assert "# The ramp table" in text  # the Owner's file stays
     shown = project.json("describe", "project")["data"]["ramps"]
-    assert shown == [{"name": n, "length": len(parts[n]["rgb"]), "rgb": parts[n]["rgb"]} for n in ("cloth", "skin")]
+    assert shown == [{"name": n, "length": len(parts[n]["rgb"]), "rgb": parts[n]["rgb"], "choices": {}} for n in ("cloth", "skin")]
 
     again = project.json("ramps-add", HERO, "--parts", "cloth,skin", "--colours", owner=True)
 

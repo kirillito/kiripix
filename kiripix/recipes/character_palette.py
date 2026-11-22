@@ -39,6 +39,7 @@ else:
     Image = lazy_module("PIL.Image")
 
 from kiripix.checks import Finding, Position, check_ramp_shared
+from kiripix.checks.ramps import RampLookup
 from kiripix.ops import (
     colour_regions,
     conformance,
@@ -454,6 +455,7 @@ def _check_palette(run: StageRun, source: str, labels_here: bool = False) -> lis
             owner_action="Add colours to the Project palette, or give the thing a row of the Project's ramp table "
                          "(palette parts=<row>=<thing material>+...)."))
     shared: set[str] = set()
+    lookup: RampLookup | None = None
     for number, (clip, direction, index, name) in enumerate(_colour_files(render)):
         path = out / name
         if not path.is_file():
@@ -477,7 +479,9 @@ def _check_palette(run: StageRun, source: str, labels_here: bool = False) -> lis
             continue  # `render` has nothing to compare with: its own Stage says so
         if label.shape != image.shape[:2]:
             continue
-        for found in check_ramp_shared(image, label, parts, ramps, name, fix):
+        if lookup is None:
+            lookup = RampLookup(parts, ramps)  # the same for every frame: built once per Check
+        for found in check_ramp_shared(image, label, parts, ramps, name, fix, lookup):
             if found.message in shared:  # two ramps with a colour in common are one finding, not one per frame
                 continue
             shared.add(found.message)
@@ -552,7 +556,8 @@ def _check_sprite_palette(run: StageRun, source: str) -> list[Finding]:
     except (OSError, ValueError):
         return findings
     regions = document.get("regions") or []
-    if regions and not document.get("parts"):
+    effect = source in run.upstream_params and bool(run.upstream_params[source].get("effect", False))  # an effect has no parts (ticket 0362)
+    if regions and not document.get("parts") and not effect:
         named = ", ".join(f"{r['name']} ({r['pixels']} px)" for r in regions)
         findings.append(Finding(
             code="palette.sprite_regions", severity="info",

@@ -234,3 +234,19 @@ def test_describe_room_place_shows_the_area_fields_and_what_walkable_asks_for(kp
     reach = next(s for s in room["stages"] if s["name"] == "reach")
     assert "area.not_reached" in [c["code"] for c in reach["checks"]]
     assert "problem" not in marker  # the cross-field rule is code, not described
+
+
+def test_the_half_cells_probe_gives_the_cells_any_painted_mask_half_covers(project: Kiripix) -> None:  # ticket 0346
+    walled_room(project)
+    area(project, "battle.a", (0, 0, 35, 11), cell=12)  # `solid` covers x 0 to 15: the cell at x 12 is a third covered
+    project("run", ROOM, "--json")
+    project.json("masks-add", "cover", "--colour", "#00AA00", "--meaning", "half cover")
+    decide(project, "polygon", {"mask": "cover", "erase": False, "points": [[24, 0], [29, 0], [29, 11], [24, 11]]})
+    project("run", ROOM, "masks", "--json")
+
+    solid = project.json("probe", "half-cells", ROOM, "solid")["data"]["result"]
+    cover = project.json("probe", "half-cells", ROOM, "cover")["data"]["result"]
+
+    assert solid == {"mask": "solid", "cells": [{"x": 12, "y": 0, "cell": 12}]}
+    assert cover == {"mask": "cover", "cells": [{"x": 24, "y": 0, "cell": 12}]}  # x 24 to 29 of 24 to 35: a half
+    assert project.json("probe", "half-cells", ROOM, "pit")["data"]["result"]["cells"] == []

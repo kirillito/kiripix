@@ -163,15 +163,14 @@ def test_a_looks_light_is_under_the_look_disabled_and_in_room_json_under_the_loo
     assert [m["id"] for m in look["markers"]] == ["lamp.gate"] and "look" not in look["markers"][0]
 
 
-def test_room_json_is_schema_12_and_masks_list_added_and_cleared(project: Kiripix) -> None:
+def test_room_json_is_schema_13_and_masks_list_added_and_cleared(project: Kiripix) -> None:
     gate_room(project)
 
     export(project)
 
     room = exported_room(project)
-    assert room["schema_version"] == 12
-    assert room["masks"][f"{LOOK}.added"] == f"masks/{LOOK}.added.png"
-    assert room["masks"][f"{LOOK}.cleared"] == f"masks/{LOOK}.cleared.png"
+    assert room["schema_version"] == 15
+    assert [mask["name"] for mask in room["masks"]] == ["pit", "solid"]  # a Look's files are listed under the Look
     [look] = room["looks"]
     assert look["navigation"]["polygons"] and look["added"]["file"] == f"masks/{LOOK}.added.png"
     assert look["cleared"]["file"] == f"masks/{LOOK}.cleared.png" and look["markers"] == []
@@ -186,7 +185,7 @@ def test_a_look_without_its_own_solid_has_no_navigation_added_or_cleared(project
 
     [look] = exported_room(project)["looks"]
     assert look["navigation"] is None and look["added"] is None and look["cleared"] is None
-    assert "LookNavigation" not in scene(project) and f"{LOOK}.cleared" not in exported_room(project)["masks"]
+    assert "LookNavigation" not in scene(project) and all(not mask["name"].startswith(LOOK) for mask in exported_room(project)["masks"])
 
 
 def test_an_older_room_json_is_refused_naming_the_rebuild(project: Kiripix) -> None:
@@ -210,7 +209,7 @@ def test_the_manifest_is_schema_3_with_look_markers_and_a_version_2_one_is_rewri
     project.json("run", ROOM)
     export(project)
     record = manifest(project)
-    assert record["schema_version"] == 3 and record["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
+    assert record["schema_version"] == 4 and record["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
     assert "lamp.gate" not in record["ids"]["markers"]
 
     old = json.loads(json.dumps(record))
@@ -220,7 +219,7 @@ def test_the_manifest_is_schema_3_with_look_markers_and_a_version_2_one_is_rewri
 
     export(project)  # reads the schema 2 Manifest and rewrites it once
     after = manifest(project)
-    assert after["schema_version"] == 3 and after["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
+    assert after["schema_version"] == 4 and after["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
 
 
 def test_a_room_without_look_markers_has_no_look_markers_key_and_no_look_markers_node(project: Kiripix) -> None:
@@ -229,7 +228,7 @@ def test_a_room_without_look_markers_has_no_look_markers_key_and_no_look_markers
     export(project)
 
     assert "look_markers" not in manifest(project)["ids"] and "LookMarkers" not in scene(project)
-    assert manifest(project)["schema_version"] == 3
+    assert manifest(project)["schema_version"] == 4
 
 
 def test_moving_an_exported_marker_into_a_look_is_refused(project: Kiripix) -> None:

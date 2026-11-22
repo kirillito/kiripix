@@ -19,7 +19,7 @@ from kiripix.core.errors import KiripixError, fail
 from kiripix.core.images import load_palette, load_rgba, save_png
 from kiripix.core.project import find_root
 from kiripix.core.settings import load_project_settings
-from kiripix.ops import BayerSize, ConformanceReport, Palette, conformance, quantize
+from kiripix.ops import BayerSize, ConformanceReport, Palette, conformance, dither_alpha, quantize
 
 OP_GROUP = "Run one Op directly on an image."
 Dither = Literal["none", "bayer2", "bayer4", "bayer8"]
@@ -162,4 +162,58 @@ def op_conformance(arguments: ConformanceInput, context: Context) -> Outcome[Con
         ConformanceData.from_report(report, shown, palette_name),
         findings,
         ExitCode.CHECK_FAILED if findings else ExitCode.OK,
+    )
+
+
+AlphaPattern = Literal["bayer2", "bayer4", "bayer8"]
+
+
+class DitherAlphaInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: Path = Field(description="The image whose partial alpha is to become a pattern.")
+    output: Path = Field(description="Where to write the PNG, its alpha 0 or 255.")
+    pattern: AlphaPattern = Field("bayer4", description="The ordered Bayer matrix: bayer2, bayer4 or bayer8.")
+
+
+class DitherAlphaData(BaseModel):
+    input: str
+    output: str
+    pattern: AlphaPattern
+    width: int
+    height: int
+    partial: int
+    opaque: int
+
+    def text(self) -> str:
+        return (f"Wrote {self.output}: {self.partial} partially transparent pixels of {self.input} dithered "
+                f"({self.pattern}), {self.opaque} opaque pixels")
+
+
+@command(
+    "op dither-alpha",
+    summary="Turn partial alpha into a fixed ordered-dither pattern of opaque and clear pixels.",
+    input=DitherAlphaInput,
+    output=DitherAlphaData,
+    kind="writing",
+    mcp="exposed",
+    cli=CliMeta(positional=("input", "output")),
+    group_summary=OP_GROUP,
+)
+def op_dither_alpha(arguments: DitherAlphaInput, context: Context) -> Outcome[DitherAlphaData]:
+    shown = str(arguments.input)
+    rgba = load_rgba(context.cwd / arguments.input, shown)
+    alpha = rgba[..., 3]
+    result = dither_alpha(rgba, int(arguments.pattern[5:]))
+    save_png(context.cwd / arguments.output, np.where((result[..., 3] == 0)[..., None], 0, result).astype(np.uint8))
+    return Outcome(
+        DitherAlphaData(
+            input=shown,
+            output=str(arguments.output),
+            pattern=arguments.pattern,
+            width=int(rgba.shape[1]),
+            height=int(rgba.shape[0]),
+            partial=int(((alpha != 0) & (alpha != 255)).sum()),
+            opaque=int((result[..., 3] == 255).sum()),
+        )
     )

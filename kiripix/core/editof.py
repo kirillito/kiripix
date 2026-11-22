@@ -28,7 +28,7 @@ else:
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic, cancel, extend, sources
+from kiripix.core import atomic, cancel, changes, extend, sources
 from kiripix.core.assets import Asset
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
@@ -154,8 +154,8 @@ def _move_legacy(asset: Asset) -> None:
         if not target.exists():
             atomic.write_bytes(target, png.read_bytes())
         atomic.write_json(target.with_suffix(".json"), record.model_dump(mode="json"))
-        png.unlink()
-    record_path.unlink()
+        changes.remove(png)
+    changes.remove(record_path)
 
 
 def write_crop(project: Project, asset: Asset, box: tuple[int, int, int, int], size: tuple[int, int],

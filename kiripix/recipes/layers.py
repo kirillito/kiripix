@@ -570,9 +570,18 @@ def check_layers(run: StageRun) -> list[Finding]:
     fit = read_rgba(run.upstream["fit"] / "fit.png")
     plate = read_rgba(out / "plate.png")  # as the Overrides painted it
     layers = [read_rgba(out / str(entry["file"])) for entry in read_layers(out, run.asset_id)]
+    asset = run.asset_id
+    if plate.shape != fit.shape:  # the fit changed (by hand, or not yet rebuilt): nothing here can be compared with it
+        return [
+            Finding(
+                code="layers.stale_size",
+                message=f"the Plate is {plate.shape[1]}x{plate.shape[0]} but the fit image is "
+                        f"{fit.shape[1]}x{fit.shape[0]}, so the Layers were cut from another fit",
+                fix=f"kiripix run {asset} {LAYERS_STAGE} --force",
+            )
+        ]
     hole = hole_of(layers, fit.shape)
     findings: list[Finding] = []
-    asset = run.asset_id
     unfilled = hole & (plate[..., 3] == 0)
     if unfilled.any():
         findings.append(

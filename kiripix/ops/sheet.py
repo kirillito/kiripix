@@ -108,14 +108,26 @@ def blit_trimmed(cells: list[np.ndarray], rects: list[Rect], offsets: list[tuple
     return atlas
 
 
-def pack_trimmed(layers: list[list[np.ndarray]], gap: int = 1) -> tuple[list[np.ndarray], list[Rect], list[tuple[int, int]]]:
+def pack_trimmed(layers: list[list[np.ndarray]], gap: int = 1, share: bool = False) -> tuple[list[np.ndarray], list[Rect], list[tuple[int, int]]]:
     """Packs frames cut to their opaque boxes. `layers[k][i]` is frame i's whole cell in layer k (colour, normal, ...; a frame's
     layers are one size, and frames may differ). One box for each frame over every layer (`opaque_box`), so the layers share a
     layout. Returns one RGBA atlas for each layer, each frame's rect in them, and each frame's offset (x, y) in its cell:
-    `cell[offset.y : offset.y + rect.height, offset.x : offset.x + rect.width] = atlas[rect]` restores the cell exactly."""
+    `cell[offset.y : offset.y + rect.height, offset.x : offset.x + rect.width] = atlas[rect]` restores the cell exactly.
+    With `share`, a frame whose box, offset and pixels (in every layer) equal an earlier frame's is packed once: both get the
+    same rect (the lists keep one entry for each frame)."""
     count = len(layers[0]) if layers else 0
     boxes = [opaque_box([layer[i] for layer in layers]) for i in range(count)]
-    places, size = shelf_layout([(b[2], b[3]) for b in boxes], gap)
-    rects = [(x, y, b[2], b[3]) for (x, y), b in zip(places, boxes, strict=True)]
+    first = list(range(count))  # the frame whose region frame i uses
+    if share:
+        seen: dict[tuple[object, ...], int] = {}
+        for i, b in enumerate(boxes):
+            key = (b, *(layer[i][b[1]:b[1] + b[3], b[0]:b[0] + b[2]].tobytes() for layer in layers))
+            first[i] = seen.setdefault(key, i)
+    kept = [i for i in range(count) if first[i] == i]
+    places, size = shelf_layout([(boxes[i][2], boxes[i][3]) for i in kept], gap)
+    at = {i: place for i, place in zip(kept, places, strict=True)}
+    rects = [(at[first[i]][0], at[first[i]][1], b[2], b[3]) for i, b in enumerate(boxes)]
     offsets = [(b[0], b[1]) for b in boxes]
-    return [blit_trimmed(layer, rects, offsets, size) for layer in layers], rects, offsets
+    unique = [rects[i] for i in kept]
+    return ([blit_trimmed([layer[i] for i in kept], unique, [offsets[i] for i in kept], size) for layer in layers],
+            rects, offsets)

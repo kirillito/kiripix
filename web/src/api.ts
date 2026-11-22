@@ -40,9 +40,30 @@ export interface StageState {
   reason: string | null;
 }
 
-export interface StatusData {
+// What `status` answers for some Assets, and the cheap list `assets` (ticket 0373).
+export interface StatusAnswer {
   project: string;
   assets: { asset: string; kind: string; stages: StageState[] }[];
+}
+
+export interface ListRow {
+  asset: string;
+  kind: string;
+  name: string;
+  base: string | null;
+  body: string | null;
+  reference: boolean;
+}
+
+export interface ListAnswer {
+  project: string;
+  assets: ListRow[];
+}
+
+// What the lists draw (ticket 0374): a row of the cheap list, with its Stages once `status` has answered for it (null until then).
+export interface StatusData {
+  project: string;
+  assets: { asset: string; kind: string; base: string | null; body: string | null; reference: boolean; stages: StageState[] | null }[];
 }
 
 // Where a Layer sorts against the Body, as `place`'s Decisions give it: `y` is None when it is always above (or has no line).
@@ -137,6 +158,113 @@ export interface ShowData {
   stages: StageDetail[];
 }
 
+// One stop the Owner owns (`queue`, ticket 0325): a Stage to review, an input only the Owner can give, or a finding.
+export interface QueueStop {
+  asset: string;
+  kind: string;
+  stage: string | null;
+  type: "review" | "input" | "finding";
+  input_hash: string | null;
+  reason: string | null;
+  owner_action: string | null;
+  command: string | null;
+  code: string | null;
+  severity: string | null;
+  position: Position | null;
+  notes: { id: string; text: string }[]; // the Stage's live hand-over notes, oldest first
+}
+
+export interface QueueData {
+  stops: QueueStop[];
+  agent_fixable: { asset: string; count: number; fixes: { stage: string | null; code: string; command: string }[] }[];
+  counts: { review: number; input: number; finding: number; total: number; agent_fixable: number; assets_clear: string[] };
+}
+
+// A district's room, Exit and Link (`district`, ticket 0328): the view shows them as the Probe gives them.
+export interface DistrictRoom {
+  asset: string;
+  width: number;
+  height: number;
+  tiles_wide: number;
+  tiles_high: number;
+  built: StageState | null;
+  waiting: StageState | null;
+  queue: { review: number; input: number; finding: number; agent_fixable: number };
+  thumbnail: string | null; // relative to the Project, for the file route
+  thumbnail_stage: string | null;
+  thumbnail_reason: string | null;
+}
+
+export interface DistrictExit {
+  room: string;
+  exit: string;
+  side: string | null;
+  target_room: string;
+  target_exit: string;
+  pairing: "paired" | "one_way" | "unpaired" | "outside";
+  code: string | null;
+  reason: string | null;
+}
+
+export interface DistrictData {
+  rooms: DistrictRoom[];
+  exits: DistrictExit[];
+  links: { room: string; id: string; kind: string; two_way: boolean; start: number[]; end: number[] }[];
+}
+
+// What a batch Command gives that the view shows besides findings.
+export interface BatchRunData {
+  results: { asset: string; stage: string; outcome: string; message?: string | null }[];
+}
+
+export interface BatchExportData {
+  dry_run: boolean;
+  written: string[];
+  would_write: string[];
+  unchanged: string[];
+  backed_up: string[];
+  changed: string[];
+  unmanaged: string[];
+  assets: { asset: string }[];
+}
+
+// `probe style <id>` (ticket 0334): the Asset's measures, each reference's, and the references' range, as the Probe gives them.
+export interface OutlineMeasure {
+  outline_px: number;
+  edge_px: number;
+  density: number;
+}
+
+export interface ScaleMeasure {
+  runs: number;
+  gcd: number;
+  median: number;
+  run1_share: number;
+}
+
+export interface StyleMeasures {
+  outline_density: OutlineMeasure | null;
+  pixel_scale: ScaleMeasure;
+}
+
+export interface StyleRange {
+  low: number;
+  high: number;
+  furthest: string | null;
+}
+
+export interface StyleProbe {
+  asset: string;
+  kind: string;
+  stage: string | null; // the Stage the style Checks measure; null for a Kind without them
+  built: boolean;
+  measures: StyleMeasures | null;
+  references: { asset: string; kind: string | null; stage: string | null; built: boolean; left_out: boolean; measures: StyleMeasures | null }[];
+  range: { outline_density: StyleRange | null; pixel_scale: StyleRange | null };
+  limits: { outline_density_floor: number; pixel_scale_gcd: number; pixel_scale_min_runs: number };
+  findings: Finding[];
+}
+
 export interface NextData {
   asset: string;
   done: boolean;
@@ -170,8 +298,19 @@ export interface StageDescription {
   available_from: string | null;
 }
 
+// One Mask of the Project (`describe room`): the top view's first, then the side's, each in file order.
+export interface MaskRow {
+  view: "top" | "side";
+  name: string;
+  colour: string | null;
+  meaning: string | null;
+  derived: boolean;
+  blocks: boolean;
+}
+
 export interface DescribeData {
   kinds: { name: string; stages: StageDescription[] | null }[];
+  masks?: MaskRow[] | null;
 }
 
 const TOKEN_KEY = "kiripix.token";
@@ -244,13 +383,55 @@ export async function cancelJob(job: string): Promise<void> {
   await fetch(`api/jobs/${encodeURIComponent(job)}/cancel`, { method: "POST" });
 }
 
-export function fileUrl(relative: string, version: number): string {
-  return `files/${encodeURI(relative)}?v=${version}`;
+// What changed in the Project, as `changed` events named it (ticket 0369). A path is a file or a folder (a Stage's output is named by its
+// folder), so a path matches another when one is the other or lies under it. Each change has a number; a file's URL carries the newest
+// number of the changes that touch it, so only a file whose own change was reported is fetched again.
+// An Asset ID is `<kind>.<name>`, its folder `assets/<kind>/<name>`.
+export function assetFolder(id: string): string {
+  const dot = id.indexOf(".");
+  return dot < 0 ? `assets/${id}` : `assets/${id.slice(0, dot)}/${id.slice(dot + 1)}`;
+}
+
+let changeSeq = 0;
+let everything = 0; // the number of the latest change that named no paths: anything may have changed
+const changed = new Map<string, number>();
+const shown = new Set<string>(); // the files the page has asked for
+
+export function pathsRelated(a: string, b: string): boolean {
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+// The number of the newest change that touches `path` (a file or a folder); 0 when none did.
+export function changeStamp(path: string): number {
+  let newest = everything;
+  for (const [other, seq] of changed) if (seq > newest && pathsRelated(other, path)) newest = seq;
+  return newest;
+}
+
+// Record a change; true when it touches a file the page has shown. `null`: no paths known, so everything is taken as changed.
+export function noteChange(paths: string[] | null): boolean {
+  changeSeq += 1;
+  if (paths === null) {
+    everything = changeSeq;
+    return true;
+  }
+  let touched = false;
+  for (const path of paths) {
+    changed.set(path, changeSeq);
+    if (!touched) for (const file of shown) if (pathsRelated(path, file)) touched = true;
+  }
+  return touched;
+}
+
+export function fileUrl(relative: string, _version?: number): string {
+  shown.add(relative);
+  return `files/${encodeURI(relative)}?v=${changeStamp(relative)}`;
 }
 
 export interface EventHandlers {
-  // Files changed in the Project (or, with `null`, the stream has just connected and anything may have).
-  onChange: (paths: string[] | null) => void;
+  // Files changed in the Project: `paths` is null when it has just connected or more changed than the event names; `own` is the part
+  // `serve`'s own Commands wrote (what this page's actions did); `hello` is the stream connecting, the first time or again.
+  onChange: (change: { paths: string[] | null; own: string[]; hello: boolean }) => void;
   onProgress: (message: string, fraction: number | null) => void;
   onLost: () => void;
 }
@@ -259,10 +440,10 @@ export interface EventHandlers {
 // of Commands. A reconnect says "hello", and what changed during the gap was reported to nobody, so that refreshes too.
 export function events({ onChange, onProgress, onLost }: EventHandlers): () => void {
   const source = new EventSource("api/events");
-  source.addEventListener("hello", () => onChange(null));
+  source.addEventListener("hello", () => onChange({ paths: null, own: [], hello: true }));
   source.addEventListener("changed", (event) => {
-    const { count, paths } = JSON.parse((event as MessageEvent<string>).data) as { count: number; paths: string[] };
-    onChange(count > paths.length ? null : paths);
+    const { count, paths, own } = JSON.parse((event as MessageEvent<string>).data) as { count: number; paths: string[]; own?: string[] };
+    onChange({ paths: count > paths.length ? null : paths, own: own ?? [], hello: false });
   });
   source.onerror = onLost;
   source.addEventListener("progress", (event) => {

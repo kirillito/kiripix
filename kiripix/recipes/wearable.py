@@ -105,7 +105,7 @@ WEARABLE = KindSpec(
             name="sheet",
             description="Packs the frames into colour, normal and depth atlases on the body's cell, pivot and frame layout, so "
                         "that a Wearable lies pixel for pixel on the body, and records its default stacking order.",
-            version=5,  # frames cut to their opaque boxes, `rect` plus `offset` (ticket 0308); 4: color.png an indexed PNG when it fits 256 colours (ticket 0310); 3: each clip's `cell` and `pivot` in sheet.json (0303); 2: the first sheet that builds anything (0293)
+            version=6,  # a repeated cell packed once (ticket 0375); 5: frames cut to their opaque boxes, `rect` plus `offset` (ticket 0308); 4: color.png an indexed PNG when it fits 256 colours (ticket 0310); 3: each clip's `cell` and `pivot` in sheet.json (0303); 2: the first sheet that builds anything (0293)
             inputs=StageInputs(upstream=["finish", "render"]),
             params=(ORDER,),
             checks=_SHEET.checks,

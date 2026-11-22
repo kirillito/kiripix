@@ -478,6 +478,25 @@ def _materials_by_frame(document: dict[str, Any]) -> dict[tuple[str, str, int], 
             for e in document["clips"] for d, listed in e["directions"].items() for f in listed}
 
 
+def _is_effect(run: StageRun) -> bool:
+    """The sprite's `fit` was told `effect` (ticket 0362): its cell keeps 1 px around the frames for the outline."""
+    return "fit" in run.upstream_params and bool(run.upstream_params["fit"].get("effect", False))
+
+
+def _trim_render(source: Path, target: Path) -> None:
+    """`render.json` for frames cut by 1 px on every side: the cell is 2 px smaller, and every pivot and foot 1 px nearer the corner."""
+    document: dict[str, Any] = json.loads(source.read_text(encoding="utf-8"))
+    document["frame"] = {"width": document["frame"]["width"] - 2, "height": document["frame"]["height"] - 2}
+    document["pivot"] = [document["pivot"][0] - 1, document["pivot"][1] - 1]
+    for entry in document["clips"]:
+        for listed in entry["directions"].values():
+            for frame in listed:
+                frame["pivot"] = [frame["pivot"][0] - 1, frame["pivot"][1] - 1]
+                if "feet" in frame:
+                    frame["feet"] = [frame["feet"][0] - 1, frame["feet"][1] - 1]
+    target.write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
+
+
 def _run_finish(run: StageRun, source: str) -> None:
     document = _document(run)
     mode, relief = _normals_mode(run), float(run.params.get("relief", 0.0))
@@ -486,6 +505,7 @@ def _run_finish(run: StageRun, source: str) -> None:
     levels, placement = int(run.params["normal_levels"]), str(run.params["placement"])
     eyes = _Eyes(run, source, document, palette) if _eyes_mode(run) != "render" else None
     files = _colour_files(document)
+    spare = outline is None and _is_effect(run) and bool(document["frame"]["width"] > 2 and document["frame"]["height"] > 2)
     lines = _InnerLines(run, source, document, palette, files) if _lines_mode(run) != "off" else None
     materials = _materials_by_frame(document) if eyes is not None else {}
     for number, (clip, direction, index, name) in enumerate(files):
@@ -515,10 +535,15 @@ def _run_finish(run: StageRun, source: str) -> None:
         except OSError:
             raise StageFailure(f"{source} has no normal pass for {clip}/{direction} frame {index}; "
                                f"run {source} again") from None
+        if spare:  # an effect with no outline: the cell `fit` left 1 px around it goes
+            colour, finished = colour[1:-1, 1:-1], finished[1:-1, 1:-1]
         for target, image in ((run.output_dir / name, colour), (run.output_dir / _normal_name(name), finished)):
             target.parent.mkdir(parents=True, exist_ok=True)
             write_rgba(target, image)
-    shutil.copyfile(run.upstream["palette"] / RENDER_FILE, run.output_dir / RENDER_FILE)
+    if spare:
+        _trim_render(run.upstream["palette"] / RENDER_FILE, run.output_dir / RENDER_FILE)
+    else:
+        shutil.copyfile(run.upstream["palette"] / RENDER_FILE, run.output_dir / RENDER_FILE)
     drawn = {"schema_version": FINISH_SCHEMA_VERSION, "normal_levels": levels,
              **({} if mode == "pass" else {"normals": mode}),
              "outline": None if outline is None else {"colour": outline[0], "rgb": list(outline[1]), "placement": placement},
@@ -543,7 +568,8 @@ def _read_depth(path: Path) -> np.ndarray:
         return np.asarray(image, dtype=np.float64).copy()
 
 
-def _vanishing_parts(run: StageRun, source: str, document: dict[str, Any], frames: list[SheetFrame]) -> list[Finding]:
+def _vanishing_parts(run: StageRun, source: str, document: dict[str, Any], frames: list[SheetFrame],
+                     read: dict[Path, np.ndarray] | None = None) -> list[Finding]:
     """`sheet.part_vanishes` (ticket 0159): each material's pixels per finished frame, counted where the final colour frame is
     opaque, from the material pass `render` wrote. Nothing when the pass isn't there to read."""
     names = {int(m["index"]): str(m["name"]) for m in document.get("materials", [])}
@@ -563,6 +589,8 @@ def _vanishing_parts(run: StageRun, source: str, document: dict[str, Any], frame
                 if found is None or not path.is_file():
                     continue
                 labels = _read_labels(path)
+                if read is not None and direction in FRONT_VIEWS:
+                    read[path] = labels  # `_covered_eyes` reads the front views' material frames too
                 if labels.shape != found.image.shape[:2]:
                     continue
                 inside = labels[found.image[..., 3] > 0]
@@ -578,7 +606,8 @@ FRONT_VIEWS = ("s", "sw", "se")
 FACING_CAMERA = 0.0  # an eye whose normal's z (toward the camera) is above this faces it; the stamp's own limit (`ops.eyes`)
 
 
-def _covered_eyes(run: StageRun, source: str, document: dict[str, Any]) -> list[Finding]:
+def _covered_eyes(run: StageRun, source: str, document: dict[str, Any],
+                  read: dict[Path, np.ndarray] | None = None) -> list[Finding]:
     """`sheet.eyes_covered` (ticket 0225): per frame of the front views, whether the eyes that face the camera are all behind
     another material in the render's material pass. Nothing when render followed no eyes."""
     render = run.upstream.get(source)
@@ -595,7 +624,9 @@ def _covered_eyes(run: StageRun, source: str, document: dict[str, Any]) -> list[
                 facing = [e for e in frame.get("eyes", []) if float(e["normal"][2]) > FACING_CAMERA]
                 if not facing or not path.is_file():
                     continue
-                labels = _read_labels(path)
+                labels = read.get(path) if read is not None else None
+                if labels is None:
+                    labels = _read_labels(path)
                 covers = [_covered_by(labels, e, eye_labels) for e in facing]
                 hidden = all(c is not None for c in covers)
                 found = [by_index.get(c, "") for c in covers if c is not None]
@@ -629,8 +660,9 @@ def _check_finish(run: StageRun, source: str) -> list[Finding]:
         frames.append(SheetFrame(clip, direction, index, colour, (0, 0), read_rgba(normal_path)))
         findings += check_conformance(conformance(colour, palette), name, fix=fix)
     findings += check_normal_size(frames, fix)
-    findings += _vanishing_parts(run, source, document, frames)
-    findings += _covered_eyes(run, source, document)
+    labels_read: dict[Path, np.ndarray] = {}
+    findings += _vanishing_parts(run, source, document, frames, labels_read)
+    findings += _covered_eyes(run, source, document, labels_read)
     for finding in findings:
         if finding.position is None:
             finding.position = Position()

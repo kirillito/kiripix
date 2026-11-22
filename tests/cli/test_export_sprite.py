@@ -70,6 +70,23 @@ def test_a_four_direction_sprite_has_four_animations_per_clip(project: Kiripix) 
     assert frames.count("[sub_resource") == 4 * 2
 
 
+def test_a_clip_with_ticks_plays_at_60_a_second_each_frame_its_own_ticks(project: Kiripix) -> None:
+    """A `clip` Decision's `ticks` (ticket 0362) reach `frames.tres`: speed 60, each frame's duration its ticks. Without them
+    every frame lasts 1.0 at the clip's fps, as before."""
+    exportable_sprite(project)
+    project.json("export", SPRITE)
+    plain = (project.cwd / FOLDER / "frames.tres").read_text("utf-8")
+    assert set(re.findall(r'"duration": ([0-9.]+)', plain)) == {"1.0"} and '"speed": 60.0' not in plain
+
+    decide(project, "frames", "clip", {"name": "idle", "loop": False, "ticks": [3, 9]})
+    project.json("run", SPRITE)
+    project.json("export", SPRITE)
+
+    frames = (project.cwd / FOLDER / "frames.tres").read_text("utf-8")
+    assert re.findall(r'"duration": ([0-9.]+)', frames) == ["3.0", "9.0"] * 4
+    assert re.findall(r'"speed": ([0-9.]+)', frames) == ["60.0"] * 4
+
+
 def test_re_exporting_writes_nothing_and_a_rebuild_is_byte_identical(project: Kiripix) -> None:
     exportable_sprite(project)
     project.json("export", SPRITE)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import {
   fileUrl,
   type Finding,
@@ -11,6 +11,7 @@ import {
   type StatusData,
 } from "./api";
 import { PixelCanvas } from "./pixelCanvas";
+import { VirtualRows } from "./virtualRows";
 
 export const GLYPH: Record<Status, string> = {
   todo: "·",
@@ -30,7 +31,9 @@ const FILTERS: Record<Filter, { label: string; statuses: Status[] }> = {
   failing: { label: "Failing", statuses: ["failed"] },
 };
 
-function matches(stages: StageState[], filter: Filter): boolean {
+// A row whose status has not answered yet shows under "All" only: it has no status to filter by.
+function matches(stages: StageState[] | null, filter: Filter): boolean {
+  if (stages === null) return filter === "all";
   return stages.some((stage) => FILTERS[filter].statuses.includes(stage.status));
 }
 
@@ -46,17 +49,25 @@ export function FilterBar({ filter, onChange }: { filter: Filter; onChange: (fil
   );
 }
 
+type ListItem = { heading: string } | { asset: StatusData["assets"][number] };
+
 export function AssetList(props: {
   status: StatusData | null;
   selected: string | null;
   filter: Filter;
+  references?: string[]; // the style references (ticket 0335)
   onSelect: (asset: string) => void;
+  onSee?: (ids: string[]) => void; // the rows drawn, whose status is asked first
 }) {
   const [search, setSearch] = useState("");
   const assets = (props.status?.assets ?? []).filter(
     (asset) => asset.asset.includes(search.trim().toLowerCase()) && matches(asset.stages, props.filter),
   );
-  const kinds = [...new Set(assets.map((asset) => asset.kind))];
+  const items: ListItem[] = [];
+  for (const kind of new Set(assets.map((asset) => asset.kind))) {
+    items.push({ heading: kind });
+    for (const asset of assets) if (asset.kind === kind) items.push({ asset });
+  }
   return (
     <nav className="assets" aria-label="Assets">
       <input
@@ -66,25 +77,32 @@ export function AssetList(props: {
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
-      {kinds.map((kind) => (
-        <section key={kind}>
-          <h2>{kind}</h2>
-          {assets
-            .filter((asset) => asset.kind === kind)
-            .map((asset) => (
-              <button
-                key={asset.asset}
-                className="asset"
-                data-testid={`asset-${asset.asset}`}
-                aria-current={props.selected === asset.asset}
-                onClick={() => props.onSelect(asset.asset)}
-              >
-                {asset.asset.slice(kind.length + 1)}
-                <Summary stages={asset.stages} />
-              </button>
-            ))}
-        </section>
-      ))}
+      <VirtualRows
+        items={items}
+        keyOf={(item) => ("heading" in item ? `h:${item.heading}` : `a:${item.asset.asset}`)}
+        estimate={26}
+        onRange={(shown) => props.onSee?.(shown.flatMap((item) => ("asset" in item ? [item.asset.asset] : [])))}
+        render={(item) =>
+          "heading" in item ? (
+            <section>
+              <h2>{item.heading}</h2>
+            </section>
+          ) : (
+            <button
+              className="asset"
+              data-testid={`asset-${item.asset.asset}`}
+              aria-current={props.selected === item.asset.asset}
+              onClick={() => props.onSelect(item.asset.asset)}
+            >
+              {item.asset.asset.slice(item.asset.kind.length + 1)}
+              {(props.references?.includes(item.asset.asset) ?? item.asset.reference) && (
+                <ReferenceMark asset={item.asset.asset} testid={`list-reference-${item.asset.asset}`} />
+              )}
+              <Summary stages={item.asset.stages} />
+            </button>
+          )
+        }
+      />
       {props.status && props.status.assets.length === 0 && (
         <p className="hint">
           No Assets yet. Create one: <code>kiripix new room alley --view top</code>
@@ -94,7 +112,23 @@ export function AssetList(props: {
   );
 }
 
-function Summary({ stages }: { stages: StageState[] }) {
+// Marks a style reference (ticket 0335): the Assets the others' style is measured against.
+function ReferenceMark(props: { asset: string; testid: string }) {
+  return (
+    <span className="reference-mark" data-testid={props.testid} title={`${props.asset} is a style reference`}>
+      ★
+    </span>
+  );
+}
+
+function Summary({ stages }: { stages: StageState[] | null }) {
+  // A quiet placeholder until the status answers.
+  if (stages === null)
+    return (
+      <span className="glyph pending" data-pending="" title="reading the status">
+        ·
+      </span>
+    );
   const worst = (["failed", "needs-review", "needs-input", "stale", "todo", "done"] as Status[]).find((status) =>
     stages.some((stage) => stage.status === status),
   );
@@ -174,6 +208,11 @@ export function StatusBoard(props: {
   onOpen: (asset: string, stage: string) => void;
   onCreateCharacter?: (name: string, base: string, parameters: File | null) => void;
   worn?: Record<string, WornAsset>;
+  references?: string[]; // the style references (ticket 0335)
+  queue?: ReactNode; // the button into queue mode (ticket 0329)
+  district?: ReactNode; // the way into the district view (ticket 0330)
+  crowds?: ReactNode; // the NPC crowds' strips (ticket 0360)
+  onSee?: (ids: string[]) => void; // the rows drawn, whose status is asked first
 }) {
   const assets = (props.status?.assets ?? []).filter((asset) => matches(asset.stages, props.filter));
   const worn = props.worn ?? {};
@@ -181,15 +220,30 @@ export function StatusBoard(props: {
   // A Wearable shows under its body when the body is on the board too; else in its own Kind's section.
   const under = (body: string) => assets.filter((asset) => asset.kind === "wearable" && worn[asset.asset]?.body === body);
   const loose = (asset: { asset: string; kind: string }) => asset.kind !== "wearable" || !shown.has(worn[asset.asset]?.body ?? "");
-  const row = (asset: (typeof assets)[number], nested: boolean) => (
+  type Entry = (typeof assets)[number];
+  const items: ({ heading: string } | { asset: Entry; worn: Entry[] })[] = [];
+  for (const kind of new Set(assets.filter(loose).map((asset) => asset.kind))) {
+    items.push({ heading: kind });
+    for (const asset of assets) if (asset.kind === kind && loose(asset)) items.push({ asset, worn: under(asset.asset) });
+  }
+  const row = (asset: Entry, nested: boolean) => (
     <div
       className={nested ? "board-row board-worn" : "board-row"}
       key={asset.asset}
       data-testid={`board-${asset.asset}`}
       data-body={nested ? worn[asset.asset]?.body : undefined}
     >
-      <span className="board-name">{nested ? "↳ " : ""}{asset.asset}</span>
-      {asset.stages.map((stage) => (
+      <span className="board-name">
+        {nested ? "↳ " : ""}
+        {asset.asset}
+        {props.references?.includes(asset.asset) && <ReferenceMark asset={asset.asset} testid={`reference-${asset.asset}`} />}
+      </span>
+      {asset.stages === null && (
+        <span className="hint pending" data-pending="" title="reading the status">
+          reading…
+        </span>
+      )}
+      {(asset.stages ?? []).map((stage) => (
         <button
           key={stage.stage}
           className="glyph-button"
@@ -209,20 +263,32 @@ export function StatusBoard(props: {
   );
   return (
     <div className="board" data-testid="board">
-      {[...new Set(assets.filter(loose).map((asset) => asset.kind))].map((kind) => (
-        <section key={kind}>
-          <h2>{kind}</h2>
-          {assets
-            .filter((asset) => asset.kind === kind && loose(asset))
-            .map((asset) => (
-              <div key={asset.asset}>
-                {row(asset, false)}
-                {under(asset.asset).map((one) => row(one, true))}
-              </div>
-            ))}
-        </section>
-      ))}
-      {props.status && assets.length === 0 && <p className="hint">No Asset matches this filter.</p>}
+      {props.queue}
+      {props.district}
+      {props.crowds}
+      <VirtualRows
+        items={items}
+        keyOf={(item) => ("heading" in item ? `h:${item.heading}` : `r:${item.asset.asset}`)}
+        estimate={32}
+        onRange={(shown) =>
+          props.onSee?.(shown.flatMap((item) => ("heading" in item ? [] : [item.asset.asset, ...item.worn.map((one) => one.asset)])))
+        }
+        render={(item) =>
+          "heading" in item ? (
+            <section>
+              <h2>{item.heading}</h2>
+            </section>
+          ) : (
+            <div>
+              {row(item.asset, false)}
+              {item.worn.map((one) => row(one, true))}
+            </div>
+          )
+        }
+      />
+      {props.status && assets.length === 0 && !props.status.assets.some((asset) => asset.stages === null) && (
+        <p className="hint">No Asset matches this filter.</p>
+      )}
       {props.onCreateCharacter && props.status && (
         <NewCharacter
           characters={props.status.assets.filter((asset) => asset.kind === "character").map((asset) => asset.asset)}

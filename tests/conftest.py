@@ -264,11 +264,14 @@ def find_blender() -> tuple[str | None, str]:
 
 
 def find_godot() -> tuple[str | None, str]:
-    """The Godot 4.7 executable (`KIRIPIX_GODOT`, else PATH) and, when there's none to use, the reason to skip."""
+    """The Godot 4.7 executable (`KIRIPIX_GODOT`, else PATH) and, when there's none to use, the reason to skip.
+
+    On PATH it is `godot` or `godot4`, or Godot's own release name (`Godot_v4.7.2-stable_win64_console.exe`), as it
+    comes out of the download, in a folder on PATH. The console build is preferred: it prints to the test's pipes."""
     import re
     import shutil
 
-    found = os.environ.get("KIRIPIX_GODOT") or shutil.which("godot") or shutil.which("godot4")
+    found = os.environ.get("KIRIPIX_GODOT") or shutil.which("godot") or shutil.which("godot4") or _godot_by_release_name()
     if not found:
         return None, "Godot 4.7 not found: set KIRIPIX_GODOT or put godot on PATH"
     try:
@@ -278,6 +281,19 @@ def find_godot() -> tuple[str | None, str]:
     if not re.match(r"4\.7\.", out):
         return None, f"Godot at {found} is {out.strip() or 'of unknown version'}, not 4.7.x"
     return found, ""
+
+
+def _godot_by_release_name() -> str | None:
+    """The newest `Godot_v4.7*` executable in a folder on PATH, the console build first; None when there's none."""
+    found: list[Path] = []
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if folder and Path(folder).is_dir():
+            found.extend(p for p in Path(folder).glob("Godot_v4.7*") if p.is_file() and not p.suffix == ".zip")
+    if not found:
+        return None
+    found.sort(key=lambda p: p.name, reverse=True)  # the newest release first
+    found.sort(key=lambda p: "console" not in p.name.lower())  # stable: the console build of it ahead
+    return str(found[0])
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

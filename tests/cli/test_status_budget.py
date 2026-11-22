@@ -31,3 +31,24 @@ def test_status_of_300_assets_and_show_of_one_stay_inside_the_budget(project: Ki
     assert status < 3.0, status
     assert show < 0.5, show
     assert len(project.json("status")["data"]["assets"]) == ROOMS
+
+
+def test_a_warm_queue_of_300_assets_whose_checks_read_their_output_stays_inside_the_budget(project: Kiripix) -> None:
+    """Ticket 0367: a built Stage's Check findings are kept until what it reads changes, so a warm `queue` doesn't run 300
+    Checks (each of the demo `copy` Stage reads its output) again."""
+    folder = make_demo(project, "a000")
+    for number in range(1, ROOMS):
+        shutil.copytree(folder, folder.parent / f"a{number:03d}")
+    project("run", "--all", "--json", timeout=300)  # builds every Stage it can; the exit code doesn't matter here
+    project("queue", "--json")  # cold: runs every Check once and keeps the findings
+    startup = min(timed(project, "describe", "demo") for _ in range(2))
+    calls = project.cwd / ".kiripix" / "check-calls.txt"
+    kept = len(calls.read_text(encoding="utf-8").splitlines())
+    assert kept >= ROOMS
+
+    queue = min(timed(project, "queue") for _ in range(2)) - startup
+
+    assert len(calls.read_text(encoding="utf-8").splitlines()) == kept  # no Check ran again
+    # `status` above holds 3 s; `queue` also runs the Project checks and builds its list, and measured 3.2-3.6 s here while other
+    # agents' tests loaded the machine (`status` itself took 6 s then), so the limit is 4 s (ticket 0367).
+    assert queue < 4.0, queue

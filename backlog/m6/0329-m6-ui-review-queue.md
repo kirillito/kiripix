@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: ui-engineer
 type: ticket
@@ -35,7 +35,20 @@ board's "needs me" filter lists Assets, not stops, and has no next.
 
 ## Acceptance criteria
 
-- [ ] Playwright against a real `kiripix serve`: a Project with two `needs-review` Stages on two rooms and one owner-action
+- [x] Playwright against a real `kiripix serve`: a Project with two `needs-review` Stages on two rooms and one owner-action
       finding; the Owner steps through all three by keyboard, accepts both reviews with `A`, and the queue ends empty.
-- [ ] Playwright: a note written by `kiripix note` shows on its item.
-- [ ] `npm run build` passes (the type check).
+- [x] Playwright: a note written by `kiripix note` shows on its item.
+- [x] `npm run build` passes (the type check).
+
+## Result
+
+Queue mode is built on `queue` alone; the UI holds no logic. `web/src/queueMode.tsx` holds the strip, the "Queue · N" button
+and the item identity; `App.tsx` fetches `queue` with every refresh (so a Project change, an agent's note or a Decision
+refreshes it), keeps the current item while it still waits, else moves to the item now at its place, and opens each item as a
+Stage click does (a finding also jumps to its position). Keys: `A` accepts a review, `→`/`N` next, `←`/`P` previous, `Esc`
+leaves. The match field is kept for the session (sessionStorage) and `?queue=<glob>` opens queue mode on a glob, for 0330's
+"Review this district" (`openQueue(glob)` in App). `agent_fixable` is one line with the commands to copy. Active time is the
+Stage screen's own `track`. No Stage `version` bump.
+
+Notes: in queue mode the queue keys win over a Stage's use of the same key (arrow panning, `N`/`P` on the frame screens, a Mask
+whose key is `a`); `Home` and Space-drag still move the view. Tests: `web/e2e/queue.spec.ts` (screenshot `web/shots/queue-mode.png`).

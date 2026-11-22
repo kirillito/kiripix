@@ -13,7 +13,7 @@ is the joined image of the newest live piece, or, with none, the room's picked S
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from kiripix.ops.lazy import lazy_module
 
@@ -296,16 +296,43 @@ def parse_keep(text: str | None, sides: list[str], canvas: tuple[int, int], exam
     return kept
 
 
+def next_side(width: int, height: int, need: tuple[int, int]) -> str | None:
+    """The side an image of this size still needs to reach `need` (width, height): east first, then south; None when it
+    is big enough. One side at a time, so the next canvas never needs a corner."""
+    if width < need[0]:
+        return "east"
+    return "south" if height < need[1] else None
+
+
+class PlannedCanvas(NamedTuple):
+    """The canvas for the next piece, written nowhere yet."""
+
+    image: U8
+    kept: tuple[int, int]  # the strip kept, x and y
+    origin: tuple[int, int]
+    fill: tuple[int, int, int]
+    base: str  # the name of the image it continues
+
+
+def plan_canvas(
+    project: Project, asset: Asset, sides: list[str], canvas: tuple[int, int], keep: str | None, offset: int,
+    example: str,
+) -> PlannedCanvas:
+    """The canvas for the next piece. `write_canvas` and `kiripix to-paint` (ticket 0349) both make it here."""
+    kept = parse_keep(keep, sides, canvas, example)
+    name, rgba, _ = current_image(project, asset)
+    _partial(rgba, name)
+    image, origin, fill = make_canvas(rgba, sides, canvas, kept, offset)
+    return PlannedCanvas(image, kept, origin, fill, name)
+
+
 def write_canvas(
     project: Project, asset: Asset, sides: list[str], canvas: tuple[int, int], keep: str | None, offset: int,
     example: str,
 ) -> tuple[Path, tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int, int]]:
     """Write the canvas for the next piece. Returns its path, its size, the strip kept (x, y), its origin and its
     fill."""
-    kept = parse_keep(keep, sides, canvas, example)
-    name, rgba, _ = current_image(project, asset)
-    _partial(rgba, name)
-    image, origin, fill = make_canvas(rgba, sides, canvas, kept, offset)
+    image, kept, origin, fill, name = plan_canvas(project, asset, sides, canvas, keep, offset, example)
     cancel.check()
     path = folder(asset) / CANVAS_PNG
     save_png(path, image)
@@ -348,6 +375,19 @@ def _canvas_record(asset: Asset, name: str, sides: list[str] | None, example: st
         raise fail("extend.canvas_mismatch", f"the canvas was written for {wanted}, not {','.join(sides)}",
                    fix=f"kiripix extend {asset.id} canvas --side {','.join(sides)}")
     return record
+
+
+def ensure_canvas(project: Project, asset: Asset, sides: list[str], example: str) -> bool:
+    """Make sure a canvas record for exactly these sides, on the image as it is now, is there for `add_piece` (ticket 0350:
+    `to-paint` writes the canvas to a folder, not into the Asset). One the Owner wrote with `extend canvas` is kept, with its
+    own strip. Otherwise the canvas is written here, at the default keep. True when it was written."""
+    name, _, _ = current_image(project, asset)
+    try:
+        _canvas_record(asset, name, sides, example)
+    except KiripixError:
+        write_canvas(project, asset, sides, project.settings.extend.canvas, None, 0, example)
+        return True
+    return False
 
 
 def _missed(piece_name: str, detail: str, asset: Asset) -> KiripixError:

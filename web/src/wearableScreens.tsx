@@ -5,7 +5,7 @@
 // `kiripix/ops/stack.py`: the lowest order first, each over the last where it has alpha; or the nearest depth, a tie to the later.
 
 import { useEffect, useRef, useState } from "react";
-import { call, fileUrl, type Finding, type ShowData, type StageDetail, type StatusData } from "./api";
+import { assetFolder, call, changeStamp, fileUrl, type Finding, type ShowData, type StageDetail, type StatusData } from "./api";
 import { outputOf } from "./characterScreens";
 
 export const WEARABLE_KIND = "wearable";
@@ -75,54 +75,68 @@ function stageOf(show: ShowData, name: string): StageDetail | undefined {
 }
 
 // Each Wearable of the Project: its body and `order` from the body's `show` (`wearables`), and its cost from the Wearable's own `show`
-// and two small files, read again on every refresh.
-export function useWearables(status: StatusData | null, refreshes: number): Record<string, WearableInfo> {
+// and two small files. A body is read again only when a change named a file of its folder or of one of its Wearables (ticket 0369);
+// the second argument only makes the hook render again when the Project's views refresh.
+export function useWearables(status: StatusData | null, _refreshed: number): Record<string, WearableInfo> {
   const [found, setFound] = useState<Record<string, WearableInfo>>({});
-  const bodies = (status?.assets ?? []).filter((asset) => asset.kind !== WEARABLE_KIND).map((asset) => asset.asset);
-  const hasWearables = (status?.assets ?? []).some((asset) => asset.kind === WEARABLE_KIND);
-  const key = hasWearables ? bodies.join("\n") : "";
+  const read = useRef<{ key: string; bodies: Map<string, { signature: string; infos: WearableInfo[] }> }>({ key: "", bodies: new Map() });
+  const assets = status?.assets ?? [];
+  // The bodies are the ones the Wearables name in the cheap list: no other Asset is asked about (ticket 0374).
+  const wearableIds = assets.filter((asset) => asset.kind === WEARABLE_KIND).map((asset) => asset.asset);
+  const bodies = [...new Set(assets.filter((asset) => asset.kind === WEARABLE_KIND && asset.body).map((asset) => asset.body as string))];
+  const key = wearableIds.length > 0 ? `${bodies.join(",")};${wearableIds.join(",")}` : "";
+  const stamps = wearableIds.length > 0 ? assets.map((asset) => changeStamp(assetFolder(asset.asset))).join(",") : "";
   useEffect(() => {
     let live = true;
+    if (read.current.key !== key) read.current = { key, bodies: new Map() };
+    const cache = read.current.bodies;
     void (async () => {
       const perBody = await Promise.all(
-        (key ? key.split("\n") : []).map(async (body) => {
+        (key ? key.split(";")[0].split(",") : []).map(async (body): Promise<WearableInfo[]> => {
+          const signature = (ids: string[]) => [body, ...ids].map((id) => changeStamp(assetFolder(id))).join(",");
+          const known = cache.get(body);
+          if (known && known.signature === signature(known.infos.map((one) => one.id))) return known.infos;
           try {
-            return ((await call<ShowData>("show", { asset: body })).data?.wearables ?? []).map((one) => ({ ...one, body }));
+            const listed = ((await call<ShowData>("show", { asset: body })).data?.wearables ?? []).map((one) => ({ ...one, body }));
+            const infos = (
+              await Promise.all(
+                listed.map(async ({ asset: id, order, body: of }): Promise<WearableInfo | null> => {
+                  try {
+                    const shown = await call<ShowData>("show", { asset: id });
+                    if (!shown.data) return null;
+                    const sheetPath = outputOf(stageOf(shown.data, "sheet"), "sheet.json");
+                    const [sheet, render] = await Promise.all([
+                      readJson<SheetDocument>(sheetPath),
+                      readJson<RenderDocument>(outputOf(stageOf(shown.data, "render"), "render.json")),
+                    ]);
+                    return {
+                      id,
+                      body: of,
+                      order,
+                      seconds: typeof render?.seconds?.render === "number" ? render.seconds.render : null,
+                      atlas: sheet?.atlas ?? null,
+                      sheetFolder: sheetPath ? folderOf(sheetPath) : null,
+                      sheet,
+                    };
+                  } catch {
+                    return null;
+                  }
+                }),
+              )
+            ).filter((one): one is WearableInfo => one !== null);
+            cache.set(body, { signature: signature(infos.map((one) => one.id)), infos });
+            return infos;
           } catch {
             return [];
           }
         }),
       );
-      const read = await Promise.all(
-        perBody.flat().map(async ({ asset: id, order, body }): Promise<WearableInfo | null> => {
-          try {
-            const shown = await call<ShowData>("show", { asset: id });
-            if (!shown.data) return null;
-            const sheetPath = outputOf(stageOf(shown.data, "sheet"), "sheet.json");
-            const [sheet, render] = await Promise.all([
-              readJson<SheetDocument>(sheetPath),
-              readJson<RenderDocument>(outputOf(stageOf(shown.data, "render"), "render.json")),
-            ]);
-            return {
-              id,
-              body,
-              order,
-              seconds: typeof render?.seconds?.render === "number" ? render.seconds.render : null,
-              atlas: sheet?.atlas ?? null,
-              sheetFolder: sheetPath ? folderOf(sheetPath) : null,
-              sheet,
-            };
-          } catch {
-            return null;
-          }
-        }),
-      );
-      if (live) setFound(Object.fromEntries(read.filter((one): one is WearableInfo => one !== null).map((one) => [one.id, one])));
+      if (live) setFound(Object.fromEntries(perBody.flat().map((one) => [one.id, one])));
     })();
     return () => {
       live = false;
     };
-  }, [key, refreshes]);
+  }, [key, stamps]);
   return found;
 }
 

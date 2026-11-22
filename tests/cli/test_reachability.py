@@ -381,3 +381,18 @@ def test_a_masks_edit_makes_reach_stale(project: Kiripix) -> None:
     decide(project, "brush", {"mask": "solid", "erase": False, "radius": 1, "points": [[8, 8]]})
 
     assert stage_status(project, ROOM)["reach"] == "stale"
+
+
+def test_a_named_mask_across_the_floor_leaves_reach_unchanged(project: Kiripix) -> None:  # ticket 0344
+    folder = walled_room(project)
+    place(project, "spawn.main", "spawn")
+    project.json("run", ROOM, expect=3)
+    before = read_reachable(folder)
+
+    project.json("masks-add", "cover", "--colour", "#00AA00", "--meaning", "half cover")
+    decide(project, "brush", {"mask": "cover", "erase": False, "radius": 2, "points": WALL})
+    project.json("run", ROOM, expect=3)
+
+    assert stage_status(project, ROOM)["reach"] == "done"
+    assert np.array_equal(read_reachable(folder), before)
+    assert report(folder)["markers"][0]["reached"] is True

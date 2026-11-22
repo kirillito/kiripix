@@ -119,7 +119,13 @@ async def _body(request: Request) -> bytes | list[Part]:
 
 def create_app(session: Session, web: Path | None = None) -> FastAPI:
     hub = Hub()
-    watch = ProjectWatch(session.root, lambda paths: hub.publish("changed", {"count": len(paths), "paths": paths[:200]}))
+
+    def changed(paths: list[str], own: list[str]) -> None:
+        shown = paths[:200]
+        kept = set(shown)
+        hub.publish("changed", {"count": len(paths), "paths": shown, "own": [p for p in own if p in kept]})
+
+    watch = ProjectWatch(session.root, changed)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

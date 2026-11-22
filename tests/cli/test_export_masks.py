@@ -40,7 +40,9 @@ def test_the_masks_and_room_json_are_written_beside_the_scene(project: Kiripix) 
         assert int(np.asarray(image).sum()) == 16 * 32  # the left wall
     exported_room = json.loads((project.cwd / FOLDER / "room.json").read_text("utf-8"))
     assert exported_room == json.loads((folder / "out" / "export" / "room.json").read_text("utf-8"))
-    assert exported_room["masks"] == {"pit": "masks/pit.png", "solid": "masks/solid.png"}
+    assert exported_room["masks"] == [
+        {"name": "pit", "file": "masks/pit.png", "meaning": "no walking on it, but the Body can dash over it", "collision": True},
+        {"name": "solid", "file": "masks/solid.png", "meaning": "blocks movement", "collision": True}]
     assert f"{RES}/room.json" in data["written"]
 
 
@@ -111,8 +113,9 @@ func _init() -> void:
 	var description: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(room.get_meta("kiripix_room")))
 	var folder: String = room.get_meta("kiripix_room").get_base_dir()
 	var counts := {}
-	for name in description["masks"]:
-		var image: Image = load(folder + "/" + description["masks"][name]).get_image()
+	for mask in description["masks"]:
+		var name: String = mask["name"]
+		var image: Image = load(folder + "/" + mask["file"]).get_image()
 		var set_pixels := 0
 		for y in image.get_height():
 			for x in image.get_width():

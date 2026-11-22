@@ -1,5 +1,6 @@
 """The Project Commands: init, new, describe, status, next and run."""
 
+from functools import partial
 from pathlib import Path
 from typing import Self
 
@@ -8,9 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from kiripix.checks import Finding, Position
 from kiripix.commands.contract import Context, ExitCode, Outcome
 from kiripix.commands.clip_table import CLIPS_EXAMPLE, ClipRow
-from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow
+from kiripix.commands.listing import FORGET_HELP, REFRESH_HELP, named_assets, project_assets
+from kiripix.commands.mask_table import MASKS_EXAMPLE, MaskRow, mask_rows
+from kiripix.commands.ramp_table import RAMPS_EXAMPLE, RampRow, ramp_row
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import cancel, sources
+from kiripix.core import cancel, crowd, sources
 from kiripix.core.assets import create_asset, is_asset_id, list_assets, load_asset
 from kiripix.core.errors import KiripixError, fail
 from kiripix.core.graph import (
@@ -24,9 +27,11 @@ from kiripix.core.graph import (
 )
 from kiripix.core.hashing import HashCache
 from kiripix.core.kinds import all_kinds, get_kind
-from kiripix.core.project import find_project, init_project
-from kiripix.export import EXPORT_STAGE, export_command, export_pending
-from kiripix.recipes.base import CheckSpec, DecisionSpec, KindSpec, ParamSpec, StageInputs
+from kiripix.core.match import select
+from kiripix.core.project import Project, find_project, init_project
+from kiripix.core.queue import recall_state, what_next
+from kiripix.export import EXPORT_STAGE, export_command, export_pending, export_stamp
+from kiripix.recipes.base import BASE_PARAM, BODY_PARAM, CheckSpec, DecisionSpec, KindSpec, ParamSpec, StageInputs
 
 
 class _Input(BaseModel):
@@ -73,7 +78,9 @@ class NewInput(_Input):
     base: str | None = Field(None, description="For a character: the character it is made from, such as "
                                                "character.body_m. Its Model carries the base's skeleton, so it needs no "
                                                "rigged file; it starts with the base's clips; and a Stage parameter it "
-                                               "doesn't set takes the base's value. The base has no base of its own.")
+                                               "doesn't set takes the base's value. The base has no base of its own. "
+                                               "For an npc (required): the character it is made of; its Wearables and "
+                                               "colours are `choose`'s parameters.")
     body: str | None = Field(None, description="For a wearable: the character or sprite it is worn on, such as "
                                                "character.body_m. Its Model, rig, clips and cell make the wearable stale "
                                                "when they change; its cell and pivot are the wearable's.")
@@ -82,17 +89,47 @@ class NewInput(_Input):
                           "from ([character.generators] in kiripix.toml). It is stored in the new character's "
                           "src/parameters/, as `import --role parameters` stores it.")
 
+    count: int | None = Field(None, ge=1, le=500, description="For an npc: make this many NPCs, <name>_01 … <name>_NN (the name "
+                                                              "is their prefix), each with a choice picked from --seed that "
+                                                              "passes the npc Checks (ticket 0359). Needs --base and --seed.")
+    seed: int | None = Field(None, description="For an npc crowd or --reroll: the seed. The same seed in the same Project gives "
+                                               "the same NPCs. A re-roll without one takes the next choice after the NPC's own.")
+    wearables: str | None = Field(None, description="For an npc crowd or --reroll: the Wearables worn on the base that a pick may "
+                                                    "use, IDs or globs comma-separated, such as wearable.hair_*,wearable.coat. "
+                                                    "Default: every Wearable worn on the base. Each NPC wears a random subset.")
+    choices: list[str] | None = Field(None, description="For an npc crowd or --reroll: narrow a Part's colour choices, part=a,b "
+                                                        "(repeat for each Part), such as hair=auburn,blond. A Part not named "
+                                                        "may use all its choices.")
+    reroll: bool = Field(False, description="For an npc: pick its Wearables and colours again (the name is its ID). It changes "
+                                            "that NPC and no other.")
+
     @property
     def asset_id(self) -> str:
         return f"{self.kind}.{self.name.removeprefix(f'{self.kind}.')}"
 
+    @property
+    def bulk(self) -> bool:
+        return self.count is not None or self.reroll or any(v is not None for v in (self.seed, self.wearables, self.choices))
+
+
+class CrowdNpc(BaseModel):
+    asset: str
+    wearables: list[str] = Field(description="The Wearables worn, in stack order.")
+    colours: dict[str, str] = Field(description="Each Part's colour choice.")
+    tries: int = Field(description="Picks tried until this one passed the Checks.")
+    changed: bool = Field(True, description="With --reroll: false when no other choice could be found.")
+
 
 class NewData(BaseModel):
-    asset: str
+    asset: str = Field(description="The new Asset; for a crowd, the IDs comma-separated.")
     path: str
     created: list[str]
+    crowd: list[CrowdNpc] = Field(default_factory=list, description="With --count or --reroll: each NPC and its choice.")
 
     def text(self) -> str:
+        if self.crowd:
+            return "\n".join(f"{n.asset}: {','.join(n.wearables) or 'bare'} {','.join(f'{p}={c}' for p, c in n.colours.items())}"
+                             for n in self.crowd)
         return f"Created {self.asset} in {self.path}"
 
 
@@ -110,19 +147,55 @@ def _parameters_to_import(arguments: NewInput, context: Context) -> Path | None:
     return path
 
 
+def _new_locks(arguments: NewInput) -> list[str]:
+    """The Assets `new` makes or changes: one, or a crowd's N (`<prefix>_01`…). A re-roll changes the named NPC."""
+    if arguments.kind == "npc" and arguments.count is not None and not arguments.reroll:
+        width = max(2, len(str(arguments.count)))
+        ids = [f"npc.{arguments.name.removeprefix('npc.')}_{n:0{width}d}" for n in range(1, arguments.count + 1)]
+    else:
+        ids = [arguments.asset_id]
+    return [i for i in ids if is_asset_id(i)]
+
+
+def _new_bulk(arguments: NewInput, project: Project) -> Outcome[NewData]:
+    """`new npc` with --count (a crowd from a seed) or --reroll (one NPC again): ticket 0359."""
+    example = f"kiripix new npc {arguments.name} --base character.body_m --count 5 --seed 1"
+    if arguments.kind != "npc":
+        raise fail("new.crowd_needs_npc", f"--count, --seed, --wearables, --choices and --reroll are for an npc; this is a {arguments.kind}",
+                   fix=example)
+    if arguments.reroll:
+        if arguments.count is not None or arguments.base is not None:
+            raise fail("new.crowd_reroll_args", "--reroll re-picks the NPC named; --count and --base belong to a new crowd",
+                       fix=f"kiripix new npc {arguments.asset_id} --reroll")
+        result = crowd.reroll(project, arguments.asset_id, arguments.seed, arguments.wearables, arguments.choices, cancel.check)
+    else:
+        if arguments.count is None or arguments.base is None or arguments.seed is None:
+            raise fail("new.crowd_incomplete", "a crowd needs --base, --count and --seed (the same seed in the same Project gives "
+                       "the same NPCs)", fix=example)
+        result = crowd.make_crowd(project, arguments.name, arguments.base, arguments.count, arguments.seed, arguments.wearables,
+                                  arguments.choices, cancel.check)
+    members = [CrowdNpc(asset=m.asset, wearables=list(m.choice.wearables), colours=dict(m.choice.colours), tries=m.tries,
+                        changed=m.changed) for m in result.members]
+    ids = ",".join(m.asset for m in members)
+    return Outcome(NewData(asset=ids, path="assets/npc", created=result.created, crowd=members), result.findings)
+
+
 @command(
     "new",
-    summary="Create a new Asset from its Kind's Recipe.",
+    summary="Create a new Asset from its Kind's Recipe. For an npc, --count N --seed S makes a crowd, and --reroll picks one "
+            "NPC again.",
     input=NewInput,
     output=NewData,
     kind="writing",
     mcp="hidden",
     cli=CliMeta(positional=("kind", "name")),
-    locks=LockNeeds(asset=lambda a: a.asset_id if is_asset_id(a.asset_id) else None),
+    locks=LockNeeds(assets=_new_locks),
     files=("from_parameters",),
 )
 def new(arguments: NewInput, context: Context) -> Outcome[NewData]:
     project = find_project(context.cwd)
+    if arguments.bulk:
+        return _new_bulk(arguments, project)
     params = {name: value for name, value in (("view", arguments.view), ("base", arguments.base), ("body", arguments.body)) if value is not None}
     parameters = _parameters_to_import(arguments, context)
     if parameters is not None:
@@ -171,9 +244,19 @@ class DescribeData(BaseModel):
     clips: list[ClipRow] | None = Field(
         None, description="With `describe project`: the Project's clip table (null for a Kind).")
     clips_example: str | None = Field(None, description="With `describe project`: how to fill the clip table.")
+    masks: list[MaskRow] | None = Field(
+        None, description="With `describe room`: the Project's Masks, each view's in file order, with colour and meaning "
+                          "(null for other targets, and outside a Project).")
+    masks_example: str | None = Field(None, description="With `describe room`: how to add a named Mask.")
 
     def text(self) -> str:
         lines = []
+        if self.masks is not None:
+            lines.append(f"masks (add one: {self.masks_example}):")
+            for mask in self.masks:
+                what = "derived, never painted" if mask.derived else f"painted {mask.colour}"
+                role = "; blocks movement in Kiripix" if mask.blocks else ""
+                lines.append(f"  {mask.view} {mask.name}: {what}{role}{f' - {mask.meaning}' if mask.meaning else ''}")
         if self.clips is not None:
             lines.append(f"clip table ({len(self.clips)} rows; e.g. {self.clips_example}):")
             for clip in self.clips:
@@ -246,8 +329,7 @@ def describe(arguments: DescribeInput, context: Context) -> Outcome[DescribeData
             ramps = character.ramps
         except KiripixError:
             return Outcome(DescribeData(kinds=kinds, ramps_example=RAMPS_EXAMPLE, clips_example=CLIPS_EXAMPLE))
-        table = [RampRow(name=r.name, length=r.length, rgb=[list(c) for c in r.rgb] if r.rgb is not None else None)
-                 for r in ramps]
+        table = [ramp_row(r) for r in ramps]
         clip_table = [ClipRow.from_spec(c) for c in character.clips]
         return Outcome(DescribeData(kinds=kinds, ramps=table, ramps_example=RAMPS_EXAMPLE, clips=clip_table,
                                     clips_example=CLIPS_EXAMPLE))
@@ -261,6 +343,12 @@ def describe(arguments: DescribeInput, context: Context) -> Outcome[DescribeData
                            f"{', '.join(names)}", fix=f"kiripix describe {kind.name}")
             kind = kind.model_copy(update={"stages": [s for s in kind.stages or [] if s.name == arguments.stage]})
         kinds = [kind]
+        if kind.name == "room":  # the Project's Masks, so a session finds the named ones (ticket 0344)
+            try:
+                rows = mask_rows(find_project(context.cwd).settings)
+            except KiripixError:  # outside a Project: the Recipe alone
+                return Outcome(DescribeData(kinds=kinds, masks_example=MASKS_EXAMPLE))
+            return Outcome(DescribeData(kinds=kinds, masks=rows, masks_example=MASKS_EXAMPLE))
     return Outcome(DescribeData(kinds=kinds))
 
 
@@ -269,6 +357,12 @@ def describe(arguments: DescribeInput, context: Context) -> Outcome[DescribeData
 
 class StatusInput(_Input):
     kind: str | None = Field(None, description="Show only the Assets of this Kind.")
+    match: str | None = Field(None, description="Show only the Assets whose IDs match this glob, such as room.ch01_dungeon_*.")
+    assets: list[str] | None = Field(
+        None, description="Show only these Assets, by ID (the rows a list shows); none given is every Asset. An ID that "
+                          "isn't an Asset is a finding. Repeat `--asset` on the command line.")
+    refresh: str | None = Field(None, description=REFRESH_HELP)
+    forget: list[str] | None = Field(None, description=FORGET_HELP)
 
 
 class AssetStatus(BaseModel):
@@ -318,34 +412,97 @@ class StatusData(BaseModel):
     output=StatusData,
     kind="probe",
     mcp="exposed",
+    cli=CliMeta(options={"assets": ("--asset",), "forget": ("--forget",)}),
 )
 def status(arguments: StatusInput, context: Context) -> Outcome[StatusData]:
     project = find_project(context.cwd)
     if arguments.kind is not None:
         get_kind(arguments.kind)
-    assets, findings = list_assets(project)
+    assets, findings = project_assets(project, context, arguments.refresh, arguments.forget)
+    if arguments.match is not None:
+        assets = select(assets, arguments.match)
+    assets, findings = named_assets(assets, findings, arguments.assets)
     cache = HashCache(project.state_dir)
+    memory = context.memory
+    stamp = export_stamp(project) if memory is not None else ""  # the game's files: asked once for every Asset of this call
     rows: list[AssetStatus] = []
     for asset in assets:
         if arguments.kind is not None and asset.kind != arguments.kind:
             continue
-        try:
-            graph = AssetGraph(project, asset, cache)
-            states = graph.states()
-            first_open = next((s.stage for s in states if s.status != "done"), None)
-            waits_on = {} if first_open is None else {
-                s.stage: first_open for s in states if first_open in graph.upstream_chain(graph.spec(s.stage))}
-        except KiripixError as error:
-            findings.extend(error.findings)
+        state = recall_state(project, asset, cache, memory)
+        if state.errors:
+            findings.extend(state.errors)
             continue
-        rows.append(AssetStatus(asset=asset.id, kind=asset.kind, stages=states, waits_on=waits_on,
-                                export_command=export_command(project, asset, cache, states)))
+        built = all(s.status == "done" for s in state.states)
+        if not built:
+            pending = None
+        elif memory is None:
+            pending = export_command(project, asset, cache, state.states)
+        else:
+            pending = memory.recall("export", asset, partial(export_command, project, asset, cache, state.states),
+                                    stamp=lambda _: stamp)
+        rows.append(AssetStatus(asset=asset.id, kind=asset.kind, stages=state.states, waits_on=state.waits_on,
+                                export_command=pending))
     cache.save()
     return Outcome(
         StatusData(project=project.settings.project.name, assets=rows),
         findings,
         ExitCode.ERROR if findings else ExitCode.OK,
     )
+
+
+class AssetsInput(_Input):
+    kind: str | None = Field(None, description="List only the Assets of this Kind.")
+    match: str | None = Field(None, description="List only the Assets whose IDs match this glob, such as room.ch01_dungeon_*.")
+    refresh: str | None = Field(None, description=REFRESH_HELP)
+
+
+class AssetRow(BaseModel):
+    asset: str
+    kind: str
+    name: str
+    base: str | None = Field(None, description="The Asset it is made from (its `base` parameter), as written.")
+    body: str | None = Field(None, description="The Asset it is worn on (a Wearable's `body` parameter), as written.")
+    reference: bool = Field(False, description="Whether it is one of the Project's style references (`[style] references`).")
+
+
+class AssetsData(BaseModel):
+    project: str
+    assets: list[AssetRow]
+
+    def text(self) -> str:
+        if not self.assets:
+            return f"{self.project}: no Assets yet"
+        return "\n".join([self.project, *(f"  {a.asset}{'  *' if a.reference else ''}" for a in self.assets)])
+
+
+@command(
+    "assets",
+    summary="List the Assets from their asset.toml files alone: ID, Kind, name, base, body and whether it is a style "
+            "reference. No hashes and no Stage status, so it answers at once; `status` has the status.",
+    input=AssetsInput,
+    output=AssetsData,
+    kind="probe",
+    mcp="exposed",
+)
+def assets_list(arguments: AssetsInput, context: Context) -> Outcome[AssetsData]:
+    project = find_project(context.cwd)
+    if arguments.kind is not None:
+        get_kind(arguments.kind)
+    assets, findings = project_assets(project, context, arguments.refresh)
+    if arguments.match is not None:
+        assets = select(assets, arguments.match)
+    references = set(project.settings.style.references)
+    rows = []
+    for asset in assets:
+        if arguments.kind is not None and asset.kind != arguments.kind:
+            continue
+        base, body = asset.settings.params.get(BASE_PARAM), asset.settings.params.get(BODY_PARAM)
+        rows.append(AssetRow(asset=asset.id, kind=asset.kind, name=asset.name,
+                             base=base if isinstance(base, str) else None, body=body if isinstance(body, str) else None,
+                             reference=asset.id in references))
+    return Outcome(AssetsData(project=project.settings.project.name, assets=rows), findings,
+                   ExitCode.ERROR if findings else ExitCode.OK)
 
 
 # next
@@ -401,16 +558,7 @@ def next_step(arguments: NextInput, context: Context) -> Outcome[NextData]:
                             reason=failed[0].message, command=failed[0].fix, owner_action=failed[0].owner_action)
             break
         data = NextData(asset=asset.id, done=False, stage=state.stage, status=state.status, reason=state.reason)
-        waiting = graph.needs_input(spec) if state.status == "needs-input" and (
-            spec.run is not None or spec.needs_input is not None) else None
-        if waiting is not None:
-            data.command, data.owner_action = waiting.command, waiting.owner_action
-        elif state.status == "needs-input":
-            data.owner_action = f"{state.reason[0].upper()}{state.reason[1:]}." if state.reason else "Provide input."
-        elif state.status == "needs-review":
-            data.owner_action = f"Review and accept: kiripix accept {asset.id} {state.stage}"
-        else:
-            data.command = f"kiripix run {asset.id}"
+        data.command, data.owner_action = what_next(graph, spec, state)
         break
     if data.done and export_pending(project, asset, cache):
         data = NextData(asset=asset.id, done=False, stage=EXPORT_STAGE, status="done",
@@ -426,6 +574,9 @@ class RunInput(_Input):
     asset: str | None = Field(None, description="The Asset ID. Omit with --all.")
     stage: str | None = Field(None, description="Run only this Stage (its upstream Stages must be done).")
     all: bool = Field(False, description="Run every Asset, locking one at a time.")
+    match: str | None = Field(None, description="Run the Assets whose IDs match this glob, such as room.ch01_dungeon_*; "
+                                                "alone it means --all --match. A base of a matched Asset is built first, "
+                                                "matched or not.")
     kind: str | None = Field(None, description="With --all: only the Assets of this Kind.")
     force: bool = Field(False, description="Re-run even Stages that are done.")
     from_stage: str | None = Field(None, description="With --force: re-run this Stage and every Stage after it "
@@ -435,14 +586,15 @@ class RunInput(_Input):
 
     @model_validator(mode="after")
     def _asset_or_all(self) -> Self:
-        if self.all == (self.asset is not None):
-            raise ValueError("give an Asset ID or --all, not both")
-        if self.all and self.stage is not None:
-            raise ValueError("a Stage can't be given with --all")
-        if self.from_stage is not None and (self.all or self.stage is not None or not self.force):
+        scoped = self.all or self.match is not None
+        if scoped == (self.asset is not None):
+            raise ValueError("give an Asset ID or --all/--match, not both")
+        if scoped and self.stage is not None:
+            raise ValueError("a Stage can't be given with --all or --match")
+        if self.from_stage is not None and (scoped or self.stage is not None or not self.force):
             raise ValueError("--from works with --force and an Asset ID, without a Stage")
-        if self.kind is not None and not self.all:
-            raise ValueError("--kind works only with --all")
+        if self.kind is not None and not scoped:
+            raise ValueError("--kind works only with --all or --match")
         return self
 
 
@@ -471,10 +623,10 @@ class RunData(BaseModel):
 def run(arguments: RunInput, context: Context) -> Outcome[RunData]:
     project = find_project(context.cwd)
     cache = HashCache(project.state_dir)
-    if arguments.all:
+    if arguments.all or arguments.match is not None:
         if arguments.kind is not None:
             get_kind(arguments.kind)
-        result = run_all(project, cache, kind=arguments.kind, force=arguments.force, progress=context.progress,
+        result = run_all(project, cache, match=arguments.match, kind=arguments.kind, force=arguments.force, progress=context.progress,
                          wait=context.wait, command_line=context.command_line, rerun=arguments.rerun, cpu=arguments.cpu,
                          keep_warm=context.via == "rest")
     else:

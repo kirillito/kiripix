@@ -1,4 +1,4 @@
-"""The room Recipe (spec §6.1): brief, source, fit, layers, masks, palette, looks, loops, place, reach, export."""
+"""The room Recipe (spec §6.1): brief, source, fit, layers, masks, normals, palette, looks, loops, place, reach, export."""
 
 from __future__ import annotations
 
@@ -123,6 +123,18 @@ from kiripix.recipes.loops import (
     read_loops,
     run_loops,
 )
+from kiripix.recipes.room_normals import (
+    CHECKS as NORMALS_CHECKS,
+    NORMAL_FILE,
+    NORMALS_STAGE,
+    PARAMS as NORMALS_PARAMS,
+    check_normals,
+    flatten_decision,
+    needs_input as normals_needs_input,
+    run_normals,
+    runner_calls as normals_runner_calls,
+)
+from kiripix.recipes.room_prompt import parse_exits, project_files as brief_project_files, render_prompt
 from kiripix.recipes.room_palette import (
     after_overrides as palette_after_overrides,
     check_room_palette,
@@ -134,7 +146,8 @@ from kiripix.runners import SEGMENTER
 
 
 def _brief(run: StageRun) -> None:
-    """Writes the brief; rendering it into a generation prompt waits for `gen` (M4)."""
+    """Writes the brief and, when the Project has a room template, renders `prompt.txt` from it (ticket 0348)."""
+    exits = parse_exits(str(run.params["exits"]), run.asset_id)
     brief = {
         "width": run.params["width"],
         "height": run.params["height"],
@@ -143,6 +156,7 @@ def _brief(run: StageRun) -> None:
         "tile": run.settings["project.tile"],
     }
     (run.output_dir / "brief.json").write_text(json.dumps(brief, indent=2) + "\n", encoding="utf-8")
+    render_prompt(run, exits)
 
 
 def _whole_tiles(size: int, tile: int) -> int:
@@ -196,6 +210,7 @@ class _ViewMasks:
     """The room's view's Masks from `[masks.<view>]`, partitioned once."""
 
     painted: dict[str, str]  # name to colour, in the project file's order
+    meanings: dict[str, str | None]  # each painted Mask's meaning, as the Project gives it (ticket 0345)
     derived: list[str]
     colours: list[tuple[RGB, list[str]]]  # the defined colours in order: each painted Mask's own, then the imports
 
@@ -204,10 +219,11 @@ def _view_masks(run: StageRun) -> _ViewMasks:
     entries: dict[str, Any] = dict(run.settings["masks"][str(run.asset_params["view"])])
     table: dict[str, list[str]] = entries.pop("import", {})
     painted = {name: str(entry["colour"]) for name, entry in entries.items() if not entry.get("derived", False)}
+    meanings = {name: entries[name].get("meaning") for name in painted}
     derived = [name for name, entry in entries.items() if entry.get("derived", False)]
     colours = [(_rgb(colour), [name]) for name, colour in painted.items()]
     colours.extend((_rgb(colour), list(names)) for colour, names in table.items())
-    return _ViewMasks(painted, derived, colours)
+    return _ViewMasks(painted, meanings, derived, colours)
 
 
 def _rgb(colour: str) -> RGB:
@@ -298,7 +314,10 @@ def _decision_mask(run: StageRun, view: _ViewMasks, name: str, decision: str) ->
     if name in view.derived:
         raise StageFailure(f"the {decision} Decision paints '{name}', which is derived and never painted; {undo}")
     raise StageFailure(f"the {decision} Decision paints '{name}', which is not a painted Mask of the "
-                       f"{run.asset_params['view']} view ({', '.join(view.painted)}); {undo}")
+                       f"{run.asset_params['view']} view ({', '.join(view.painted)})", code="masks.unknown",
+                       # The Owner removed the Mask: whether its painting goes too is theirs, not an agent's to undo.
+                       owner_action=f"Either {undo}, or add the Mask back (kiripix masks-add {name} --colour ... "
+                                    "--meaning ...).")
 
 
 def _write_mask(path: Path, mask: np.ndarray) -> None:
@@ -527,6 +546,7 @@ _MARKER_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
     "exit": {
         "target_room": {"type": "string", "pattern": "^room\\.[a-z0-9_]+$"},
         "target_exit": {"type": "string", "pattern": _MARKER_ID},
+        "one_way": {"type": "boolean"},
     },
     "spawn": {},
     "interactable": {},
@@ -571,7 +591,7 @@ _MARKER_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "walkable": {"type": "boolean"},
     },
 }
-_OPTIONAL_FIELDS = {"area": ("cell", "walkable"), "emitter": ("shape", "direction", "colours")}  # the rest of a type's own fields are required
+_OPTIONAL_FIELDS = {"exit": ("one_way",), "area": ("cell", "walkable"), "emitter": ("shape", "direction", "colours")}  # the rest of a type's own fields are required
 _ON_WALKABLE = ("exit", "spawn")
 
 
@@ -622,7 +642,8 @@ def _marker_decision() -> DecisionSpec:
     return DecisionSpec(
         name="marker",
         description="Place a Marker at a target pixel. A Marker with the same ID and type moves it. An Exit also takes "
-                    "target_room and target_exit; a light colour, radius and energy; an emitter name; and a y-sort "
+                    "target_room and target_exit (where the player arrives), and `one_way` (default false) when no return is "
+                    "meant, so the target Exit needn't point back; a light colour, radius and energy; an emitter name; and a y-sort "
                     "line runs from (x, y) to (x2, y2) and sorts the Layer it names (a sloped line sorts at its mean y). "
                     "An `area` is a box from (x, y), its top-left, to (x2, y2), its bottom-right, corners included; a "
                     "room holds any number, each with its own ID, and Kiripix reads nothing into an ID's prefix (the "
@@ -688,6 +709,8 @@ def _snapped(data: dict[str, Any]) -> dict[str, Any]:
     data = {**data, "look": data.get("look")}  # a Look's ID or null, always written (markers.json schema 3)
     if data["type"] == "emitter":  # the optional fields are written out, `null` when unset, so a reader needs no default
         return {**data, "shape": data.get("shape"), "direction": data.get("direction"), "colours": data.get("colours")}
+    if data["type"] == "exit":  # written out, `false` when unset, so a reader needs no default (markers.json schema 4)
+        return {**data, "one_way": bool(data.get("one_way", False))}
     if data["type"] != "area":
         return data
     area = {**data, "walkable": bool(data.get("walkable", False))}
@@ -817,8 +840,8 @@ def _removed_layers(run: StageRun) -> list[str]:
 
 MARKERS_FILE = "markers.json"
 LOOKS_FOLDER = "looks"  # in `place`'s output: `looks/<look>/walkable.png` and `clear.png`, per Look with its own `solid`
-MARKERS_SCHEMA_VERSION = 3  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046); 2: `links` (0265);
-# 3: each Marker has `look`, a Look's ID or null (ticket 0314)
+MARKERS_SCHEMA_VERSION = 4  # 1: `sort`, each Layer's sort position, beside `markers` (ticket 0046); 2: `links` (0265);
+# 3: each Marker has `look`, a Look's ID or null (ticket 0314); 4: each Exit has `one_way` (0352)
 
 
 def _read_markers_file(place_dir: Path, asset: str) -> dict[str, Any]:
@@ -1230,6 +1253,11 @@ def ambiguous_cells(blocked: np.ndarray, box: tuple[int, int, int, int], cell: i
     return found
 
 
+def cell_areas(decisions: tuple[CurrentDecision, ...]) -> list[dict[str, Any]]:
+    """The current `area` Markers that have a `cell`, their boxes snapped to it."""
+    return [m for m in _current_markers(decisions) if m["type"] == "area" and m.get("cell")]
+
+
 def current_area(decisions: tuple[CurrentDecision, ...], area_id: str) -> dict[str, Any] | None:
     """The current `area` Marker of that ID, its box snapped to its cell; `None` when there is none."""
     for marker in _current_markers(decisions):
@@ -1590,7 +1618,7 @@ def _check_reach(run: StageRun) -> list[Finding]:
 # export: what the game gets, with nothing of Godot in it: the mapped Plate, the collision Masks and `room.json` with the collision shapes, the
 # navigation polygon and the Markers. The Exporter (`kiripix.export`) turns those into the engine's files.
 
-ROOM_SCHEMA_VERSION = 12 # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
+ROOM_SCHEMA_VERSION = 15 # 2: `layers`, the foreground Layers with their files and sort positions (ticket 0047)
 #                          3: `area` Markers, with `walkable` and a snapped box (ticket 0137)
 #                          4: an emitter's `shape`, `direction` and `colours`, `null` when unset (ticket 0185)
 #                          5: `masks`, the collision Masks' PNG files, by name (ticket 0140)
@@ -1602,6 +1630,10 @@ ROOM_SCHEMA_VERSION = 12 # 2: `layers`, the foreground Layers with their files a
 #                          11: `links`, each Link's ID, kind, ends and `two_way`, ordered by ID (ticket 0267)
 #                          12: a Look's `markers`, `navigation`, `added` and `cleared`, and `scene`, the bodies the scene's
 #                              `solid` is split into; the room's `markers` hold only its own (ticket 0316)
+#                          13: `masks` is a list of each painted Mask of the view: `name`, `file`, `meaning`, and `collision`
+#                              (true) only on `solid` and `pit`; a Look's Mask files are listed under the Look (ticket 0345)
+#                          14: each Exit Marker has `one_way`, true when no return is meant (ticket 0352)
+#                          15: `normals`, `null` or the normal-map files by Plate, Layer, remainder, Look and Loop (ticket 0342)
 STRIP_LIMIT = 4096  # px: a Loop's strip wraps into rows at this width, and none may be taller (a texture's safe size)
 MASKS_DIR = "masks"  # in `out/export/`, and beside the scene in the game: the game builds its grid from `masks/solid.png`
 _COLLISION_MASKS = ("pit", "solid")  # any other painted Mask is the game's to read, and blocks nothing here
@@ -1817,6 +1849,82 @@ def _export_loops(run: StageRun) -> tuple[list[dict[str, Any]], dict[str, str]]:
     return listed, _write_remainders(run, built, taken)
 
 
+NORMALS_DIR = "normals"  # in `out/export/`, and beside the scene in the game: the normal map cut for each picture, same names
+_FLAT_NORMAL = (128, 128, 255)
+
+
+def _alpha_of(path: Path) -> np.ndarray:
+    with Image.open(path) as image:
+        return np.asarray(image.convert("RGBA"))[..., 3]
+
+
+def _write_normal(run: StageRun, file: str, normal: np.ndarray, box: list[int] | None, alpha: np.ndarray,
+                  cols: int = 1, rows: int = 1) -> str:
+    """The room's normal map cut to the picture `file` (ticket 0342, ADR 0014): `box` is where the picture sits in the room
+    (the whole room when None), `cols` and `rows` the strip layout of a Loop's frames, which share the one cut. Opaque where
+    the picture is, nothing where it isn't. Written to `normals/<file>`; the name is returned."""
+    height, width = alpha.shape[0] // rows, alpha.shape[1] // cols
+    x, y = (int(box[0]), int(box[1])) if box is not None else (0, 0)
+    cell = np.empty((height, width, 4), dtype=np.uint8)
+    cell[...] = (*_FLAT_NORMAL, 255)
+    part = normal[y:y + height, x:x + width]
+    cell[:part.shape[0], :part.shape[1]] = part
+    cut = np.tile(cell, (rows, cols, 1))
+    cut[alpha == 0] = 0
+    target = f"{NORMALS_DIR}/{file}"
+    (run.output_dir / target).parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(cut, "RGBA").save(run.output_dir / target)
+    return target
+
+
+def _export_normals(run: StageRun, layers: list[dict[str, Any]], looks: list[dict[str, Any]],
+                    loops: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The room's `normals` Stage's one `normal.png` cut into a map for the Plate, each Layer (and its remainder), and each
+    piece of a Look and a Loop, by the alpha of the picture it goes with; `None` when the Stage is off and wrote none."""
+    path = run.upstream[NORMALS_STAGE] / NORMAL_FILE
+    if not path.is_file():
+        return None
+    with Image.open(path) as image:
+        normal = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+    out = run.output_dir
+    found: dict[str, Any] = {"plate": _write_normal(run, "plate.png", normal, None, _alpha_of(out / "plate.png")),
+                             "layers": {}, "remainders": {}, "looks": {}, "loops": {}}
+    for layer in layers:
+        run.check_cancel()
+        found["layers"][str(layer["id"])] = _write_normal(run, str(layer["file"]), normal, None,
+                                                           _alpha_of(out / str(layer["file"])))
+        if layer.get("remainder"):
+            found["remainders"][str(layer["id"])] = _write_normal(run, str(layer["remainder"]), normal, None,
+                                                                   _alpha_of(out / str(layer["remainder"])))
+    for look in looks:
+        run.check_cancel()
+        if look["box"] is None:
+            continue
+        found["looks"][str(look["id"])] = {
+            "file": _write_normal(run, str(look["file"]), normal, look["box"], _alpha_of(out / str(look["file"])))
+            if look["file"] else None,
+            "pieces": {str(piece["layer"]): _write_normal(run, str(piece["file"]), normal, look["box"],
+                                                          _alpha_of(out / str(piece["file"])))
+                       for piece in look["pieces"]}}
+    for loop in loops:
+        run.check_cancel()
+        if loop["box"] is None:
+            continue
+        cols, rows = int(loop["hframes"]), int(loop["vframes"])
+        found["loops"][str(loop["id"])] = {
+            "file": _write_normal(run, str(loop["file"]), normal, loop["box"], _alpha_of(out / str(loop["file"])), cols, rows)
+            if loop["file"] else None,
+            "pieces": {str(piece["layer"]): _write_normal(run, str(piece["file"]), normal, loop["box"],
+                                                          _alpha_of(out / str(piece["file"])), cols, rows)
+                       for piece in loop["pieces"]}}
+    return found
+
+
+def _named_masks(run: StageRun) -> dict[str, str | None]:
+    """The painted Masks of the room's view, by name, with their meaning (ticket 0345). Derived Masks aren't painted."""
+    return _view_masks(run).meanings
+
+
 def _export(run: StageRun) -> None:
     palette = run.upstream["palette"]
     shutil.copyfile(palette / "plate.png", run.output_dir / "plate.png")  # the mapped Plate, not the composite
@@ -1832,15 +1940,20 @@ def _export(run: StageRun) -> None:
                        "y": None if position is None or above else position.y})
     tolerance = float(run.params["tolerance"])
     collision = {}
-    mask_files: dict[str, str] = {}  # a Look's own `solid` joins these as `<look>.solid`
-    for name in _COLLISION_MASKS:
+    mask_files: dict[str, str] = {}  # a Look's own `solid` joins these as `<look>.solid`; the Looks list them, not `masks`
+    named = _named_masks(run)
+    for name in sorted(named):
         run.check_cancel()
         path = run.upstream[MASKS_STAGE] / f"{name}.png"
         if path.is_file():
             (run.output_dir / MASKS_DIR).mkdir(exist_ok=True)
             shutil.copyfile(path, run.output_dir / MASKS_DIR / path.name)  # byte for byte: 1-bit, the room's size
-            mask_files[name] = f"{MASKS_DIR}/{path.name}"
+    for name in _COLLISION_MASKS:
+        path = run.upstream[MASKS_STAGE] / f"{name}.png"
         collision[name] = collision_shapes(simplify(contours(_read_mask(path)), tolerance)) if path.is_file() else []
+    masks = [{"name": name, "file": f"{MASKS_DIR}/{name}.png", "meaning": meaning,
+              **({"collision": True} if name in _COLLISION_MASKS else {})}
+             for name, meaning in sorted(named.items()) if (run.upstream[MASKS_STAGE] / f"{name}.png").is_file()]
     solid_path = run.upstream[MASKS_STAGE] / "solid.png"
     ground_size = _read_mask(run.upstream["place"] / "walkable.png").shape
     room_solid = _read_mask(solid_path) if solid_path.is_file() else np.zeros(ground_size, dtype=np.bool_)
@@ -1864,10 +1977,11 @@ def _export(run: StageRun) -> None:
         "links": [{"id": link["id"], "kind": link["kind"], "from": link["from"], "to": link["to"],
                    "two_way": link["two_way"]} for link in sorted(links, key=lambda each: str(each["id"]))],
         "layers": layers,
-        "masks": mask_files,
+        "masks": masks,
         "looks": looks,
         "scene": scene,
         "loops": loops,
+        "normals": _export_normals(run, layers, looks, loops),
     }
     (run.output_dir / "room.json").write_text(json.dumps(room, indent=2) + "\n", encoding="utf-8")
 
@@ -1940,18 +2054,27 @@ ROOM = KindSpec(
     stages=chain(
         StageSpec(
             name="brief",
-            description="Size, mood, Exits and notes; renders the generation prompt.",
+            description="Size, mood, Exits and notes; renders the generation prompt from the Project's room template.",
             inputs=StageInputs(settings=["project.tile"]),
             params=(
                 ParamSpec(name="width", type="int", description="Width in px.", default=640, minimum=1),
                 ParamSpec(name="height", type="int", description="Height in px.", default=368, minimum=1),
                 ParamSpec(name="mood", type="str", description="Mood words for the prompt.", default=""),
+                ParamSpec(name="notes", type="str", description="Notes for the prompt.", default=""),
+                ParamSpec(name="exits", type="str", default="",
+                          description="The room's Exits for the prompt, as `name:side` separated by commas, a side being "
+                                      "top, right, bottom or left (`door:top, stairs:left`)."),
+                ParamSpec(name="canvas_width", type="int", default=1376, minimum=1,
+                          description="Width in px of the image the prompt asks for."),
+                ParamSpec(name="canvas_height", type="int", default=768, minimum=1,
+                          description="Height in px of the image the prompt asks for."),
             ),
             checks=(CheckSpec(code="brief.size_not_tiles", description="The size is a whole number of tiles."),),
             owner_input="Writes the brief.",
             available_from="M1",
             run=_brief,
             check=_check_brief,
+            project_files=brief_project_files,
         ),
         StageSpec(
             name="source",
@@ -1998,6 +2121,8 @@ ROOM = KindSpec(
             checks=(
                 CheckSpec(code="layers.recompose_mismatch", description="Plate and Layers recompose to the fit image."),
                 CheckSpec(code="layers.plate_hole", description="The Plate has no holes."),
+                CheckSpec(code="layers.stale_size", description="The Plate is the fit image's size; when the fit changed "
+                                                                "size, the rest of the Check is skipped until a rebuild."),
             ),
             owner_input="Clicks objects to lift out; trims a rim with a brush.",
             available_from="M1",
@@ -2092,6 +2217,29 @@ ROOM = KindSpec(
             segment=SegmentHooks(call=_preview_call, to_target=_preview_to_target, box_call=_preview_box_call),
         ),
         StageSpec(
+            name=NORMALS_STAGE,
+            description="The room's normal map, for a light in the game (ADR 0014). `mode` `off` (the default) is done with "
+                        "no output and no Runner call; `depth` runs the depth Runner on the Source (one pinned call, "
+                        "its input `size` in the key), maps the depth through the Grid to target pixels, refills it per "
+                        "Layer outside the Layer's alpha, and takes Sobel, `strength`, `deadzone` and `levels` to one "
+                        "`normal.png`: the room's size, each pixel the normal of its front-most Layer, in Godot's "
+                        "encoding, never palette-mapped. `depth.png` is the height as a picture, for the review. A "
+                        "`flatten` Decision makes a brush or polygon face the camera; an Override paints normals by "
+                        "hand. Only `export` reads it, and a palette change leaves it as it is. Judge it without Godot: "
+                        "`kiripix preview <asset> --stage normals`, and `--overlay lit` for the room lit from a corner.",
+            inputs=StageInputs(upstream=["layers", "source", "fit", MASKS_STAGE], settings=["body"]),
+            params=NORMALS_PARAMS,
+            decisions=(flatten_decision(),),
+            checks=NORMALS_CHECKS,
+            owner_input="Turns `mode` to `depth` on a room that is lit, accepts the depth result, and flattens what should face the camera.",
+            available_from="M6",
+            image=NORMAL_FILE,
+            run=run_normals,
+            needs_input=normals_needs_input,
+            check=check_normals,
+            runner_calls=normals_runner_calls,
+        ),
+        StageSpec(
             name="palette",
             description="Maps the composite to the palette in OKLab and removes orphan pixels.",
             inputs=StageInputs(upstream=["layers"], settings=["palette"]),  # ADR 0004: not `masks`
@@ -2100,6 +2248,8 @@ ROOM = KindSpec(
                 CheckSpec(code="palette.off_palette", description="Every pixel is a palette colour."),
                 CheckSpec(code="palette.mapping_error", description="The palette maps the image without a high error."),
                 CheckSpec(code="layers.recompose_mismatch", description="Plate and Layers still recompose exactly."),
+                CheckSpec(code="palette.stale_size", description="palette.png is the size of the Plate and Layers it "
+                                                                 "was mapped with; when not, they aren't compared."),
             ),
             owner_input="Tunes the sliders.",
             available_from="M1",
@@ -2157,7 +2307,8 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="place",
-            version=3,  # 2: markers.json has `links` (ticket 0265); 3: schema 3, `look` on a Marker, and the Looks' walkable (0314)
+            version=4,  # 2: markers.json has `links` (ticket 0265); 3: schema 3, `look` on a Marker, and the Looks' walkable (0314);
+            # 4: schema 4, `one_way` on an Exit (0352)
             description="Places Markers: Exits, Spawns, lights, emitters, areas (boxes), Links (two ends, for a hop, a "
                         "climb or a jump) and y-sort lines, one for each foreground Layer unless it is always above. A "
                         "light, an emitter or an interactable may belong to a Look (`look`). A Look with its own `solid` "
@@ -2231,13 +2382,14 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="export",
-            version=3,  # 2: room.json schema 11, with `links` (ticket 0267); 3: schema 12, a Look's Markers, navigation and
-            # added and cleared Masks, and the scene's split `solid` (ticket 0316)
+            version=6,  # 6: schema 15, `normals` and the cut normal maps (0342); 5: schema 14, `one_way` on an Exit (0352); 2: room.json schema 11, with `links` (ticket 0267); 3: schema 12, a Look's Markers, navigation and
+            # added and cleared Masks, and the scene's split `solid` (ticket 0316); 4: schema 13, every painted Mask (0345)
+
             description="Builds what the game gets: the mapped Plate, collision shapes, navigation polygon and Markers, and "
                         "for each Look with its own `solid` what it adds, clears and navigates. "
                         "`kiripix export` then writes them into the Godot project.",
-            inputs=StageInputs(upstream=["reach", "place", "palette", MASKS_STAGE, LOOKS_STAGE, LOOPS_STAGE],
-                               settings=["export.godot"]),
+            inputs=StageInputs(upstream=["reach", "place", "palette", MASKS_STAGE, LOOKS_STAGE, LOOPS_STAGE, NORMALS_STAGE],
+                               settings=["export.godot", "masks"]),
             params=(ParamSpec(name="tolerance", type="float", description="How far collision and navigation outlines "
                               "may stray from the Mask, in px. 0 keeps every corner.", default=1.0, minimum=0),),
             checks=(

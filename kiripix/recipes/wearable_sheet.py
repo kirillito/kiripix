@@ -1,7 +1,7 @@
 """A Wearable's `sheet` Stage (spec §6.3, ticket 0293).
 
 The character's `sheet` (`character_sheet.py`) on the Wearable's `finish` frames: the body's cell and pivot (they are the
-render's, which is the body's), the same grid and rect for each frame, a colour atlas and a normal atlas. This adds a third
+render's, which is the body's), the same packing (a cell that repeats is packed once, ticket 0375), a colour atlas and a normal atlas. This adds a third
 atlas of the same layout, `depth.png` (`character_sheet.run_sheet_with_depth`, which the body's `sheet` uses too): the render's
 depth pass, 16 bit gray, 0 nearest and 65535 farthest, in the body's depth scale, so that the game can stack the body and its Wearables by depth. Where a cell has no frame pixel the depth is
 65535. `sheet.json` is the character's, with `files.depth` and the default stacking `order` added.

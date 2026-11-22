@@ -20,7 +20,8 @@ else:
 
 from kiripix.core import atomic
 from kiripix.core.hashing import hash_json
-from kiripix.core.images import save_mask_png, save_png
+from kiripix.core.images import save_gray16_png, save_mask_png, save_png
+from kiripix.ops import unit_to_u16
 from kiripix.recipes.base import RunnerCall
 from kiripix.runners import runners
 
@@ -54,7 +55,7 @@ def was_made_before(asset_dir: Path, stage: str, call: RunnerCall) -> bool:
 
 def store(asset_dir: Path, stage: str, call: RunnerCall, pin: str, image_hash: str, result: np.ndarray, *, device: str,
           licence: str, time: str) -> None:
-    """Pin a call's result: a Mask as a 1-bit PNG, or else an RGBA image."""
+    """Pin a call's result: a Mask as a 1-bit PNG, a depth (float32) as a 16-bit greyscale PNG, or else an RGBA image."""
     record: dict[str, Any] = {
         "schema_version": RECORD_SCHEMA_VERSION,
         "key": pin,
@@ -71,6 +72,8 @@ def store(asset_dir: Path, stage: str, call: RunnerCall, pin: str, image_hash: s
     atomic.write_json(asset_dir / PINNED_DIR / f"{pin}.json", record)
     if result.dtype == np.bool_:
         save_mask_png(result_path(asset_dir, pin), result)
+    elif result.dtype == np.float32:
+        save_gray16_png(result_path(asset_dir, pin), unit_to_u16(result))
     else:
         save_png(result_path(asset_dir, pin), result)
     # Written after the PNG, so a record with it says the PNG is whole and as the Runner made it (see `is_as_made`).

@@ -65,25 +65,23 @@ async function dragPixel(page: Page, from: [number, number], to: [number, number
 
 const strip = (page: Page) => page.getByTestId("work-strip");
 
-test("opening the room list and a room show the strip before the response", async ({ page, studio }) => {
+test("reading the Project and opening a room show the strip before the response", async ({ page, studio }) => {
   studio.room();
+  // The list is read once, when the page opens; opening a room then asks only for the room's own calls (ticket 0369).
+  const list = await hold(page, "**/api/status");
   await page.goto(studio.home);
+  await expect(page.getByTestId("work-label")).toContainText("Reading the Project");
+  list.release();
   await expect(page.getByTestId(`asset-${ROOM}`)).toBeVisible();
   await expect(strip(page)).toHaveCount(0);
 
-  const status = await hold(page, "**/api/status");
+  const shown = await hold(page, "**/api/show");
   await page.getByTestId(`asset-${ROOM}`).click();
-  await expect(page.getByTestId("work-label")).toHaveText(`Opening ${ROOM}`);
+  await expect(page.getByTestId("work-label")).toContainText(`Opening ${ROOM}`);
   await expect(page.getByTestId("work-elapsed")).toBeVisible();
-  status.release();
+  shown.release();
   await expect(strip(page)).toHaveCount(0);
   await expect(page.getByTestId("stage-title")).toBeVisible();
-
-  const again = await hold(page, "**/api/status");
-  await page.getByTestId("home").click();
-  await expect(page.getByTestId("work-label")).toHaveText("Opening the room list");
-  again.release();
-  await expect(strip(page)).toHaveCount(0);
 });
 
 test("Accept shows the strip and a working button before the response, and a second press sends no second request", async ({

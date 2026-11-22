@@ -1,4 +1,5 @@
-"""Atomic writes and append-only JSON Lines. Every file Kiripix writes goes through here."""
+"""Atomic writes and append-only JSON Lines. Every file Kiripix writes goes through here, and each is recorded in
+`kiripix.core.changes` once it is in place."""
 
 import json
 import os
@@ -6,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from kiripix.core import cancel
+from kiripix.core import cancel, changes
 
 
 def _replace(source: Path, target: Path) -> None:
@@ -35,6 +36,7 @@ def write_bytes(path: Path, data: bytes) -> None:
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+    changes.record(path)
 
 
 def write_text(path: Path, text: str) -> None:
@@ -57,8 +59,20 @@ def append_jsonl_many(path: Path, entries: list[dict[str, Any]]) -> None:
     write_bytes(path, existing + lines.encode("utf-8"))
 
 
+def append_line(path: Path, data: bytes) -> None:
+    """Append `data` (whole LF-terminated lines) in a single write, its folder made if it's missing. Not recorded: the
+    change record itself is written with it (`kiripix.core.changes`); everything else appends through `append_jsonl`."""
+    try:
+        handle = path.open("ab")
+    except FileNotFoundError:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("ab")
+    with handle:
+        handle.write(data)
+
+
 def append_jsonl(path: Path, entry: dict[str, Any]) -> None:
     """Append one JSON object as one LF-terminated line, in a single write."""
     line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
-    with path.open("ab") as handle:
-        handle.write(line.encode("utf-8"))
+    append_line(path, line.encode("utf-8"))
+    changes.record(path)

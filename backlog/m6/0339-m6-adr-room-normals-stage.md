@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: reviewer
 type: adr
@@ -32,7 +32,26 @@ tickets are [0340](0340-m6-depth-runner.md) to [0343](0343-m6-ui-room-normals.md
 
 ## Acceptance criteria
 
-- [ ] `docs/adr/0014-…` drafted, with the alternatives (after `palette`; a parameter of `layers`; normals only at `export`)
+- [x] `docs/adr/0014-…` drafted, with the alternatives (after `palette`; a parameter of `layers`; normals only at `export`)
       and why they lost.
-- [ ] Spec §6.1's Stage line and table, §8's depth row and §14 updated to match, marked "proposed" until the Owner accepts.
-- [ ] The Owner's acceptance recorded here, with the date.
+- [x] Spec §6.1's Stage line and table, §8's depth row and §14 updated to match, marked "proposed" until the Owner accepts.
+- [x] The Owner's acceptance recorded here, with the date.
+
+## Result
+
+Drafted 2026-11-20. **Accepted by the Owner on 2026-11-20**; ADR 0014, the spec and the glossary no longer say proposed.
+
+- [docs/adr/0014-a-rooms-normal-maps-are-a-stage-before-palette.md](../../docs/adr/0014-a-rooms-normal-maps-are-a-stage-before-palette.md),
+  status proposed: `normals` between `masks` and `palette`; `mode` `off` (default) or `depth`; one `normal.png`, the room's
+  size, from which `export` cuts the Plate's, each Layer's, and each Look's and Loop's maps; `flatten` Decisions and Overrides
+  as the Owner's fix; `normals.not_flat_walkable` stays in `normals` (reading `masks`, walkable derived with `place`'s Op).
+  A fourth alternative, "late in the order, before `export`", is recorded as open in case the extra stop proves costly.
+- Spec §6.1 (Stage line, a `normals` row, the note under the table), §8's depth row and §14 updated, marked proposed.
+  Glossary: **Normal map**.
+
+Things the ADR changes in the work tickets:
+- **0341** writes one `normal.png`, not `plate.normal.png` plus one per Layer: a Stage has one image for its Overrides
+  (ADR 0004). `normals.size` follows. **0342** cuts the per-Layer maps at `export`.
+- **0340:** the 518 px fallback must be a recorded parameter of the call, never chosen silently from free VRAM (ADR 0002).
+- **0331:** a room with `mode = depth` adds one `needs-review` stop before `palette`.
+- 0324's Out of scope said "ADR 0339"; corrected to ADR 0014.

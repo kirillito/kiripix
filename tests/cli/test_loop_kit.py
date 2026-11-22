@@ -22,6 +22,7 @@ def a_frame_loop(project: Kiripix, region: list[list[int]] | None = TRIANGLE, la
         folder = built_room(project)
         project.json("run", ROOM, "masks")
         project.json("run", ROOM, "palette")
+    project.json("run", ROOM, "normals")  # off: a no-op, so `next` speaks of the Loop, not the unbuilt `normals`
     declare(project, form="frames")
     if region is not None:
         decide(project, "polygon", {"loop": LOOP, "points": region})
@@ -55,7 +56,7 @@ def reason(project: Kiripix) -> str:
 
 def refit(project: Kiripix) -> None:
     project.json("set", ROOM, "fit", "offset_x=2")
-    for stage in ("fit", "layers", "masks", "palette"):
+    for stage in ("fit", "layers", "masks", "normals", "palette"):
         project.json("run", ROOM, stage)
     project.json("run", ROOM, "looks")
 

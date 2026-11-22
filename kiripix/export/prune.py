@@ -14,6 +14,7 @@ from kiripix.core import atomic, cancel
 from kiripix.core.assets import ASSET_FILE, asset_dir, is_asset_id, parse_asset_id
 from kiripix.core.errors import fail
 from kiripix.core.hashing import hash_bytes
+from kiripix.core.match import matches
 from kiripix.core.project import Project
 from kiripix.export.manifest import MANIFEST_DIR, Manifest, read_manifest
 from kiripix.export.target import GodotTarget
@@ -75,7 +76,8 @@ def _owned(manifest: Manifest, target: GodotTarget, shown: str) -> list[str]:
     return sorted(manifest.files)
 
 
-def plan_prune(project: Project, target: GodotTarget, only: str | None, force: bool) -> list[PrunePlan]:
+def plan_prune(project: Project, target: GodotTarget, only: str | None, force: bool,
+               match: str | None = None) -> list[PrunePlan]:
     """What pruning every deleted Asset (or just `only`) would do, or the refusal why not. Writes nothing."""
     if only is not None:
         parse_asset_id(only)
@@ -90,7 +92,7 @@ def plan_prune(project: Project, target: GodotTarget, only: str | None, force: b
                        position=Position(asset=only))
         ids = [only]
     else:
-        ids = deleted_assets(project, target)
+        ids = [i for i in deleted_assets(project, target) if match is None or matches(i, match)]
     plans: list[PrunePlan] = []
     for asset_id in ids:
         cancel.check()
