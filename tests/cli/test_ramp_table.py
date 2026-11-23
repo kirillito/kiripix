@@ -60,8 +60,8 @@ def codes(result: dict[str, object]) -> list[str]:
 def test_a_version_3_project_migrates_in_memory_to_an_empty_table(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
-    assert "schema_version = 12" in text
-    old = text.replace("schema_version = 12", "schema_version = 3")
+    assert "schema_version = 13" in text
+    old = text.replace("schema_version = 13", "schema_version = 3")
     path.write_text(old, encoding="utf-8")
 
     described = project.json("describe", "project")

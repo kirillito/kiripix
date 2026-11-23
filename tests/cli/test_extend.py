@@ -289,3 +289,92 @@ def test_the_first_canvas_needs_a_picked_source(project: Kiripix) -> None:
     variant = project.json("import", ROOM, save(project, "a.png", scene()[:160, :240]))["data"]["variant"]
     second = project.json("extend", ROOM, "canvas", "--side", "east", expect=1)["findings"][0]
     assert second["code"] == "extend.no_source" and second["fix"] == f"kiripix pick {ROOM} {variant}"
+
+
+# A strip the image model re-rendered (ticket 0377): GPT Image paints the whole canvas again, kept strip included, so the
+# strip comes back the same picture, warped by under a pixel, with new texture and a slight per-channel gain.
+
+
+def repainted(full: Any, x: int, size: tuple[int, int], amplitude: float = 0.9, period: float = 60.0) -> Any:
+    """The picture from (x, 0), each pixel moved by a smooth wave of `amplitude` px (no affine fit undoes it), toned
+    by a per-channel gain and with noise for the re-rendered texture."""
+    width, height = size
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    y = np.clip(yy + amplitude * np.cos(2 * np.pi * xx / period), 0, full.shape[0] - 1.001)
+    x_ = np.clip(xx + x + amplitude * np.sin(2 * np.pi * yy / period), 0, full.shape[1] - 1.001)
+    y0, x0 = np.floor(y).astype(int), np.floor(x_).astype(int)
+    fy, fx = (y - y0)[..., None], (x_ - x0)[..., None]
+    src = full.astype(np.float64)
+    warped = (src[y0, x0] * (1 - fy) * (1 - fx) + src[y0, x0 + 1] * (1 - fy) * fx
+              + src[y0 + 1, x0] * fy * (1 - fx) + src[y0 + 1, x0 + 1] * fy * fx)
+    toned = warped * np.array([0.993, 0.998, 1.011]) + np.random.default_rng(5).normal(0, 8, warped.shape)
+    return np.clip(toned + 0.5, 0, 255).astype(np.uint8)
+
+
+def journal(project: Kiripix) -> Path:
+    return project.cwd / "assets" / "room" / "alley" / "extend" / "journal.jsonl"
+
+
+def test_a_re_rendered_strip_fails_under_the_default_limit_and_joins_with_a_warning_under_a_raised_one(
+    project: Kiripix,
+) -> None:
+    full = room(project)
+    canvas(project, "east", "--keep", "80")
+    piece = save(project, "east.png", repainted(full, 160, CANVAS))
+
+    missed = project.json("extend", ROOM, "add", piece, expect=2)["findings"][0]
+    assert missed["code"] == "extend.registration_missed" and "0.5 px limit" in missed["message"]
+    assert "--max-residual 1" in missed["owner_action"] and "max_residual = 1" in missed["owner_action"]
+    assert not journal(project).exists()
+
+    joined = project.json("extend", ROOM, "add", piece, "--max-residual", "1")
+
+    assert 0.5 < joined["data"]["residual"] <= 1.0
+    assert joined["data"]["width"] in (399, 400) and joined["data"]["pieces"] == 1  # a fit a hair under scale 1 may trim a column
+    [warning] = [f for f in joined["findings"] if f["code"] == "extend.strip_repainted"]
+    assert warning["severity"] == "warning" and f"{joined['data']['residual']:.2f} px" in warning["message"]
+    assert "gain 0.9" in warning["message"] and "seam difference" in warning["message"] and warning["owner_action"]
+    assert "join.residual_high" not in [f["code"] for f in joined["findings"]]  # within the limit it was joined under
+
+
+def test_the_project_setting_raises_the_limit_for_extend_add_and_inbox(project: Kiripix) -> None:
+    full = room(project)
+    path = project.cwd / "kiripix.toml"
+    path.write_text(path.read_text(encoding="utf-8").replace("max_residual = 0.5", "max_residual = 1.0"), encoding="utf-8")
+    canvas(project, "east", "--keep", "80")
+
+    joined = project.json("extend", ROOM, "add", save(project, "east.png", repainted(full, 160, CANVAS)))
+
+    assert "extend.strip_repainted" in [f["code"] for f in joined["findings"]]
+    project.json("extend", ROOM, "undo")
+    path.write_text(path.read_text(encoding="utf-8").replace("max_residual = 1.0", "max_residual = 0.5"), encoding="utf-8")
+    filed = project.json("inbox", "--file", "east.png", "--asset", ROOM, "--sides", "east", "--max-residual", "1")
+    assert filed["data"]["files"][0]["outcome"] == "imported"
+    assert "extend.strip_repainted" in [f["code"] for f in filed["findings"]]
+
+
+def test_a_piece_from_another_scene_fails_under_the_default_and_the_raised_limit(project: Kiripix) -> None:
+    room(project)
+    canvas(project, "east", "--keep", "80")
+    rng = np.random.default_rng(12)  # another blocky scene: the same kind of texture, another picture
+    other = np.kron(rng.integers(0, 256, (40, 60, 3), dtype=np.uint8), np.ones((4, 4, 1), dtype=np.uint8))
+    piece = save(project, "other.png", repainted(other, 0, CANVAS, amplitude=0.0))
+
+    for extra in ([], ["--max-residual", "1"]):
+        missed = project.json("extend", ROOM, "add", piece, *extra, expect=2)["findings"][0]
+        assert missed["code"] == "extend.registration_missed"
+        assert "--max-residual" not in missed["owner_action"]  # beyond what a re-rendered strip misses by
+    assert not journal(project).exists()
+
+
+def test_a_limit_beyond_the_ceiling_is_refused(project: Kiripix) -> None:
+    full = room(project)
+    canvas(project, "east", "--keep", "80")
+    piece = save(project, "east.png", full[:160, 160:400])
+
+    over = project.json("extend", ROOM, "add", piece, "--max-residual", "1.5", expect=1)["findings"][0]
+    assert over["code"] == "extend.max_residual_invalid" and over["fix"].endswith("--max-residual 1")
+    assert project.json("inbox", "--max-residual", "0", expect=1)["findings"][0]["code"] == "extend.max_residual_invalid"
+    path = project.cwd / "kiripix.toml"
+    path.write_text(path.read_text(encoding="utf-8").replace("max_residual = 0.5", "max_residual = 2"), encoding="utf-8")
+    assert project.json("status", expect=1)["findings"][0]["code"] == "config.invalid"

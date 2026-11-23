@@ -135,9 +135,9 @@ def test_the_folder_is_the_settings_or_the_flag(project: Kiripix) -> None:
 def test_an_old_settings_file_migrates_in_memory_and_gains_the_inbox_section(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
-    assert "schema_version = 12" in text and '[inbox]' in text
+    assert "schema_version = 13" in text and '[inbox]' in text
     block = text[text.index("[inbox]"):].split("\n\n", 1)[0]
-    old = text.replace("schema_version = 12", "schema_version = 9").replace(block + "\n\n", "")
+    old = text.replace("schema_version = 13", "schema_version = 9").replace(block + "\n\n", "")
     assert "[inbox]" not in old
     path.write_text(old, encoding="utf-8")
 
@@ -145,7 +145,7 @@ def test_an_old_settings_file_migrates_in_memory_and_gains_the_inbox_section(pro
     assert project.json("inbox")["ok"]
     assert path.read_text(encoding="utf-8") == old  # migrated in memory only
 
-    path.write_text(old.replace("schema_version = 9", "schema_version = 12") + '[inbox]\nfolder = "x"\nextra = 1\n', encoding="utf-8")
+    path.write_text(old.replace("schema_version = 9", "schema_version = 13") + '[inbox]\nfolder = "x"\nextra = 1\n', encoding="utf-8")
     assert project.json("status", expect=1)["findings"]  # an unknown key is an error
 
 

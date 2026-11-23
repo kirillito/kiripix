@@ -42,6 +42,10 @@ class ExtendInput(BaseModel):
                                                "([extend] canvas, 1376x768) by default.")
     offset: int = Field(0, description="With canvas: where along the edge the canvas starts, px from the image's top "
                                        "(east, west) or left (north, south).")
+    max_residual: float | None = Field(
+        None, description="With add: the registration residual, px, above which the piece is refused; `[extend] "
+                          "max_residual` (0.5) by default, at most 1.0. A model that re-renders the kept strip (GPT Image) "
+                          "registers to about 0.7: such a piece joins with `extend.strip_repainted`, so look at the seam.")
 
 
 class ExtendData(BaseModel):
@@ -106,7 +110,7 @@ def _asset_lock(arguments: ExtendInput) -> str | None:
 @command(
     "extend",
     summary="Grow a room's Source past its edge, one piece at a time: canvas (write the canvas for the next piece), "
-            "add <png> (join a piece onto the image), undo (drop the last piece), done (import the joined image as "
+            "add <png> (join a piece onto the image; --max-residual up to 1.0 for a strip the model re-rendered), undo (drop the last piece), done (import the joined image as "
             "a Variant), crop (write a crop of the Source at the image model's size, named by its hash, for a Look's edit; `import --of crop` is the latest).",
     input=ExtendInput,
     output=ExtendData,
@@ -142,7 +146,7 @@ def extend_command(arguments: ExtendInput, context: Context) -> Outcome[ExtendDa
         if arguments.piece is None:
             raise fail("extend.piece_needed", "add needs the piece's PNG", fix=f"{example} <png>")
         joined, findings = extend.add_piece(project, asset, context.cwd / arguments.piece, str(arguments.piece),
-                                            sides, example)
+                                            sides, example, arguments.max_residual)
         data.piece, data.sides, data.width, data.height = joined.piece, joined.sides, joined.width, joined.height
         data.residual, data.scale, data.gain = joined.residual, joined.scale, joined.gain
         data.seam_length, data.seam_difference, data.pieces = joined.seam_length, joined.seam_difference, joined.pieces

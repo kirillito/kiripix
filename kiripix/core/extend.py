@@ -23,8 +23,8 @@ else:
     np = lazy_module("numpy")
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from kiripix.checks import Finding, check_join_gain, check_join_residual, check_seam_difference
-from kiripix.checks.join import MAX_RESIDUAL
+from kiripix.checks import Finding, Position, check_join_gain, check_join_residual, check_seam_difference
+from kiripix.checks.join import MAX_RESIDUAL, RESIDUAL_CEILING
 from kiripix.core import atomic, cancel, journal, sources
 from kiripix.core.assets import Asset
 from kiripix.core.errors import ExitCode, KiripixError, fail
@@ -390,20 +390,52 @@ def ensure_canvas(project: Project, asset: Asset, sides: list[str], example: str
     return False
 
 
-def _missed(piece_name: str, detail: str, asset: Asset) -> KiripixError:
+def _missed(piece_name: str, detail: str, asset: Asset, raise_to: float | None = None) -> KiripixError:
+    """`raise_to`: the piece registered within `RESIDUAL_CEILING`, so a raised limit would join it, if the image model
+    re-renders the kept strip."""
+    raised = (f" If the image model re-renders the kept strip (GPT Image), join it with `--max-residual {raise_to:g}`, or set "
+              f"`[extend] max_residual = {raise_to:g}` in kiripix.toml, and look at the seam.") if raise_to else ""
     return fail(
         "extend.registration_missed", f"{piece_name} doesn't register onto the image: {detail}",
         owner_action=f"Make the piece again from the canvas, or write the canvas with a wider strip "
                      f"(`kiripix extend {asset.id} canvas --keep N`): a piece fails when too little of a subject is in "
-                     "the strip.",
+                     f"the strip.{raised}",
         exit_code=ExitCode.CHECK_FAILED)
+
+
+def residual_limit(project: Project, max_residual: float | None, example: str) -> float:
+    """The registration limit: `--max-residual` if given, else `[extend] max_residual`."""
+    if max_residual is None:
+        return project.settings.extend.max_residual
+    if not 0 < max_residual <= RESIDUAL_CEILING:
+        raise fail("extend.max_residual_invalid", f"--max-residual {max_residual:g} is not a registration limit: use more "
+                   f"than 0 and at most {RESIDUAL_CEILING:g} px (more lets a piece from another scene through)",
+                   fix=f"{example} --max-residual {RESIDUAL_CEILING:g}")
+    return max_residual
+
+
+def repainted_findings(shown: str, residual: float, limit: float, gain: tuple[float, float],
+                       seam_difference: float) -> list[Finding]:
+    """A piece joined above the untouched-strip limit (`MAX_RESIDUAL`) under a raised one: the image model re-rendered
+    the kept strip, so the seam is between two paintings of the same picture, and the Owner should look at it."""
+    if residual <= MAX_RESIDUAL:
+        return []
+    return [Finding(
+        code="extend.strip_repainted", severity="warning",
+        message=f"{shown} registers to {residual:.2f} px, over the {MAX_RESIDUAL:g} px of an untouched strip and within "
+                f"the {limit:g} px limit: the image model re-rendered the kept strip (gain {gain[0]:.3f} to {gain[1]:.3f}, "
+                f"seam difference {seam_difference:.1f})",
+        position=Position(file=shown),
+        owner_action="Look at the seam in the joined image at 2x; if it shows, undo and make the piece again.")]
 
 
 def add_piece(
     project: Project, asset: Asset, piece_file: Path, shown: str, sides: list[str] | None, example: str,
+    max_residual: float | None = None,
 ) -> tuple[Joined, list[Finding]]:
     """Register, tone and seam the piece onto the current image and record it. Records nothing if the registration
-    misses its limit (`MAX_RESIDUAL`) or the piece can't be joined."""
+    misses its limit (`max_residual`, else `[extend] max_residual`; ticket 0377) or the piece can't be joined."""
+    limit = residual_limit(project, max_residual, example)
     name, base, live = current_image(project, asset)
     _partial(base, name)
     record = _canvas_record(asset, name, sides, example)
@@ -415,9 +447,10 @@ def add_piece(
     try:
         box = _within(sides, base.shape, piece.shape, record.origin)
         registration = register_piece(_crop(base, box), piece, _overlaps(sides, box, piece.shape, record.origin))
-        if registration.residual > MAX_RESIDUAL:
-            raise ValueError(f"the edge patches are {registration.residual:.2f} px from the fit, over the "
-                             f"{MAX_RESIDUAL} px limit")
+        if registration.residual > limit:
+            raise_to = RESIDUAL_CEILING if registration.residual <= RESIDUAL_CEILING else None
+            raise _missed(shown, f"the edge patches are {registration.residual:.2f} px from the fit, over the "
+                                 f"{limit:g} px limit", asset, raise_to)
         registration = _snap(_shifted(registration, box))
         cancel.check()
         resampled, placed_at = _trim(*resample_piece(piece, registration))
@@ -455,7 +488,9 @@ def add_piece(
         residual=round(registration.residual, 3), gain=(round(gain.low, 4), round(gain.high, 4)),
         seam_length=length, seam_difference=difference)
     _append(asset, [entry])
-    findings = (check_join_residual(registration.residual, registration.patches, shown)
+    rounded_gain = (round(gain.low, 4), round(gain.high, 4))
+    findings = (check_join_residual(registration.residual, registration.patches, shown, limit)
+                + repainted_findings(shown, registration.residual, limit, rounded_gain, difference)
                 + check_join_gain(gain.low, gain.high, shown) + check_seam_difference(difference, length, shown))
     result = Joined(
         piece=piece_name, sides=record.sides, width=int(joined.shape[1]), height=int(joined.shape[0]),

@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: ml-engineer
 type: trial
@@ -161,3 +161,30 @@ Gemini and OpenAI; FLUX direct is dropped because its API terms forbid removing 
   Step 1's generation counts and step 3's bar (kept per generated image, by task) use these.
 - Pollinations only if Cloudflare fails (round 2's recommendation, not asked again).
 
+
+## Result: closed by the Owner's decision (2026-11-23)
+
+**The painted work goes to OpenAI's GPT Image, through the OpenAI API, on a budget of $10 a month** (`[providers]
+budget_usd_month = 10` in the art repo's `kiripix.toml`, replacing $0 by DEC-004 and this ticket's $100 a year). The Owner
+chose it from use, not from this study: round 2 had closed OpenAI as paid-only (`desk-study-round2.md`), and the Cloudflare
+klein 4B step 3 was never run. **Steps 3 to 5 are waived.** The evidence there is:
+
+- Round 1's desk row ([desk-study.md](0353-trial/desk-study.md), read 2026-11-20): `gpt-image-2` at 1536 x 1024 costs $0.005
+  low, $0.041 medium, $0.165 high, about $17 to $34 a year at step 1's volume, at the flat 1-in-10 pass rate; the per-image
+  price of 2.5 and 2.6 wasn't readable. At the round-2 pass rates for room Sources (1 in 10 to 20), medium quality may not
+  fit $120 a year; the cap ([0378](0378-m6-gen-states-the-cost-and-refuses-past-the-cap.md)) holds it either way, and `gen`'s
+  ledger will give the real figures.
+- [0377](0377-m6-extend-joins-a-re-rendered-strip.md): a real GPT Image `extend` piece of the laneway joins at 0.66 px
+  (`--max-residual 1`), seam difference 3.3, no visible seam. GPT Image re-renders the kept strip, so its pieces need the
+  raised limit.
+
+**Tasks:** room Sources, `extend` pieces, Look edits, Props and their states, and portraits with their emotions (the Owner:
+"generating character portraits seems OK for now"). **Not decided:** character and enemy sprites and their animations, which
+stay with [0354](0354-m6-provider-research-actors.md); VFX strips ([0347](0347-m6-vfx-trial.md)) and image-to-3D
+([0144](0144-m6-image-to-3d-trial.md)) are unchanged. No FLUX model enters Kiripix (round 2's licence answer stands).
+
+**Spec:** §16 decision 5 and the §14 line on the image API Provider name OpenAI's GPT Image.
+
+**Follow-up tickets:** [0379](0379-m6-openai-provider-and-gen.md) (the OpenAI Provider, `gen`, the cost ledger and `cost`),
+[0378](0378-m6-gen-states-the-cost-and-refuses-past-the-cap.md) (the estimate and the cap, on 0379),
+[0380](0380-m6-gen-drives-extend.md) (`gen` driving `extend`), and [0143](0143-m6-gen-a-look-edit.md) moved to OpenAI.

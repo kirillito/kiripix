@@ -16,6 +16,7 @@ import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
 
 from kiripix.checks import Finding, Position
+from kiripix.checks.join import MAX_RESIDUAL, RESIDUAL_CEILING
 from kiripix.core import atomic
 from kiripix.core.errors import KiripixError
 
@@ -113,9 +114,15 @@ class StyleSection(_Strict):
 
 
 class ExtendSection(_Strict):
-    """`[extend]`: the canvas, in px, that `kiripix extend <id> canvas` writes for the image model (ticket 0136)."""
+    """`[extend]`: the canvas, in px, that `kiripix extend <id> canvas` writes for the image model (ticket 0136), and how
+    closely a piece must register for `extend add` to join it (ticket 0377)."""
 
     canvas: tuple[int, int] = Field((1376, 768), description="Width and height of the canvas for the next piece.")
+    max_residual: float = Field(
+        MAX_RESIDUAL, gt=0, le=RESIDUAL_CEILING,
+        description=f"The registration residual, px, above which `extend add` refuses a piece: {MAX_RESIDUAL} for a model "
+                    f"that leaves the kept strip untouched (Nano Banana), up to {RESIDUAL_CEILING} for one that "
+                    "re-renders it (GPT Image).")
 
     @model_validator(mode="after")
     def _positive(self) -> Self:
@@ -305,14 +312,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 12
+PROJECT_SCHEMA_VERSION = 13
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[12] = 12
+    schema_version: Literal[13] = 13
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -407,10 +414,17 @@ def _add_ramp_choices(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 12}
 
 
+def _add_extend_max_residual(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 12 had no `[extend] max_residual`; version 13 adds it (ticket 0377), 0.5 px, the limit `extend add` had
+    (written nowhere: the default is read)."""
+    return {**document, "schema_version": 13}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
     4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section,
-    8: _add_portrait_section, 9: _add_inbox_section, 10: _add_style_section, 11: _add_ramp_choices}
+    8: _add_portrait_section, 9: _add_inbox_section, 10: _add_style_section, 11: _add_ramp_choices,
+    12: _add_extend_max_residual}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 

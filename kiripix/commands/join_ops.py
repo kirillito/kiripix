@@ -13,11 +13,13 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.checks import check_join_gain, check_join_residual, check_seam_difference
+from kiripix.checks.join import MAX_RESIDUAL
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.image_ops import OP_GROUP
 from kiripix.commands.registry import CliMeta, command
 from kiripix.core.errors import KiripixError, fail
 from kiripix.core.images import load_rgba, save_png
+from kiripix.core.project import find_project, find_root
 from kiripix.ops import JOIN_SIDES, JoinError, Overlap, has_partial_alpha, match_tone, register_piece, resample_piece, seam_join
 
 _FORMAT = "side:width[:offset], side one of " + ", ".join(JOIN_SIDES)
@@ -149,8 +151,15 @@ def op_register_piece(arguments: RegisterInput, context: Context) -> Outcome[Reg
             origin=origin,
             overlap=placed,
         ),
-        check_join_residual(registration.residual, registration.patches, piece_name),
+        check_join_residual(registration.residual, registration.patches, piece_name, _residual_limit(context.cwd)),
     )
+
+
+def _residual_limit(cwd: Path) -> float:
+    """`[extend] max_residual` of the Project the Op runs in (ticket 0377); outside a Project, the default."""
+    if find_root(cwd) is None:
+        return MAX_RESIDUAL
+    return find_project(cwd).settings.extend.max_residual
 
 
 class ToneInput(BaseModel):

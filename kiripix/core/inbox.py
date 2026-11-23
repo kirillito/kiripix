@@ -109,8 +109,10 @@ def _move(project: Project, inbox: Path, file: Path, day: str) -> Path:
 
 def run(
     project: Project, inbox: Path, dry_run: bool, hold: Callable[[Asset], AbstractContextManager[None]],
+    max_residual: float | None = None,
 ) -> Result:
-    """File every image in `inbox`. `hold` takes an Asset's lock for the length of its import."""
+    """File every image in `inbox`. `hold` takes an Asset's lock for the length of its import. `max_residual` is the
+    registration limit of each piece joined on (`extend add --max-residual`)."""
     result = Result()
     every, result.findings = list_assets(project)
     day = datetime.date.today().isoformat()
@@ -145,7 +147,7 @@ def run(
             continue
         try:
             with hold(asset):
-                entry, extra = _file(project, asset, file, shown, sides)
+                entry, extra = _file(project, asset, file, shown, sides, max_residual)
                 entry.moved_to = project.relative(_move(project, inbox, file, day))
         except KiripixError as error:
             result.files.append(Filed(shown, "failed", asset=asset.id, action=action, sides=sides,
@@ -162,7 +164,7 @@ def run(
 
 def file_one(
     project: Project, asset_id: str, file: Path, shown: str, sides: list[str],
-    hold: Callable[[Asset], AbstractContextManager[None]],
+    hold: Callable[[Asset], AbstractContextManager[None]], max_residual: float | None = None,
 ) -> Result:
     """File one image into one Asset: a Variant with no `sides`, else a piece joined on those sides. The file stays."""
     result = Result()
@@ -176,7 +178,7 @@ def file_one(
             fix=f"kiripix to-paint --match {asset.id}")])
     try:
         with hold(asset):
-            entry, extra = _file(project, asset, file, shown, sides)
+            entry, extra = _file(project, asset, file, shown, sides, max_residual)
     except KiripixError as error:
         result.files.append(Filed(shown, "failed", asset=asset.id, action=action, sides=sides,
                                   code=error.findings[0].code if error.findings else None))
@@ -199,11 +201,13 @@ def _lone(project: Project, result: Result, touched: Iterable[Asset], cache: Has
     cache.save()
 
 
-def _file(project: Project, asset: Asset, file: Path, shown: str, sides: list[str]) -> tuple[Filed, list[Finding]]:
+def _file(
+    project: Project, asset: Asset, file: Path, shown: str, sides: list[str], max_residual: float | None,
+) -> tuple[Filed, list[Finding]]:
     if not sides:
         name, _, created = sources.import_file(asset, file, shown, "variant")
         return Filed(shown, "imported", asset=asset.id, action="import", variant=name, created=created), []
     example = f"kiripix extend {asset.id} add {shown} --side {','.join(sides)}"
     extend.ensure_canvas(project, asset, sides, example)
-    joined, findings = extend.add_piece(project, asset, file, shown, sides, example)
+    joined, findings = extend.add_piece(project, asset, file, shown, sides, example, max_residual)
     return Filed(shown, "imported", asset=asset.id, action="extend", sides=joined.sides, piece=joined.piece), findings

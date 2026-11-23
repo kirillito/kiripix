@@ -167,8 +167,8 @@ def test_an_old_settings_file_migrates_in_memory_and_the_stage_takes_a_height(pr
 def test_a_version_2_settings_file_migrates_in_memory_and_gets_the_default_light(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
-    assert "schema_version = 12" in text  # 0105 added the key light, 0167 the ramp table, 0136 `[extend]`, 0224 the generators, 0262 `[icon]`, 0242 `[portrait]`
-    old = text.replace("schema_version = 12", "schema_version = 2")
+    assert "schema_version = 13" in text  # 0105 added the key light, 0167 the ramp table, 0136 `[extend]`, 0224 the generators, 0262 `[icon]`, 0242 `[portrait]`, 0377 `[extend] max_residual`
+    old = text.replace("schema_version = 13", "schema_version = 2")
     for key in ("light_angle", "light_tilt"):
         old = "\n".join(line for line in old.splitlines() if not line.startswith(key)) + "\n"
     path.write_text(old, encoding="utf-8")

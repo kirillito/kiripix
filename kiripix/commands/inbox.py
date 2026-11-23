@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import inbox
+from kiripix.core import extend, inbox
 from kiripix.core.assets import Asset
 from kiripix.core.inbox import FiledAction, FiledOutcome
 from kiripix.core.locks import asset_lock, hold
@@ -27,6 +27,8 @@ class InboxInput(BaseModel):
     asset: str | None = Field(None, description="With --file: the Asset to file it into.")
     sides: list[str] = Field([], description="With --file: the side the piece extends, as `to-paint` "
                                                                "gives a room mid-`extend`; none imports it as a Variant.")
+    max_residual: float | None = Field(None, description="The registration limit, px, of each piece joined on, as `extend add "
+                                                         "--max-residual`: `[extend] max_residual` (0.5) by default, at most 1.0.")
 
     @model_validator(mode="after")
     def _one_file_or_the_folder(self) -> Self:
@@ -92,15 +94,18 @@ class InboxData(BaseModel):
 def inbox_command(arguments: InboxInput, context: Context) -> Outcome[InboxData]:
     project = find_project(context.cwd)
     where = inbox.folder(project, arguments.folder, context.cwd)
+    if arguments.max_residual is not None:  # refused once, before any file
+        extend.residual_limit(project, arguments.max_residual, "kiripix inbox")
 
     def hold_asset(asset: Asset) -> AbstractContextManager[None]:
         return hold(project.state_dir, [asset_lock(asset.id)], context.wait, context.command_line)
 
     if arguments.file is not None and arguments.asset is not None:
         file = arguments.file if arguments.file.is_absolute() else context.cwd / arguments.file
-        done = inbox.file_one(project, arguments.asset, file, project.relative(file), arguments.sides, hold_asset)
+        done = inbox.file_one(project, arguments.asset, file, project.relative(file), arguments.sides, hold_asset,
+                               arguments.max_residual)
     else:
-        done = inbox.run(project, where, arguments.dry_run, hold_asset)
+        done = inbox.run(project, where, arguments.dry_run, hold_asset, arguments.max_residual)
     files = [InboxFile.model_validate(vars(f)) for f in done.files]
     lone = [LoneVariant(asset=a, variant=v, pick=f"kiripix pick {a} {v}") for a, v in done.lone]
     filed = sum(1 for f in files if f.outcome in ("imported", "would_import"))

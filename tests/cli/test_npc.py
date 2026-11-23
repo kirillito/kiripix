@@ -230,8 +230,8 @@ def test_a_wearable_of_another_body_is_refused(project: Kiripix) -> None:
 def test_an_older_project_migrates_and_gains_empty_choices(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text(encoding="utf-8")
-    assert "schema_version = 12" in text
-    old = text.replace("schema_version = 12", "schema_version = 11")
+    assert "schema_version = 13" in text
+    old = text.replace("schema_version = 13", "schema_version = 11")
     path.write_text(old, encoding="utf-8")
     table(project, row("hair", 2, [BLACK, NIGHT]))
     old = path.read_text(encoding="utf-8")
@@ -247,7 +247,7 @@ def test_an_older_project_migrates_and_gains_empty_choices(project: Kiripix) -> 
 
 def test_a_version_11_project_with_ramps_reads_its_choices(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
-    path.write_text(path.read_text("utf-8").replace("schema_version = 12", "schema_version = 11"), encoding="utf-8")
+    path.write_text(path.read_text("utf-8").replace("schema_version = 13", "schema_version = 11"), encoding="utf-8")
     ramps(project)
 
     shown = project.json("describe", "project")["data"]["ramps"]

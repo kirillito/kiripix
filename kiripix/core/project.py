@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 12
+PROJECT_TEMPLATE = """schema_version = 13
 
 [project]
 name = "{name}"
@@ -87,6 +87,7 @@ version = "4.7"                # the pinned Godot version (docs/versions.md in K
 
 [extend]                       # `kiripix extend <id> canvas`: the canvas pasted into the image model
 canvas = [1376, 768]           # width and height in px
+max_residual = 0.5             # px `extend add` lets a piece's registration miss by; up to 1.0 for a model that re-renders the kept strip
 
 [icon]                         # `kiripix new icon <name>`: the square an icon is fitted to
 size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) overrides it

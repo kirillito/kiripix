@@ -2,20 +2,24 @@
 
 from kiripix.checks.finding import Finding, Position
 
-MAX_RESIDUAL = 0.5  # px; trial 0063 registered its pieces to 0.3
+MAX_RESIDUAL = 0.5  # px; trial 0063 registered its pieces to 0.3. The default of `[extend] max_residual` (ticket 0377)
+# The most `[extend] max_residual` and `--max-residual` may raise it to (ticket 0377): a strip GPT Image re-rendered registers
+# to 0.66 px, a strip from another scene to 1.34 px or more, and a strip with part of it moved 2 px to 1.2 px.
+RESIDUAL_CEILING = 1.0
 MAX_GAIN_RANGE = (0.8, 1.25)  # a piece darker or brighter than this against the base is a different exposure, not a tint
 MAX_SEAM_DIFFERENCE = 12.0  # mean absolute RGB difference (0..255) along the cut
 
 
-def check_join_residual(residual: float, patches: int, file: str) -> list[Finding]:
-    """The registration left more than half a pixel between the edge patches and the fit."""
-    if residual <= MAX_RESIDUAL:
+def check_join_residual(residual: float, patches: int, file: str, limit: float = MAX_RESIDUAL) -> list[Finding]:
+    """The registration left more than `limit` px (half a pixel by default, `[extend] max_residual`) between the edge
+    patches and the fit."""
+    if residual <= limit:
         return []
     return [
         Finding(
             code="join.residual_high",
             severity="warning",
-            message=f"{file} registers to {residual:.2f} px over {patches} patches; more than {MAX_RESIDUAL} px "
+            message=f"{file} registers to {residual:.2f} px over {patches} patches; more than {limit:g} px "
             "shows as a step in the join",
             position=Position(file=file),
             owner_action=f"Widen the overlap of {file}, or generate the piece again with a wider strip of the base.",

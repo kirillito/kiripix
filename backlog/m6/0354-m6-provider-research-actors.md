@@ -14,6 +14,11 @@ volume, the desk table and the $100-a-year budget for both; start once its desk 
 in `backlog/m6/0354-trial/` or the scratchpad, not in `kiripix/`. Same rules as 0353: $0, free credits only, the Owner makes
 the accounts, keys only in environment variables, every figure from the vendor's own page.
 
+**Since 0353 closed (2026-11-23):** the painted work went to OpenAI's GPT Image, on $10 a month for all Provider calls
+(`[providers] budget_usd_month`, replacing $100 a year). Portraits and their emotions are in that decision. **Still open
+here:** character and enemy sprites and their animations, and the cutscene poses. GPT Image is now a candidate to test
+here too, within that budget; whether this trial may spend from it, or stays at $0, is the Owner's call before step 3.
+
 ## Context
 
 - The cast is rendered from 3D: the mc03 bodies at 52 px, 8 directions (the game's DEC-068), the `top34_8` camera at a

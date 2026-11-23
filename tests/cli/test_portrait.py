@@ -242,7 +242,7 @@ def test_a_project_that_wrote_the_old_canvas_keeps_it(project: Kiripix) -> None:
 
 def test_the_project_file_at_version_8_reads_with_the_default_portrait_canvas(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
-    text = path.read_text(encoding="utf-8").replace("schema_version = 12", "schema_version = 8")
+    text = path.read_text(encoding="utf-8").replace("schema_version = 13", "schema_version = 8")
     lines = [line for line in text.splitlines() if not line.startswith(("[portrait]", "canvas = [192", "# anchor"))]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     assert "portrait" not in tomllib.loads(path.read_text(encoding="utf-8"))

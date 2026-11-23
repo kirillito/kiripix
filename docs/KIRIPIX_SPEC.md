@@ -179,6 +179,7 @@ version = "4.7"                # pinned at M0: Godot 4.7 (4.7.2-stable); see doc
 
 [extend]                       # `kiripix extend <id> canvas`: the canvas pasted into the image model (M4)
 canvas = [1376, 768]           # width and height in px
+max_residual = 0.5             # px `extend add` lets a piece's registration miss by (M6); 0.5 for a model that leaves the kept strip untouched, up to 1.0 for one that re-renders it (GPT Image); `--max-residual` overrides it
 
 [inbox]                        # `kiripix inbox`: the images made elsewhere, filed by their file names (M6)
 folder = "inbox"               # relative to the Project; `--folder` overrides it
@@ -909,7 +910,7 @@ kiripix next <id>                           the next stage and what it needs (a 
 kiripix queue [--match <glob>] [--kind <kind>]   everything waiting on the Owner: reviews, owner-only inputs and findings with their hand-over notes; findings an agent can fix are counted per Asset, not listed (M6)
 kiripix district <glob>                     a district's rooms in ID order (size, furthest built and waiting Stage, queue counts, a cached 1x thumbnail), every Exit with its pairing (paired, one_way, unpaired, outside) and the rooms' Links; a Probe (M6)
 kiripix to-paint --match <glob> [--out <dir>]  every prompt and canvas a district needs, in one folder (default .kiripix/to-paint/<date>/): per room waiting on its Source `<nn>-<room>.prompt.txt` (the brief's built prompt), or, mid-`extend`, its next canvas `<nn>-<room>.<side>.png` with the prompt; `index.md` names the file each image comes back as (`<room>.png`, `<room>.<side>.png`, for `inbox`); rooms with no brief are listed under "no brief yet"; records nothing in the Project (M6)
-kiripix inbox [--folder <dir>] [--dry-run] | --file <image> --asset <id> [--sides <side>]   file the PNG and JPEG images the Owner made elsewhere (`[inbox] folder`, `inbox/` by default) by their file names, the ones `to-paint` lists: `<room>.png` or `<room>-<anything>.png` (a Kind prefix is optional) is imported as a Variant, `<room>.<side>.png` is joined on as `extend add` does, after writing the canvas record it needs; a name that matches no Asset, or several, stays with `inbox.unmatched` or `inbox.ambiguous`; a failed `extend add` stays with its own finding (exit 2); each filed image moves to `<folder>/imported/<date>/`, so a second run imports nothing; never picks, but names the rooms that now have exactly one Variant with their `pick` command; `--dry-run` changes nothing; `--file` files one image into one named Asset, whatever its name, and doesn't move it (the UI's drop on a waiting room) (M6)
+kiripix inbox [--folder <dir>] [--dry-run] | --file <image> --asset <id> [--sides <side>] [--max-residual PX]   file the PNG and JPEG images the Owner made elsewhere (`[inbox] folder`, `inbox/` by default) by their file names, the ones `to-paint` lists: `<room>.png` or `<room>-<anything>.png` (a Kind prefix is optional) is imported as a Variant, `<room>.<side>.png` is joined on as `extend add` does, after writing the canvas record it needs; a name that matches no Asset, or several, stays with `inbox.unmatched` or `inbox.ambiguous`; a failed `extend add` stays with its own finding (exit 2); each filed image moves to `<folder>/imported/<date>/`, so a second run imports nothing; never picks, but names the rooms that now have exactly one Variant with their `pick` command; `--dry-run` changes nothing; `--file` files one image into one named Asset, whatever its name, and doesn't move it (the UI's drop on a waiting room) (M6)
 kiripix run <id>|--all|--match <glob> [stage] [--force [--from <stage>]] [--rerun] [--cpu]   run stale and todo stages; --from forces that stage and every one after it; --rerun also re-runs stale Runner calls
 kiripix set <id[,id...]> <stage> key=value...   set stage parameters; several Assets, all or none (M5)
 kiripix decide <id> <stage> --decision '<json>' | --file d.json [--brief]   record a Decision (validated against the stage's schema); a file may hold a JSON array of Decisions, recorded all or none; --brief leaves out `current`
@@ -919,7 +920,7 @@ kiripix plate-import <id> <png>             import a Plate image (the layers Sta
 kiripix undo <id> <stage> [--brief]         undo the stage's last Decision
 kiripix redo <id> <stage> [--brief]         redo it
 kiripix accept <id> <stage>                 confirm a needs-review stage (owner-only)
-kiripix extend <id> canvas|add <png>|undo|done|crop [--side east|south|west|north] [--keep N|ACROSS,DOWN] [--box x0,y0,x1,y1] [--size WxH]   the canvas for the next piece of a large room, joining a piece onto it, and the joined image as a Variant (M4); crop writes a crop of the Source at the image model's size for a Look's edit (M5)
+kiripix extend <id> canvas|add <png>|undo|done|crop [--side east|south|west|north] [--keep N|ACROSS,DOWN] [--box x0,y0,x1,y1] [--size WxH] [--max-residual PX]   the canvas for the next piece of a large room, joining a piece onto it (`--max-residual`, up to 1.0, for a strip the model re-rendered), and the joined image as a Variant (M4); crop writes a crop of the Source at the image model's size for a Look's edit (M5)
 kiripix import <id> <file> [--role variant|clip-source|rigged|parameters|sheet] [--look l | --loop l [--frame n]] [--of piece|crop]   set a source from an outside image or model; --role says what a character's or sprite's file is; --look adds an edit Variant of Look l; --loop imports a frame Loop's kit frames, --frame an edit of the Source as frame n (M4); --of says the edit was made on a piece or a crop of the room (M5)
 kiripix loop kit <id> <loop> <folder> [--frames N]   write a frame Loop's kit to paint on (M4)
 kiripix clips copy <id> --from <character> [--clip c,...] [--replace]   copy another character's clip Decisions and their clip sources (M4)
@@ -1169,6 +1170,13 @@ DEC-048): rooms grow past one screen in both directions, and a battle area in th
   `--keep` takes one number or two, across and down, for a corner's two strips ([0231](../backlog/m4/0231-m4-extend-keep-per-axis.md)).
   A corner piece joins inside the L's bounds, each overlap ending at the piece's own edge, and `done` crops an open margin of
   up to 2 px that a piece registered just inside the image's edge leaves ([0230](../backlog/m4/0230-m4-extend-corner-off-by-one.md)).
+  `add` refuses a piece whose registration misses by more than `[extend] max_residual` (0.5 px by default, the most a strip the
+  model left untouched misses by), and `--max-residual` on `add` and `inbox` overrides it for one call. A model that re-renders the
+  whole canvas, kept strip included (GPT Image), returns the same picture warped by under a pixel, with new texture: a real piece
+  registered to 0.66 px and joined with no visible seam. Raised to at most 1.0 px, the limit joins such a piece and `add` warns
+  `extend.strip_repainted` (the residual, the gain, the seam's difference), so the Owner looks at the seam; a strip from another
+  scene (1.34 px or more, or too few patches to fit) and a strip with part of its layout moved (1.2 px for 2 px) still fail
+  ([0377](../backlog/m6/0377-m6-extend-joins-a-re-rendered-strip.md)).
 - The `area` Marker and its `Area2D`; the Masks and `room.json` exported into the game (§9).
 - Room Looks (§6.1, ADR 0009): the `looks` Stage, edits by `import --look`, and their export to Godot. Trial
   [0128](../backlog/m4/0128-m4-room-look-edit-trial.md) comes first; the work is [0127](../backlog/m4/0127-m4-room-looks.md).
@@ -1284,7 +1292,7 @@ with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.m
   ([0062](../backlog/m2/0062-m2-claude-first-pass-trial.md)). Its value next to the CLI is unproven: agents already drive
   Kiripix through the CLI and `describe`.
 - **PixelLab:** delayed, because its sprite generation has been unsatisfactory so far.
-- **An image API Provider** (Nano Banana is the candidate) with prompt templates, the style bible, the cost ledger and the
+- **An image API Provider** (OpenAI's GPT Image, the Owner's choice of 2026-11-23, §16) with prompt templates, the style bible, the cost ledger and the
   budget: nice to have, not urgent. It brings `gen --look` ([0143](../backlog/m6/0143-m6-gen-a-look-edit.md)), `gen` for a
   portrait's emotions and a Prop's states, and `gen` driving `extend`. The Owner's aim for `extend` (2026-11-16, after
   [0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md)) is that Kiripix writes the prompt, generates the base image,
@@ -1342,7 +1350,12 @@ strips with doors and lights as props, and every piece from one image.
    real character (`character.mc02`, 2026-11-11): the silhouette is kept and inner lines are out. On the idle it has no
    flicker on still parts; inner lines would add a third more line pixels.
 4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (with Providers; deferred from M3, then from M6).
-5. Which API provider comes first (with Providers, deferred from M6). Nano Banana is the candidate (the Owner, 2026-11-18).
+5. ~~Which API provider comes first~~: decided 2026-11-23 by the Owner: OpenAI's GPT Image, through the OpenAI API, for
+   the painted work (room Sources, `extend` pieces, Looks, Props and their states, portraits and their emotions), within
+   `[providers] budget_usd_month` ($10 in the art Project). Its pieces re-render the kept strip, so `extend add` joins them
+   under `--max-residual 1` ([0377](../backlog/m6/0377-m6-extend-joins-a-re-rendered-strip.md)). Sprites and their
+   animations are still open ([0354](../backlog/m6/0354-m6-provider-research-actors.md)); the study is
+   [0353](../backlog/m6/0353-m6-provider-research.md).
 6. Licence for Kiripix itself, if it's ever published.
 7. ~~How a multi-screen room is made~~: decided 2026-11-06 by the owner, after the trial
    [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects

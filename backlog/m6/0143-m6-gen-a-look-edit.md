@@ -1,13 +1,14 @@
 ---
 status: todo
-milestone: later
+milestone: M6
 agent: ml-engineer
 type: ticket
+depends_on: [0379-m6-openai-provider-and-gen.md]
 ---
 
 # M6: `gen --look`: make a Look's edit through a Provider
 
-Spec §6.1 (Looks), §10.5 and §14 M6. Needs M6's first Provider with image editing, and [0129](../m4/0129-m4-look-variants.md). Moved from M4 on 2026-11-08, when M4 became rooms for grid battles.
+Spec §6.1 (Looks), §10.5 and §14 M6. Needs the OpenAI Provider ([0379](0379-m6-openai-provider-and-gen.md); GPT Image, the Owner's choice of 2026-11-23), and [0129](../m4/0129-m4-look-variants.md). Moved from M4 on 2026-11-08, when M4 became rooms for grid battles.
 
 ## What to build
 
