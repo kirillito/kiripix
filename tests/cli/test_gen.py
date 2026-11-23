@@ -331,6 +331,156 @@ def test_an_undeclared_state_is_refused_before_the_call(project: Kiripix) -> Non
     assert result.codes == ["prop.state_unknown"] and ledger(project) == []
 
 
+# the OpenAI Provider over the fake HTTP layer: the mask, input_fidelity and the size sent
+
+
+def openai(project: Kiripix, **choice: str) -> None:
+    """The OpenAI Provider, sending at once, a fake key in .env, and `[providers.openai]` set as given."""
+    sending(project, default="openai")
+    (project.cwd / ".env").write_text("OPENAI_API_KEY=sk-fake-for-the-fake-transport\n", encoding="utf-8")
+    if choice:
+        with (project.cwd / "kiripix.toml").open("a", encoding="utf-8") as settings:
+            settings.write("\n[providers.openai]\n" + "".join(f'{k} = "{v}"\n' for k, v in choice.items()))
+
+
+def sent_requests(project: Kiripix) -> list[dict[str, Any]]:
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((project.cwd / "openai-requests").glob("*.json"))]
+
+
+def data_image(url: str) -> Any:
+    import base64
+    import io
+
+    assert url.startswith("data:image/png;base64,")
+    return np.asarray(Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).convert("RGBA"))
+
+
+def extend_room(project: Kiripix) -> Any:
+    from test_extend import room
+
+    full = room(project)
+    (project.cwd / "style" / "prompts" / "room.j2").write_text("A laneway.\n", encoding="utf-8")
+    project.json("run", "room.alley", "brief")
+    return full
+
+
+def canvas_and_fill(project: Kiripix) -> tuple[Any, tuple[int, int, int]]:
+    folder = project.cwd / "assets" / "room" / "alley" / "extend"
+    canvas = np.asarray(Image.open(folder / "canvas.png").convert("RGBA"))
+    keep = json.loads((folder / "canvas.json").read_text(encoding="utf-8"))
+    return canvas, keep
+
+
+def test_an_extend_edit_sends_a_mask_at_the_size_sent_over_the_fill_and_maps_the_result_back(project: Kiripix) -> None:
+    extend_room(project)
+    openai(project)
+
+    data = project.json("gen", "room.alley", "--side", "east")["data"]
+
+    [request] = sent_requests(project)
+    body = request["body"]
+    assert request["url"].endswith("/v1/images/edits") and request["bearer"] is True
+    assert "sk-fake" not in json.dumps(request)
+    width, height = (int(v) for v in body["size"].split("x"))
+    assert (width, height) == tuple(int(v) for v in data["size"].split("x")) and (width, height) != (240, 160)
+    sent = data_image(body["images"][0]["image_url"])
+    mask = data_image(body["mask"]["image_url"])
+    assert sent.shape == mask.shape == (height, width, 4)  # the 240 x 160 canvas, padded to what the model takes
+    canvas, _ = canvas_and_fill(project)
+    assert (sent[:160, :240] == canvas).all()  # placed at scale 1, top-left
+    alpha = mask[..., 3]
+    assert (alpha[:160, :80] == 255).all()  # the kept strip: the canvas's first 80 columns (east)
+    assert (alpha[:160, 80:240] == 0).all() and (alpha[160:, :] == 0).all() and (alpha[:, 240:] == 0).all()
+    assert "input_fidelity" not in body  # gpt-image-2.6-sunburst: the docs name no input_fidelity for it
+    [candidate] = data["candidates"]
+    stored = np.asarray(Image.open(project.cwd / candidate["file"]).convert("RGBA"))
+    assert stored.shape == (160, 240, 4) and (stored == canvas).all()  # the fake answers with what it was sent
+    [line] = ledger(project)
+    assert line["mask"] and line["input_fidelity"] is None and line["usage"]["input_image_tokens"] == 40
+
+
+def test_a_corner_canvas_mask_keeps_both_strips(project: Kiripix) -> None:
+    from test_extend import east_and_south
+
+    full = extend_room(project)
+    east_and_south(project, full)
+    openai(project)
+
+    project.json("gen", "room.alley", "--side", "east,south")
+
+    canvas, record = canvas_and_fill(project)
+    alpha = data_image(sent_requests(project)[0]["body"]["mask"]["image_url"])[..., 3]
+    kx, ky = record["keep"]
+    fill = canvas[-1, -1, :3]  # the corner to paint is the canvas's bottom right
+    kept = ~np.all(canvas[..., :3] == fill, axis=-1)
+    assert (alpha[:160, :240] == np.where(kept, 255, 0)).all() and (alpha[:, 240:] == 0).all() and (alpha[160:] == 0).all()
+    assert kept[ky:, :kx].any() and kept[:ky, kx:].any()  # the L: the west strip below the corner, the north strip beside it
+    assert not kept[ky:, kx:].any()  # the corner itself is painted
+
+
+def test_input_fidelity_is_sent_when_set_or_when_the_model_takes_it(project: Kiripix) -> None:
+    extend_room(project)
+    openai(project, input_fidelity="high")
+    project.json("gen", "room.alley", "--side", "east")
+    path = project.cwd / "kiripix.toml"
+    path.write_text(path.read_text(encoding="utf-8").replace('input_fidelity = "high"',
+                                                              'input_fidelity = "auto"\nmodel = "gpt-image-1.5"'),
+                    encoding="utf-8")
+    project.json("gen", "room.alley", "--side", "east")
+    path.write_text(path.read_text(encoding="utf-8").replace('input_fidelity = "auto"', 'input_fidelity = "off"'),
+                    encoding="utf-8")
+    project.json("gen", "room.alley", "--side", "east")
+
+    bodies = [r["body"] for r in sent_requests(project)]
+
+    assert bodies[0]["input_fidelity"] == "high"  # forced
+    assert bodies[1]["input_fidelity"] == "high" and bodies[1]["model"] == "gpt-image-1.5"  # auto, on a model that takes it
+    assert "input_fidelity" not in bodies[2]
+    assert [line["input_fidelity"] for line in ledger(project)] == ["high", "high", None]
+
+
+def test_a_look_edit_is_sent_at_the_size_sent_and_stored_at_the_sources(project: Kiripix) -> None:
+    room_with_source(project)
+    openai(project)
+
+    data = project.json("gen", "room.alley", "--look", "night", "--prompt", "make it night")["data"]
+
+    body = sent_requests(project)[0]["body"]
+    assert "mask" not in body
+    sent = data_image(body["images"][0]["image_url"])
+    assert (sent.shape[1], sent.shape[0]) == tuple(int(v) for v in data["size"].split("x"))
+    stored = np.asarray(Image.open(project.cwd / data["files"][0]).convert("RGBA"))
+    source = np.asarray(Image.open(project.cwd / "first.png").convert("RGBA"))
+    assert stored.shape == source.shape and (stored == source).all()  # mapped back: the fake returned what it was sent
+
+
+def test_a_canvas_larger_than_the_model_takes_is_shrunk_into_it_and_scaled_back(project: Kiripix) -> None:
+    """A canvas over 3840 px wide: fit_size shrinks it, so it is sent shrunk and the mask with it, at the size sent."""
+    from test_extend import ROOM
+
+    path = project.cwd / "kiripix.toml"
+    path.write_text(path.read_text(encoding="utf-8").replace("canvas = [1376, 768]", "canvas = [4000, 400]"),
+                    encoding="utf-8")
+    project.json("new", "room", "alley", "--view", "top")
+    rng = np.random.default_rng(4)
+    Image.fromarray(np.kron(rng.integers(0, 256, (100, 1000, 3), dtype=np.uint8), np.ones((4, 4, 1), dtype=np.uint8)),
+                    "RGB").save(project.cwd / "wide.png")
+    project.json("pick", ROOM, project.json("import", ROOM, "wide.png")["data"]["variant"])
+    (project.cwd / "style" / "prompts" / "room.j2").write_text("A laneway.\n", encoding="utf-8")
+    project.json("run", ROOM, "brief")
+    openai(project)
+
+    data = project.json("gen", ROOM, "--side", "south")["data"]
+
+    body = sent_requests(project)[0]["body"]
+    width, height = (int(v) for v in body["size"].split("x"))
+    assert width <= 3840 and width % 16 == 0 and height % 16 == 0
+    mask = data_image(body["mask"]["image_url"])
+    assert mask.shape[:2] == (height, width)
+    stored = np.asarray(Image.open(project.cwd / data["candidates"][0]["file"]).convert("RGBA"))
+    assert stored.shape == (400, 4000, 4)  # scaled back to the canvas
+
+
 # gen drives extend (0380)
 
 

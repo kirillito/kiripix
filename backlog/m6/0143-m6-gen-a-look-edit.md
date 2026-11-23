@@ -33,7 +33,9 @@ sends the room's picked Source with the edit prompt, and stores each result unde
   With no template, it is Lost-and-Found's wording: "Edit this image. Keep everything exactly the same except: <words>".
 - The same path makes a Prop's state (`--state`, `import_state`) and a portrait's emotion (`--emotion`, `import_emotion`).
   Each is refused before the call when the state or emotion isn't declared.
-- The size asked for is the Source's own, fitted to the model's rules.
+- The size asked for is the Source's own, fitted to the model's rules; the Source is placed into that size and each result
+  mapped back to the Source's size, and `input_fidelity` is `high` where the model takes it (the follow-up in
+  [0380](0380-m6-gen-drives-extend.md)).
 - Each call is logged in `history.jsonl` (`stage` `looks`, `look`) and the ledger, and is held to the budget and the
   approval like every `gen` call.
 - Tests: `test_gen_look_adds_n_edit_variants_of_the_look_and_touches_nothing_else` (2 Variants under `src/looks/night/`,

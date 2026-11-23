@@ -41,6 +41,8 @@ class LedgerLine(BaseModel):
     usd: float
     estimated: bool = Field(description="True: `usd` is the pre-call estimate, the Provider reported no usage.")
     prices_date: str = Field(description="The day the Provider's price table was read.")
+    mask: str | None = Field(None, description="The SHA-256 of the mask sent with an edit (an `extend` canvas's).")
+    input_fidelity: str | None = Field(None, description="The input_fidelity sent; None: left out.")
     usage: dict[str, int] = Field(default_factory=dict, description="The token counts the Provider reported, such as "
                                   "input_tokens and output_tokens; empty when it reported none.")
     outcome: Literal["done", "failed", "cancelled"] = Field(

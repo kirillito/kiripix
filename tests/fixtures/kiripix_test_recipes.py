@@ -1156,5 +1156,36 @@ class FakeProvider(Provider):
         return ProviderResult(images=images, usd=FAKE_PRICE * request.count, usage=usage)
 
 
+# The OpenAI Provider's own request code runs in tests over a fake HTTP layer: it answers from the request (an edit: the
+# first image sent, unchanged; a generation: flat images of the size asked) and keeps each request's JSON body in the
+# working folder's `openai-requests/`, without the Authorization header (only whether it was there).
+import kiripix.providers.openai as openai_provider
+
+
+def _fake_openai(request: Any, check_cancel: CheckCancel) -> dict[str, Any]:
+    import base64
+    import io
+
+    check_cancel()
+    body = json.loads(request.data)
+    folder = Path.cwd() / "openai-requests"
+    folder.mkdir(exist_ok=True)
+    number = len(list(folder.glob("*.json"))) + 1
+    (folder / f"{number:03}.json").write_text(json.dumps({
+        "url": request.full_url, "bearer": str(request.get_header("Authorization", "")).startswith("Bearer "),
+        "body": body}), encoding="utf-8")
+    if "images" in body:
+        first = body["images"][0]["image_url"].split(",", 1)[1]
+        images = [first] * int(body["n"])
+    else:
+        width, height = (int(v) for v in body["size"].split("x"))
+        out = io.BytesIO()
+        Image.new("RGB", (width, height), (90, 120, 150)).save(out, format="PNG")
+        images = [base64.b64encode(out.getvalue()).decode("ascii")] * int(body["n"])
+    return {"data": [{"b64_json": b} for b in images],
+            "usage": {"input_tokens": 50, "output_tokens": 500, "input_tokens_details": {"text_tokens": 10, "image_tokens": 40}}}
+
+
+openai_provider.set_transport(_fake_openai)
 register_provider(FakeProvider("fake"))
 register_provider(FakeProvider("fake_keyed", key_name="FAKE_PROVIDER_KEY"))

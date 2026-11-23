@@ -1,7 +1,17 @@
 """The OpenAI Provider: GPT Image through the OpenAI Images API (ticket 0379; the Owner's choice, 2026-11-23, ticket 0353).
 
-Generation is `POST /v1/images/generations` (JSON); an edit is `POST /v1/images/edits` (multipart, one `image[]` part per
-input image, the first being the one edited). Images come back base64 in `data[].b64_json`, with the call's token `usage`.
+Generation is `POST /v1/images/generations` (JSON); an edit is `POST /v1/images/edits` (JSON too: `images`, each an
+`image_url` holding a base64 data URL, the first being the one edited; `mask`, an `image_url` the same way, applied to the
+first image; `input_fidelity`). The JSON body is the one the Images API reference documents for every field used here; the
+multipart form's mask field isn't documented. Images come back base64 in `data[].b64_json`, with the call's token `usage`.
+
+Edits, read on 2026-11-23 (the reference and the guide): a mask "must be of the same format and size" as the image it
+applies to and "contain an alpha channel"; "masking with GPT Image is entirely prompt-based" and the model "may not follow
+its exact shape with complete precision". The meaning of alpha isn't stated now; the earlier GPT Image convention, alpha 0
+where the model paints, is the one sent. `input_fidelity` ("high" | "low") is documented for `gpt-image-1.5` (both) and
+`gpt-image-1-mini` (low only), and "for `gpt-image-2`, omit this parameter"; nothing is said for 2.5 or 2.6, nor about its
+cost, so it is sent only to the models named (`FIDELITIES`) unless `[providers.openai] input_fidelity` forces it, and the
+estimate is unchanged. `markup` (2.5, 2.6) can't be combined with a mask and isn't used.
 
 Read on 2026-11-23 from developers.openai.com (the image generation guide, the pricing page, the models catalogue, the
 deprecations page and the Images API reference):
@@ -26,7 +36,7 @@ import math
 import threading
 import urllib.error
 import urllib.request
-import uuid
+from collections.abc import Callable
 from typing import Any
 
 from kiripix.providers.base import CheckCancel, Provider, ProviderError, ProviderRequest, ProviderResult
@@ -40,6 +50,8 @@ USD_PER_TOKEN = {"text_in": 5.00 / 1e6, "image_in": 8.00 / 1e6, "image_out": 30.
 OUTPUT_TOKENS_PER_MEGAPIXEL = {"low": 200, "medium": 1767, "high": 7033}  # per 1024 x 1024, see above
 IMAGE_IN_TOKENS = 1000  # an estimate per input image; the reported usage gives the real figure
 CHARS_PER_TOKEN = 4
+
+FIDELITIES = {"gpt-image-1.5": ("low", "high"), "gpt-image-1-mini": ("low",)}  # by model, dated snapshots included
 
 EDGE_STEP = 16
 MIN_PIXELS = 655_360
@@ -59,6 +71,12 @@ class OpenAI(Provider):
     max_images_in = 16
     prices_date = PRICES_DATE
     rerenders_kept_strip = True
+
+    def fidelities(self, model: str) -> tuple[str, ...]:
+        for name, values in FIDELITIES.items():
+            if model == name or model.startswith(f"{name}-20"):
+                return values
+        return ()
 
     def estimate_usd(self, model: str, size: tuple[int, int], quality: str, count: int, images_in: int,
                      prompt_chars: int) -> float:
@@ -93,19 +111,18 @@ class OpenAI(Provider):
         if not key:
             raise ProviderError("no OpenAI key was given")
         size = f"{request.size[0]}x{request.size[1]}"
+        payload: dict[str, Any] = {"model": request.model, "prompt": request.prompt, "n": request.count, "size": size,
+                                   "quality": request.quality, "output_format": "png"}
         if request.images:
-            boundary = uuid.uuid4().hex
-            fields: list[tuple[str, str]] = [("model", request.model), ("prompt", request.prompt), ("n", str(request.count)),
-                                             ("size", size), ("quality", request.quality), ("output_format", "png")]
-            body = _multipart(boundary, fields, [("image[]", image.name, image.png) for image in request.images])
-            built = urllib.request.Request(f"{API}/edits", data=body, method="POST", headers={
-                "Authorization": f"Bearer {key}", "Content-Type": f"multipart/form-data; boundary={boundary}"})
-        else:
-            payload = {"model": request.model, "prompt": request.prompt, "n": request.count, "size": size,
-                       "quality": request.quality, "output_format": "png"}
-            built = urllib.request.Request(f"{API}/generations", data=json.dumps(payload).encode("utf-8"), method="POST",
-                                           headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-        answer = _send_cancellable(built, check_cancel)
+            payload["images"] = [{"image_url": _data_url(image.png)} for image in request.images]
+            if request.mask is not None:
+                payload["mask"] = {"image_url": _data_url(request.mask)}
+            if request.input_fidelity is not None:
+                payload["input_fidelity"] = request.input_fidelity
+        built = urllib.request.Request(f"{API}/{'edits' if request.images else 'generations'}",
+                                       data=json.dumps(payload).encode("utf-8"), method="POST",
+                                       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        answer = _transport(built, check_cancel)
         images = [base64.b64decode(item["b64_json"]) for item in answer.get("data", []) if item.get("b64_json")]
         usage = answer.get("usage") or {}
         usd = _priced(usage) if usage else None
@@ -135,16 +152,8 @@ def _priced(usage: dict[str, Any]) -> float:
     return text_in * USD_PER_TOKEN["text_in"] + image_in * USD_PER_TOKEN["image_in"] + out * USD_PER_TOKEN["image_out"]
 
 
-def _multipart(boundary: str, fields: list[tuple[str, str]], files: list[tuple[str, str, bytes]]) -> bytes:
-    parts: list[bytes] = []
-    for name, value in fields:
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8")
-                     + value.encode("utf-8") + b"\r\n")
-    for name, filename, data in files:
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
-                     f"Content-Type: image/png\r\n\r\n".encode("utf-8") + data + b"\r\n")
-    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
-    return b"".join(parts)
+def _data_url(png: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
 
 def _send_cancellable(request: urllib.request.Request, check_cancel: CheckCancel) -> dict[str, Any]:
@@ -170,6 +179,17 @@ def _send_cancellable(request: urllib.request.Request, check_cancel: CheckCancel
         raise box["error"]
     answer: dict[str, Any] = box["answer"]
     return answer
+
+
+Transport = Callable[[urllib.request.Request, CheckCancel], dict[str, Any]]
+_transport: Transport = _send_cancellable
+
+
+def set_transport(transport: Transport) -> None:
+    """Replace how a request reaches OpenAI. For the test harness only (`KIRIPIX_TEST_RECIPES`): its fake answers from
+    the request and keeps what was sent, so no test reaches the network (the Owner, 2026-11-23: tests cost $0)."""
+    global _transport
+    _transport = transport
 
 
 def _error_message(error: urllib.error.HTTPError) -> str:

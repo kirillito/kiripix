@@ -84,8 +84,14 @@ def render_prompt(run: StageRun, exits: list[dict[str, str]]) -> None:
     template = template_in(root) if root is not None else None
     if root is None or template is None:
         return
-    from jinja2 import StrictUndefined, TemplateError, UndefinedError
-    from jinja2.sandbox import SandboxedEnvironment
+    try:
+        from jinja2 import StrictUndefined, TemplateError, UndefinedError
+        from jinja2.sandbox import SandboxedEnvironment
+    except ImportError:
+        raise StageFailure("jinja2, which renders the room template, isn't installed in the environment running kiripix: "
+                           "it was set up before jinja2 was a dependency and not synced since",
+                           code="setup.missing_dependency",
+                           fix="uv sync  (in the Kiripix repository; then run kiripix through `uv run`)") from None
 
     shown = template.relative_to(root).as_posix()
     fields = context(run, exits)

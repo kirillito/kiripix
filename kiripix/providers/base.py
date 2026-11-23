@@ -35,7 +35,10 @@ class InputImage:
 @dataclass(frozen=True)
 class ProviderRequest:
     """One call. `size` is (width, height) in px, already one the Provider accepts (`Provider.fit_size`). With no
-    `images` it is a generation; with images, an edit of the first, the rest references."""
+    `images` it is a generation; with images, an edit of the first, the rest references. An edited first image is already
+    at `size` (core pads or shrinks it to the size sent, and maps each result back). `mask`: a PNG at `size` whose alpha is
+    0 where the Provider paints and 255 where it keeps the first image (an `extend` canvas's kept strips). `input_fidelity`:
+    how closely the Provider keeps the input (`high`, `low`), None to leave it out."""
 
     prompt: str
     model: str
@@ -43,6 +46,8 @@ class ProviderRequest:
     quality: str
     count: int
     images: tuple[InputImage, ...] = ()
+    mask: bytes | None = None
+    input_fidelity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,10 @@ class Provider(ABC):
     max_images_in: int = 0  # input images an edit may send; 0: no edits
     prices_date: str = ""  # the day its price table was read
     rerenders_kept_strip = False  # an edit repaints the whole canvas, kept strip too (GPT Image, ticket 0377)
+
+    def fidelities(self, model: str) -> tuple[str, ...]:
+        """The `input_fidelity` values the model takes; none: it takes no such setting, and it is left out."""
+        return ()
 
     @abstractmethod
     def estimate_usd(self, model: str, size: tuple[int, int], quality: str, count: int, images_in: int,

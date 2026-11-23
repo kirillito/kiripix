@@ -175,6 +175,10 @@ class ProviderChoice(_Strict):
     quality: str = Field("", description="low, medium or high for OpenAI; empty: the Provider's default (medium).")
     size: str = Field("", description="WIDTHxHEIGHT for every call; empty: the image the call is for (a room's brief "
                                       "canvas, the `extend` canvas, the edited image), fitted to what the model takes.")
+    input_fidelity: Literal["auto", "high", "low", "off"] = Field(
+        "auto", description="How closely an edit keeps its input image. auto: high for an `extend` piece and a Look's edit "
+                            "when the model takes the setting (the Provider's documented models), else left out. high, "
+                            "low: sent with every edit, whatever the model. off: never sent.")
 
     @model_validator(mode="after")
     def _size(self) -> Self:

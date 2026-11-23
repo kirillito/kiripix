@@ -234,7 +234,14 @@ max_calls_per_day = 20         # UTC, counted from the cost ledger
 model = "gpt-image-2.6-sunburst"
 quality = "medium"             # low | medium | high
 size = ""                      # WIDTHxHEIGHT; empty: the image the call is for, fitted to what the model takes
+input_fidelity = "auto"        # auto: high for an extend piece or a Look's edit where the model takes it | high | low | off
 ```
+
+An edit's image is sent at the size the model takes: placed top-left at scale 1 when it fits (shrunk to fit when it doesn't),
+its edges repeated into the rest, and each result cropped back and scaled back, so a result lines up with its input pixel
+for pixel. An `extend` canvas goes with a mask at that size: alpha 0 over the fill and the padding (paint), 255 over the
+kept strips (both, the L, for a corner). The mask's hash and the fidelity sent are in the pending call, the history line
+and the ledger line.
 
 Secrets (API keys) come only from the git-ignored `.env` at the Project's root (`OPENAI_API_KEY=...`), never from
 `kiripix.toml` or the environment, and are written nowhere else: not in a log, a finding, the ledger or a pending call.

@@ -14,6 +14,7 @@ nowhere. The caller holds the Asset lock (`approve`: the Project lock).
 
 from __future__ import annotations
 
+import io
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -83,6 +84,10 @@ class PendingCall(BaseModel):
     estimated_usd: float
     remaining_usd: float = Field(description="The month's budget left before this call, UTC.")
     budget_usd_month: float
+    fill: str | None = Field(None, description="With extend: the canvas's fill colour, #rrggbb, where the mask lets the "
+                                               "Provider paint.")
+    mask_sha256: str | None = Field(None, description="With extend: the SHA-256 of the mask, at the size sent.")
+    input_fidelity: str | None = Field(None, description="The input_fidelity sent with the edit; None: left out.")
     again: str = Field(description="The `gen` command that plans this call again.")
 
 
@@ -158,6 +163,76 @@ def provider_for(project: Project, name: str | None, again: str) -> Provider:
     return known[chosen]
 
 
+def _fidelity(project: Project, provider: Provider, model: str, target: Target) -> str | None:
+    """The input_fidelity an edit sends: `[providers.<id>] input_fidelity`, where `auto` asks for `high` on an `extend`
+    piece and a Look's edit when the model takes it, and leaves it out otherwise."""
+    section = getattr(project.settings.providers, provider.id, None)
+    chosen = section.input_fidelity if isinstance(section, ProviderChoice) else "auto"
+    if chosen == "off":
+        return None
+    if chosen != "auto":
+        return chosen
+    return "high" if target in ("extend", "look") and "high" in provider.fidelities(model) else None
+
+
+# the size sent: an edited image is placed into it, top-left, at scale 1 when it fits and shrunk to fit when it doesn't,
+# its right and bottom edges repeated into the rest; each result is cropped back to the placed image and scaled back. So a
+# result lines up with the input pixel for pixel, and registration never fights a stretch the call itself made.
+
+
+def _placement(size: tuple[int, int], sent: tuple[int, int]) -> tuple[float, tuple[int, int]]:
+    width, height = size
+    scale = 1.0 if width <= sent[0] and height <= sent[1] else min(sent[0] / width, sent[1] / height)
+    return scale, (min(sent[0], max(1, round(width * scale))), min(sent[1], max(1, round(height * scale))))
+
+
+def _resized(rgba: Any, size: tuple[int, int], nearest: bool = False) -> Any:
+    import numpy as np
+    from PIL import Image
+
+    if (rgba.shape[1], rgba.shape[0]) == size:
+        return rgba
+    image = Image.fromarray(rgba, "RGBA").resize(size, Image.Resampling.NEAREST if nearest else Image.Resampling.LANCZOS)
+    return np.asarray(image, dtype=np.uint8).copy()
+
+
+def place_for_call(rgba: Any, sent: tuple[int, int]) -> Any:
+    """The edited image as it is sent: placed into the size sent."""
+    import numpy as np
+
+    _, (width, height) = _placement((rgba.shape[1], rgba.shape[0]), sent)
+    placed = _resized(rgba, (width, height))
+    return np.pad(placed, ((0, sent[1] - height), (0, sent[0] - width), (0, 0)), mode="edge")
+
+
+def edit_mask(canvas: Any, fill: tuple[int, int, int], sent: tuple[int, int]) -> Any:
+    """The mask sent with an `extend` canvas: alpha 0 (paint) over the fill and over the padding, 255 (keep) over the kept
+    strips; for a corner canvas both strips, the L. Black elsewhere, at the size sent."""
+    import numpy as np
+
+    kept = ~np.all(canvas[..., :3] == np.array(fill, dtype=np.uint8), axis=-1)
+    alpha = np.zeros((*kept.shape, 4), dtype=np.uint8)
+    alpha[..., 3] = np.where(kept, 255, 0).astype(np.uint8)
+    _, (width, height) = _placement((canvas.shape[1], canvas.shape[0]), sent)
+    placed = _resized(alpha, (width, height), nearest=True)
+    return np.pad(placed, ((0, sent[1] - height), (0, sent[0] - width), (0, 0)), constant_values=0)
+
+
+def unplace(result: Any, size: tuple[int, int], sent: tuple[int, int]) -> Any:
+    """A result mapped back onto the edited image: brought to the size sent if the Provider answered another, cropped to
+    where the image was placed, and scaled back to its size."""
+    _, (width, height) = _placement(size, sent)
+    return _resized(_resized(result, sent)[:height, :width], size)
+
+
+def _hex(colour: tuple[int, int, int]) -> str:
+    return "#" + "".join(f"{c:02x}" for c in colour)
+
+
+def _colour(text: str) -> tuple[int, int, int]:
+    return int(text[1:3], 16), int(text[3:5], 16), int(text[5:7], 16)
+
+
 def _choice(project: Project, provider: Provider) -> tuple[str, str, str]:
     """The Owner's model, quality and size for the Provider (`[providers.<id>]`), or the Provider's defaults."""
     section = getattr(project.settings.providers, provider.id, None)
@@ -210,6 +285,12 @@ def _render(project: Project, template: Path, fields: dict[str, Any]) -> str:
     from jinja2 import StrictUndefined, TemplateError, UndefinedError
     from jinja2.sandbox import SandboxedEnvironment
 
+    try:
+        import jinja2  # noqa: F401
+    except ImportError:
+        raise fail("setup.missing_dependency", "jinja2, which renders prompt templates, isn't installed in the environment "
+                   "running kiripix: it was set up before jinja2 was a dependency and not synced since",
+                   fix="uv sync  (in the Kiripix repository; then run kiripix through `uv run`)") from None
     shown = project.relative(template)
     bible = project.root / BIBLE
     fields = {**fields, "bible": bible.read_text(encoding="utf-8") if bible.is_file() else ""}
@@ -396,13 +477,18 @@ def plan(project: Project, asset: Asset, *, count: int, provider_name: str | Non
     size = provider.fit_size(model, _parse_size(size_choice) if size_choice else wanted)
     estimate = round(provider.estimate_usd(model, size, quality, count, len(inputs), len(text)), ledger.CENTS)
     remaining = check_limits(project, provider, count, len(inputs), estimate, again)
+    fill = mask_sha256 = None
     if planned is not None and sides is not None:  # the canvas is written only once the call passed every limit
         extend.store_canvas(project, asset, sides, canvas, planned)
+        fill = _hex(planned.fill)
+        mask_sha256 = hash_bytes(png_bytes(edit_mask(planned.image, planned.fill, size)))
+    fidelity = _fidelity(project, provider, model, target) if inputs and inputs[0].role != "reference" else None
     return PendingCall(
         id=journal.new_ulid(), time=ledger.now().isoformat(timespec="seconds"), asset=asset.id, target=target,
         look=look, state=state, emotion=emotion, sides=sides, provider=provider.id, model=model, size=_size_text(size),
         quality=quality, count=count, prompt=text, inputs=inputs, estimated_usd=estimate, remaining_usd=remaining,
-        budget_usd_month=project.settings.providers.budget_usd_month, again=again)
+        budget_usd_month=project.settings.providers.budget_usd_month, fill=fill, mask_sha256=mask_sha256,
+        input_fidelity=fidelity, again=again)
 
 
 # pending calls
@@ -490,7 +576,8 @@ def _history(asset: Asset, call: PendingCall, outcome: str, **extra: Any) -> Non
     entry: dict[str, Any] = {
         "time": ledger.now().isoformat(timespec="seconds"), "stage": stage, "provider": call.provider,
         "provider_model": call.model, "size": call.size, "quality": call.quality, "count": call.count, "call": call.id,
-        "prompt": call.prompt, "inputs": [i.model_dump(mode="json") for i in call.inputs], "outcome": outcome}
+        "prompt": call.prompt, "inputs": [i.model_dump(mode="json") for i in call.inputs], "mask": call.mask_sha256,
+        "input_fidelity": call.input_fidelity, "outcome": outcome}
     for name in ("look", "state", "emotion", "sides"):
         if getattr(call, name) is not None:
             entry[name] = getattr(call, name)
@@ -504,7 +591,8 @@ def _ledger(project: Project, call: PendingCall, provider: Provider, usd: float 
     ledger.append(project, ledger.LedgerLine(
         time=ledger.now().isoformat(timespec="seconds"), call=call.id, asset=call.asset, provider=call.provider,
         model=call.model, size=call.size, quality=call.quality, count=call.count, images=images, usd=cost,
-        estimated=estimated, prices_date=provider.prices_date, usage=usage or {}, outcome=outcome))
+        estimated=estimated, prices_date=provider.prices_date, mask=call.mask_sha256,
+        input_fidelity=call.input_fidelity, usage=usage or {}, outcome=outcome))
     return cost, estimated
 
 
@@ -547,8 +635,19 @@ def send(project: Project, call: PendingCall) -> Sent:
     provider = provider_for(project, call.provider, call.again)
     key = key_for(project, provider)
     images = _read_inputs(project, call)
-    request = ProviderRequest(prompt=call.prompt, model=call.model, size=_parse_size(call.size), quality=call.quality,
-                              count=call.count, images=tuple(images))
+    sent = _parse_size(call.size)
+    edited: tuple[int, int] | None = None
+    mask: bytes | None = None
+    if call.inputs and call.inputs[0].role != "reference":  # the edited image goes at the size sent, the mask with it
+        rgba = load_rgba(io.BytesIO(images[0].png), call.inputs[0].path)
+        edited = (int(rgba.shape[1]), int(rgba.shape[0]))
+        images[0] = InputImage(name=images[0].name, png=png_bytes(place_for_call(rgba, sent)))
+        if call.fill is not None:
+            mask = png_bytes(edit_mask(rgba, _colour(call.fill), sent))
+            if hash_bytes(mask) != call.mask_sha256:
+                raise fail("provider.call_stale", f"the mask for call {call.id} isn't the one planned", fix=call.again)
+    request = ProviderRequest(prompt=call.prompt, model=call.model, size=sent, quality=call.quality, count=call.count,
+                              images=tuple(images), mask=mask, input_fidelity=call.input_fidelity)
     cancel.check()
     try:
         result = provider.call(request, key, cancel.check)
@@ -573,6 +672,8 @@ def send(project: Project, call: PendingCall) -> Sent:
     names: list[str] = []
     files: list[str] = []
     for number, png in enumerate(result.images, 1):
+        if edited is not None:
+            png = png_bytes(unplace(load_rgba(io.BytesIO(png), f"result {number}"), edited, sent))
         name, path = _store(project, asset, call, provider, png, number)
         names.append(name)
         files.append(project.relative(path))

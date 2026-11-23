@@ -54,7 +54,9 @@ logic is one core module, `kiripix/core/gen.py`, and the Commands are in `kiripi
   as Runners do (`register_provider`), and the test harness adds its fake ones through `KIRIPIX_TEST_RECIPES`.
 - **The OpenAI Provider** (`kiripix/providers/openai.py`): `POST /v1/images/generations` (JSON) and `/v1/images/edits`
   (multipart, one `image[]` part per input image), on the standard library's `urllib`, so no new dependency. The call runs on
-  a thread and the cancel token is checked every 0.2 s (ticket 0031). Not tested, as the ticket says.
+  a thread and the cancel token is checked every 0.2 s (ticket 0031). Edits are sent as JSON since the follow-up in
+  [0380](0380-m6-gen-drives-extend.md) (the mask, `input_fidelity`, the size sent), whose tests run this request code over a
+  fake HTTP layer, at the Owner's request; no test reaches the network.
 - **Defaults, read on 2026-11-23** from developers.openai.com (the image generation guide, the pricing page, the models
   catalogue, the deprecations page, the Images API reference): model **`gpt-image-2.6-sunburst`** (what OpenAI tells new
   integrations to use, and the edit endpoint's default; `gpt-image-2` is deprecated with shutdown on 2027-02-10, and
