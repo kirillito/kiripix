@@ -77,7 +77,8 @@ def _progress_sink(mode: str) -> Any:
         _write(sys.stderr, event.model_dump_json() + "\n")
 
     def ignore(event: ProgressEvent) -> None:
-        pass
+        if event.event == "notice" and event.message:  # a line the Owner reads before the work, such as gen's estimate
+            _write(sys.stderr, event.message + "\n")
 
     return emit if mode == "jsonl" else ignore
 

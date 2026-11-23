@@ -55,6 +55,7 @@ def kiripix_env(test_recipes: bool = True, owner: bool = False) -> dict[str, str
     env = dict(os.environ)
     env.pop("KIRIPIX_TEST_RECIPES", None)
     env.pop("KIRIPIX_TEST_OWNER", None)
+    env.pop("OPENAI_API_KEY", None)  # no test reaches OpenAI (ticket 0379): a key in the shell stays out of `kiripix`
     env["PYTHONIOENCODING"] = "utf-8"
     if owner:
         env["KIRIPIX_TEST_OWNER"] = "1"

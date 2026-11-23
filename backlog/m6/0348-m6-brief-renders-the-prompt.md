@@ -61,11 +61,37 @@ Built (the code and the CLI-seam tests; the two acceptance items about the art P
   room goes stale and so does everything downstream of it (a Stage's hash covers its upstream hashes), as it does for any brief change.
 - Spec §4 (fields of the template) and §6.1 (brief row) say what is built. Tests: `tests/cli/test_brief_prompt.py`.
 
+### The art Project's template: drafted, waiting for the Owner (2026-11-23)
+
+Drafted in [0348-trial/](0348-trial/), not yet copied into `urban-mystery-club-art`: adding `style/prompts/room.j2` makes every
+room's `brief` stale there, and with it each room's whole chain, so the Owner copies it when they accept it.
+
+- [room.j2](0348-trial/room.j2) carries the skill's (v1) per-room rules: the projection reference line, the camera and
+  "not isometric" lines, the cutaway box for a room narrower than the screen (640), scale said twice (adult 52k px and its share
+  of the image height, the door 32k x 64k, the back wall 80k), an exit per `exits` entry on the back wall or as a gap in the
+  bottom edge, the room's `notes`, and the grid line. [bible.md](0348-trial/bible.md) carries the rules that don't depend on the
+  room: the sun from the upper left (0070), lights with causes, no figures, signage only, blank surfaces, the style line.
+- Rendered on a copy of `room.annex_bedroom` (ch01-001) with `exits = "living_room:top"` and `notes` holding the skill's room
+  and gameplay-spot paragraphs: [annex_bedroom.prompt.txt](0348-trial/annex_bedroom.prompt.txt), beside the skill's prompt in
+  `urban-mystery-club/.claude/skills/room-brief/rooms/annex_bedroom.md`.
+
+**How it compares with the skill's prompt for the same room:**
+
+| | Skill (hand-written) | Rendered |
+|---|---|---|
+| Camera, projection, empty room, text, style | the same rules, in the same words | the same (from the template and bible) |
+| k (source px per game px) | 3.74, from P = 368: the room's planned width before the fit | 4.10, from the brief's `width` 336, the fitted Plate |
+| Adult / door / back wall | 194 / 120 x 239 / 300 px | 213 / 131 x 262 / 328 px |
+| Room's share of the width | "about 60%" (by eye) | 52% (336 / 640) |
+| Furniture sizes | each in px from the size table (bed 120 px wide, closet 180 x 240) | only what `notes` says; the template has no furniture fields |
+| Light | the window's sunbeam "toward the lower right" (written before 0070) | "from the upper left, shadows up and to the right" (0070's rule) |
+
+The k gap is real: the skill picks P before painting (the room's size at ~30 px per metre), the brief knows only the Plate it
+was fitted to. For a room not yet painted they're the same number if the brief's `width` is set to P; for a room already fitted
+at a whole k (the bedroom's k = 4), the rendered prompt asks for a slightly larger adult than the fitted pick has.
+
 ### Still open, needs the Owner
 
-- Port the game's `room-brief` rules for a ch01 room into the art Project's `style/prompts/room.j2` and `style/bible.md`. Not done: the
-  art Project and `../urban-mystery-club` are the Owner's. `docs/examples/room-prompt.j2` is a starting point (its scale rule is a
-  placeholder, not the game's ISS-016).
-- Run `kiripix run <room> brief` on a ch01 room, record here how `prompt.txt` compares with the one the skill wrote for the same room,
-  and the Owner's view. If a rule needs a field the brief doesn't have (for example the room's lighting), say which: it is one more
-  brief parameter.
+- The Owner's view of the draft, and copying it into the art Project's `style/`.
+- Whether the brief needs a furniture-size field (the size table as a list), or the notes keep carrying sizes as the skill's
+  room files do. The template can't print the size table's furniture without one.

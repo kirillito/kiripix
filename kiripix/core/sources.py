@@ -282,6 +282,11 @@ def picked_look_edits(graph: AssetGraph) -> dict[str, str]:
     return found
 
 
+def check_look_id(asset: Asset, look: str) -> None:
+    """Refuse a Look ID that isn't one (`look.invalid_id`)."""
+    _check_look_id(asset, look)
+
+
 def _check_look_id(asset: Asset, look: str) -> None:
     if re.fullmatch(LOOK_ID, look) is None:
         raise fail("look.invalid_id", f"'{look}' is not a Look ID: lower-case letters, digits and underscores, in "
@@ -363,6 +368,11 @@ def _declared_state(graph: AssetGraph, state: str, command: str, position: Posit
                    + (f"; its states are {', '.join(declared)}" if declared else ""), position=position,
                    fix=prop_states.declare_command(asset.id, state, int(str(brief["width"])), int(str(brief["height"]))))
     return declared[state]
+
+
+def declared_state(graph: AssetGraph, state: str, command: str) -> DeclaredState:
+    """A Prop's declared state, or the refusal `import` and `pick` give (for `gen`, ticket 0379, before a call is paid)."""
+    return _declared_state(graph, state, command, Position(asset=graph.asset.id))
 
 
 def import_state(project: Project, asset: Asset, file: Path, shown: str, role: str, state: str) -> tuple[

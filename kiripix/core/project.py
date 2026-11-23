@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 13
+PROJECT_TEMPLATE = """schema_version = 14
 
 [project]
 name = "{name}"
@@ -137,8 +137,16 @@ light_tilt = 35                # and toward the camera
 # library = ["chargen/library.toml", "chargen/bases", "chargen/parts"]   # a change to any makes those Models stale
 
 [providers]
-default = "import"             # import | openai | gemini | pixellab | local-sd
-budget_usd_month = 20          # hard cap; calls fail beyond it
+default = "import"             # import | openai: the Provider `kiripix gen` uses (`--provider` overrides it)
+budget_usd_month = 20          # hard cap: `gen` refuses a call whose estimate would take the month past it
+approve = "each"               # each: `gen` writes a pending call for `kiripix approve <id>`; none: `gen` sends at once
+max_images_per_call = 4
+max_calls_per_day = 20         # counted from the cost ledger, .kiripix/cost.jsonl
+
+# [providers.openai]           # the key is OPENAI_API_KEY in this Project's .env (git-ignored), never here
+# model = "gpt-image-2.6-sunburst"
+# quality = "medium"           # low | medium | high
+# size = ""                    # WIDTHxHEIGHT; empty: the image the call is for (a room's brief canvas, the extend canvas)
 """
 
 DEFAULT_PALETTE = """GIMP Palette

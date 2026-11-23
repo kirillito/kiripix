@@ -112,7 +112,11 @@ my-game-assets/
                              (sandboxed, strict: an unknown field is an error). Fields: `asset`, `view`, `width`, `height`
                              (px), `tile`, `tiles_wide`, `tiles_high`, `aspect`, `canvas_width`, `canvas_height`,
                              `canvas_aspect`, `mood`, `notes`, `exits` (a list of `name` and `side`) and `bible` (the text of
-                             bible.md). Other Kinds' templates are not rendered yet.
+                             bible.md). `gen` renders two more the same way (M6): <kind>-edit.<ext> for an edit
+                             (`--look`, `--state`, `--emotion`; fields `asset`, `edit`, the Owner's words, the
+                             `look`, `state` or `emotion`, and `bible`; without it "Edit this image. Keep
+                             everything exactly the same except: <edit>"), and room-extend.<ext> for an `extend`
+                             piece (`asset`, `prompt`, the room's built prompt, `sides`, `edit`, `bible`).
   assets/
     room/queen_west_alley/
       asset.toml             kind and parameters (no stage status, ADR 0005)
@@ -219,12 +223,21 @@ foot = false                   # optional: the clip must have foot frames (`even
 script = "chargen/generate.py"
 library = ["chargen/library.toml", "chargen/bases", "chargen/parts"]
 
-[providers]
-default = "import"             # import | openai | gemini | pixellab | local-sd
-budget_usd_month = 20          # hard cap; calls fail beyond it
+[providers]                    # `kiripix gen` (M6; tickets 0379, 0378, 0381)
+default = "import"             # import | openai: the Provider `gen` uses; import paints nothing (`--provider` overrides it)
+budget_usd_month = 20          # hard cap: `gen` refuses a call whose estimate would take the month's spend (UTC) past it
+approve = "each"               # each: `gen` writes a pending call for `kiripix approve <id>`; none: `gen` sends at once
+max_images_per_call = 4
+max_calls_per_day = 20         # UTC, counted from the cost ledger
+
+[providers.openai]             # the Owner's choice; empty: the Provider's default
+model = "gpt-image-2.6-sunburst"
+quality = "medium"             # low | medium | high
+size = ""                      # WIDTHxHEIGHT; empty: the image the call is for, fitted to what the model takes
 ```
 
-Secrets (API keys) come from environment variables or a git-ignored `.env`, never from `kiripix.toml`.
+Secrets (API keys) come only from the git-ignored `.env` at the Project's root (`OPENAI_API_KEY=...`), never from
+`kiripix.toml` or the environment, and are written nowhere else: not in a log, a finding, the ledger or a pending call.
 
 **Importing a painted mask image.** A single colour image painted in an editor is accepted: each pixel snaps to the
 nearest defined colour (each Mask's `colour`, plus the `import` table), and the image is split into one 1-bit Mask
@@ -865,7 +878,8 @@ edit is followed by a `run` of the Stage (ADR 0006).
 
 ### 10.3 Owner-only Commands
 
-`accept`, `palette-add`, `ramps-add`, `style-add` and `style-remove` (which choose what the Project's look is), and any future Command that stands for the owner's own judgement, are **owner-only**. This is a guardrail
+`accept`, `palette-add`, `ramps-add`, `style-add` and `style-remove` (which choose what the Project's look is), `approve` (which spends the
+Project's money on a Provider call, ticket 0381), and any future Command that stands for the owner's own judgement, are **owner-only**. This is a guardrail
 against an agent accepting its own work by mistake, not security:
 - from the CLI, it refuses unless stdin is an interactive terminal (an agent's shell is not);
 - over REST, it requires the session token that `serve` gives the browser when it opens it;
@@ -924,7 +938,9 @@ kiripix extend <id> canvas|add <png>|undo|done|crop [--side east|south|west|nort
 kiripix import <id> <file> [--role variant|clip-source|rigged|parameters|sheet] [--look l | --loop l [--frame n]] [--of piece|crop]   set a source from an outside image or model; --role says what a character's or sprite's file is; --look adds an edit Variant of Look l; --loop imports a frame Loop's kit frames, --frame an edit of the Source as frame n (M4); --of says the edit was made on a piece or a crop of the room (M5)
 kiripix loop kit <id> <loop> <folder> [--frames N]   write a frame Loop's kit to paint on (M4)
 kiripix clips copy <id> --from <character> [--clip c,...] [--replace]   copy another character's clip Decisions and their clip sources (M4)
-kiripix gen <id> [-n 4] [--provider x] [--look l]   generate source variants, or edits of Look l (the only command that calls Providers)
+kiripix gen <id> [-n N] [--provider x] [--prompt "..."] [--look l | --state s | --emotion e | --side east] [--reference png]   paint through a Provider (M6): a room's Source from its brief's prompt, a Prop's or portrait's Source, an edit of the picked Source as Look l, state s or emotion e, or the next `extend` piece from a fresh canvas (kept as candidates, joined by no one: `extend add` joins the one chosen, under 1.0 px for a Provider that re-renders the kept strip); each image a Variant, never picked; the estimate and the month's remaining budget on stderr and in `data` before the call; refused before sending past `max_images_per_call`, `max_calls_per_day` or the budget (`cost.budget_exceeded`, exit 3); with `approve = "each"` writes a pending call and exits 3 (`provider.approval_needed`); the only command that calls Providers
+kiripix approve <id> | --list               send a pending call (owner-only): its limits and budget checked again, refused if an input image changed (`provider.call_stale`); its Variants and ledger line stored as `gen` would, the pending call deleted (M6)
+kiripix reject <id>                         delete a pending call, sending nothing; not owner-only (M6)
 kiripix pick <id> <variant> [--look l | --loop l --frame n]      record the chosen variant; --look picks Look l's edit, --loop --frame a Loop frame's edit (M4)
 kiripix check <id>|--all                    run checks (--all includes Project checks), list findings with positions; --all also lists each Asset `next` doesn't call done, with what `next` says (`unfinished`; not a finding, the exit code is the Checks')
 kiripix preview <id> [--stage s] [--overlay masks|walkable|reachable] [--region x,y,w,h] [--grid N]
@@ -963,7 +979,7 @@ kiripix masks-add <name> --colour #RRGGBB --meaning "<text>" [--view top|side]  
 kiripix clips-add <character> --clips a,b [--foot a] [--dry-run]   append clips a character decided and built to the Project's clip table (an agent may run it, M5); `check --all` and `export --all` then run `clips.timing_differs`
 kiripix track <id> <stage> --seconds N      log a span of the Owner's active time (owner-only; the UI sends these); appends to the Asset's time.jsonl (M4)
 kiripix stats <id>|--all [--since <date>]   the Owner's active minutes, Decisions, undos and redos per Asset and Stage (M4)
-kiripix cost [--month]                      provider spend from the ledger
+kiripix cost [--month] [--since <time>]     Provider spend from the cost ledger (`.kiripix/cost.jsonl`, one line per call sent, with the token counts the Provider reported): by month and by Provider; this month's spend, the cap and what's left; with --since, the calls, cost and tokens since a time, such as an agent's session's start (M6)
 kiripix runners [list|pull|rm]              local Runner management
 kiripix serve                               the REST API and the web UI; holds a warm Runner
 kiripix ui                                  serve, and open the browser
@@ -1020,7 +1036,14 @@ finding), so the UI can ask for the rows in view first and the rest in chunks.
   path, so the agent can report back instead of stalling.
 - **Results:** JSON plus file paths. Images are returned only when the caller asks (`preview` with `inline=true`),
   because images cost tokens.
-- **Spend:** a tool that spends money (`gen`) states the estimated cost in its result and respects the budget cap.
+- **Spend:** a tool that spends money (`gen`) states each call's estimate (from the Provider's dated price table) and the
+  month's remaining budget (`budget_usd_month` less the ledger's spend for the calendar month, UTC) before it sends, on
+  stderr and in `data`, and refuses a call whose estimate would cross the cap before sending it (`cost.budget_exceeded`,
+  exit 3, `-n` refused whole). Each call sent appends its actual cost (the Provider's reported usage, else the estimate,
+  marked so) and the reported token counts to the cost ledger, and states it after the call (stderr, and `usd`, `usage`,
+  `month_spent_usd` in `data`); a refused call the Provider still bills is recorded too. With `[providers] approve =
+  "each"` (the default) `gen` only writes a pending call (`.kiripix/calls/<id>.json`: the prompt, the input images and
+  their hashes, the estimate) and the Owner sends it with `approve` (tickets 0378, 0379, 0381).
 
 ## 11. UI
 
@@ -1103,7 +1126,7 @@ kiripix/
   ops/         pure image functions
   checks/      check functions returning findings, including Project checks
   runners/     local ML runners (lazy load, unload)
-  providers/   image generation adapters: import, openai, gemini, pixellab, local-sd
+  providers/   image API Providers (openai, M6): a prompt and images in, PNGs and their cost out; core keeps the key, the budget and the ledger
   recipes/     room.py, prop.py, character.py: stage definitions per kind
   blender/     bpy scripts (run inside Blender only)
   export/      godot.py (tscn and tres writers), manifest (ownership, freeze, merge)

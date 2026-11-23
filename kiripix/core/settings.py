@@ -167,9 +167,35 @@ class PortraitSettings(_Strict):
         return self
 
 
+class ProviderChoice(_Strict):
+    """`[providers.<id>]`: the Owner's choice of model, quality and size for one Provider (ticket 0379). Empty: the
+    Provider's own default."""
+
+    model: str = Field("", description="The model ID; empty: the Provider's default (OpenAI: gpt-image-2.6-sunburst).")
+    quality: str = Field("", description="low, medium or high for OpenAI; empty: the Provider's default (medium).")
+    size: str = Field("", description="WIDTHxHEIGHT for every call; empty: the image the call is for (a room's brief "
+                                      "canvas, the `extend` canvas, the edited image), fitted to what the model takes.")
+
+    @model_validator(mode="after")
+    def _size(self) -> Self:
+        if self.size and re.fullmatch(r"[1-9][0-9]*x[1-9][0-9]*", self.size) is None:
+            raise ValueError(f"size '{self.size}' is not WIDTHxHEIGHT, such as 1536x1024")
+        return self
+
+
 class Providers(_Strict):
+    """`[providers]`: which Provider `gen` uses, the month's budget, how calls are approved and the limits besides the
+    budget (tickets 0378, 0379, 0381)."""
+
     default: str = "import"
     budget_usd_month: float = Field(20, ge=0)
+    approve: Literal["each", "none"] = Field(
+        "each", description="each: `gen` writes a pending call and the Owner sends it with `kiripix approve <id>`; none: "
+                            "`gen` sends at once.")
+    max_images_per_call: int = Field(4, ge=1, description="The most images one `gen` may ask for.")
+    max_calls_per_day: int = Field(20, ge=1, description="The most Provider calls sent in a UTC day, counted from the "
+                                                         "cost ledger.")
+    openai: ProviderChoice = Field(default_factory=ProviderChoice)
 
 
 class CameraPreset(_Strict):
@@ -312,14 +338,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 13
+PROJECT_SCHEMA_VERSION = 14
 ASSET_SCHEMA_VERSION = 1
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[13] = 13
+    schema_version: Literal[14] = 14
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -420,11 +446,17 @@ def _add_extend_max_residual(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 13}
 
 
+def _add_provider_choices(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 13 had no `[providers] approve`, `max_images_per_call`, `max_calls_per_day` or `[providers.openai]`;
+    version 14 adds them (tickets 0379 and 0381), at their defaults (written nowhere: the defaults are read)."""
+    return {**document, "schema_version": 14}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
     4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section,
     8: _add_portrait_section, 9: _add_inbox_section, 10: _add_style_section, 11: _add_ramp_choices,
-    12: _add_extend_max_residual}
+    12: _add_extend_max_residual, 13: _add_provider_choices}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
 
 

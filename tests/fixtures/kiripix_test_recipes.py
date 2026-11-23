@@ -1080,3 +1080,81 @@ def _log_state_work() -> None:
 
 
 _log_state_work()
+
+
+# The fake Providers (tickets 0379, 0378, 0381, 0380, 0143): no network, no key, a fixed price, so no test costs anything.
+# A generation gives flat images, a colour per image from the prompt; an edit gives the first input image re-rendered as
+# GPT Image re-renders a canvas (0377): moved by a smooth sub-pixel wave, toned by a per-channel gain, with new noise,
+# a different noise per image. A prompt holding FAIL fails the call (FAIL-BILLED: and says it billed $0.01).
+from kiripix.providers import Provider, ProviderError, ProviderRequest, ProviderResult, register_provider
+
+FAKE_PRICE = 0.04  # USD per image
+
+
+def _rerendered(png: bytes, seed: int, amplitude: float = 0.9, period: float = 60.0) -> bytes:
+    import io
+
+    with Image.open(io.BytesIO(png)) as image:
+        full = np.asarray(image.convert("RGB"), dtype=np.float64)
+    height, width = full.shape[:2]
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    y = np.clip(yy + amplitude * np.cos(2 * np.pi * xx / period), 0, height - 1.001)
+    x = np.clip(xx + amplitude * np.sin(2 * np.pi * yy / period), 0, width - 1.001)
+    y0, x0 = np.floor(y).astype(int), np.floor(x).astype(int)
+    fy, fx = (y - y0)[..., None], (x - x0)[..., None]
+    warped = (full[y0, x0] * (1 - fy) * (1 - fx) + full[y0, x0 + 1] * (1 - fy) * fx
+              + full[y0 + 1, x0] * fy * (1 - fx) + full[y0 + 1, x0 + 1] * fy * fx)
+    toned = warped * np.array([0.993, 0.998, 1.011]) + np.random.default_rng(seed).normal(0, 8, warped.shape)
+    out = io.BytesIO()
+    Image.fromarray(np.clip(toned + 0.5, 0, 255).astype(np.uint8), "RGB").save(out, format="PNG")
+    return out.getvalue()
+
+
+def _flat(size: tuple[int, int], prompt: str, number: int) -> bytes:
+    import io
+
+    digest = hashlib.sha256(f"{prompt}\n{number}".encode("utf-8")).digest()
+    out = io.BytesIO()
+    Image.new("RGB", size, (digest[0], digest[1], digest[2])).save(out, format="PNG")
+    return out.getvalue()
+
+
+class FakeProvider(Provider):
+    description = "A test Provider: fixed images, a fixed price, no network."
+    default_model = "fake-model"
+    default_quality = "standard"
+    qualities = ("standard", "fine")
+    max_count = 10
+    max_images_in = 16
+    prices_date = "2026-11-23"
+    rerenders_kept_strip = True
+
+    def __init__(self, id: str, key_name: str | None = None) -> None:
+        self.id = id
+        self.key_name = key_name
+
+    def estimate_usd(self, model: str, size: tuple[int, int], quality: str, count: int, images_in: int,
+                     prompt_chars: int) -> float:
+        return FAKE_PRICE * count
+
+    def fit_size(self, model: str, wanted: tuple[int, int]) -> tuple[int, int]:
+        return max(1, wanted[0]), max(1, wanted[1])
+
+    def call(self, request: ProviderRequest, key: str | None, check_cancel: CheckCancel) -> ProviderResult:
+        check_cancel()
+        if self.key_name is not None and not key:
+            raise ProviderError("no key")
+        if "FAIL-BILLED" in request.prompt:
+            raise ProviderError("the fake Provider failed on purpose", billed_usd=0.01)
+        if "FAIL" in request.prompt:
+            raise ProviderError("the fake Provider failed on purpose")
+        if request.images:
+            images = [_rerendered(request.images[0].png, seed) for seed in range(1, request.count + 1)]
+        else:
+            images = [_flat(request.size, request.prompt, n) for n in range(1, request.count + 1)]
+        usage = {"input_tokens": 100, "output_tokens": 1000 * request.count}
+        return ProviderResult(images=images, usd=FAKE_PRICE * request.count, usage=usage)
+
+
+register_provider(FakeProvider("fake"))
+register_provider(FakeProvider("fake_keyed", key_name="FAKE_PROVIDER_KEY"))

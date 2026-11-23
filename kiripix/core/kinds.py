@@ -5,6 +5,7 @@ import os
 
 from kiripix.core.errors import fail
 from kiripix.recipes import kinds
+from kiripix.providers import Provider, providers
 from kiripix.recipes.base import KindSpec
 from kiripix.runners import Runner, runners
 
@@ -26,6 +27,12 @@ def all_kinds() -> dict[str, KindSpec]:
 def all_runners() -> dict[str, Runner]:
     _load_test_recipes()
     return runners()
+
+
+def all_providers() -> dict[str, Provider]:
+    """The image API Providers: OpenAI, plus the test harness's fake one (`KIRIPIX_TEST_RECIPES`)."""
+    _load_test_recipes()
+    return providers()
 
 
 def get_kind(name: str) -> KindSpec:

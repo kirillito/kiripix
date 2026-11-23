@@ -42,6 +42,7 @@ FOLDER = "extend"
 JOURNAL = "journal.jsonl"
 CANVAS_PNG = "canvas.png"
 CANVAS_JSON = "canvas.json"
+CANDIDATES = "candidates"  # pieces `gen --side` kept for the Owner to join, each with a record of its Provider (ticket 0380)
 SCHEMA_VERSION = 1
 # The canvas' flat fill, what the image model paints over: the first of these loud colours far enough from the kept
 # strip's colours, so the model can't mistake the fill for picture (a grey fill matched the asphalt). Red first: the
@@ -332,13 +333,20 @@ def write_canvas(
 ) -> tuple[Path, tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int, int]]:
     """Write the canvas for the next piece. Returns its path, its size, the strip kept (x, y), its origin and its
     fill."""
-    image, kept, origin, fill, name = plan_canvas(project, asset, sides, canvas, keep, offset, example)
+    planned = plan_canvas(project, asset, sides, canvas, keep, offset, example)
     cancel.check()
+    path = store_canvas(project, asset, sides, canvas, planned)
+    return path, canvas, planned.kept, planned.origin, planned.fill
+
+
+def store_canvas(project: Project, asset: Asset, sides: list[str], canvas: tuple[int, int], planned: PlannedCanvas) -> Path:
+    """Write a planned canvas and its record (`gen --side` plans first and writes once the call passed its limits)."""
     path = folder(asset) / CANVAS_PNG
-    save_png(path, image)
-    record = CanvasRecord(schema_version=SCHEMA_VERSION, sides=sides, keep=kept, origin=origin, canvas=canvas, base=name)
+    save_png(path, planned.image)
+    record = CanvasRecord(schema_version=SCHEMA_VERSION, sides=sides, keep=planned.kept, origin=planned.origin,
+                          canvas=canvas, base=planned.base)
     atomic.write_json(folder(asset) / CANVAS_JSON, record.model_dump(mode="json"))
-    return path, canvas, kept, origin, fill
+    return path
 
 
 # add
@@ -403,6 +411,35 @@ def _missed(piece_name: str, detail: str, asset: Asset, raise_to: float | None =
         exit_code=ExitCode.CHECK_FAILED)
 
 
+class CandidateRecord(BaseModel):
+    """`candidates/<piece>.json`: which Provider made a piece `gen --side` kept, so `add` joins it under the raised limit
+    when that Provider re-renders the kept strip (ticket 0380)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = 1
+    call: str
+    provider: str
+    model: str
+    sides: list[str]
+    rerenders_kept_strip: bool
+
+
+def rerendered_candidate(asset: Asset, piece_name: str) -> bool:
+    """True when `gen --side` kept this piece from a Provider that re-renders the kept strip; False for any other piece.
+    A record that isn't valid is refused (`extend.record_invalid`), never read as False."""
+    path = folder(asset) / CANDIDATES / f"{piece_name}.json"
+    if not path.is_file():
+        return False
+    try:
+        record = CandidateRecord.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValidationError as error:
+        raise _invalid(asset, path, error.errors()[0]["msg"]) from None
+    if record.schema_version != 1:
+        raise _invalid(asset, path, f"schema_version {record.schema_version}; this Kiripix reads 1")
+    return record.rerenders_kept_strip
+
+
 def residual_limit(project: Project, max_residual: float | None, example: str) -> float:
     """The registration limit: `--max-residual` if given, else `[extend] max_residual`."""
     if max_residual is None:
@@ -434,7 +471,9 @@ def add_piece(
     max_residual: float | None = None,
 ) -> tuple[Joined, list[Finding]]:
     """Register, tone and seam the piece onto the current image and record it. Records nothing if the registration
-    misses its limit (`max_residual`, else `[extend] max_residual`; ticket 0377) or the piece can't be joined."""
+    misses its limit (`max_residual`, else `[extend] max_residual`; ticket 0377) or the piece can't be joined. A piece
+    `gen --side` kept from a Provider that re-renders the kept strip (GPT Image) is joined under `RESIDUAL_CEILING`
+    without `--max-residual` (ticket 0380)."""
     limit = residual_limit(project, max_residual, example)
     name, base, live = current_image(project, asset)
     _partial(base, name)
@@ -442,6 +481,8 @@ def add_piece(
     data, piece = read_as_png(piece_file, shown)
     _partial(piece, shown)
     piece_name = _name(data)
+    if max_residual is None and rerendered_candidate(asset, piece_name):
+        limit = max(limit, RESIDUAL_CEILING)
     cancel.check()
     sides = record.sides
     try:

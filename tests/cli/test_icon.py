@@ -118,7 +118,7 @@ def test_an_icon_the_grid_leaves_larger_than_the_square_is_icon_size(project: Ki
 
 def test_the_project_file_at_version_7_reads_with_the_default_icon_size(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
-    text = path.read_text(encoding="utf-8").replace("schema_version = 13", "schema_version = 7")
+    text = path.read_text(encoding="utf-8").replace("schema_version = 14", "schema_version = 7")
     path.write_text("\n".join(l for l in text.splitlines() if not l.startswith(("[icon]", "size = 24"))) + "\n",
                     encoding="utf-8")
     assert "icon" not in tomllib.loads(path.read_text(encoding="utf-8"))

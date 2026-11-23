@@ -138,6 +138,25 @@ def _game_repo(project: Kiripix) -> None:
     git(game, "init", "-b", "main")
 
 
+def _providers(project: Kiripix, approve: str) -> None:
+    """The fake Provider (the test recipes'), approving each call or sending at once, and a Prop to paint."""
+    path = project.cwd / "kiripix.toml"
+    text = path.read_text(encoding="utf-8").replace('default = "import"', 'default = "fake"', 1)
+    path.write_text(text.replace('approve = "each"', f'approve = "{approve}"', 1), encoding="utf-8")
+    project.json("new", "prop", "bench")
+
+
+def _pending_call(project: Kiripix) -> str:
+    """A pending call for prop.bench; returns its ID."""
+    _providers(project, "each")
+    return str(project.json("gen", "prop.bench", "--prompt", "a bench", expect=3)["data"]["call"])
+
+
+def _spent(project: Kiripix) -> None:
+    _providers(project, "none")
+    project.json("gen", "prop.bench", "--prompt", "a bench")
+
+
 # Each sample prepares the Project, then gives the arguments of one successful call.
 SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "init": lambda p: ["init", "sub"],
@@ -159,6 +178,10 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "district": lambda p: (_room_image(p), ["district", "room.*"])[1],
     "to-paint": lambda p: (_room_with_prompt(p), ["to-paint", "--match", "room.*", "--out", "paint"])[1],
     "inbox": lambda p: (_room_inbox(p), ["inbox", "--folder", "inbox"])[1],
+    "gen": lambda p: (_providers(p, "none"), ["gen", "prop.bench", "-n", "2", "--prompt", "a bench"])[1],
+    "approve": lambda p: ["approve", _pending_call(p)],
+    "reject": lambda p: ["reject", _pending_call(p)],
+    "cost": lambda p: (_spent(p), ["cost", "--month"])[1],
     "import": lambda p: (_character_files(p), ["import", "character.hero", "rigged.fbx", "--role", "clip-source"])[1],
     "thing-remove": lambda p: (_a_thing(p), ["thing-remove", "character.hero", "phone"])[1],
     "clips copy": lambda p: (_clips_to_copy(p), ["clips", "copy", "character.twin", "--from", "character.hero"])[1],

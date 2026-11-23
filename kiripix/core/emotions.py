@@ -74,6 +74,11 @@ def _declared(graph: AssetGraph, emotion: str, command: str, position: Position)
     return declared[emotion]
 
 
+def declared_emotion(graph: AssetGraph, emotion: str, command: str) -> DeclaredEmotion:
+    """A portrait's declared emotion, or the refusal `import` gives (for `gen`, ticket 0379, before a call is paid)."""
+    return _declared(graph, emotion, command, Position(asset=graph.asset.id))
+
+
 def import_emotion(project: Project, asset: Asset, file: Path, shown: str, role: str, emotion: str) -> tuple[
         DeclaredEmotion, str, Path, bool]:
     """Add an image as a Variant of a portrait's declared emotion, in `src/emotions/<emotion>/` (a JPEG is stored as a PNG);

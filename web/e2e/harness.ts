@@ -12,10 +12,17 @@ const REPOSITORY = resolve(import.meta.dirname, "..", "..");
 const WEB = join(REPOSITORY, "web", "dist");
 const FIXTURES = join(REPOSITORY, "tests", "fixtures");
 
+// No test reaches OpenAI (ticket 0379): a key in the shell is left out of every environment `kiripix` gets.
+function withoutKeys(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.OPENAI_API_KEY;
+  return env;
+}
+
 // The test Kinds and the fake SAM 2 that the Python tests use: no GPU and no weights. Set for the child processes only.
 function fakeRunnerEnv(): NodeJS.ProcessEnv {
   return {
-    ...process.env,
+    ...withoutKeys(),
     PYTHONPATH: [FIXTURES, process.env.PYTHONPATH ?? ""].filter(Boolean).join(delimiter),
     KIRIPIX_TEST_RECIPES: "kiripix_test_recipes",
   };
@@ -78,7 +85,7 @@ export class Studio {
   // `fakeSegmenter`: SAM 2 is the fake Runner of tests/fixtures, for the screens that segment.
   static async start(fakeSegmenter = false): Promise<Studio> {
     const cwd = mkdtempSync(join(tmpdir(), "kiripix-e2e-"));
-    const env = fakeSegmenter ? fakeRunnerEnv() : process.env;
+    const env = fakeSegmenter ? fakeRunnerEnv() : withoutKeys();
     execFileSync("uv", kiripixArgs("init"), { cwd, stdio: "pipe", env });
     const server = spawn("uv", kiripixArgs("serve", "--port", "0", "--print-token", "--web", WEB), {
       cwd,

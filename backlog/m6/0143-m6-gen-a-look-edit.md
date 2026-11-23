@@ -1,9 +1,9 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: ml-engineer
 type: ticket
-depends_on: [0379-m6-openai-provider-and-gen.md]
+depends_on: [0379-m6-openai-provider-and-gen.md, 0381-m6-the-owner-approves-each-provider-call.md]
 ---
 
 # M6: `gen --look`: make a Look's edit through a Provider
@@ -22,3 +22,20 @@ Spec §6.1 (Looks), §10.5 and §14 M6. Needs the OpenAI Provider ([0379](0379-m
 
 - [ ] With a fake Provider: `gen --look` adds N Variants under `src/looks/<look>/`, logs them, and touches nothing else.
 - [ ] Over budget, it refuses before calling.
+
+## Result
+
+Built with [0379](0379-m6-openai-provider-and-gen.md). `kiripix gen <room> --look <look> [-n N] --prompt "<what changes>"`
+sends the room's picked Source with the edit prompt, and stores each result under `src/looks/<look>/` with
+`sources.import_look`, the function `import --look` uses.
+
+- The prompt is `style/prompts/room-edit.<ext>`, rendered with the Owner's words as `edit` (and `look`, `asset`, `bible`).
+  With no template, it is Lost-and-Found's wording: "Edit this image. Keep everything exactly the same except: <words>".
+- The same path makes a Prop's state (`--state`, `import_state`) and a portrait's emotion (`--emotion`, `import_emotion`).
+  Each is refused before the call when the state or emotion isn't declared.
+- The size asked for is the Source's own, fitted to the model's rules.
+- Each call is logged in `history.jsonl` (`stage` `looks`, `look`) and the ledger, and is held to the budget and the
+  approval like every `gen` call.
+- Tests: `test_gen_look_adds_n_edit_variants_of_the_look_and_touches_nothing_else` (2 Variants under `src/looks/night/`,
+  nothing else added, the same file `import --look` would store) and `test_the_edit_prompt_is_the_default_wording_or_the_kinds_template`.
+  The budget tests in `test_gen.py` cover every `gen` call the same way.

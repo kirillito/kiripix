@@ -227,6 +227,10 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "district": lambda a: {"glob": a[1]},
     "to-paint": lambda a: {"match": a[2], "out": a[4]},
     "inbox": lambda a: {"folder": a[2]},
+    "gen": lambda a: {"asset": a[1], "count": int(a[3]), "prompt": a[5]},
+    "approve": lambda a: {"id": a[1]},
+    "reject": lambda a: {"id": a[1]},
+    "cost": lambda a: {"month": True},
     "import": lambda a: {"asset": a[1], "file": a[2], **({"role": a[a.index("--role") + 1]} if "--role" in a else {})},
     "thing-remove": lambda a: {"asset": a[1], "thing": a[2]},
     "clips copy": lambda a: {"asset": a[2], "source_asset": a[4]},
@@ -294,7 +298,7 @@ def test_the_rest_response_equals_the_cli_json(project: Kiripix, tmp_path_factor
     arguments = SAMPLES[name](project)
     twin = tmp_path_factory.mktemp("twin") / "project"
     shutil.copytree(project.cwd, twin)  # the same Project, so each side starts from the same state
-    owner = name in {"accept", "palette-add", "ramps-add", "track", "style-add", "style-remove"}
+    owner = name in {"accept", "palette-add", "ramps-add", "track", "style-add", "style-remove", "approve"}
 
     expected = project.json(*arguments, owner=owner)
     with serving(twin) as running:

@@ -1,0 +1,21 @@
+Use the attached image only for the camera angle and projection; ignore its content, palette and lighting.
+
+Painterly pixel art game background: morning sun, Annex bedroom, in the style of a 16-bit JRPG interior. High-angle oblique view, the camera looks down at the room at about 60 degrees. Orthographic projection: no perspective, no vanishing point; parallel lines stay parallel. Not isometric: the floor is a rectangle and the back wall runs perfectly horizontal. The floor fills two thirds of the room's height; side walls are thin vertical strips. Every object, including small clutter, is drawn from the same camera as the room, its top visible. The room is a cutaway box in the middle of the frame, surrounded by plain black; no ceiling; the front wall is cut away. The room fills about 52% of the image width.
+
+Scale: everything is sized for a standing adult about 213 px tall (0.28 of the image height). Furniture at true scale next to that adult. A door is a little taller than an adult, about 131 px wide and 262 px tall. The back wall is about 328 px tall from the floor to its top edge.
+
+Exits:
+- "living_room": set into the back wall, facing the camera, with clear floor in front for a person to stand.
+
+The room: the upstairs bedroom of an old Victorian house in Toronto's Annex, morning. Worn honey-coloured wooden floorboards running left to right, cream plaster walls with a tall wooden baseboard, an old painted cast-iron radiator under the window. A newcomer has just moved in: lived-in but not settled.
+
+Gameplay spots, back wall from left to right: back-left corner, a single bed, headboard against the back wall, running toward the viewer, with a rumpled blanket and one pillow, empty; centre-left, a tall old sash window, its sill at the adult's waist height, the morning sun through it falling as a long soft patch of warm light across the floorboards; under the window, a plain wooden desk at the adult's hip height with a closed laptop, a mug and papers, and a desk chair; centre-right, a tall two-door wooden closet, doors closed. Clutter: three plain cardboard moving boxes, two stacked in the front-right corner and one open at the foot of the bed; a rolled-up rug against the right wall; a backpack by the desk. The window is the only light; the ceiling lamp is off.
+
+The floor's open walking space reads on a 66 px grid: clear floor in runs of whole tiles; all furniture sits square to the walls.
+
+Light: the sun comes from the upper left, high, with short shadows that fall behind objects, up and to the right; every shadow has a caster. Every bright area has a visible source (a window, a lamp, a sign, a screen), named in the room's notes. No other glow.
+
+No people, no animals, no creatures. Text only on environment signage named in the notes (street names, store signs, with fictional business names); everything else (posters, screens, labels, boxes, papers) is blank. Surfaces the game draws on stay blank and empty.
+
+Style: painterly pixel art, limited palette, crisp pixel edges, sharp focus throughout, no blur, no vignette.
+

@@ -45,7 +45,8 @@ class ExtendInput(BaseModel):
     max_residual: float | None = Field(
         None, description="With add: the registration residual, px, above which the piece is refused; `[extend] "
                           "max_residual` (0.5) by default, at most 1.0. A model that re-renders the kept strip (GPT Image) "
-                          "registers to about 0.7: such a piece joins with `extend.strip_repainted`, so look at the seam.")
+                          "registers to about 0.7: such a piece joins with `extend.strip_repainted`, so look at the seam. "
+                          "A piece `gen --side` kept from such a Provider joins under 1.0 without it.")
 
 
 class ExtendData(BaseModel):
