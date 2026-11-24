@@ -51,6 +51,7 @@ from kiripix.ops.chroma import (
     remove_light_rim,
 )
 from kiripix.ops.cleanup import Placement, add_outline, outline_mask, paint_outline, remove_orphans
+from kiripix.ops.selout import sel_out_outline, sel_out_paint
 from kiripix.ops.colourset import SetReport, map_set, set_colours, set_report
 from kiripix.ops.compose import overlay
 from kiripix.ops.eyes import EyeAnchor, EyeStamp, fill_from_neighbours, paint_eyes, plan_eyes, stamped_mask
@@ -246,6 +247,8 @@ __all__ = [
     "paint_eyes",
     "stamped_mask",
     "paint_outline",
+    "sel_out_outline",
+    "sel_out_paint",
     "plan_eyes",
     "narrowest_gaps",
     "navigation_polygon",

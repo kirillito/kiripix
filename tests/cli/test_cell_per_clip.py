@@ -115,6 +115,7 @@ def test_sheet_lays_out_each_clip_at_its_own_cell_and_character_json_lists_them(
     atlas = np.array(Image.open(folder / "work" / "sheet" / "color.png").convert("RGBA"))
     assert (atlas.shape[1], atlas.shape[0]) == (sheet["atlas"]["width"], sheet["atlas"]["height"])
     taken = np.zeros(atlas.shape[:2], dtype=bool)
+    packed: set[tuple[int, int, int, int]] = set()
     for name, entry in clips.items():
         want = entry["cell"]
         for direction, listed in entry["directions"].items():
@@ -122,8 +123,11 @@ def test_sheet_lays_out_each_clip_at_its_own_cell_and_character_json_lists_them(
                 r, o = frame["rect"], frame["offset"]  # the box is in the clip's own cell (ticket 0308)
                 assert o["x"] + r["width"] <= want["width"] and o["y"] + r["height"] <= want["height"]
                 assert r["x"] + r["width"] <= atlas.shape[1] and r["y"] + r["height"] <= atlas.shape[0]
-                assert not taken[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]].any()  # no two frames overlap
-                taken[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]] = True
+                box = (r["x"], r["y"], r["width"], r["height"])
+                if box not in packed:  # a repeated cell names an earlier frame's rect (ticket 0375); no two rects overlap
+                    assert not taken[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]].any()
+                    taken[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]] = True
+                    packed.add(box)
                 source = np.array(Image.open(folder / "work" / "finish" / "color" / f"{name}/{direction}/{frame['index']:03d}.png"))
                 cell = np.zeros((want["height"], want["width"], 4), dtype=np.uint8)
                 cell[o["y"]:o["y"] + r["height"], o["x"]:o["x"] + r["width"]] = atlas[r["y"]:r["y"] + r["height"], r["x"]:r["x"] + r["width"]]

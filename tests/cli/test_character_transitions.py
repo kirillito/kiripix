@@ -12,7 +12,7 @@ from PIL import Image
 from test_character_clips import HIT, IDLE, WALK, clip, clips_json, real_hero, rigged_hero
 from test_character_model import HERO
 from test_character_render import DIRECTIONS, ready, render_calls, render_json, rendered
-from test_export_character import FRAMES, exportable_character, manifest
+from test_export_character import FRAMES, exportable_character, manifest, regions
 
 IDLE_TO_HIT = {"name": "idle_to_hit", "from": {"clip": "idle"}, "to": {"clip": "hit", "frame": 0}, "length": 3}
 
@@ -215,7 +215,7 @@ def test_a_transition_that_reads_only_the_other_clip_is_kept_when_the_first_chan
 
 
 def test_export_gives_the_transition_its_ids_and_a_longer_one_keeps_them(project: Kiripix) -> None:
-    exportable_character(project)
+    folder = exportable_character(project)
     transition(project, IDLE_TO_HIT)
     project.json("run", HERO)
     project.json("export", HERO)
@@ -227,7 +227,9 @@ def test_export_gives_the_transition_its_ids_and_a_longer_one_keeps_them(project
     project.json("export", HERO)
 
     assert manifest(project)["ids"]["clips"] == ids
-    assert (project.cwd / FRAMES).read_text("utf-8").count("[sub_resource") == 8 * (4 + 10 + 5)
+    frames = (project.cwd / FRAMES).read_text("utf-8")
+    assert frames.count('"texture": SubResource') == 8 * (4 + 10 + 5)  # every frame plays
+    assert frames.count("[sub_resource") == len(regions(folder))  # a repeated cell shares one (ticket 0375)
 
 
 # the real Blender

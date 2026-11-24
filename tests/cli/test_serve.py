@@ -698,7 +698,7 @@ def test_the_file_route_stays_inside_the_project(project: Kiripix, server: Serve
 # The Commands with file inputs, and those inputs. Over REST each is a multipart part of the Command's own request.
 FILE_INPUTS: dict[str, list[str]] = {"override": ["png"], "import": ["file", "frames", "kit"], "mask-import": ["png"],
                                      "plate-import": ["png"], "extend": ["piece"], "new": ["from_parameters"],
-                                     "inbox": ["file"]}
+                                     "inbox": ["file"], "gen": ["reference"]}
 
 
 def test_every_file_input_has_a_multipart_test(server: Server) -> None:
@@ -717,7 +717,7 @@ def _as_parts(project: Kiripix, name: str, body: dict[str, Any]) -> list[tuple[s
     return parts
 
 
-@pytest.mark.parametrize("name", sorted(set(FILE_INPUTS) - {"extend", "new", "inbox"}))  # inbox's: below  # extend's sample writes a canvas; new's
+@pytest.mark.parametrize("name", sorted(set(FILE_INPUTS) - {"extend", "new", "inbox", "gen"}))  # inbox's, gen's: below  # extend's sample writes a canvas; new's
 # sample has no file: both are below
 def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, tmp_path_factory: pytest.TempPathFactory,
                                                               name: str) -> None:
@@ -736,6 +736,29 @@ def test_a_file_input_as_a_multipart_part_equals_the_cli_json(project: Kiripix, 
     assert _normal(reply.json, roots) == _normal(expected, roots)
     assert left == [], "the file inputs' temporary folder is deleted when the Command ends"
     assert not (twin / ".kiripix" / "uploads").exists()
+
+
+def test_gen_references_as_repeated_parts_equal_the_cli_json(project: Kiripix,
+                                                            tmp_path_factory: pytest.TempPathFactory) -> None:
+    """`gen --reference` over REST: one `reference` part per image, sent as the CLI sends them (the fake Provider)."""
+    SAMPLES["gen"](project)
+    save_image(project.cwd / "ref1.png", (8, 8))
+    save_image(project.cwd / "ref2.png", (8, 8), (0, 0, 0, 255))
+    twin = tmp_path_factory.mktemp("twin") / "project"
+    shutil.copytree(project.cwd, twin)
+    temp = tmp_path_factory.mktemp("server_temp")
+
+    expected = project.json("gen", "prop.bench", "--prompt", "a bench", "--reference", "ref1.png", "--reference", "ref2.png")
+    body = {"asset": "prop.bench", "prompt": "a bench", "reference": ["ref1.png", "ref2.png"]}
+    with serving(twin, temp=temp) as running:
+        reply = running.call("/api/gen", parts=_as_parts(project, "gen", body))
+        left = list(temp.iterdir())
+
+    roots = [str(project.cwd), str(twin), str(project.cwd.resolve()), str(twin.resolve())]
+    assert reply.status == 200 and reply.headers["x-kiripix-exit-code"] == "0"
+    assert len(reply.json["data"]["variants"]) == 1
+    assert _normal(reply.json, roots) == _normal(expected, roots)
+    assert left == []
 
 
 def test_import_loop_frames_as_repeated_parts_equal_the_cli(project: Kiripix,

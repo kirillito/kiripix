@@ -34,6 +34,14 @@ Toon shading (ticket 0105): the colour pass is the Model's colour lit by one key
 `band_smooth` blurs the normals inside the silhouette before they are lit (ticket 0213). It is done in the script on the normal, not with
 a Blender shader, because Shader to RGB is EEVEE-only and render uses Cycles so that `--cpu` works. The other passes don't change.
 
+Painted-room look (ticket 0382), each parameter off at its default, and then `toon`, `render.json` and every frame are the bytes
+they were: `shadow_hue` and `light_hue` (a `#rrggbb` colour, with `hue_strength`) move the darkest steps toward a cool colour and
+the lightest toward a warm one at their own lightness, so the hue lives in the ramp `palette` fits or the table holds; `highlight`
+(half-Lambert, with `highlight_gain`) adds one step above the brightest, a highlight; `bands` goes to 8; `contact` (with
+`contact_distance`, a share of the Model's height, and `contact_threshold`) puts a pixel one step down where Blender's
+ambient-occlusion pass finds it closed. `render.json`'s `bands` is the steps a part's ramp needs: `bands`, one more with a highlight.
+The new keys are in `toon` only when they are on.
+
 Transitions (ticket 0218): a `transition` clip of `clips.json` has no action of its own. Blender poses the rig at each end's
 frame and renders the blend of the two, per bone, at each of the clip's `frames` (the blend positions). The key hashes the
 whole entry, which carries both ends' source hashes and frames, so a transition is rendered again when a clip it reads changes
@@ -135,6 +143,31 @@ def _check_points(run: StageRun, result: dict[str, Any]) -> None:
             f"the Model has no bone or empty named {', '.join(result['points_unknown'])}; its bones are "
             f"{', '.join(result['bones']) or 'none'}" + (f", its empties {', '.join(result['empties'])}" if result["empties"] else ""),
             code="render.point_unknown", fix=f"kiripix set {run.asset_id} render points=")
+
+
+HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def _toon_extra(run: StageRun, shadow_hue: str, light_hue: str) -> dict[str, Any]:
+    """The `toon` keys of the painted-room look (ticket 0382), only those that are on, so a render with none of them is as it
+    was. StageFailure `render.hue_invalid` for a hue that isn't `#rrggbb`."""
+    extra: dict[str, Any] = {}
+    for name, value in (("shadow_hue", shadow_hue), ("light_hue", light_hue)):
+        if not value:
+            continue
+        if not HEX.fullmatch(value):
+            raise StageFailure(f"{name} is {value!r}, not a colour written #rrggbb", code="render.hue_invalid",
+                               fix=f"kiripix set {run.asset_id} render {name}=")
+        extra[name] = value.lower()
+    if extra:
+        extra["hue_strength"] = float(run.params.get("hue_strength", 0.25))
+    if float(run.params.get("highlight", 0)) > 0:
+        extra["highlight"] = float(run.params["highlight"])
+        extra["highlight_gain"] = float(run.params.get("highlight_gain", 0.35))
+    if bool(run.params.get("contact", False)):
+        extra["contact"] = {"distance": float(run.params.get("contact_distance", 0.05)),
+                            "threshold": float(run.params.get("contact_threshold", 0.5))}
+    return extra
 
 
 def cell_size(height: int) -> int:
@@ -460,6 +493,7 @@ def run_render(run: StageRun) -> None:
             owner_action=f"Add [character.camera.{camera_name}] (elevation, directions) to kiripix.toml, or set the "
                          f"Asset's camera parameter to one of the presets.")
     preset = presets[camera_name]
+    toon_extra = _toon_extra(run, str(run.params.get("shadow_hue", "")), str(run.params.get("light_hue", "")))
     elevation, count = float(preset["elevation"]), int(preset["directions"])
 
     clips_document = _json(run.upstream["clips"] / "clips.json")
@@ -482,7 +516,8 @@ def run_render(run: StageRun) -> None:
         "pivot": pivot,
         "toon": {"bands": int(run.params.get("bands", 3)), "shadow": float(run.params.get("shadow", 0.5)),
                  "band_edge": float(run.params.get("band_edge", 0.5)), "band_smooth": float(run.params.get("band_smooth", 0)),
-                 "light": {"angle": float(preset.get("light_angle", -45)), "tilt": float(preset.get("light_tilt", 35))}},
+                 "light": {"angle": float(preset.get("light_angle", -45)), "tilt": float(preset.get("light_tilt", 35))},
+                 **toon_extra},
         "device": "cpu" if run.cpu else "gpu",
         "output": str(run.output_dir),
     }
@@ -616,7 +651,7 @@ def run_render(run: StageRun) -> None:
         "pivot": pivot,
         "px_per_unit": args["px_per_unit"],
         "toon": args["toon"],
-        "bands": args["toon"]["bands"],
+        "bands": args["toon"]["bands"] + (1 if args["toon"].get("highlight") else 0),
         "materials": materials,
         **({"things": held_materials} if held else {}),
         **({"eyes": eyes} if eyes else {}),

@@ -336,7 +336,7 @@ CHARACTER = KindSpec(
         StageSpec(
             name="render",
             description="Headless Blender render at the target pixel size: colour, normal, depth and mask passes.",
-            version=4,  # a clip keyed on the things it holds and those before them, a socket's point never lost to a same-named one (ticket 0313); 3: each clip's own `frame` and `pivot` in render.json (0303); 2: held things (0302)
+            version=5,  # the painted-room look (ticket 0382): hue shift, highlight, contact shading, `bands` to 8; 4: a clip keyed on the things it holds and those before them, a socket's point never lost to a same-named one (ticket 0313); 3: each clip's own `frame` and `pivot` in render.json (0303); 2: held things (0302)
             inputs=StageInputs(upstream=["model", "rig", "clips"], files=["src/clips/*", THINGS_PATTERN, "imported.jsonl"],
                                settings=["character.camera", "character.height", BLENDER_VERSION_SETTING,
                                          RENDER_FORMAT_SETTING],
@@ -372,10 +372,76 @@ CHARACTER = KindSpec(
                 ParamSpec(
                     name="bands",
                     type="int",
-                    description="Toon shading: the number of light bands on the colour pass.",
+                    description="Toon shading: the number of light bands on the colour pass, 2 to 8 (the ramp of a part has "
+                                "this many colours, one more with `highlight`).",
                     default=3,
                     minimum=2,
-                    maximum=4,
+                    maximum=8,
+                ),
+                ParamSpec(
+                    name="highlight",
+                    type="float",
+                    description="Toon shading: where one more band, a highlight, starts above the brightest, in half-Lambert "
+                                "(0 to 1, such as 0.92); the highlight is the colour lightened by `highlight_gain`. 0: none.",
+                    default=0,
+                    minimum=0,
+                    maximum=1,
+                ),
+                ParamSpec(
+                    name="highlight_gain",
+                    type="float",
+                    description="With `highlight`: how far the highlight band lightens the colour toward white (0 to 1).",
+                    default=0.35,
+                    minimum=0,
+                    maximum=1,
+                ),
+                ParamSpec(
+                    name="shadow_hue",
+                    type="str",
+                    description="Toon shading: a colour, #rrggbb such as #5a6fa8, that the dark bands move toward at their own "
+                                "lightness (cool shadows), by `hue_strength`. Empty: the shadow is only darker. The shift is "
+                                "in the colours `palette` fits, so a part's ramp carries it and the game's swap keeps it.",
+                    default="",
+                ),
+                ParamSpec(
+                    name="light_hue",
+                    type="str",
+                    description="Toon shading: a colour, #rrggbb such as #ffd9a0, that the light bands move toward at their "
+                                "own lightness (warm light), by `hue_strength`. Empty: none.",
+                    default="",
+                ),
+                ParamSpec(
+                    name="hue_strength",
+                    type="float",
+                    description="With `shadow_hue` or `light_hue`: how far the darkest band moves toward the shadow hue and the "
+                                "lightest toward the light hue, 0 to 1; the bands between move in proportion.",
+                    default=0.25,
+                    minimum=0,
+                    maximum=1,
+                ),
+                ParamSpec(
+                    name="contact",
+                    type="bool",
+                    description="Contact shading: a pixel where Blender's ambient-occlusion pass finds the Model's surfaces "
+                                "meeting or close (an arm against the body, under the hair) goes one band down. One hard "
+                                "step, not a gradient; it costs a second, 32-sample render of each frame.",
+                    default=False,
+                ),
+                ParamSpec(
+                    name="contact_distance",
+                    type="float",
+                    description="With `contact`: how far from a surface another counts as close, as a share of the Model's height.",
+                    default=0.05,
+                    minimum=0.001,
+                ),
+                ParamSpec(
+                    name="contact_threshold",
+                    type="float",
+                    description="With `contact`: the occlusion (0 open, 1 closed) at which a pixel goes one band down; lower "
+                                "darkens more of the Model.",
+                    default=0.5,
+                    minimum=0,
+                    maximum=1,
                 ),
                 ParamSpec(
                     name="shadow",
@@ -428,6 +494,7 @@ CHARACTER = KindSpec(
             worn_stage="render",
             generated_params=render_generated_params,
             checks=(CheckSpec(code="render.camera_unknown", description="The camera preset exists in kiripix.toml."),
+                    CheckSpec(code="render.hue_invalid", description="`shadow_hue` and `light_hue` are empty or #rrggbb."),
                     CheckSpec(code="wearable.stack_differs",
                               description="Info, once a Wearable's render is built: where its Wearables stacked over the body "
                                           "by order differ from stacked by depth, per clip, with the worst frames' boxes.")),
@@ -486,12 +553,19 @@ CHARACTER = KindSpec(
         StageSpec(
             name="finish",
             description="Outline after mapping; the normal pass quantised and aligned to the colour frames.",
-            version=4,  # line_skip skips every index of a shared material name (ticket 0313); 3: inner lines on a held thing's materials (0305); 2: finish.json gains `line_depth` (ticket 0247)
+            version=5,  # outline_from=part, the sel-out outline and inner lines (ticket 0382); 4: line_skip skips every index of a shared material name (ticket 0313); 3: inner lines on a held thing's materials (0305); 2: finish.json gains `line_depth` (ticket 0247)
             inputs=StageInputs(upstream=["palette", "render"], settings=["palette"]),
             params=(
                 ParamSpec(name="outline", type="bool", description="Draw a 1 px outline round the silhouette.", default=True),
                 ParamSpec(name="outline_colour", type="int", minimum=0, default=0,
                           description="The outline's colour: an index into the Project palette."),
+                ParamSpec(name="outline_from", type="choice", choices=["colour", "part"], default="colour",
+                          description="colour: the outline, and `inner_lines=outline`, are one palette colour, "
+                                      "`outline_colour`. part (sel-out): each outline pixel is the darkest colour of the part "
+                                      "it borders (its ramp's first colour; with palette part_lines that step is the lines' "
+                                      "own), the darker of the two where it borders two parts, and the inner lines the same, "
+                                      "so a swap of a part's ramp recolours its lines; `outline_colour` is then only the "
+                                      "colour of a pixel that borders no known part."),
                 ParamSpec(name="placement", type="choice", choices=["outside", "edge"], default="outside",
                           description="outside: the outline is the pixels around the silhouette, which keeps its own "
                                       "(none where it touches the frame's edge); edge: it is the silhouette's edge pixels."),

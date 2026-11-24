@@ -796,6 +796,7 @@ if Path("inpainter-b").exists():
 # - blender-calls.jsonl: one line per call, with the script, its args and the `[character] blender` setting;
 # - blender-fails: while it exists, a call fails with the file's text;
 # - blender-materials: JSON list of the Model's material names, for a render's material pass (default skin, cloth);
+# - a toon with `shadow_hue` or `light_hue` (ticket 0382) makes the right half of the colour frame three flat steps, dark and cool, base, light and warm;
 # - blender-material-split: while it exists, the material pass is 1 on the left half of a frame and 2 on the right (else all 1);
 # - blender-material-frames: JSON {"clip/dir/index" | "clip/dir" | "*": [material indexes]}, what each frame's material pass holds;
 # - blender-wearable-reach: JSON {<clip>: [left, top, right, bottom]}, how far a Wearable's frames reach (ticket 0291; else inside the cell);
@@ -983,6 +984,12 @@ class FakeBlender:
                         if name == "color":  # two colours that differ by frame, so a palette has something to choose
                             tint = (clip["frames"].index(clip["frames"][index]) * 13 + len(direction["name"]) * 29) % 90  # a held pose (`still`) renders alike
                             image.paste((200 - tint, 100 + tint, 50 + tint, 255), (width // 2, 0, width, height))
+                            if args["toon"].get("shadow_hue") or args["toon"].get("light_hue"):
+                                # ticket 0382: the right half is three flat steps as a toon render with a hue shift has them:
+                                # the dark one cooler, the light one warmer, the middle one the Model's colour
+                                right = width - width // 2
+                                for step, hue in enumerate(((90, 70, 130), (200, 100, 50), (235, 150, 70))):
+                                    image.paste((*hue, 255), (width // 2 + step * right // 3, 0, width // 2 + (step + 1) * right // 3, height))
                         if name == "material" and Path("blender-material-split").exists():  # the right half is the 2nd material
                             image.paste(2, (width // 2, 0, width, height))
                         image.save(path)

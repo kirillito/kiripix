@@ -12,8 +12,10 @@ args:   {"rig_file": <the file to animate: the Model's `model.blend`, or the rig
          "directions": [{"name", "yaw": <degrees the Model turns about its up axis; 0 is facing the camera>}],
          "elevation": <degrees the camera looks down>, "frame": [<width>, <height>] in px, "px_per_unit": <px per Blender unit>,
          "pivot": [<x>, <y>] in px, where the ground point under the root lands, "device": "cpu" | "gpu",
-         "toon": {"bands": 2 to 4, "shadow": 0 to 1, "band_edge": 0 to 1, "band_smooth": px, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
-                  toward the camera>}}, "eyes": [<names of the materials that are the eyes; optional>],
+         "toon": {"bands": 2 to 8, "shadow": 0 to 1, "band_edge": 0 to 1, "band_smooth": px, "light": {"angle": <deg round the view axis from screen top>, "tilt": <deg
+                  toward the camera>}, and, each only when it is on (ticket 0382): "shadow_hue" / "light_hue": "#rrggbb", "hue_strength": 0 to 1,
+                  "highlight": 0 to 1, "highlight_gain": 0 to 1, "contact": {"distance": <share of the Model's height>, "threshold": 0 to 1}},
+         "eyes": [<names of the materials that are the eyes; optional>],
          "points": [{"name": <the point's name>, "target": <a bone of the armature or an Empty, by name>}; optional],
          "things": [{"id": <a held thing's ID>, "file": <its .glb or .blend>}; optional] (the Asset's things up to the last one a clip holds, in the order their
                     materials are numbered), and a clip's "attach": [{"thing", "socket": <a bone>, "offset": [x, y, z]?, "turn": [x, y, z]?}],
@@ -60,7 +62,10 @@ in Blender units) and `mask/...` (gray, 8 bit, 0 or 255) and `material/...` (gra
 Cycles renders it at one sample with a box filter 0.01 wide and no denoising, so every pixel is its centre's value and there
 is no anti-aliasing. Every pass is a primary-ray value (Diffuse Color, Normal, Depth, Object Index, Material Index), so the passes don't
 depend on the device and don't have noise. The colour pass is the Diffuse Color toon-shaded by `shade` (ticket 0105): a light
-fixed in camera space, stepped in `bands` levels in numpy, which works in Cycles on CPU and GPU alike.
+fixed in camera space, stepped in `bands` levels in numpy, which works in Cycles on CPU and GPU alike. Hue shift, a highlight
+step and contact shading (ticket 0382) are extra, off unless `toon` has their keys; with none of them the colour pass is the
+same bytes as before. Contact shading reads an ambient-occlusion pass from a second render of the frame at `AO_SAMPLES` samples
+(the box filter is the same, so it is still a pixel's centre value); the other passes are the first render's.
 
 The camera orbits the point under the root, in 3D the Model turning about its up axis there, so the pivot is the same pixel
 in every direction. A clip whose root travels (`root_motion`) has the camera follow it, so the pivot is also the same pixel in
@@ -84,6 +89,7 @@ from mathutils import Euler, Matrix, Quaternion, Vector
 
 ROOT = "model_root"
 DISTANCE = 10.0  # Blender units from the camera to the ground point under the root
+AO_SAMPLES = 32  # of the ambient-occlusion render that contact shading reads (ticket 0382); every other pass is rendered at 1
 DEPTH_MARGIN = 1.5  # of the Model's size around that point: how far a posed limb may reach beyond the rest pose
 
 
@@ -565,6 +571,30 @@ def set_up_scene(args: dict, armature, root_bone: str) -> dict:
     return {"ground": ground, "turntable": turntable, "camera": camera, "radius": radius, "materials": materials}
 
 
+def set_up_contact(args: dict) -> None:
+    """Ambient occlusion reaches `contact.distance` (a share of the Model's height) from every surface."""
+    scene = bpy.context.scene
+    if scene.world is None:
+        scene.world = bpy.data.worlds.new("kiripix_world")
+    scene.world.light_settings.distance = float(args["toon"]["contact"]["distance"]) * float(args["model_height"])
+
+
+def render_occlusion(exr: Path, ao_exr: Path) -> np.ndarray:
+    """The frame's occlusion, 0 (open) to 1 (closed), from a second render at `AO_SAMPLES` samples that writes only to `ao_exr`;
+    the scene is put back as it was, for the next frame's first render."""
+    scene, layer = bpy.context.scene, bpy.context.view_layer
+    scene.cycles.samples = AO_SAMPLES
+    layer.use_pass_ambient_occlusion = True
+    scene.render.filepath = str(ao_exr)
+    try:
+        bpy.ops.render.render(write_still=True)
+    finally:
+        scene.cycles.samples = 1
+        layer.use_pass_ambient_occlusion = False
+        scene.render.filepath = str(exr)
+    return 1.0 - np.clip(channel(read_exr(ao_exr), "AO.R", "AmbientOcclusion.R", "Ambient Occlusion.R"), 0.0, 1.0)
+
+
 def choose_device(want: str) -> str:
     cycles = bpy.context.scene.cycles
     if want == "gpu":
@@ -627,13 +657,38 @@ def smooth_normal(normal: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndar
     return np.where(mask[..., None], total, normal)
 
 
-def shade(albedo: np.ndarray, normal: np.ndarray, mask: np.ndarray, toon: dict) -> np.ndarray:
+def hex_linear(text: str) -> np.ndarray:
+    """A "#rrggbb" colour as linear RGB."""
+    value = text.lstrip("#")
+    srgb_values = np.array([int(value[i:i + 2], 16) for i in (0, 2, 4)], dtype=np.float64) / 255.0
+    return np.where(srgb_values <= 0.04045, srgb_values / 12.92, ((srgb_values + 0.055) / 1.055) ** 2.4)
+
+
+def luma(linear: np.ndarray) -> np.ndarray:
+    return linear @ np.array([0.2126, 0.7152, 0.0722])
+
+
+def tint(colour: np.ndarray, target: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    """`colour` moved by `weight` (per pixel, 0 to 1) toward the hue of `target` at the colour's own lightness: the hue
+    changes and the brightness stays, so a band is cooler or warmer, not darker or lighter."""
+    wanted = np.clip(target * (luma(colour) / max(float(luma(target)), 1e-4))[..., None], 0.0, 1.0)
+    return colour * (1.0 - weight[..., None]) + wanted * weight[..., None]
+
+
+def shade(albedo: np.ndarray, normal: np.ndarray, mask: np.ndarray, toon: dict, occlusion: np.ndarray | None = None) -> np.ndarray:
     """The colour pass, (h, w, 3) linear: toon shading (ticket 0105). The key light is fixed in camera space, so it sits in the
     same place on screen for every direction, frame and character. Half-Lambert (n . l * 0.5 + 0.5) is shifted by
     `0.5 - band_edge`, clipped to 0..1 and cut into `bands` steps, so with 2 bands the cut is at `band_edge` (ticket 0213); the
     brightest keeps the Model's own colour and each step down darkens it by an equal share of `shadow` (0 to 1). With
     `band_smooth` above 0 the normals are blurred inside the mask first (only here: the normal pass is not). Pure numpy
-    on the primary-ray normal, so it works the same on CPU and GPU and has no noise (a Shader to RGB node is EEVEE-only)."""
+    on the primary-ray normal, so it works the same on CPU and GPU and has no noise (a Shader to RGB node is EEVEE-only).
+
+    Ticket 0382, each only when `toon` has it (else the result is the plain one, bit for bit): `highlight` adds one step above
+    the brightest, where half-Lambert is at least `highlight`, lightened toward white by `highlight_gain`; `shadow_hue` and
+    `light_hue` move the colour of a step toward that hue at its own lightness, by `hue_strength` times (1 - step) for the shadow
+    and times step for the light, so with 2 bands the dark one is moved by the whole strength and the light one by none of the
+    shadow's; `occlusion` (1 minus the ambient-occlusion pass, 0 to 1) at or above `contact.threshold` puts a pixel one step
+    down, to the darkest at most. Every step is still one flat colour."""
     bands = int(toon["bands"])
     edge, sigma = float(toon.get("band_edge", 0.5)), float(toon.get("band_smooth", 0.0))
     if sigma > 0:
@@ -642,12 +697,33 @@ def shade(albedo: np.ndarray, normal: np.ndarray, mask: np.ndarray, toon: dict) 
     if edge != 0.5:
         lit = lit + (0.5 - edge)
     lit = np.clip(lit, 0.0, 1.0)
-    step = np.minimum(np.floor(lit * bands), bands - 1) / (bands - 1)  # 0 darkest band .. 1 brightest
-    factor = 1.0 - float(toon["shadow"]) * (1.0 - step)
-    return albedo * factor[..., None]
+    highlight = float(toon.get("highlight", 0.0))
+    shadow_hue, light_hue = toon.get("shadow_hue"), toon.get("light_hue")
+    contact = toon.get("contact") if occlusion is not None else None
+    if highlight <= 0 and not shadow_hue and not light_hue and not contact:
+        step = np.minimum(np.floor(lit * bands), bands - 1) / (bands - 1)  # 0 darkest band .. 1 brightest
+        factor = 1.0 - float(toon["shadow"]) * (1.0 - step)
+        return albedo * factor[..., None]
+    level = np.minimum(np.floor(lit * bands), bands - 1)  # 0 darkest band .. bands - 1 brightest
+    if highlight > 0:
+        level = level + (lit >= highlight)  # one step more: bands, the highlight
+    if contact and occlusion is not None:
+        level = np.where(occlusion >= float(contact["threshold"]), np.maximum(level - 1.0, 0.0), level)
+    step = np.minimum(level, bands - 1) / (bands - 1)
+    out = albedo * (1.0 - float(toon["shadow"]) * (1.0 - step))[..., None]
+    if highlight > 0:
+        lighter = albedo + (1.0 - albedo) * float(toon.get("highlight_gain", 0.35))
+        out = np.where((level >= bands)[..., None], lighter, out)
+    strength = float(toon.get("hue_strength", 0.25))
+    if shadow_hue:
+        out = tint(out, hex_linear(str(shadow_hue)), strength * (1.0 - step))
+    if light_hue:
+        out = tint(out, hex_linear(str(light_hue)), strength * step)
+    return out
 
 
-def write_frame(output: Path, clip: str, direction: str, index: int, exr: Path, camera, depth_range: tuple, toon: dict):
+def write_frame(output: Path, clip: str, direction: str, index: int, exr: Path, camera, depth_range: tuple, toon: dict,
+                occlusion: np.ndarray | None = None):
     """Writes the passes of one frame; returns its depth (Blender units, as rendered) and mask, for `mark_hidden`."""
     channels = read_exr(exr)
     mask = channel(channels, "Object Index.X", "IndexOB.X") > 0.5
@@ -664,7 +740,7 @@ def write_frame(output: Path, clip: str, direction: str, index: int, exr: Path, 
 
     alpha = np.where(mask, 255, 0).astype(np.uint8)
     colour = np.zeros(mask.shape + (4,), dtype=np.uint8)
-    colour[..., :3] = np.where(mask[..., None], to_u8(srgb(shade(albedo, view, mask, toon))), 0)
+    colour[..., :3] = np.where(mask[..., None], to_u8(srgb(shade(albedo, view, mask, toon, occlusion))), 0)
     colour[..., 3] = alpha
     normal = np.zeros(mask.shape + (4,), dtype=np.uint8)
     normal[..., :3] = np.where(mask[..., None], to_u8((view + 1.0) / 2.0), 0)
@@ -981,9 +1057,13 @@ def render(args: dict) -> dict:
     scratch = output / ".scratch"
     scratch.mkdir(parents=True, exist_ok=True)
     exr = scratch / "pass.exr"
+    ao_exr = scratch / "occlusion.exr"
     scene = bpy.context.scene
     device = choose_device(args["device"])
     setup = set_up_scene(args, armature, root_bone)
+    contact = bool(args["toon"].get("contact"))
+    if contact:
+        set_up_contact(args)
     held_materials = number_things(args, setup)
     scene.render.filepath = str(exr)
     materials = show_wearable(args, setup, measuring=False)
@@ -1018,7 +1098,9 @@ def render(args: dict) -> dict:
                     placed["points"] = seen_points(places, camera, args)
                 pivots[clip["name"]][direction["name"]].append(placed)
                 bpy.ops.render.render(write_still=True)
-                depth, mask = write_frame(output, clip["name"], direction["name"], index, exr, camera, depth_range, args["toon"])
+                occlusion = render_occlusion(exr, ao_exr) if contact else None
+                depth, mask = write_frame(output, clip["name"], direction["name"], index, exr, camera, depth_range, args["toon"],
+                                          occlusion)
                 if places:
                     mark_hidden(placed["points"], depth, mask, HIDDEN_MARGIN * float(args["model_height"]))
                 done += 1

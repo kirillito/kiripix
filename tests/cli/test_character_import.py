@@ -159,7 +159,8 @@ def test_an_old_settings_file_migrates_in_memory_and_the_stage_takes_a_height(pr
     assert path.read_text(encoding="utf-8") == old
     render = {s["name"]: s for s in project.json("describe", "character")["data"]["kinds"][0]["stages"]}["render"]
     assert {p["name"] for p in render["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes", "points",
-                                                        "cell_margin"}
+                                                        "cell_margin", "highlight", "highlight_gain", "shadow_hue", "light_hue",
+                                                        "hue_strength", "contact", "contact_distance", "contact_threshold"}
     project.json("set", HERO, "render", "height=40")
     assert project.json("show", HERO)["data"]["stages"][3]["params"]["height"] == 40
 

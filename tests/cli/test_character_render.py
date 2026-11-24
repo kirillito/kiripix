@@ -161,9 +161,11 @@ def test_the_stage_takes_the_gpu_lock(project: Kiripix) -> None:
     [stage] = kind["stages"]
 
     assert stage["gpu"] is True
-    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes", "points", "cell_margin"}
+    assert {p["name"] for p in stage["params"]} == {"height", "camera", "bands", "shadow", "band_edge", "band_smooth", "eyes", "points", "cell_margin",
+                                                          "highlight", "highlight_gain", "shadow_hue", "light_hue", "hue_strength",
+                                                          "contact", "contact_distance", "contact_threshold"}
     by_name = {p["name"]: p for p in stage["params"]}
-    assert (by_name["bands"]["minimum"], by_name["bands"]["maximum"], by_name["bands"]["default"]) == (2, 4, 3)
+    assert (by_name["bands"]["minimum"], by_name["bands"]["maximum"], by_name["bands"]["default"]) == (2, 8, 3)
 
 
 def test_the_same_inputs_are_skipped(project: Kiripix) -> None:
@@ -273,10 +275,10 @@ def test_changing_bands_or_shadow_makes_render_stale_and_reaches_blender(project
     assert render_calls(project)[-1]["args"]["toon"]["shadow"] == 0.8
 
 
-def test_bands_outside_2_to_4_are_refused(project: Kiripix) -> None:
+def test_bands_outside_2_to_8_are_refused(project: Kiripix) -> None:
     ready(project)
 
-    for value in ("1", "5"):
+    for value in ("1", "9"):
         result = project.json("set", HERO, "render", f"bands={value}", expect=1)
         assert result["ok"] is False and result["findings"]
 

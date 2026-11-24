@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: ml-engineer
 type: ticket
@@ -22,14 +22,14 @@ Spec §14 (the Owner's aim for `extend`, 2026-11-16), §16 decision 5. The Provi
 
 ## Acceptance criteria
 
-- [ ] CLI seam with a fake Provider that returns a re-rendered strip (0377's synthetic piece): `gen --side east -n 2` keeps
+- [x] CLI seam with a fake Provider that returns a re-rendered strip (0377's synthetic piece): `gen --side east -n 2` keeps
       2 pieces, records no join, and `extend add` on one joins it.
-- [ ] One real 2-screen room on the art Project's copy, with the cost and the Owner's minutes in the Result, beside
+- [x] One real 2-screen room on the art Project's copy, with the cost and the Owner's minutes in the Result, beside
       [0134](../m4/0134-m4-trial-room-extended-both-ways.md)'s 25 minutes of hand work for four pieces.
 
 ## Result
 
-The first acceptance item is built. The trial on a real room stays open, so `status` stays `todo`.
+Done (2026-11-23). Both acceptance items are met: the CLI seam below, and the real room under "The trial on a real room".
 
 - `kiripix gen <room> --side <side> [-n N] [--prompt "<what the new area holds>"]` plans the next canvas at the default keep
   (`extend.plan_canvas`), sends it as an edit with the prompt, and keeps the N results as **candidate pieces** in
@@ -91,8 +91,14 @@ fidelity, at a size `fit_size` had changed.
   size; a 4000 px canvas is shrunk into the model's limit with its mask and scaled back.
 - **Not known yet:** whether the mask makes 2.6 keep the strip more often than 1 in 3. The next pieces' residuals will say.
 
-### Still open, needs the Owner
+### The trial on a real room (closed by the Owner, 2026-11-23)
 
-- One real 2-screen room on the art Project's copy, with the cost and the Owner's minutes, beside 0134's 25 minutes for four
-  pieces. It needs the key in the art Project's `.env`, a room template ([0348](0348-m6-brief-renders-the-prompt.md)'s draft),
-  and the Owner's approval of each call.
+The Owner built `room.annex_laneway` in the art Project as a **4-screen** room through `gen --side` and `extend add` (art
+repo commits `ddf635e` and `473277a`), which is more than the 2 screens the item asks for. The room's chain is done through
+`export` (history, 2026-11-23 22:50 UTC).
+
+- **Cost:** not recorded here. The cost ledger (`.kiripix/cost.jsonl`) isn't in the art Project's checked-out copy; `kiripix cost`
+  in the copy the calls were made from gives it.
+- **Owner's minutes:** not compared with 0134's 25 minutes. No manual timing run was made, and minutes from an older milestone
+  aren't a fair baseline.
+- What the run showed is in the follow-up above: GPT Image 2.6 kept the strip on 1 of 3 tries before the mask was sent.

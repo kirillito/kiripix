@@ -8,6 +8,12 @@ Two things, both after `palette`:
   Prop's outline matches; where the character touches the frame's edge the line has nowhere to go) or `edge` (the line is the
   silhouette's own edge pixels). `render`'s cell leaves the character at least `ceil(0.1 * height)` px under its feet and more
   elsewhere, so `outside` has room.
+- the sel-out outline (ticket 0382), with `outline_from=part`: each outline pixel is painted in the darkest colour of the part it
+  borders, taken from the part's ramp (its first colour, the line step with palette `part_lines`; for a material in no part the
+  darker colour `inner_lines=dark` would choose), and in the darker of the two where it borders two parts (`sel_out_outline`);
+  `outline_colour` is then only the colour of a pixel that borders no part with a colour. The inner lines too (`sel_out_paint`):
+  each takes the darker of its own part's colour and that of the part across the border. A swap of a part's ramp recolours its
+  lines with it. The default, `colour`, is the one fixed colour of today.
 - the eyes (ticket 0203), with `eyes=stamp` or `pupils`, before the outline: the pixels of the eye materials that `render`
   followed (its `eyes` parameter) are filled with the skin round them, and each eye is painted as a small fixed pattern from
   where the posed Model puts it (`plan_eyes`): chosen once for a clip and a direction, on whole pixels, moving only when the
@@ -66,6 +72,8 @@ from kiripix.ops import (
     paint_eyes,
     plan_eyes,
     quantise_normals,
+    sel_out_outline,
+    sel_out_paint,
     stamped_mask,
 )
 from kiripix.recipes.base import CheckFunction, ParamSpec, StageFailure, StageFunction, StageRun
@@ -102,9 +110,11 @@ def _normal_name(colour_name: str) -> str:
     return "normal/" + colour_name.partition("/")[2]
 
 
-def _outline_colour(run: StageRun, palette: np.ndarray, force: bool = False) -> tuple[int, tuple[int, int, int]] | None:
+def _outline_colour(run: StageRun, palette: np.ndarray, force: bool = False,
+                    refuse: bool = True) -> tuple[int, tuple[int, int, int]] | None:
     """The outline's index and colour, or None for `outline=false` (unless `force`: the colour for `inner_lines=outline`);
-    StageFailure when the index isn't in the palette."""
+    StageFailure when the index isn't in the palette, or, unless `refuse` is off (a sel-out outline, whose colour is only the
+    fallback and may be a ramp's), in a part's ramp."""
     if not run.params["outline"] and not force:
         return None
     index = int(run.params["outline_colour"])
@@ -114,7 +124,8 @@ def _outline_colour(run: StageRun, palette: np.ndarray, force: bool = False) -> 
                            code="finish.outline_colour_unknown",
                            fix=f"kiripix set {run.asset_id} finish outline_colour=0")
     r, g, b = (int(v) for v in palette[index])
-    _refuse_a_ramp_colour(run, palette, index, (r, g, b))
+    if refuse:
+        _refuse_a_ramp_colour(run, palette, index, (r, g, b))
     return index, (r, g, b)
 
 
@@ -313,12 +324,14 @@ class _InnerLines:
     line, and, for `dark`, each material's line colour, chosen once over all the palette frames before the first is painted."""
 
     def __init__(self, run: StageRun, source: str, document: dict[str, Any], palette: np.ndarray,
-                 files: list[tuple[str, str, int, str]]) -> None:
-        self.run, self.source, self.mode = run, source, _lines_mode(run)
+                 files: list[tuple[str, str, int, str]], sel_out: bool = False, mode: str | None = None) -> None:
+        """`sel_out` (ticket 0382): a line takes the darker of its own part's colour and the neighbouring parts', whatever `mode`
+        says of the colour. `mode` is `inner_lines` unless given: `dark` with no lines, for a sel-out outline alone."""
+        self.run, self.source, self.mode, self.sel_out = run, source, mode or _lines_mode(run), sel_out
         if source not in run.upstream:
             raise StageFailure(f"finish can't draw inner lines: it has no material pass from {source}; run {source} again")
         self.described = _palette_document(run)
-        if self.mode == "dark" and self.described.get("parts") and not self.described.get("part_lines"):
+        if self.mode == "dark" and mode is None and self.described.get("parts") and not self.described.get("part_lines"):
             raise StageFailure("inner_lines=dark with palette parts needs a line step in each part's ramp, so that swapping the "
                                "part recolours its lines too; palette part_lines=true adds it (inner_lines=outline needs "
                                "none)", code="finish.inner_lines_with_parts",
@@ -363,7 +376,7 @@ class _InnerLines:
             self.depth_step = self.line_depth / float(document["px_per_unit"]) / max(far - near, 1e-9) * 65535.0
         self.outline: tuple[int, tuple[int, int, int]] | None = None
         self.colours: dict[int, tuple[int, tuple[int, int, int]]] = {}
-        if self.mode == "outline":
+        if self.mode == "outline" and not sel_out:
             self.outline = _outline_colour(run, palette, force=True)
         else:
             self._choose(files, palette)
@@ -429,6 +442,21 @@ class _InnerLines:
     def _path(self, clip: str, direction: str, index: int, kind: str) -> Path:
         return self.run.upstream[self.source] / self.frames[(clip, direction, index)][kind]
 
+    def rgb_by_material(self) -> dict[int, tuple[int, int, int]]:
+        """Each material's line colour, for the sel-out Ops."""
+        return {m: rgb for m, (_, rgb) in self.colours.items()}
+
+    def labels_of(self, clip: str, direction: str, index: int) -> np.ndarray | None:
+        """A frame's material pass (parts joined, for a sprite), or None when it isn't there."""
+        try:
+            return self._labels(self._path(clip, direction, index, "material"))
+        except (OSError, KeyError):
+            return None
+
+    def table(self) -> dict[str, Any]:
+        """finish.json's record of the colours a sel-out line takes, by material name."""
+        return {self.names.get(m, str(m)): {"material": m, "colour": c, "rgb": list(rgb)} for m, (c, rgb) in sorted(self.colours.items())}
+
     def paint(self, colour: np.ndarray, clip: str, direction: str, index: int, eyed: np.ndarray | None) -> np.ndarray:
         """The frame with the lines painted, inside the render's mask and never over a pixel the eyes painted."""
         files = self.frames[(clip, direction, index)]
@@ -446,6 +474,8 @@ class _InnerLines:
         line = inner_lines(labels, depth, self.skip, self.depth_step) & inside
         if eyed is not None:
             line &= ~eyed
+        if self.sel_out:
+            return sel_out_paint(colour, labels, line, self.rgb_by_material())
         out = colour.copy()
         if self.outline is not None:
             out[line] = (*self.outline[1], 255)
@@ -501,12 +531,19 @@ def _run_finish(run: StageRun, source: str) -> None:
     document = _document(run)
     mode, relief = _normals_mode(run), float(run.params.get("relief", 0.0))
     palette = palette_rgb(run)
-    outline = _outline_colour(run, palette)
+    sel_out = str(run.params.get("outline_from", "colour")) == "part" and bool(run.params["outline"])
+    outline = _outline_colour(run, palette, refuse=not sel_out)
     levels, placement = int(run.params["normal_levels"]), str(run.params["placement"])
     eyes = _Eyes(run, source, document, palette) if _eyes_mode(run) != "render" else None
     files = _colour_files(document)
     spare = outline is None and _is_effect(run) and bool(document["frame"]["width"] > 2 and document["frame"]["height"] > 2)
-    lines = _InnerLines(run, source, document, palette, files) if _lines_mode(run) != "off" else None
+    if sel_out and not document.get("materials"):
+        raise StageFailure("finish can't take the outline's colour from the parts: there are none to draw from (a sprite's are "
+                           f"palette `parts`); name them (kiripix set {run.asset_id} palette parts=...) or set outline_from=colour",
+                           code="finish.outline_without_parts", fix=f"kiripix set {run.asset_id} finish outline_from=colour")
+    lines = _InnerLines(run, source, document, palette, files, sel_out) if _lines_mode(run) != "off" else None
+    # the colours of the parts' lines: the inner lines' own, or, with none, chosen the same way for the outline alone
+    parts_lines = lines if lines is not None or not sel_out else _InnerLines(run, source, document, palette, files, True, "dark")
     materials = _materials_by_frame(document) if eyes is not None else {}
     for number, (clip, direction, index, name) in enumerate(files):
         run.check_cancel()
@@ -520,7 +557,11 @@ def _run_finish(run: StageRun, source: str) -> None:
             colour = lines.paint(colour, clip, direction, index, eyed)
         mapped = colour
         if outline is not None:
-            colour = add_outline(colour, outline[1], cast(Placement, placement))
+            seen = parts_lines.labels_of(clip, direction, index) if sel_out and parts_lines is not None else None
+            if parts_lines is not None and seen is not None and seen.shape == colour.shape[:2]:
+                colour = sel_out_outline(colour, seen, parts_lines.rgb_by_material(), outline[1], cast(Placement, placement))
+            else:
+                colour = add_outline(colour, outline[1], cast(Placement, placement))
         try:
             if mode == "flat":
                 finished = _flat_frame(colour)
@@ -546,7 +587,9 @@ def _run_finish(run: StageRun, source: str) -> None:
         shutil.copyfile(run.upstream["palette"] / RENDER_FILE, run.output_dir / RENDER_FILE)
     drawn = {"schema_version": FINISH_SCHEMA_VERSION, "normal_levels": levels,
              **({} if mode == "pass" else {"normals": mode}),
-             "outline": None if outline is None else {"colour": outline[0], "rgb": list(outline[1]), "placement": placement},
+             "outline": None if outline is None else {"colour": outline[0], "rgb": list(outline[1]), "placement": placement,
+                                                      **({"from": "part", "colours": parts_lines.table()}
+                                                         if sel_out and parts_lines is not None else {})},
              **({} if eyes is None else {"eyes": eyes.drawn()}),
              **({} if lines is None else {"inner_lines": lines.drawn()})}
     (run.output_dir / FINISH_FILE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")

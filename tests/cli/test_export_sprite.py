@@ -8,6 +8,7 @@ from typing import Any
 
 from conftest import Kiripix
 from test_export import GENERATED, node
+from test_export_character import regions
 from test_sprite import FOUR, SPRITE, decide, import_sheet, load, new_sprite, png_sheet, save, sheet_of
 
 FOLDER = "game/kiripix/sprite/npc"
@@ -60,14 +61,15 @@ def test_a_sprite_exports_the_characters_files_under_sprite(project: Kiripix) ->
 
 
 def test_a_four_direction_sprite_has_four_animations_per_clip(project: Kiripix) -> None:
-    exportable_sprite(project)
+    folder = exportable_sprite(project)
     project.json("export", SPRITE)
 
     frames = (project.cwd / FOLDER / "frames.tres").read_text("utf-8")
 
     assert re.findall(r'"name": &"([a-z_]+)"', frames) == [f"idle_{d}" for d in FOUR]
     assert manifest(project)["ids"] == {"markers": [], "layers": [], "masks": [], "clips": sorted(f"idle_{d}" for d in FOUR)}
-    assert frames.count("[sub_resource") == 4 * 2
+    assert frames.count('"texture": SubResource') == 4 * 2  # every frame plays
+    assert frames.count("[sub_resource") == len(regions(folder))  # a repeated cell shares one (ticket 0375)
 
 
 def test_a_clip_with_ticks_plays_at_60_a_second_each_frame_its_own_ticks(project: Kiripix) -> None:
