@@ -10,6 +10,7 @@ from PIL import Image
 
 from kiripix.ops import (
     Grid,
+    connected_regions,
     detect_grid,
     downscale,
     mask_to_source,
@@ -169,6 +170,52 @@ def test_a_thin_dark_line_straddling_cells_stays_one_continuous_pixel_line(reque
     assert dark[:, 3].all() and dark[11, 5:].all()  # unbroken along their length
     assert dark.sum() == 14 + 9  # and nothing else is dark
     assert_golden(request, result, "downscale_thin_line.png")
+
+
+def outlined(left: int = 6, top: int = 6, right: int = 44, bottom: int = 35) -> np.ndarray:
+    """A 60x48 light ground with a closed dark outline 1 px wide, on the given columns and rows."""
+    source = painted_wall(60, 48)
+    source[[top, bottom], left:right + 1] = (20, 30, 35, 255)
+    source[top:bottom + 1, [left, right]] = (20, 30, 35, 255)
+    return source
+
+
+def test_a_1_px_outline_at_scale_3_breaks_at_the_default_thresholds_and_is_continuous_at_lower_ones(
+        request: pytest.FixtureRequest) -> None:
+    grid = Grid.to_size(60, 48, 20, 16)
+    ring = np.zeros((16, 20), dtype=np.bool_)
+    ring[[2, 11], 2:15] = True
+    ring[2:12, [2, 14]] = True
+
+    broken = downscale(outlined(), grid)
+    whole = downscale(outlined(), grid, dark_share=0.33, separation=0.12)
+
+    assert (downscale(outlined(), grid, dark_share=0.4, separation=0.05) == broken).all(), "0.4 and 0.05 are the defaults"
+    dark = broken[..., :3].sum(axis=2) < 150
+    assert not (dark & ~ring).any() and dark.sum() < ring.sum() / 2, "most of the outline is lost"
+    assert ((whole[..., :3].sum(axis=2) < 150) == ring).all(), "the whole outline, one pixel wide, and nothing else"
+    assert_golden(request, np.concatenate([broken, whole], axis=1), "downscale_outline_thresholds.png")
+
+
+@pytest.mark.parametrize("dx", range(3))
+@pytest.mark.parametrize("dy", range(3))
+def test_a_1_px_outline_is_one_piece_wherever_it_falls_in_its_cells(dx: int, dy: int) -> None:
+    source = outlined(6 + dx, 6 + dy, 42 + dx, 33 + dy)
+
+    result = downscale(source, Grid.to_size(60, 48, 20, 16), dark_share=0.33, separation=0.12)
+
+    dark = result[..., :3].sum(axis=2) < 150
+    assert dark[2, 3:14].all() and dark[11, 3:14].all() and dark[3:11, 2].all() and dark[3:11, 14].all()
+    assert len(connected_regions(dark, eight=True)) == 1  # 8-connected: a corner cell may be cut diagonally
+
+
+def test_a_gap_under_the_separation_takes_the_cells_mean() -> None:
+    light, shade = (150, 150, 150, 255), (125, 125, 125, 255)  # an OKLab lightness gap between 0.05 and 0.12
+    cell = np.array([[shade, light, light]] * 3, dtype=np.uint8)
+    grid = Grid.to_size(3, 3, 1, 1)
+
+    assert downscale(cell, grid, dark_share=0.33).tolist() == [[list(shade)]]
+    assert downscale(cell, grid, dark_share=0.33, separation=0.12).tolist() == [[[142, 142, 142, 255]]]
 
 
 def test_a_flat_soft_shaded_area_stays_even(request: pytest.FixtureRequest) -> None:

@@ -27,6 +27,7 @@ from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.images import load_palette, load_rgba, png_bytes
 from kiripix.core.project import Project, find_project
 from kiripix.ops import Grid, downscale, parse_gpl, quantize, suggest_palette
+from kiripix.recipes.common import line_thresholds
 
 PROPOSAL_SCHEMA_VERSION = 1
 PROPOSALS_DIR = "palette-proposals"
@@ -71,9 +72,9 @@ class PaletteProposal(BaseModel):
 # op palette-suggest
 
 
-def _asset_inputs(project: Project, asset_id: str) -> tuple[Grid, Path, str]:
-    """A room's or prop's `fit` Grid transform, its Source's path, and a hash of both (what a proposal was made from).
-    Refused for another Kind, and while `fit` isn't built."""
+def _asset_inputs(project: Project, asset_id: str) -> tuple[Grid, dict[str, float], Path, str]:
+    """A room's or prop's `fit` Grid transform and line thresholds, its Source's path, and a hash of them (what a proposal was
+    made from). Refused for another Kind, and while `fit` isn't built."""
     asset = load_asset(project, asset_id)
     if asset.kind not in ("room", "prop"):
         raise fail("palette.suggest_input", f"--asset takes a room or a prop; {asset_id} is a {asset.kind}, which has "
@@ -86,8 +87,9 @@ def _asset_inputs(project: Project, asset_id: str) -> tuple[Grid, Path, str]:
                    f"take the Source through", fix=f"kiripix run {asset_id} fit")
     grid_bytes = (graph.output_dir(fit_spec) / "grid.json").read_bytes()
     source_path = graph.output_dir(graph.spec("source")) / "source.png"
-    grid = Grid.from_json(json.loads(grid_bytes.decode("utf-8")))
-    return grid, source_path, hash_bytes(hash_bytes(source_path.read_bytes()).encode() + grid_bytes)
+    record = json.loads(grid_bytes.decode("utf-8"))
+    made_from = hash_bytes(hash_bytes(source_path.read_bytes()).encode() + grid_bytes)
+    return Grid.from_json(record), line_thresholds(record), source_path, made_from
 
 
 def _parse_box(given: str) -> tuple[int, int, int, int] | None:
@@ -104,7 +106,7 @@ def _parse_box(given: str) -> tuple[int, int, int, int] | None:
 def _asset_source(project: Project, asset_id: str, given: str | None, add: int) -> tuple[Any, list[int], float, str]:
     """The Asset's Source cut to `given` (x,y,w,h in target px, the whole room by default) and downscaled by the `fit`
     Grid transform: the image, the box, the scale and the hash of what it was made from."""
-    grid, source_path, made_from = _asset_inputs(project, asset_id)
+    grid, thresholds, source_path, made_from = _asset_inputs(project, asset_id)
     source = load_rgba(source_path, str(source_path))
     cells_x, cells_y = grid.cells_x, grid.cells_y
     if given is None:
@@ -123,7 +125,7 @@ def _asset_source(project: Project, asset_id: str, given: str | None, add: int) 
                    f"{source.shape[0]} px", fix=f"kiripix op palette-suggest --asset {asset_id} --box 0,0,{cells_x},"
                    f"{cells_y} --add {add}")
     crop = source[top:bottom, left:right]
-    small = downscale(crop, Grid.to_size(right - left, bottom - top, w, h))
+    small = downscale(crop, Grid.to_size(right - left, bottom - top, w, h), **thresholds)
     return small, [x, y, w, h], float(grid.scale_x), made_from
 
 
@@ -381,7 +383,7 @@ def palette_add(arguments: PaletteAddInput, context: Context) -> Outcome[Palette
         )
     if proposal.asset is not None:
         try:
-            _, _, now = _asset_inputs(project, proposal.asset)
+            _, _, _, now = _asset_inputs(project, proposal.asset)
         except KiripixError as error:
             if any(f.code == "palette.suggest_needs_fit" for f in error.findings):
                 raise

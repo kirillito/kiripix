@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from kiripix.checks import Finding
+from kiripix.ops import DARK_SHARE, SEPARATION
 
 Scalar = str | int | float | bool
 ParamType = Literal["int", "float", "bool", "str", "choice"]
@@ -655,4 +656,11 @@ FIT_PARAMS = (
     ParamSpec(name="offset_y", type="int", default=0, minimum=0,
               description="Source pixels from the top to the first cell: the grid's offset, or in downscale mode "
                           "where the crop starts."),
+    ParamSpec(name="dark_share", type="float", default=DARK_SHARE, minimum=0, maximum=1,
+              description="In downscale mode, the share of a cell its dark pixels need to win it. Lower keeps thinner "
+                          "outlines: a line 1 Source pixel wide covers 1/3 of a cell at scale 3, so 0.33 keeps it."),
+    ParamSpec(name="separation", type="float", default=SEPARATION, minimum=0, maximum=1,
+              description="In downscale mode, the OKLab lightness gap between a cell's dark and light pixels above which "
+                          "it holds a line or an edge; under it the cell takes its mean colour. Raise it with a lower "
+                          "dark_share, so soft shading isn't taken for lines."),
 )

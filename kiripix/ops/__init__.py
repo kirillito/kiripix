@@ -125,6 +125,8 @@ from kiripix.ops.sprite import (
 )
 from kiripix.ops.reach import Gap, Island, Link, narrowest_gaps, reachable, reachable_via, walkable, walkable_island_labels, walkable_islands
 from kiripix.ops.resample import (
+    DARK_SHARE,
+    SEPARATION,
     Grid,
     alpha_by_vote,
     alpha_coverage,
@@ -183,6 +185,8 @@ __all__ = [
     "JOIN_SIDES",
     "JoinError",
     "NavigationPolygon",
+    "DARK_SHARE",
+    "SEPARATION",
     "Outline",
     "Overlap",
     "Palette",

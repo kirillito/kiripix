@@ -32,7 +32,7 @@ def test_parameters_are_the_current_values_defaults_and_all(project: Kiripix) ->
     project.json("set", ROOM, "fit", "mode=downscale", "scale=2")
 
     assert stage(project.json("show", ROOM)["data"], "fit")["params"] == {
-        "mode": "downscale", "scale": 2, "offset_x": 0, "offset_y": 0}
+        "mode": "downscale", "scale": 2, "offset_x": 0, "offset_y": 0, "dark_share": 0.4, "separation": 0.05}
 
 
 def test_variants_and_the_pick_with_files_the_file_route_serves(project: Kiripix) -> None:

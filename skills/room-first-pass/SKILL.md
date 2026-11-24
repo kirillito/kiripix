@@ -42,7 +42,8 @@ A step is done when its Stage is `done` (or `needs-review`, below) and its Check
 3. **Source.** `import` the image; a lone Variant you may `pick` yourself. Several Variants: the choice is the Owner's.
 4. **Fit.** `kiripix set <room> fit mode=downscale` for a painted Source (the default `grid` mode is for pixel art already on
    a grid, and leaves a painting at full size: `fit.size_mismatch`). Choose `offset_x`/`offset_y` so the crop keeps what the
-   room needs; `fit.size_mismatch` gone is done.
+   room needs; `fit.size_mismatch` gone is done. If 1-2 px outlines break into dashes (an AI painting at scale 3), try
+   `dark_share=0.33 separation=0.12`.
 5. **Layers.** Lift every object the Body walks behind: cars, poles, lamps, sheds, signs, a bin standing out from a wall.
    An object hugging a wall the Body can only stand in front of (lockers, a cabinet, a bench) needs no Layer. Try a click
    and a box with `probe segment-preview` and keep the one whose `box` covers the whole object: a click often returns only

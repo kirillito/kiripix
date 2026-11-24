@@ -23,6 +23,8 @@ else:
 
 from kiripix.checks import Finding, Position, check_conformance, check_mapping_error
 from kiripix.ops import (
+    DARK_SHARE,
+    SEPARATION,
     BayerSize,
     Grid,
     alpha_by_vote,
@@ -116,6 +118,22 @@ def read_grid(run: StageRun) -> tuple[Grid, dict[str, Any]] | None:
     return Grid.from_json(record), record
 
 
+_THRESHOLDS = {"dark_share": DARK_SHARE, "separation": SEPARATION}
+
+
+def line_thresholds(record: dict[str, Any]) -> dict[str, float]:
+    """The `dark_share` and `separation` of the `downscale` a `grid.json` record was made with. A record holds one only
+    when it isn't the default, so a record at the defaults is the same as before the parameters existed."""
+    return {name: float(record.get(name, default)) for name, default in _THRESHOLDS.items()}
+
+
+def mapped_as_fit(record: dict[str, Any], grid: Grid, image: np.ndarray) -> np.ndarray:
+    """An image of the Source's size through the recorded Grid transform, as `fit` did the Source."""
+    if record["mode"] == "downscale":
+        return downscale(image, grid, **line_thresholds(record))
+    return sample_nearest(image, grid)
+
+
 def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False, size: tuple[int, int] | None = None,
             scale: tuple[Fraction, Fraction] | None = None, state: str | None = None,
             offsets: tuple[int, int] | None = None) -> None:
@@ -131,6 +149,7 @@ def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False, size: tuple
     target_width, target_height = brief_size(run) if size is None else size
     mode = str(run.params["mode"])
     cells = int(run.params["scale"])
+    thresholds = {name: float(run.params[name]) for name in _THRESHOLDS}
     named = "" if state is None else f"the state {state}: "
     offset_x, offset_y = offsets if offsets is not None else (int(run.params["offset_x"]), int(run.params["offset_y"]))
     if mode == "downscale":
@@ -145,7 +164,7 @@ def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False, size: tuple
             raise StageFailure(f"{named}can't downscale the {width}x{height} Source to the "
                                f"{'brief' if state is None else 'state'}'s "
                                f"{target_width}x{target_height}: the Source is smaller") from None
-        fitted = downscale(source, grid)
+        fitted = downscale(source, grid, **thresholds)
     else:
         try:
             grid = (Grid.uniform(cells, offset_x, offset_y, width, height)
@@ -163,9 +182,10 @@ def run_fit(run: StageRun, image: Path, *, vote_alpha: bool = False, size: tuple
             grid = grid.padded_to(max(grid.width, target_width), max(grid.height, target_height))
         fitted = sample_nearest(source, grid)
         if vote_alpha:
-            fitted = alpha_by_vote(fitted, source, grid)
+            fitted = alpha_by_vote(fitted, source, grid, **thresholds)
     write_rgba(run.output_dir / "fit.png", fitted)
-    record = {"mode": mode, "source": [width, height], **grid.to_json()}
+    changed = {name: value for name, value in thresholds.items() if value != _THRESHOLDS[name]}
+    record = {"mode": mode, "source": [width, height], **grid.to_json(), **changed}
     (run.output_dir / "grid.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 

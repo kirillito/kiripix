@@ -45,7 +45,6 @@ from kiripix.ops import (
     Grid,
     connected_regions,
     cut_by_alpha,
-    downscale,
     grow_where_partial,
     mask_from_difference,
     mask_to_source,
@@ -54,7 +53,6 @@ from kiripix.ops import (
     partial_cells,
     recompose,
     remove_small_pieces,
-    sample_nearest,
 )
 from kiripix.recipes.base import (
     PLATE,
@@ -76,6 +74,7 @@ from kiripix.recipes.common import (
     check_unchanged,
     click_groups,
     lift_call,
+    mapped_as_fit,
     read_grid,
     read_rgba,
     runner_mask_on_source,
@@ -401,7 +400,7 @@ def _difference(run: StageRun, read: tuple[Grid, dict[str, Any]], png_hash: str,
     label = np.full(opaque.shape, -1, dtype=np.int64)
     for number, region in enumerate(connected_regions(mask_to_target(difference, grid) & opaque)):
         label[region[:, 0], region[:, 1]] = number
-    mapped = downscale(plate, grid) if record["mode"] == "downscale" else sample_nearest(plate, grid)
+    mapped = mapped_as_fit(record, grid, plate)
     return _Difference(label, partial_cells(difference, grid), mapped)
 
 
@@ -520,7 +519,7 @@ def _filled_plate(run: StageRun, read: tuple[Grid, dict[str, Any]], fit: np.ndar
         inside = hole_mask(call.params, filled.shape[:2])[top:bottom, left:right]
         region = filled[top:bottom, left:right]
         region[inside] = patch[inside]
-    mapped = downscale(filled, grid) if record["mode"] == "downscale" else sample_nearest(filled, grid)
+    mapped = mapped_as_fit(record, grid, filled)
     plate = fit.copy()
     plate[hole] = mapped[hole]
     return plate

@@ -30,18 +30,16 @@ else:
 from kiripix.ops import (
     difference_region,
     dilate,
-    downscale,
     fill_polygon,
     flood_region,
     mask_to_source,
     paint_stroke,
     register,
-    sample_nearest,
     snap_cell,
     warp_nearest,
 )
 from kiripix.recipes.base import BoxCorners, CurrentDecision, DecisionSpec, StageFailure, StageRun
-from kiripix.recipes.common import read_grid, read_rgba
+from kiripix.recipes.common import mapped_as_fit, read_grid, read_rgba
 from kiripix.recipes.layers import read_layers
 
 LOOKS_STAGE = "looks"
@@ -219,7 +217,7 @@ def registered(run: StageRun, source: Any, edit: Any, static: Any, grid: Any,
 
 def fitted(record: dict[str, Any], grid: Any, edit: Any) -> Any:
     """The edit through the room's Grid transform, as `fit` did the Source."""
-    return downscale(edit, grid) if record["mode"] == "downscale" else sample_nearest(edit, grid)
+    return mapped_as_fit(record, grid, edit)
 
 
 class EditRoom:

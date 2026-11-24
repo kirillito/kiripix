@@ -178,3 +178,19 @@ def test_a_negative_click_drops_the_region_it_is_on(project: Kiripix) -> None:
     alpha = alpha_of(folder, "props")
     assert alpha[8, 8] and not alpha[24, 40]
     assert Path(out(folder) / "plate.png").is_file()
+
+
+def test_the_plate_image_is_mapped_with_the_fits_line_thresholds(project: Kiripix) -> None:
+    folder = built_room(project)
+    project.json("set", ROOM, "fit", "mode=downscale", "scale=0", "dark_share=0.2", "separation=0.12")
+    project.json("run", ROOM, "fit")
+    plate = np.repeat(np.repeat(plate_image(), SCALE, axis=0), SCALE, axis=1)
+    plate[16, 12:22] = (10, 12, 14, 255)  # one Source px of the two, with every other one light: a quarter of a cell
+    plate[16, 12:22:2] = FLOOR
+    Image.fromarray(plate, "RGBA").save(project.cwd / "plate.png")
+    project.json("plate-import", ROOM, "plate.png")
+    click(project, "lamp", 8, 8)
+
+    lift(project)
+
+    assert (rgba(out(folder) / "plate.png")[8, 6:11] == (10, 12, 14, 255)).all(), "the line is kept, as `fit` would"

@@ -211,20 +211,23 @@ def sample_nearest(image: U8, grid: Grid) -> U8:
     return result
 
 
-SEPARATION = 0.05  # OKLab lightness gap between a cell's dark and light groups, from which it holds an edge or a line
-DARK_SHARE = 0.4  # the share of a cell's pixels the dark group needs to win the cell
+SEPARATION = 0.05  # default: OKLab lightness gap between a cell's dark and light groups, above which it holds an edge or a line
+DARK_SHARE = 0.4  # default: the share of a cell's pixels the dark group needs to win the cell
 
 
-def downscale(image: U8, grid: Grid) -> U8:
+def downscale(image: U8, grid: Grid, dark_share: float = DARK_SHARE, separation: float = SEPARATION) -> U8:
     """One pixel per cell, keeping the Source's thin dark lines continuous and its flat areas even.
 
     A cell's opaque pixels are split at the cell's mean OKLab lightness into a dark and a light group. When the groups
-    differ clearly (`SEPARATION`), the cell holds a line or an edge: it takes the dark group's mean colour if the dark
-    group covers at least `DARK_SHARE` of the cell, else the light group's. Otherwise it takes the plain mean colour.
+    differ clearly (by more than `separation`), the cell holds a line or an edge: it takes the dark group's mean colour if the dark
+    group covers at least `dark_share` of the cell, else the light group's. Otherwise it takes the plain mean colour.
     A line two Source pixels wide that straddles two cells would be dark in both; only the cell with the larger dark
     share keeps it (ties go to the right or lower cell), so a line stays one pixel wide. A line runs along the axis where its run of
     cells is longer; where the runs are equal, as at a crossing, nothing is thinned. A cell is opaque when at least
     half its pixels are (alpha from 128 up); a clear cell is (0, 0, 0, 0).
+
+    A line one Source pixel wide covers 1/3 of a cell at scale 3, under the default `dark_share`: 0.33 keeps it, with a
+    larger `separation`, so soft shading doesn't count as lines.
     """
     _check_size(image, grid)
     index_x, index_y = _cell_index(grid.edges_x(), image.shape[1]), _cell_index(grid.edges_y(), image.shape[0])
@@ -251,9 +254,9 @@ def downscale(image: U8, grid: Grid) -> U8:
     dark_count, dark_light, *dark_rgb = sums(dark)
     bright_count = count - dark_count
     gap = (light_sum - dark_light) / np.maximum(bright_count, 1) - dark_light / np.maximum(dark_count, 1)
-    holds_edge = (gap > SEPARATION) & (dark_count > 0) & (bright_count > 0)
+    holds_edge = (gap > separation) & (dark_count > 0) & (bright_count > 0)
     share = np.where(count > 0, dark_count / np.maximum(count, 1), 0.0)
-    is_line = (holds_edge & (share >= DARK_SHARE)).reshape(grid.height, grid.width)
+    is_line = (holds_edge & (share >= dark_share)).reshape(grid.height, grid.width)
     line_share = np.where(is_line, share.reshape(grid.height, grid.width), 0.0)
     padded = np.pad(line_share, 1)
     across_x = (line_share >= padded[1:-1, :-2]) & (line_share > padded[1:-1, 2:])  # wins against its x neighbours
@@ -288,12 +291,13 @@ def _run_lengths(mask: BoolMask) -> IntArray:
     return result
 
 
-def alpha_by_vote(fitted: U8, source: U8, grid: Grid) -> U8:
+def alpha_by_vote(fitted: U8, source: U8, grid: Grid, dark_share: float = DARK_SHARE,
+                  separation: float = SEPARATION) -> U8:
     """`fitted` (one pixel per cell, as `sample_nearest` gives) with its alpha decided by majority vote of the cell.
 
     A cell is opaque when at least half its Source pixels are (alpha from 128 up), as in `downscale`; the result's
-    alpha is 0 or 255. Where the vote is opaque but the sampled pixel is clear, the colour is the cell's most common
-    one, as `downscale` gives; where the vote is clear, the pixel is (0, 0, 0, 0).
+    alpha is 0 or 255. Where the vote is opaque but the sampled pixel is clear, the colour is the one
+    `downscale` gives the cell, with the same `dark_share` and `separation`; where the vote is clear, the pixel is (0, 0, 0, 0).
     """
     _check_size(source, grid)
     if fitted.shape != (grid.height, grid.width, 4):
@@ -302,7 +306,7 @@ def alpha_by_vote(fitted: U8, source: U8, grid: Grid) -> U8:
     result = _binarise(fitted)
     refill = opaque & (result[..., 3] == 0)
     if refill.any():
-        result[refill] = downscale(source, grid)[refill]
+        result[refill] = downscale(source, grid, dark_share, separation)[refill]
     result[~opaque] = 0
     return result
 

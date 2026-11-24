@@ -179,6 +179,42 @@ def test_downscale_of_a_source_smaller_than_the_brief_fails_the_stage(project: K
     assert "480x272" in result["findings"][-1]["message"]
 
 
+def outlined(width: int = 96, height: int = 64) -> np.ndarray:
+    """A light ground of width x height target pixels at 3x, with a 1 Source px dark line along target row 10."""
+    source = flat(width * 3, height * 3)
+    source[30, :] = (10, 12, 14, 255)
+    return source
+
+
+def test_the_line_thresholds_keep_a_1_px_outline_and_are_recorded_only_when_changed(project: Kiripix) -> None:
+    folder = room_from(project, outlined(), 96, 64)
+    project.json("set", ROOM, "fit", "mode=downscale")
+    project.json("run", ROOM, expect=3)
+    record = folder / "work" / "fit" / "grid.json"
+    before = record.read_bytes()
+    assert not (read(folder / "work" / "fit" / "fit.png")[10, :, :3].sum(axis=1) < 100).any(), "the line is lost"
+    assert not {"dark_share", "separation"} & set(json.loads(before))
+
+    project.json("set", ROOM, "fit", "dark_share=0.4", "separation=0.05")  # the defaults: no rebuild
+    assert stage_status(project, ROOM)["fit"] == "done" and stage_status(project, ROOM)["layers"] == "done"
+    project.json("run", ROOM, "fit", "--force")
+    assert record.read_bytes() == before
+
+    project.json("set", ROOM, "fit", "dark_share=0.33", "separation=0.12")
+    assert stage_status(project, ROOM)["fit"] == "stale" and stage_status(project, ROOM)["layers"] == "stale"
+    project.json("run", ROOM, expect=3)
+
+    grid = json.loads(record.read_text(encoding="utf-8"))
+    assert (grid["dark_share"], grid["separation"]) == (0.33, 0.12)
+    assert (read(folder / "work" / "fit" / "fit.png")[10, :, :3].sum(axis=1) < 100).all()
+
+
+def test_a_line_threshold_outside_0_to_1_is_refused(project: Kiripix) -> None:
+    room_from(project, outlined(), 96, 64)
+
+    project.json("set", ROOM, "fit", "dark_share=1.5", expect=1)
+
+
 def test_changing_fit_mode_makes_fit_and_everything_below_stale(project: Kiripix) -> None:
     room_from(project, upscaled(art(), 4))
     project.json("run", ROOM, expect=3)

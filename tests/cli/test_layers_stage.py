@@ -177,6 +177,25 @@ def test_a_negative_click_at_the_pixel_of_a_positive_one_reuses_its_pinned_resul
 # grow
 
 
+def test_a_fill_is_mapped_with_the_fits_line_thresholds(project: Kiripix) -> None:
+    folder = built_room(project)
+    project.json("set", ROOM, "fit", "mode=downscale", "scale=0", "dark_share=0.2", "separation=0.12")
+    project.json("run", ROOM, "fit")
+    click(project, "lamp", 8, 8)
+    lift(project)
+    found = [json.loads(line) for line in (project.cwd / "runner-calls.jsonl").read_text("utf-8").splitlines()]
+    [crop] = [c["params"]["crop"] for c in found if "crop" in c["params"]]
+    top, left, bottom, right = crop
+    [fill] = [p for p in (folder / "pinned").glob("*.png") if rgba(p).shape[:2] == (bottom - top, right - left)]
+    patch = rgba(fill)
+    patch[16 - top, 13 - left:22 - left:2] = (10, 12, 14, 255)  # the fill paints a line: a quarter of cells 6 to 10, row 8
+    Image.fromarray(patch, "RGBA").save(fill)
+
+    project("run", ROOM, "layers", "--force")
+
+    assert (rgba(out(folder) / "plate.png")[8, 6:11] == (10, 12, 14, 255)).all(), "the line is kept, as `fit` would"
+
+
 def test_grow_moves_the_alpha_and_the_hole_together_only_where_partial_and_remakes_only_the_fill(
         project: Kiripix) -> None:
     folder = built_room(project)
