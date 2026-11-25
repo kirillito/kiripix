@@ -1,0 +1,260 @@
+{
+ "model": "C:/Workspace/urban-mystery-club-art/assets/character/mc03_female/work/model/model.blend",
+ "canvas": [
+  1024,
+  1536
+ ],
+ "analysis": {
+  "mesh": "mc_f_base_a",
+  "vertices": 14848,
+  "faces": 22258,
+  "uv_layers": [
+   {
+    "layer": "UVMap",
+    "u_range": [
+     0.001,
+     0.997
+    ],
+    "v_range": [
+     0.001,
+     0.996
+    ],
+    "uv_space_used": 0.8509,
+    "texels_covered_by_2_or_more_triangles": 0.611,
+    "texels_covered_by_both_winding_senses": 0.5939,
+    "triangles_counter_clockwise": 16864,
+    "triangles_clockwise": 5391,
+    "triangles_without_area": 3
+   },
+   {
+    "layer": "UVMap.001",
+    "u_range": [
+     0.0,
+     3.935
+    ],
+    "v_range": [
+     0.0,
+     1.0
+    ],
+    "uv_space_used": 0.3883,
+    "texels_covered_by_2_or_more_triangles": 0.9914,
+    "texels_covered_by_both_winding_senses": 0.9899,
+    "triangles_counter_clockwise": 4317,
+    "triangles_clockwise": 4321,
+    "triangles_without_area": 13620
+   },
+   {
+    "layer": "UVMap.002",
+    "u_range": [
+     0.0,
+     0.994
+    ],
+    "v_range": [
+     0.0,
+     0.958
+    ],
+    "uv_space_used": 0.5821,
+    "texels_covered_by_2_or_more_triangles": 0.9987,
+    "texels_covered_by_both_winding_senses": 0.9987,
+    "triangles_counter_clockwise": 2746,
+    "triangles_clockwise": 2748,
+    "triangles_without_area": 16764
+   },
+   {
+    "layer": "UVMap.003",
+    "u_range": [
+     -1.036,
+     0.0
+    ],
+    "v_range": [
+     0.0,
+     0.952
+    ],
+    "uv_space_used": 0.0,
+    "texels_covered_by_2_or_more_triangles": 0.0,
+    "texels_covered_by_both_winding_senses": 0.0,
+    "triangles_counter_clockwise": 2746,
+    "triangles_clockwise": 2748,
+    "triangles_without_area": 16764
+   },
+   {
+    "layer": "UVMap.004",
+    "u_range": [
+     0.0,
+     0.0
+    ],
+    "v_range": [
+     0.0,
+     0.0
+    ],
+    "uv_space_used": 0.0,
+    "texels_covered_by_2_or_more_triangles": 0.0,
+    "texels_covered_by_both_winding_senses": 0.0,
+    "triangles_counter_clockwise": 0,
+    "triangles_clockwise": 0,
+    "triangles_without_area": 22258
+   }
+  ],
+  "active_render_uv": "UVMap",
+  "colour_attributes": [
+   "paint"
+  ],
+  "modifiers": [
+   "ARMATURE"
+  ],
+  "materials": [
+   {
+    "slot": 0,
+    "name": "eyes",
+    "faces": 5894,
+    "image_textures": [],
+    "flat_base_colour_linear": [
+     0.0212,
+     0.013,
+     0.013
+    ],
+    "base_colour_linked": true,
+    "multiplied_by_vertex_colour": true
+   },
+   {
+    "slot": 1,
+    "name": "skin",
+    "faces": 11574,
+    "image_textures": [],
+    "flat_base_colour_linear": [
+     0.8388,
+     0.5149,
+     0.3419
+    ],
+    "base_colour_linked": true,
+    "multiplied_by_vertex_colour": true
+   },
+   {
+    "slot": 2,
+    "name": "underwear",
+    "faces": 1884,
+    "image_textures": [],
+    "flat_base_colour_linear": [
+     0.8388,
+     0.8388,
+     0.8388
+    ],
+    "base_colour_linked": true,
+    "multiplied_by_vertex_colour": true
+   },
+   {
+    "slot": 3,
+    "name": "hair",
+    "faces": 2906,
+    "image_textures": [],
+    "flat_base_colour_linear": [
+     0.0685,
+     0.0369,
+     0.0252
+    ],
+    "base_colour_linked": true,
+    "multiplied_by_vertex_colour": true
+   }
+  ],
+  "images_in_file": []
+ },
+ "left_arm_bone_head_x": 17.655,
+ "model_bounds": {
+  "min": [
+   -0.86792,
+   -0.22322,
+   0.0
+  ],
+  "max": [
+   0.86792,
+   0.22322,
+   2.0
+  ]
+ },
+ "selftest": {
+  "emission_vs_diffuse_color_pass_max_abs_linear": 0.0745498538017273,
+  "by_material_slot_plus_1": {
+   "1": {
+    "max": 0.00095,
+    "mean": 0.000346
+   },
+   "2": {
+    "max": 0.07182,
+    "mean": 0.016951
+   },
+   "3": {
+    "max": 0.07455,
+    "mean": 0.015046
+   },
+   "4": {
+    "max": 0.00541,
+    "mean": 0.001092
+   }
+  },
+  "own_srgb_vs_blender_png_max_abs_byte": 1,
+  "own_srgb_vs_blender_png_differing_pixels": 8,
+  "pixels_compared": 182445
+ },
+ "views": {
+  "front": {
+   "mask_pixels": 182445,
+   "bbox": [
+    68,
+    955,
+    256,
+    1279
+   ],
+   "depth_min_max": [
+    11.777,
+    12.1996
+   ],
+   "distinct_colours": 63
+  },
+  "back": {
+   "mask_pixels": 182443,
+   "bbox": [
+    68,
+    955,
+    256,
+    1279
+   ],
+   "depth_min_max": [
+    11.7768,
+    12.1373
+   ],
+   "distinct_colours": 63
+  },
+  "left": {
+   "mask_pixels": 118769,
+   "bbox": [
+    398,
+    625,
+    256,
+    1279
+   ],
+   "depth_min_max": [
+    11.1321,
+    12.1213
+   ],
+   "distinct_colours": 64
+  },
+  "right": {
+   "mask_pixels": 118769,
+   "bbox": [
+    398,
+    625,
+    256,
+    1279
+   ],
+   "depth_min_max": [
+    11.1323,
+    12.1525
+   ],
+   "distinct_colours": 64
+  }
+ },
+ "depth_range": [
+  10.5,
+  13.5
+ ]
+}
