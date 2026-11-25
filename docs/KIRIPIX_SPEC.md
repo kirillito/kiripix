@@ -1334,7 +1334,7 @@ with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.m
   Worth a trial once higher priorities are done, not before.
 
 **Later:** side view (side-view Masks: one-way, ladder; the parallax split with depth; platform reachability; the lowest
-priority, moved here from M7 on 2026-11-11), maybe the tileset recipe (autotile rules; see below; not before the game's chapter 2), "promote to Prop" for a room's foreground Layer, renaming exported
+priority, moved here from M7 on 2026-11-11), the tileset recipe (autotile rules; see below; planned for the game's procedural dungeon, [0384](../backlog/m6/0384-tileset-kind-for-a-procedural-dungeon.md)), "promote to Prop" for a room's foreground Layer, renaming exported
 IDs with aliases. (VFX sheets, normal maps for painted backgrounds and custom named Masks moved to M6 on 2026-11-19.) (Battle backgrounds were dropped on 2026-11-08: the game fights in the room, and its DEC-048 rejects
 separate battle maps.)
 
@@ -1352,6 +1352,12 @@ But 59 of its 88 joins showed a seam, from the room's baked light, and its walls
 (to the game's milestone 20-30 or so) uses painted rooms. With a good tile sheet, tiles could make procedurally generated
 dungeons in chapters 2-10, so the estimate stays here. A later try needs a sheet painted for tiling: even light, plain wall
 strips with doors and lights as props, and every piece from one image.
+
+**Planned, not scheduled (the Owner, 2026-11-25).** The game now has a procedural dungeon on a modular tile kit (its S1, the
+PATH, DEC-078); its regular dungeons wait for its M13 test. The Owner assumes GPT Image can paint the sheet (a trial of that
+is separate). The game owns the generator and the builder; Kiripix makes the tile kit. The game's builder draws tiles into
+one Plate, so the export is likely an atlas and a kit file rather than a `TileSet` `.tres`. The spec for it is
+[0384](../backlog/m6/0384-tileset-kind-for-a-procedural-dungeon.md).
 
 ## 15. Lessons carried over from Lost-and-Found
 
