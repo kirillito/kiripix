@@ -6,18 +6,20 @@ type: trial
 depends_on: [0353-m6-provider-research.md]
 ---
 
-# M6: research: can a Provider make the game's NPCs and enemies, as sprites with their animations?
+# M6: research: can a Provider make the game's animals and minor actors, as sprites with their animations?
 
 Spec §16, open decision 5, §6.4 (the `sprite` Kind), §6.3 (characters from 3D) and §14 ("PixelLab: delayed, because its
-sprite generation has been unsatisfactory so far"). The actors' half of [0353](0353-m6-provider-research.md), which does the
-volume, the desk table and the $100-a-year budget for both; start once its desk table (step 2) is done. Prototype code stays
-in `backlog/m6/0354-trial/` or the scratchpad, not in `kiripix/`. Same rules as 0353: $0, free credits only, the Owner makes
-the accounts, keys only in environment variables, every figure from the vendor's own page.
+sprite generation has been unsatisfactory so far"). The actors' half of [0353](0353-m6-provider-research.md). Prototype code
+stays in `backlog/m6/0354-trial/` or the scratchpad, not in `kiripix/`. The Owner makes the accounts and buys the credits;
+keys only in environment variables; every figure from the vendor's own page.
 
 **Since 0353 closed (2026-11-23):** the painted work went to OpenAI's GPT Image, on $10 a month for all Provider calls
 (`[providers] budget_usd_month`, replacing $100 a year). Portraits and their emotions are in that decision. **Still open
-here:** character and enemy sprites and their animations, and the cutscene poses. GPT Image is now a candidate to test
-here too, within that budget; whether this trial may spend from it, or stays at $0, is the Owner's call before step 3.
+here:** the animals' and minor actors' sprites and their animations.
+
+**Money (the Owner, 2026-11-25):** this trial may spend up to **$15** in all, PixelLab credits and GPT Image together. PixelLab
+is used through its API on prepaid credits ($1 = 1 credit), not a subscription, unless step 2's tier check shows the
+animation endpoints need one; then the Owner decides on a month's subscription.
 
 ## Context
 
@@ -26,56 +28,161 @@ here too, within that budget; whether this trial may spend from it, or stays at 
   ([0336](0336-m6-npc-variants-from-a-base.md)). Battle clips use 4 facings (DEC-048).
 - Actors that aren't humans on a base, such as the raccoons, come in as `sprite`s from 2D frames. PixelLab was the route and
   was delayed: its sprites were unsatisfactory, and its view control too weak to hold the 30° camera (DEC-044, ISS-021).
-- The game needs, for chapter 1 and after: background NPCs (its M17), enemies such as the raccoons and the Waiting Ones
-  (provisional: silhouettes that wake as you pass), bosses, and one-off poses for cutscenes (an edit of a character's frame,
-  imported as a one-frame clip; spec §1, non-goals).
+- **What the game needs now (the Owner, 2026-11-25):**
+  - the **raccoon**, animated;
+  - **black squirrels**;
+  - **animal services workers** (humans);
+  - **birds and other ambient life** that make a scene feel alive (pigeons, sparrows, small environmental loops).
+  **Crowd NPCs** come from the 3D models (a base with layers and ramps, 0336), not from this trial. **Later, not in this
+  trial:** the Waiting Ones (provisional: silhouettes that wake as you pass), bosses, and one-off cutscene poses (an edit of
+  a character's frame, imported as a one-frame clip).
+- **Prior art (read 2026-11-25).** Others have the same problem; none of them targets 8 directions at a top-down camera,
+  and there's no code to take (Kiripix already has the chroma key, `fit`, `palette` and grid detection). What to take is
+  their techniques and failures:
+  - [Wombo](https://github.com/acatovic/ai-game-studio) (MIT) and its [dev log](https://community.openai.com/t/ai-game-studio-dev-log-by-platypus/1397035):
+    one GPT Image call makes all four views on a 2×2 template image, on a flat green backdrop, which holds identity better
+    than a call per view. Its sheet prompt says "Rotate the character; do not horizontally flip a view" and "Keep every
+    asymmetric feature attached to the same anatomical side". Motion comes from a **video model** (MiniMax Hailuo,
+    Seedance: a 2 to 5 s clip from a start frame, and an end frame for a loop or a transition), then ffmpeg keys and
+    extracts the frames and the Owner keeps 12 to 24. A whole sheet of frames in one call, and each frame chained from the
+    last, both gave "heavy misalignment and quirky movements". No pixel grid or palette; accessories are fixed by hand.
+    By 2026-11-17 its author mostly draws his sprites himself and uses the tool for ideas.
+  - [Developing sprite sheets with gpt-image-2](https://community.openai.com/t/developing-sprite-sheets-with-gpt-image-2/1379831):
+    the most reliable route reported is **pose transfer from a mannequin** (#1, #5, #19): the pose as image 1, the character
+    as image 2, "transfer the pose WITHOUT MIRRORING", with left and right named per limb. Left/right limb swaps persist
+    (#1, #6, #13); a video movement costs about $0.25 (#39, a user's estimate); the edits endpoint's moderation can drop
+    most outputs, fixed by "non-sexual" in the prompt (#33). OpenAI's curated `hatch-pet` skill (#26) makes Codex's pet
+    sprites with gpt-image-2; not read yet.
+  - [PerfectPixel](https://github.com/gykim80/perfectpixel-studio) (MIT): 5 directions generated and 3 mirrored, which is
+    wrong for the 30° camera and asymmetric actors; a magenta key and a strip of N poses on one ground line.
+  - Kiripix already renders any base in 8 directions at `top34_8` for every clip, so a mannequin for pose transfer is free:
+    the angle and the pose, PixelLab's two failures, come from 3D, and the Provider only paints the look. A frame painted
+    per call still drifts across frames, which is why [0383](0383-m6-gpt-painted-character-textures-trial.md) paints the
+    texture once instead; pose transfer suits actors with few frames or no base mesh to texture.
+- **PixelLab's API (read 2026-11-25, `https://api.pixellab.ai/v2/openapi.json` and its price list).** Bearer token; long
+  calls return a `background_job_id`, polled at `GET /v2/background-jobs/{id}` every 5 to 10 s, cancelled with `DELETE`
+  (free while queued). Every response's `usage` says whether it charged `usd` or `generations`; `GET /v2/balance` gives both.
+  Prices are PixelLab's estimates, which "vary with GPU time". What matters here:
+  - **The camera:** only a `view` enum, `low top-down` (about 20°) or `high top-down` (about 35°), which PixelLab itself
+    calls a weak control. No 30°. The angle has to come from frames we give it.
+  - **Frames we give it:** `POST /v2/create-character-v3` takes a south `reference_image` and `direction_images` for the
+    other 7, used as drawn (a full set imports for 0.25 generations); `create-character-with-8-directions` takes frozen
+    `directions` references ($0.0173 at 64 px). `animate-with-text-v3` and `animate-pixminimax` start from our
+    `first_frame`, with an optional `last_frame` to close a loop. `POST /v2/save-to-asset` writes our own frames back into a
+    character's direction.
+  - **Animation:** `POST /v2/characters/animations` (`mode` `v3`: `action_description`, `frame_count` 4 to 16, even;
+    `template` with `template_animation_id`; `pixminimax`, "Tier 1 subscription or higher"), one job per direction:
+    v3 $0.0129 a direction for 4 frames at 64 px. `POST /v2/animate-with-skeleton-v3` (beta): a `first_frame` and
+    `keypoints` per frame (3 to 15 frames), joints as fractions of the image with a `z_index`, a `template_id`
+    (`mannequin`, `bear`, `cat`, `dog`, `horse`, `lion`) or a custom `rig` of 2 to 64 joints (each `near`, `mid` or `far`);
+    priced by frame count, $0.0513 for 8. `POST /v2/estimate-skeleton` ($0.005) finds a sprite's joints.
+  - **Palette:** `color_image` with `force_colors`, or `target_palette` (2 to 256 hex colours, `max_colors`), on the
+    character and animation calls.
+  - **Not used:** `POST /v2/characters/{id}/animations/{group}/mirror` (it flips a direction, wrong for asymmetric actors).
+  - **Terms:** the output is ours for commercial use; no training models on it; code may call only `api.pixellab.ai`.
+  - **Its output is native pixel art** at the canvas size, not a large image to downscale; step 4 checks what `fit` does
+    with it.
 
 ## The question
 
-For each kind of actor, which route gives the Owner a usable, in-style actor for the least money and time: a Provider's
-sprites and animations through the `sprite` Kind, a Provider's concept image into image-to-3D ([0144](0144-m6-image-to-3d-trial.md))
-and the character recipe, or the 3D route alone (a base with layers and ramps, 0336)? And can any Provider hold one actor's
-identity across 8 directions and the frames of a clip, at the 30° camera, beside the 3D cast?
+For each actor the game needs now, which route gives the Owner a usable, in-style actor for the least money and time: a
+Provider's sprites and animations through the `sprite` Kind, or the 3D route (a base with layers and ramps, 0336)? And can a
+Provider hold one actor's identity across its directions and the frames of a clip, at the 30° camera, beside the 3D cast?
 
 ## What to do
 
 1. **The Owner's account of PixelLab's failure:** what was wrong (identity drift, the angle, the size, the palette,
    the animation), so every candidate is tested for it.
-2. **Candidates,** from 0353's desk table: those that offer directions or animation from a frame (PixelLab, SpriteBrew or
-   Retro Diffusion, and any other the study found), and the general image models, asked for a sheet of directions or frames
-   with a reference image.
+2. **PixelLab first,** through its API, by a script in the trial folder that keeps each call's request, response and
+   `seed` as JSON beside the PNGs it saved. **The tier check, before more than $5 of credits is bought:** one call to
+   `POST /v2/animate-with-text-v3` at 32 px with 4 frames (about $0.022) and one to `POST /v2/characters/animations` in
+   `v3`; a 403 means animation needs a subscription, and the Owner decides. Two routes, each tested:
+   - **Text-led motion:** the actor made a PixelLab character from our frames where we have them (`direction_images`),
+     animated in `v3` (or `template`), with the mc03 ramps or the raccoon sprite's colours as `color_image`.
+   - **Motion from Kiripix:** `animate-with-skeleton-v3` with `keypoints` per frame. For the humans, the keypoints are the
+     mc03 rig's joints in each frame of a clip, projected through the `top34_8` camera by a Blender script in the trial
+     folder (the character pipeline's area: if it's more than a small script, the Owner is told, and it may be its own
+     ticket). For the animals, a `cat` or `dog` template or a custom `rig`, started from `estimate-skeleton` on the
+     actor's frame and moved by the script.
+   **Then pose transfer** with GPT Image, within the same $15: a render at `top34_8` in the pose as image 1 and the actor's
+   reference as image 2, one frame or direction per call, left and right named per limb; and one call for a sheet of
+   directions on a grid template image (3×3, the centre empty), against a call per direction.
+   No candidate mirrors a direction to make another. Other services from 0353's desk table (SpriteBrew, Retro Diffusion)
+   only if PixelLab and pose transfer both fail.
+   **Not tested: video to frames** (a video model's clip, its frames extracted). At about $0.25 a movement it's too dear
+   for this trial (the Owner, 2026-11-25).
 3. **The actor test set,** the same inputs for each candidate, with a frame of an mc03 body at `top34_8` and the raccoon
    sprite as the references for the angle, the size and the style:
-   - a background NPC from a text description: one frame in 8 directions, then a walk of 4 to 8 frames in them;
-   - an enemy: a raccoon variant (another colour or a hat) with an attack and a hit in 4 facings;
-   - a non-human or odd one: a Waiting One (a silhouette that wakes), idle and wake;
-   - a one-off pose for a cutscene: an edit of an mc03 frame (surprised, pointing), 2 Variants.
+   - **the raccoon** (from its sprite): a walk in 8 directions; an attack and a hit in 4 facings;
+   - **a black squirrel** (from a text description, the raccoon as the style): an idle and a run in 8 directions, and one
+     action of its own the Owner names (foraging, a climb, an attack);
+   - **an animal services worker** (a human at 52 px): a walk in 8 directions and one action the Owner names (a net or a
+     catch-pole), by the skeleton route on mc03's clips, beside the same worker from a base (step 5);
+   - **ambient life:** a pigeon or sparrow (an idle loop of pecking and hopping, and a take-off) in 2 to 4 facings, and one
+     environmental loop the Owner picks (a flag, leaves, steam), as a closed loop from a `first_frame` and `last_frame`.
    Where a candidate can't do a step, it records that and moves on.
 4. **Score with Kiripix,** each result imported as a `sprite` in a scratch Project (`import --role sheet`, then `frames`,
-   `fit` in `downscale` mode to 52 px, `palette` by parts, `finish`, `sheet`):
+   `fit` to the actor's height (52 px for the worker; the raccoon sprite's for the animals), `palette` by parts, `finish`,
+   `sheet`). PixelLab's frames are native pixel art: say which `fit` mode takes them without resampling, and whether that
+   is a gap.
    - `frames.direction_missing`, `frames.frame_count`, `fit.grid_differs`, `fit.alpha_partial`, `fit.height`,
      `sheet.pivot_drift`, `palette.off_palette`;
-   - identity: the frames and directions where the actor changes (clothes, proportions, colours), counted by the Owner;
+   - identity: the frames and directions where the actor changes (fur, clothes, proportions, colours), counted by the Owner;
+   - the prior art's failures, counted per sheet: left/right limb swaps, a lost accessory, chroma fringe after the key, a
+     mirrored asymmetric detail, and the calls the moderation refused;
    - the angle: whether the actor reads as the 30° camera beside an mc03 body;
    - the style measures from [0332](0332-m6-style-match-trial.md) against the mc03 bodies and the laneway, if they're ready;
-   - the Owner's minutes per actor to a usable sheet, including fixes, and the credits spent.
+   - the Owner's minutes per actor to a usable sheet, including fixes, and the money spent (from each response's `usage`).
    Note every gap in the `sprite` Kind the imports show (a naming rule a service's export needs, a frame layout `frames`
    can't cut), as a candidate follow-up ticket.
-5. **The 3D comparison:** for the background NPC, the cost of the same actor from a base (0336: the Owner's minutes and the
-   render time), and, if 0144 has a result, from image-to-3D.
+5. **The 3D comparison:** the animal services worker from a base (0336: the Owner's minutes and the render time), beside
+   the skeleton route's worker.
 
 ## What to record, in this ticket
 
 - PixelLab's failure, in the Owner's words.
+- The tier check's answer: credits alone, or a subscription.
 - The scores per candidate and actor, with the GIFs or sheets' paths for the Owner, beside an mc03 body.
-- A recommendation per kind of actor (background NPC, enemy, non-human, cutscene pose): a Provider, image-to-3D, the 3D route
-  alone, or hand work; with its yearly cost at 0353's volume, for 0353's joint plan.
+- A recommendation per actor (raccoon, black squirrel, animal services worker, birds and ambient loops): a Provider and
+  which route, the 3D route, or hand work; with its cost per actor and per year at 0353's volume. Crowd NPCs stay on the 3D
+  route unless the worker's comparison says otherwise.
+- If PixelLab is taken: what a Kiripix Provider for it needs that `kiripix/providers/base.py` lacks (keypoints as an input,
+  async jobs that can be cancelled, charges in generations as well as USD), as a follow-up ticket.
+
+## Progress (2026-11-25, Claude; nothing spent)
+
+**The test set is the game's real need (the Owner, 2026-11-25):** to waste nothing, the trial makes the poses of the game's
+ticket 0106 (`urban-mystery-club/docs/backlog/m5/0106-m05-creature-and-worker-poses.md`): the raccoon's hop, swipe, hurt
+and dazed; the black squirrel's idle, leap and bite; the worker's sack_open, bag and walk; and a sack with a raccoon (a
+prop). Each pose is made first as a PixelLab *state* of the existing character (`create-character-state`, 8 directions a
+call, 0106's route), imported into the art Project's real `sprite` assets and exported. The other routes run on the same
+poses: text-led animation (walks and runs, as extras), the skeleton route (mc03's walk and downward attack retargeted onto
+the existing worker sprite: `keypoints.py --retarget`), and GPT Image pose transfer (the worker's bag at mc03's 30°, and a
+squirrel sheet from the raccoon's directions). So step 3's set becomes 0106's list plus the pigeon and an ambient loop;
+the raccoon's attack and hit are 0106's swipe and hurt.
+
+The trial's tools are in [0354-trial/](0354-trial/), with the Owner's run book in its [README](0354-trial/README.md):
+`pixellab.py` (every endpoint above, each call's request, response, job and PNGs kept under `runs/`, a ledger from each
+`usage`, a $10 cap for PixelLab leaving $5 of the $15 for GPT Image, `--dry-run`), `keypoints.py` and `pose_inputs.py`.
+Tested offline only: dry runs, and a local fake of the API (jobs, images, the ledger, the cap, a 402). Not one real call yet.
+
+- **No Blender script is needed for the skeleton route.** `render`'s `points` parameter (ticket 0237) already projects
+  named bones through `top34_8` in every frame; `keypoints.py` turns those into PixelLab's 18 joints. Mixamo's rig has no
+  nose, eye or ear bones: those 5 come from the render's `eyes` and the head's bones, roughly; a $0.005 `estimate-skeleton`
+  on one frame checks the mapping and which side PixelLab calls RIGHT.
+- **The raccoon doesn't fit 32 px** (48x52 on its 64 canvas), so the tier check's first call runs at 64 px, about $0.10.
+- **The `sprite` Kind's `fit mode = grid` (the default) already takes PixelLab's native pixel art**; `downscale` is for GPT
+  Image's frames. Whether `grid` handles the API's frames as it does the website's ZIP is for step 4.
+- For the animals' skeleton route the first try is PixelLab's own rig (`estimate-custom-skeleton`) with the motion written
+  by PixelLab (`write_motion_frames`), not one moved by a script; a scripted quadruped rig only if that fails.
 
 ## Acceptance criteria
 
 - [ ] PixelLab's failure recorded, and every candidate tested for it.
-- [ ] The scores and sheets for each candidate that reached step 3.
-- [ ] The recommendation per kind of actor, with its cost, handed to 0353's joint plan.
+- [ ] The tier check done before more than $5 of credits was bought.
+- [ ] PixelLab's two routes tested, then pose transfer, or the reason one couldn't be.
+- [ ] The scores and sheets for each actor in step 3, per candidate.
+- [ ] The recommendation per actor, with its cost, handed to 0353's joint plan.
 - [ ] The `sprite` Kind's gaps the imports found, filed as follow-up tickets with `agent:` and `depends_on` if the Owner
       takes the route.
-- [ ] $0 spent; any sign-up that needed a card was the Owner's yes first.
+- [ ] At most $15 spent in all, from each response's `usage`; any subscription was the Owner's yes first.
