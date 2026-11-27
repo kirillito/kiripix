@@ -18,6 +18,7 @@ from kiripix.core.errors import KiripixError
 from kiripix.core.graph import AssetGraph, register_adviser
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project
+from kiripix.core.sounds import sound_id as game_sound_id
 from kiripix.core.project_checks import register_project_check
 from kiripix.export.godot import EXPORTED_MARKER_TYPES, animation_name, room_ids
 from kiripix.export.manifest import ExportedIds, Manifest, read_manifest
@@ -40,7 +41,7 @@ from kiripix.recipes.sprite_frames import FRAMES_FILE
 
 STATE_NAMES = frozenset(d.name for d in _STATE_DECISIONS)
 
-EXPORTERS = frozenset({"room", "prop", "character", "sprite", "icon", "wearable", "portrait", "npc"})  # the Kinds that have an exporter
+EXPORTERS = frozenset({"room", "prop", "character", "sprite", "icon", "wearable", "portrait", "npc", "sound"})  # the Kinds that have an exporter
 
 
 def _current_ids(graph: AssetGraph, manifest: Manifest) -> ExportedIds:
@@ -158,7 +159,23 @@ def frozen_findings(project: Project, asset: Asset, cache: HashCache) -> list[Fi
                              "refers to it. Adding new IDs is always fine." if noun == "clip animation" else
                              f"Put '{gone}' back (undo the change, or place a {noun} with that ID again): the game "
                              "refers to it. Adding new IDs is always fine."))
-    return found
+    return found + _frozen_sound_findings(project, asset, manifest, shown, where)
+
+
+def _frozen_sound_findings(project: Project, asset: Asset, manifest: Manifest, shown: str, where: str) -> list[Finding]:
+    """A sound's `sound_id` and `use` are frozen once exported (ADR 0016): the game's `audio.json` refers to the ID, and the
+    files' folder and names come from both."""
+    if asset.kind != "sound" or manifest.sound is None:
+        return []
+    now = {"sound ID": game_sound_id(asset, project.settings), "use": str(asset.settings.params.get("use", ""))}
+    was = {"sound ID": manifest.sound.id, "use": manifest.sound.use}
+    return [Finding(
+        code="export.id_frozen",
+        message=f"{asset.id}: the {noun} '{was[noun]}' was exported in {where} (Manifest {shown}, export {manifest.counter}), so "
+                f"it can't be changed to '{now[noun]}'",
+        position=Position(asset=asset.id, file=shown),
+        owner_action=f"Put the {noun} '{was[noun]}' back in the sound's asset.toml: the game refers to it. To use another, "
+                     "make a new sound.") for noun in ("sound ID", "use") if now[noun] != was[noun]]
 
 
 def _exported(project: Project, asset: Asset) -> tuple[Manifest, str, str] | list[Finding] | None:

@@ -22,7 +22,9 @@ MANIFEST_DIR = "manifest"
 # none.
 # 4: `ids.masks` lists every painted Mask of the room's view, not only `solid` and `pit` (ticket 0345): each is a file name the game's
 # grid reads, so it is frozen. A version 3 Manifest is migrated on read: the Masks it lists are the ones it froze.
-MANIFEST_SCHEMA_VERSION: Literal[4] = 4
+# 5: `sound`, an optional block of a sound's export: its ID, use, files with their Takes and measures, the source's Provenance and
+# the processing (ticket 0400, ADR 0016). A version 4 Manifest is migrated on read: it has no sound block.
+MANIFEST_SCHEMA_VERSION: Literal[5] = 5
 
 
 class ExportedIds(BaseModel):
@@ -52,10 +54,60 @@ class ExportedIds(BaseModel):
         return data
 
 
+class SoundTake(BaseModel):
+    """The span of the recording a variation was cut from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_ms: float
+    end_ms: float
+
+
+class SoundFileEntry(BaseModel):
+    """One exported variation: where it is, which Take it is, and what was measured of the encoded file. A `loop_offset` of None
+    (not a loop) is left out of the file, as every None is."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str  # as `res://...`; also a key of `Manifest.files`
+    take: SoundTake
+    length_s: float
+    peak_dbfs: float
+    lufs: float
+    loop: bool
+    loop_offset: float | None = None
+
+
+class SoundSourceEntry(BaseModel):
+    """The recording the sound was cut from and its Provenance as the Owner gave it (text, never interpreted). An absent `url`,
+    `author` or `licence` was not given."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str
+    hash: str
+    url: str | None = None
+    author: str | None = None
+    licence: str | None = None
+
+
+class SoundEntry(BaseModel):
+    """A sound's block of the Manifest (ADR 0016, decision 9): what the game builds its `audio.json` entries and `CREDITS.md`
+    lines from. It plays no part in ownership; `id` and `use` are frozen once exported."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    use: str
+    files: list[SoundFileEntry]  # in variation order
+    source: SoundSourceEntry
+    processing: dict[str, Any]
+
+
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[4] = MANIFEST_SCHEMA_VERSION
+    schema_version: Literal[5] = MANIFEST_SCHEMA_VERSION
     kiripix_version: str
     asset: str
     exported: bool
@@ -64,6 +116,7 @@ class Manifest(BaseModel):
     files: dict[str, str]  # each file as `res://...`, with its SHA-256
     # Only while an export is writing: the hash each file had before it. So one that was stopped can be run again.
     replacing: dict[str, str] | None = None
+    sound: SoundEntry | None = None  # a sound's export (ticket 0400); left out of every other Kind's Manifest
     # Set when it was read from an older schema, so that an export rewrites the file once, though nothing else changed.
     _migrated: bool = PrivateAttr(default=False)
 
@@ -74,14 +127,16 @@ class Manifest(BaseModel):
     @classmethod
     def from_value(cls, value: Any) -> "Manifest":
         """Validate a decoded Manifest, migrating one from an older schema version first (a newer one fails validation)."""
-        migrated = isinstance(value, dict) and value.get("schema_version") in (1, 2, 3)
+        migrated = isinstance(value, dict) and value.get("schema_version") in (1, 2, 3, 4)
         if migrated:
             assert isinstance(value, dict)
             if value.get("schema_version") == 1:
                 value = migrate_v1(value)
             if value.get("schema_version") == 2:
                 value = migrate_v2(value)
-            value = migrate_v3(value)
+            if value.get("schema_version") == 3:
+                value = migrate_v3(value)
+            value = migrate_v4(value)
         manifest = cls.model_validate(value)
         manifest._migrated = migrated
         return manifest
@@ -104,6 +159,11 @@ def migrate_v2(value: dict[str, Any]) -> dict[str, Any]:
 def migrate_v3(value: dict[str, Any]) -> dict[str, Any]:
     """Schema 3 to 4: only the version changes; `ids.masks` already lists what the Manifest froze. Pure."""
     return {**value, "schema_version": 4}
+
+
+def migrate_v4(value: dict[str, Any]) -> dict[str, Any]:
+    """Schema 4 to 5: only the version changes; a Manifest with no `sound` block has none. Pure."""
+    return {**value, "schema_version": 5}
 
 
 def kiripix_version() -> str:

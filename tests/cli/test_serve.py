@@ -243,6 +243,8 @@ BODIES: dict[str, Callable[[list[str]], dict[str, Any]]] = {
     "export": lambda a: {"match": a[2]},
     "probe": lambda a: {"name": a[1], "asset": a[2], "args": a[3:]},
     "cast-sheet": lambda a: {"assets": a[1], "stack": a[3], "scale": int(a[5])},
+    "sound-takes": lambda a: {"asset": a[1]},
+    "sound-sheet": lambda a: {"asset": a[1], "out": a[2], "takes": a[4]},
     "snapshot": lambda a: {"assets": a[1], "label": a[3]},
     "loop kit": lambda a: {"asset": a[2], "loop": a[3], "folder": a[4], "frames": int(a[6])},
     "track": lambda a: {"asset": a[1], "stage": a[2], "seconds": int(a[4])},

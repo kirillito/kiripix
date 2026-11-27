@@ -1,7 +1,7 @@
 # Kiripix
 
 Kiripix turns generated or imported images and 3D models into consistent, game-ready pixel art assets for one game
-project, and exports them into Godot.
+project, and recordings into its sound files, and exports them into Godot.
 
 ## Workspace
 
@@ -17,7 +17,7 @@ The Assets whose IDs an ID glob matches, such as the rooms `room.ch01_dungeon_*`
 _Avoid_: group, area, chapter folder
 
 **Kind**:
-An Asset's type, which fixes its Recipe: room, prop, icon, character, sprite.
+An Asset's type, which fixes its Recipe: room, prop, icon, portrait, character, wearable, sprite, npc, sound.
 _Avoid_: type, category
 
 **Recipe**:
@@ -61,7 +61,7 @@ Recorded human input that a Stage replays: a Pick, segmentation clicks, an Overr
 
 **Pick**:
 The Decision choosing one Variant as an Asset's Source. The Owner chooses between several; an agent may record it when
-there is only one, which needs no judgement.
+there is only one, which needs no judgement. Not the choice of a Sound's Takes, which is the `keep` Decision.
 
 **Override**:
 A recorded hand edit painted onto a Stage's image output, tied to the exact image it was painted on.
@@ -70,7 +70,7 @@ _Avoid_: layer, patch, hand edit
 ## Sources
 
 **Variant**:
-One candidate image or model, generated or imported, offered for a Pick: of an Asset's Source, or of a Look's edit.
+One candidate image, model or recording, generated or imported, offered for a Pick: of an Asset's Source, or of a Look's edit.
 
 **Source**:
 The picked Variant that a Recipe builds from. Immutable once picked. A generated character's Source is its parameter
@@ -212,7 +212,7 @@ _Avoid_: when, flag, trigger
 **Loop**:
 A part of a Room that plays by itself, over and over, cut to a region: a colour cycle (chosen palette colours stepping
 through a list) or frames. Its first frame is the room's own pixels, and its timing is in whole game ticks. A character
-clip's `loop` flag (whether a clip repeats) is not a Loop.
+clip's `loop` flag (whether a clip repeats) is not a Loop, nor is a Sound's.
 _Avoid_: animation, ambient, effect, look (a Look is shown by game state; a Loop always plays)
 
 **Base**:
@@ -271,6 +271,37 @@ a stacking order, and a named colour choice per Part. The game draws it from the
 Speaking characters are characters of their own, not NPCs.
 _Avoid_: NPC for any non-player character with its own Model or portraits (say character)
 
+## Sounds
+
+**Sound**:
+An Asset of Kind sound: a sound effect, a UI sound, an ambience bed or a piece of music, cut from one recording and
+exported as numbered OGG files (ADR 0016). Its Use says which, and its `sound_id` is the game's ID, such as
+`sfx.footstep.asphalt`.
+_Avoid_: audio asset, clip (a character's animation), sample (one value of the signal)
+
+**Use**:
+What a Sound is for: `sfx`, `ui`, `ambience` or `music`. It picks the Sound's row of loudness and format settings
+(`[sound.use.<use>]`) and its export folder. Not a Kind.
+_Avoid_: sub-kind, kind, type, bus (the game's mixer)
+
+**Take**:
+One stretch of a Sound's recording that `slice` found, such as one footstep, with its measures (peak, loudness, centroid,
+how clean it is). A Decision names a Take by its start and end in the recording, never by its number, which a re-slice
+may change.
+_Avoid_: segment, cut, clip, variant
+
+**Variation**:
+One of a Sound's exported files: a kept Take after `process`, numbered from 1 in the `keep` order
+(`footstep_asphalt_1.ogg`; a lone one has no number). The game plays one of them each time. Not a Variant, which is a
+candidate for a Pick.
+_Avoid_: variant, version
+
+**Provenance**:
+Where a recording came from: its URL, author and licence. They are given at `import`, kept on the recording's line in
+`imported.jsonl`, and carried into the Manifest for the game's credits. Kiripix stores the licence and never interprets
+it.
+_Avoid_: credits (the game's), attribution, source (the picked Variant)
+
 ## Verification and output
 
 **Check**:
@@ -295,11 +326,14 @@ in `.kiripix/snapshots/` so `cast-sheet --snapshots` can lay settings side by si
 _Avoid_: version, backup, pin (a pinned result is a Runner's, and it is an input)
 
 **Op**:
-A pure image function, such as quantise or flood fill.
+A pure function on arrays: an image function, such as quantise or flood fill, or a sound function on samples, such as
+onset detection or loudness. ffmpeg is never an Op.
 _Avoid_: function, filter, tool
 
 **Exporter**:
 The part that writes engine files from an Asset's final outputs.
 
 **Manifest**:
-The record of every file Kiripix has exported, with its hash, which decides what Kiripix may overwrite.
+The record of every file Kiripix has exported, with its hash, which decides what Kiripix may overwrite. For a Sound it
+also carries the `sound_id`, each Variation's Take and loudness, and the Provenance, from which the game builds its
+`audio.json` and credits (ADR 0016).

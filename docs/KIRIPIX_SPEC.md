@@ -12,7 +12,7 @@ The vocabulary is defined in [GLOSSARY.md](../GLOSSARY.md), and the decisions be
 
 Kiripix is a local tool that turns generated or imported images, and 3D models, into consistent game-ready pixel art
 assets: backgrounds with layers and collision, props, and animated characters. It exports them straight into a Godot
-project.
+project. Since M6 it also cuts recordings into the game's sound files: sound effects, UI sounds, ambience and music (ADR 0016).
 
 Its first customer is the owner's next game:
 - a 2D RPG about Toronto and its urban legends;
@@ -51,7 +51,7 @@ layers, and the layers get stacked back into a scene.
 2. **Non-destructive.** A stage's output is a pure function of its inputs, its parameters, its recorded human
    decisions (clicks, picks, Overrides) and its pinned Runner and Provider results. A Blender render counts as a function
    of its inputs, the Blender version and render settings among them, though it isn't bit-exact across devices
-   (ADR 0010). Change anything upstream, the
+   (ADR 0010). So does a sound's ffmpeg processing, with the ffmpeg version among its inputs, though its bytes may differ between platforms (ADR 0016). Change anything upstream, the
    palette for example, and everything below it rebuilds. Nobody edits a generated file by hand. Hand edits are
    Overrides: recorded, and replayed on top.
 3. **Built for agents and UIs.** Every operation is a Command, defined once in core and offered identically through
@@ -70,11 +70,11 @@ layers, and the layers get stacked back into a scene.
    failures live while the owner works.
 8. **Stable IDs.** Every asset, Layer, Marker and animation clip has a stable string ID, carried into Godot. Once
    exported, an ID is frozen (ADR 0003).
-9. **Text on disk.** Project and asset metadata are TOML, JSON or JSON Lines, git-friendly. Binaries are PNG and GLB,
+9. **Text on disk.** Project and asset metadata are TOML, JSON or JSON Lines, git-friendly. Binaries are PNG, GLB and audio (WAV, FLAC, MP3, OGG),
    in git LFS.
 10. **Never overwrite the game's own work.** Export writes only files the Manifest says Kiripix owns, and only while
     they are unchanged (ADR 0003). Game logic lives in scenes that instance Kiripix's scenes, never inside them.
-11. **Never re-run a Runner or Provider silently.** A rebuild re-runs only deterministic work: Ops, and Blender renders (ADR 0010). Running a Runner again
+11. **Never re-run a Runner or Provider silently.** A rebuild re-runs only deterministic work: Ops, Blender renders (ADR 0010) and ffmpeg (ADR 0016). Running a Runner again
     is always an explicit request, and calling a Provider (which costs money) only ever happens through `gen`.
 
 ## 3. Concepts
@@ -83,7 +83,7 @@ layers, and the layers get stacked back into a scene.
 
 | Term | Meaning |
 |---|---|
-| **Asset**, **Kind**, **Recipe**, **Stage** | An asset has a kind; the kind fixes its recipe, an ordered list of stages. Kinds: `room`, `prop`, `character` first, then `sprite` (an actor from imported 2D frames, M4) and `icon` (an item or skill icon on a fixed square, M5) and `wearable` (a part of a character's dress, M5: hair, an outfit, an accessory; it names its body, a character, in `body`, and follows it) and `portrait` (a character's dialogue portraits, one image per emotion, M5); `npc` (a background figure chosen from a base character, its Wearables and named colours, with no render, M6, ADR 0015); `tileset`, `vfx` later. |
+| **Asset**, **Kind**, **Recipe**, **Stage** | An asset has a kind; the kind fixes its recipe, an ordered list of stages. Kinds: `room`, `prop`, `character` first, then `sprite` (an actor from imported 2D frames, M4) and `icon` (an item or skill icon on a fixed square, M5) and `wearable` (a part of a character's dress, M5: hair, an outfit, an accessory; it names its body, a character, in `body`, and follows it) and `portrait` (a character's dialogue portraits, one image per emotion, M5); `npc` (a background figure chosen from a base character, its Wearables and named colours, with no render, M6, ADR 0015); `sound` (a sound effect, UI sound, ambience or music, cut from a recording into numbered OGG variations, M6, ADR 0016); `tileset`, `vfx` later. |
 | **Decision** | Recorded human input that a stage replays: a Pick, segmentation clicks, an Override, marker positions. |
 | **Override** | A recorded hand edit on a stage's image output, tied to the hash of the image it was painted on. |
 | **Layer** / **Plate** | A visible image plane of a room; the Plate is the room with its foreground objects removed. |
@@ -137,6 +137,8 @@ my-game-assets/
       src/parameters/        a generated character's parameter file, in place of imported Models (§6.3)
     sprite/raccoon/ ...
       src/sheets/            a sprite's imported PNG sheets and ZIPs, stored whole (§6.4)
+    sound/footstep_asphalt/ ...
+      src/                   the imported recordings (WAV, FLAC, MP3, OGG), stored whole; each one's url, author and licence on its line in imported.jsonl (§6.8)
   chargen/ ...               the Project's own Model generator, if it has one: any folder, named in kiripix.toml (§6.3)
   .kiripix/                  hash cache, last-run failures, locks, Runner weights, backups, the cost ledger (git-ignored)
 ```
@@ -178,7 +180,7 @@ foreground = { derived = true }
 
 [export.godot]
 project = "C:/Workspace/toronto-rpg"
-root = "res://kiripix"         # everything Kiripix writes goes under here, Manifest included
+root = "res://kiripix"         # everything Kiripix writes goes under here, Manifest included, except sounds ([sound] folder, ADR 0016)
 version = "4.7"                # pinned at M0: Godot 4.7 (4.7.2-stable); see docs/versions.md
 
 [extend]                       # `kiripix extend <id> canvas`: the canvas pasted into the image model (M4)
@@ -197,6 +199,35 @@ size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) o
 [portrait]                     # `kiripix new portrait <name>` (M5, §6.7)
 canvas = [192, 240]            # width and height in px; a portrait's own brief overrides it
 # anchor = [96, 239]           # the pixel the figure stands on; the bottom centre when unset
+
+[sound]                        # the sound Kind (M6, §6.8, ADR 0016), from the game's audio skill
+folder = "res://audio"         # export writes <folder>/<use>/<name>[_<n>].ogg, outside root; the Manifest stays under root
+rate = 44100                   # Hz
+quality = 5                    # Vorbis -q:a
+
+[sound.use.sfx]                # one row per use: sfx, ui, ambience, music
+prefix = "sfx"                 # how a sound_id of this use starts
+channels = 1
+peak = -3.0                    # dBFS, peak-normalised; a row has peak, or lufs with true_peak and lra, never both
+
+[sound.use.ui]
+prefix = "ui"
+channels = 1
+peak = -3.0
+
+[sound.use.ambience]
+prefix = "amb"
+channels = 2
+lufs = -40.0                   # integrated, two-pass loudnorm (calibrated by the Owner in the game's bedroom)
+true_peak = -2.0               # dBTP
+lra = 11.0
+
+[sound.use.music]
+prefix = "music"
+channels = 2
+lufs = -18.0
+true_peak = -1.0
+lra = 11.0
 
 [character]
 height = 52                    # target height in px; a character's own `height` parameter overrides it
@@ -279,6 +310,11 @@ image or crop hash, the click Decisions, the parameters, and the Runner's ID wit
 pinned call (ADR 0010): it rebuilds like deterministic work, with the Blender version and render settings among the
 Stage's inputs.
 
+**ffmpeg** (a sound's Stages, ADR 0016) is not a pinned call either. It comes from the `imageio-ffmpeg` wheel locked in
+`uv.lock`, runs only through `kiripix/recipes/ffmpeg.py`, and rebuilds like deterministic work. The first line of
+`ffmpeg -version` is a computed input (`ffmpeg.version`) of every Stage that runs it. The same inputs give the same bytes
+on one platform. Windows and Linux may differ.
+
 **Replaying Decisions.**
 - If a stage's input hash is unchanged, replay is exact and the stage goes straight to `done`.
 - If the input changed, replayed clicks and Overrides put the stage in `needs-review`. A click that now lands on a
@@ -338,6 +374,7 @@ is `style.reference_unknown` (an error, in `check --all`). `kiripix probe style 
 | Room | `palette`'s Plate (`plate.png`, not the composite with its Layers) | no | yes |
 | Prop | the `export` Stage's `sprite.png` | no | yes |
 | Icon, Portrait | not measured | no | no |
+| Sound | not measured | no | no |
 
 ### 6.1 Room
 
@@ -738,6 +775,29 @@ centre, `(width // 2, height - 1)`, when unset), so every set matches.
 | **cutout**, **register**, **fit**, **palette**, **finish** | Built ([0243](../backlog/m5/0243-m5-portrait-recipe.md), [0321](../backlog/m5/0321-m5-portrait-whole-body-emotions.md), [0322](../backlog/m5/0322-m5-portrait-light-rim-check.md)): the cutout per image (a chroma key with a `tolerance` from each image's border, the key's spill, a light rim and small islands off; or matting); `register` `mode` `off` by default, since the game's rules free the pose, the arms and the lean between emotions (`figure` or `outside_face`, outside an optional `face` Decision, a polygon or a brush, for a set whose body stays still); one Grid for the set from the neutral, its scale putting the figure's top row `head_top` (40) px below the canvas top and its lowest row on the anchor's row, transparent where the source has no pixels (`head_top` -1: `Grid.cover`'s fill); the set's own colours (`mode` `set`, `n` 32 up to 256, `outline_colour` kept; or `project`, or `off`); the white rim's specks on the edge cleared (`clear_light_edge`), the outline (`placement` `edge`), and `lock_outside_face` (off by default). | Draws `face`, only if needed | `portrait.misaligned`, `portrait.residual`, `portrait.shimmer`, `portrait.out_of_canvas` (within 2 px of the top, left or right edge), `portrait.light_rim`, `palette.set_error`, `palette.off_palette` |
 | **export** | One PNG per emotion (and `neutral.png`) and `portrait.json` in `out/export/` ([0244](../backlog/m5/0244-m5-export-a-portrait.md), §9). | | `export.no_target`, `export.portrait_canvas`, `image.partial_alpha`, `portrait.fallback_unknown` |
 
+### 6.8 Sound (M6)
+
+A sound effect, UI sound, ambience bed or piece of music, cut from one recording into numbered variations and exported as
+OGG Vorbis files. Design: ADR 0016 and [0393](../backlog/m6/0393-m6-sound-kind.md); tickets 0395 to 0400.
+
+**source → slice → keep → process → export**
+
+The Asset's `use` (`sfx`, `ui`, `ambience` or `music`, set at `new`) picks its row of `[sound.use.<use>]` (§4). Its
+`sound_id` is the game's ID (`sfx.footstep.asphalt`, `amb.<place>.<name>`, `music.<name>`), default `<prefix>.<name>`.
+It must start with the use's `prefix` (`sound.id_prefix`). Both are frozen once exported.
+
+| Stage | What it does | Owner input | Checks |
+|---|---|---|---|
+| **source** | The recording: `import <id> <file> [--url u] [--author a] [--licence l]` (WAV, FLAC, MP3, OGG, stored whole in `src/`). Its provenance goes on its line in `imported.jsonl`; importing the same bytes again with the flags adds a newer line and no Variant. Picked as any Source. Decoded with ffmpeg to 44.1 kHz float PCM, keeping its channels. A raw recording never goes to the game. | Imports and picks; an agent may pick a lone recording | — |
+| **slice** | Finds the Takes. `mode` is `auto` (the default: `onsets` for sfx and ui, `whole` for ambience and music), `onsets` (energy and spectral flux; `threshold`, `min_gap`, `pre_roll`, and `tail` until the level falls under `floor`) or `whole` (one Take: the recording less its silent head and tail). Measures each Take: start, end, peak dBFS, integrated LUFS, RMS, spectral centroid, similarity to the median Take, and a clean rank. | — | `slice.none`, `slice.clipped`, `slice.overlap` |
+| **keep** | The kept Takes in order, from a `keep` Decision, each as `start_ms` and `end_ms`. The order gives the variation numbers. A recorded Take matches the current Take that starts within 15 ms and covers half its span. All within 1 ms replay exactly; a moved bound is `needs-review` (`accept` re-records it); no match or two is `needs-input`. | The `keep` Decision (an agent may record it) | `keep.take_missing`, `keep.take_split` |
+| **process** | Per variation: trim, `fade_in`, `fade_out`, `speed` (tempo with pitch), `pitch`, `highpass`, `lowpass`, light `denoise`, the use's channels and loudness (two-pass `loudnorm` for a LUFS target, peak for sfx and ui), and for a loop a crossfaded seam on a chosen window (cross-correlation). Per-Take overrides are `process` Decisions that name the Take by its span. Writes `<n>.wav` (44.1 kHz float) and `process.json` (per variation: the Take, length, peak, loudness, `loop`, `loop_offset`, the settings applied). | Per-Take overrides | `process.odd_one_out`, `process.loop_seam` |
+| **export** | Encodes each variation to OGG Vorbis (`[sound] rate` and `quality`; `-fflags +bitexact -flags:a +bitexact -map_metadata -1 -threads 1`), measures it, and leaves `<name>[_<n>].ogg` and `sound.json` in `out/export/` for the Exporter (§9). `<name>` is the `sound_id` without its prefix, with dots as underscores; `_<n>` only when there are several variations (Owner, 2026-11-27). | — | `sound.provenance_missing`, `sound.name_taken` (a Project check), `export.no_target` |
+
+A sound has no palette and no Mask. Principle 6 doesn't apply. Kiripix never writes the game's `data/audio.json` or
+`CREDITS.md`: the game builds both from the Manifest (§9). A sound's `loop` is a flag, as a clip's is, not a Loop (a
+room's).
+
 ## 7. Ops library (first set)
 
 - **colour:**
@@ -790,6 +850,10 @@ centre, `(width // 2, height - 1)`, when unset), so every set matches.
 - **style:** the outline's density on a figure's silhouette edge (`outline_density`: outline-colour pixels per edge pixel), and
   the pixel scale (`pixel_scale`: the gcd of all colour-run lengths, 2 or more when the image was upscaled). Numbers out, for
   the `style.*` Checks (ticket 0333).
+- **sound** (M6, ADR 0016): pure numpy over decoded samples: onset detection (energy and spectral flux), peak, RMS,
+  BS.1770 integrated loudness, spectral centroid, similarity to a median, a loop point by cross-correlation, and waveform
+  and log-frequency spectrogram images for the contact sheet. Decoding, resampling, `loudnorm`, denoise, tempo and pitch,
+  and the Vorbis encoder are ffmpeg's, run by `kiripix/recipes/ffmpeg.py`, never by an Op.
 
 ## 8. Runners (8 GB VRAM)
 
@@ -831,6 +895,7 @@ Kiripix writes Godot 4 text resources (`.tscn`, `.tres`) and PNGs under `export.
 | Portrait | No scene: the game's portrait UI loads the PNGs and reads `portrait.json`. Under `portraits/<name>/` in the export root: `neutral.png`, `<emotion>.png` for each emotion and `portrait.json` (`schema_version`, `asset`, `canvas`, `anchor`, `fallback`, `emotions`: ID and file, `neutral` first and then the Decisions' order), all in the Manifest, copied byte for byte from the portrait's `export` Stage (`out/export/`). Every image is the canvas's size on the same anchor (`export.portrait_canvas`), with binary alpha, and the fallback names an emotion of the set. The emotion IDs are in the Manifest's `ids.emotions` and frozen once exported: an `emotion_remove` or `emotion_rename` of one is refused before it is recorded (`export.id_frozen`); adding an emotion is fine. `--prune` removes a deleted portrait's files with their `.import` sidecars. |
 | Wearable | Under `wearable/<name>/`, laid out as a character's and on its cell, pivot and frame layout: `color.png`, `normal.png` and `depth.png` (16 bit gray, 0 nearest, the body's depth scale), `texture.tres`, `frames.tres` (the body's animation names `<clip>_<dir>`, each frame the same cell of the atlas as the body's), a scene (a `Node2D` and an `AnimatedSprite2D`, drawn offset like the body's), and `wearable.json` (`schema_version`, `asset`, `body`, `order`, `files`, `cell`, `pivot`, `atlas`, `directions`, `clips`, `parts` with their ramps), all in the Manifest. `order` is the default stacking order over the body (0), the `sheet` parameter `order` (default 10); the game stacks by it, or by `depth.png` for an exact result. No outline: the game draws it once on the stack. Refused with `wearable.body_not_exported` until its body is in the game (its Manifest lists it as exported) with the same cell and pivot in its `character.json`; in `export --all` the body counts when it is exported in the same call. The animation names are the clip IDs frozen in its Manifest. `--prune` removes a deleted Wearable's files with their `.import` sidecars. |
 | NPC | `npc/<name>/npc.json` (`schema_version` 1, `asset`, `base` and `base_path`, `wearables` (`{id, order, path}`, bottom to top; `path` is the Wearable's exported scene), `colours` by Part (`{choice, rgb}`, the ramp dark to light, as `CharacterSprite.set_colours` takes it)), in the Manifest under its Asset ID (frozen with the Manifest's name; no other ID). No images and no scene: the game draws the base's and the Wearables' exports. Refused with `npc.base_not_exported` or `npc.wearable_not_exported` until each is exported (one exported in the same `export --all` counts); `--prune` removes a deleted NPC's file (M6, ADR 0015, ticket 0358). |
+| Sound | No scene and no JSON in the game. The variations go to `<[sound] folder>/<use>/<name>[_<n>].ogg` (`res://audio/sfx/footstep_asphalt_1.ogg`; a lone variation has no number), outside the export root (the one exception, ADR 0016), copied byte for byte from the `export` Stage. The Manifest gets a `sound` block (schema 5): `id` (the `sound_id`), `use`, `files` in variation order (`path`, `take` {`start_ms`, `end_ms`}, `length_s`, `peak_dbfs`, `lufs`, `loop`, `loop_offset`), `source` (file name, hash, `url`, `author`, `licence`) and `processing`. The game builds its `data/audio.json` entries and `CREDITS.md` lines from it; Kiripix writes neither. `sound_id` and `use` are frozen once exported (`export.id_frozen`). A file of the game's own at the path needs `--adopt`. `--prune` removes a deleted sound's files with their `.import` sidecars. `manifest install` writes the `kiripix-ours` rule for `*.ogg` into `<folder>/.gitattributes` (M6, ticket 0400). `length_s`, `peak_dbfs` and `lufs` are measured on the encoded file; a null `loop_offset` and an unset `url`, `author` or `licence` are left out of the file. A `sound.provenance_missing` (no `author` or no `licence` on the recording) refuses the export. |
 
 The game instances these scenes and adds its own scripts in its own scenes, so nothing it writes is ever regenerated
 over (principle 10).
@@ -842,7 +907,7 @@ over (principle 10).
   configured path, export and the ID freeze checks refuse rather than guess.
 - **Contents:** each asset's ID, every ID it exports (Markers, Layers, clips, node names derived from Masks, a room's Looks and Loops, each in its own list, and a room's Look Markers as `<look>/<marker>` in `ids.look_markers`, left out when empty), its
   files with their hashes, an "exported" flag and a counter that goes up each time its exported hash changes. The
-  Manifest also records its schema version and the Kiripix version that wrote it. The game's tests read it. Schema 4 (ticket 0345): `ids.masks` lists every painted Mask a room exported, a file name the game's grid reads, so removing or renaming one is refused (`export.id_frozen`) once it is exported; a schema 3 Manifest is read as it is (what it listed is what it froze) and rewritten once at the next export, and an older Kiripix refuses a schema 4 one. Schema 3 (ticket 0316) added `ids.look_markers`; a schema 2 Manifest is read as having none and rewritten once at the next export, and an older Kiripix refuses a schema 3 one. A room's `ids.markers` lists only its own Markers, so moving an exported Marker into or out of a Look changes its node path and is refused (`export.id_frozen`); `manifest merge` takes the union of the lists.
+  Manifest also records its schema version and the Kiripix version that wrote it. The game's tests read it. Schema 5 (ADR 0016, ticket 0400): an optional `sound` block (§9's Sound row), left out for every other Kind. The game builds its `audio.json` and credits from it, and it plays no part in ownership. A schema 4 Manifest is read as having none and rewritten once at the next export; an older Kiripix refuses a schema 5 one; `manifest merge` takes our `sound` block with our `files`. Schema 4 (ticket 0345): `ids.masks` lists every painted Mask a room exported, a file name the game's grid reads, so removing or renaming one is refused (`export.id_frozen`) once it is exported; a schema 3 Manifest is read as it is (what it listed is what it froze) and rewritten once at the next export, and an older Kiripix refuses a schema 4 one. Schema 3 (ticket 0316) added `ids.look_markers`; a schema 2 Manifest is read as having none and rewritten once at the next export, and an older Kiripix refuses a schema 3 one. A room's `ids.markers` lists only its own Markers, so moving an exported Marker into or out of a Look changes its node path and is refused (`export.id_frozen`); `manifest merge` takes the union of the lists.
 - **Ownership:** Kiripix overwrites or removes a file only if the Manifest lists it and its current hash matches.
   Each generated text file starts with a `; generated by kiripix, do not edit` comment, but that is a hint for humans,
   not the rule. Godot's `.import` sidecars are never owned: export ignores them, and only `--prune` removes the one of a
@@ -1157,6 +1222,7 @@ updates never go through React state.
 | Images | numpy and Pillow; OpenCV or scikit-image only when an Op needs one, added through `uv.lock` |
 | ML | ONNX Runtime (CUDA), PyTorch where needed |
 | 3D | Blender 5.2 LTS (pinned at M0, see docs/versions.md; found through config or PATH), run headless: `blender -b -P kiripix/blender/<script>.py -- <args>`, with arguments and results as JSON files |
+| Audio | ffmpeg 9.0.2, bundled by the `imageio-ffmpeg==0.8.1` wheel locked in `uv.lock` (libvorbis, `loudnorm`, `afftdn`, `rubberband`, `atempo`); run only by `kiripix/recipes/ffmpeg.py`; analysis in numpy (ADR 0016) |
 | Templates | Jinja2 for prompts |
 | Storage | git LFS for PNG and GLB (`src/`, `pinned/`, `out/`) |
 | UI | React, TypeScript and Vite; canvas widgets in plain TypeScript |
@@ -1172,7 +1238,7 @@ kiripix/
   checks/      check functions returning findings, including Project checks
   runners/     local ML runners (lazy load, unload)
   providers/   image API Providers (openai, M6): a prompt and images in, PNGs and their cost out; core keeps the key, the budget and the ledger
-  recipes/     room.py, prop.py, character.py: stage definitions per kind
+  recipes/     room.py, prop.py, character.py, sound.py: stage definitions per kind; blender_launcher.py and ffmpeg.py, the only places Blender and ffmpeg run
   blender/     bpy scripts (run inside Blender only)
   export/      godot.py (tscn and tres writers), manifest (ownership, freeze, merge)
   cli/         Typer adapter, generated from commands/
@@ -1353,6 +1419,12 @@ with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.m
   spark and the summon puff are accepted this way); the recipe is kept beside it in `src/`, with no Node in Kiripix. The buff glow,
   the sound-wave cone and the telegraph have no route yet. The rest (effect Ops, a Pixelbolt atlas import, the UI player) waits for
   the game to confirm the first effects.
+- **Sound as a Kind** (added 2026-11-26 by the Owner, from the game's laneway work; [0393](../backlog/m6/0393-m6-sound-kind.md),
+  ADR 0016). An agent cuts a recording into Takes it can see on a contact sheet, instead of guessing cut points from
+  numbers. It exports normalised OGG variations with their provenance in the Manifest; the game keeps its `audio.json` and
+  `CREDITS.md`. The loudness and format table is the game's audio skill's, as Project settings. ffmpeg, pinned through
+  `imageio-ffmpeg` in `uv.lock`, does the processing. Tickets 0394 (the ADR), 0395 (import and slice), 0396 (the contact
+  sheet), 0397 (process), 0400 (export), 0398 (UI) and 0399 (a trial of generated sound effects).
 
 **Generation and agents, deferred** (moved out of M6 by the Owner on 2026-11-18; moved from M4 on 2026-11-08 and from M5 on
 2026-11-11). Not in a milestone yet. Each part, with the Owner's view:

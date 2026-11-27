@@ -30,9 +30,9 @@ def toml(project: Kiripix) -> str:
 def test_an_older_settings_file_migrates_in_memory_and_gains_the_style_section(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = toml(project)
-    assert "schema_version = 14" in text and "[style]" in text
+    assert "schema_version = 15" in text and "[style]" in text
     block = text[text.index("[style]"):].split("\n\n", 1)[0]
-    old = text.replace("schema_version = 14", "schema_version = 10").replace(block + "\n\n", "")
+    old = text.replace("schema_version = 15", "schema_version = 10").replace(block + "\n\n", "")
     assert "[style]" not in old
     path.write_text(old, encoding="utf-8")
 
@@ -43,7 +43,7 @@ def test_an_older_settings_file_migrates_in_memory_and_gains_the_style_section(p
     project.json("style-add", "prop.bench", owner=True)  # a writing Command writes the migration back
 
     written = toml(project)
-    assert "schema_version = 14" in written and 'references = ["prop.bench"]' in written
+    assert "schema_version = 15" in written and 'references = ["prop.bench"]' in written
 
 
 def test_an_unknown_reference_is_a_finding_in_check_all_and_style_remove_takes_it_out(project: Kiripix) -> None:

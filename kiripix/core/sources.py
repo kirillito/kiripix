@@ -33,6 +33,8 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 _IMAGE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")
 CHARACTER = "character"
 ROOM = "room"
+SOUND = "sound"
+SOUND_SUFFIXES = (".wav", ".flac", ".mp3", ".ogg")  # a sound's recordings (`kiripix.recipes.ffmpeg.SUFFIXES`)
 
 
 def takes_sheets(asset: Asset) -> bool:
@@ -47,7 +49,7 @@ def takes_models(asset: Asset) -> bool:
 
 def variants(asset: Asset) -> dict[str, Path]:
     """The Asset's Variants by name, sorted: images, or for a character its Models."""
-    suffixes = MODEL_SUFFIXES if takes_models(asset) else (".png",)
+    suffixes = MODEL_SUFFIXES if takes_models(asset) else SOUND_SUFFIXES if asset.kind == SOUND else (".png",)
     return {path.stem: path for path in sorted((asset.dir / "src").glob("*")) if path.is_file()
             and path.suffix in suffixes}
 
@@ -134,7 +136,7 @@ def _model_suffix(asset: Asset, file: Path, shown: str) -> str:
 
 
 IMPORTED_FILE = "imported.jsonl"  # in the Asset folder, not `src/`: a Stage hashes `src/*`, and a name isn't an input
-IMPORTED_SCHEMA_VERSION = 2  # 2 (ticket 0388) adds `provider` and `call`; a version-1 line reads with both null, in memory
+IMPORTED_SCHEMA_VERSION = 3  # 2 (ticket 0388) adds `provider` and `call`; 3 (ticket 0395) a recording's `url`, `author`, `licence` and `at`; an older line reads with them null, in memory
 
 class ImportedName(BaseModel):
     """One line of `imported.jsonl`: the file name a stored file was imported with. The newest line for a file wins."""
@@ -145,6 +147,10 @@ class ImportedName(BaseModel):
     imported_as: str
     provider: str | None = None  # a sheet `gen` made: the Provider and the call that made it
     call: str | None = None
+    url: str | None = None  # a sound's Provenance (ADR 0016, decision 8): where the recording came from, who made it, its licence
+    author: str | None = None
+    licence: str | None = None
+    at: str | None = None  # when the line was written (UTC): the newest line of a file wins, and the file is `merge=union`
 
 
 def _relative(asset: Asset, path: Path) -> str:
@@ -166,7 +172,7 @@ def imported_names(asset: Asset) -> dict[str, str]:
         except ValidationError as error:
             raise fail("import.record_invalid", f"{asset.id}/{IMPORTED_FILE} line {number} is not valid: {error.errors()[0]['msg']}",
                        owner_action=f"Fix or remove line {number} of {IMPORTED_FILE} in {asset.id}.") from None
-        if entry.schema_version not in (1, IMPORTED_SCHEMA_VERSION):
+        if entry.schema_version not in (1, 2, IMPORTED_SCHEMA_VERSION):
             raise fail("import.record_invalid", f"{asset.id}/{IMPORTED_FILE} line {number} has schema_version "
                        f"{entry.schema_version}; this Kiripix reads {IMPORTED_SCHEMA_VERSION}",
                        owner_action="Update Kiripix.")

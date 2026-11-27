@@ -14,6 +14,7 @@ from kiripix.core.hashing import HashCache
 from kiripix.core.lightangle import check_light_angle
 from kiripix.core.match import only_named, select
 from kiripix.core.project import Project
+from kiripix.core.sounds import check_sound_ids, check_sound_names
 from kiripix.core.style import References, reference_findings, style_findings
 
 ProjectCheck = Callable[[Project, list[Asset]], list[Finding]]
@@ -28,6 +29,8 @@ def register_project_check(check: ProjectCheck) -> ProjectCheck:
 
 
 register_project_check(check_light_angle)  # `style.light_angle_differs` (ticket 0361)
+register_project_check(check_sound_ids)  # `sound.id_prefix` (ticket 0395)
+register_project_check(check_sound_names)  # `sound.name_taken` (ticket 0400)
 
 
 def _located(finding: Finding, asset: str, stage: str) -> Finding:

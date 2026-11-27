@@ -1,0 +1,15 @@
+{
+  "_note": "Five prompts from the game's needs (see findings.md, section 4). duration_s is what the script asks the provider for.",
+  "prompts": [
+    {"id": "screen_door", "game_id": "sfx.door.screen", "duration_s": 2.0,
+     "text": "A wooden screen door with a spring closing: a creak as it swings, then a light rattling slap against the frame. Close recording, dry, no room echo, no voices."},
+    {"id": "dog_far", "game_id": "amb.laneway.dog_far", "duration_s": 3.0,
+     "text": "A medium-sized dog barking twice, far away behind a fence in a quiet city back lane, muffled and distant, a little outdoor reverb, no other sounds."},
+    {"id": "bin_lid", "game_id": "sfx.bin.lid", "duration_s": 2.0,
+     "text": "A heavy plastic wheelie-bin lid dropped shut: one hollow thud and a short rattle. Close recording, dry, single event, no music."},
+    {"id": "coin", "game_id": "sfx.item_get.coin", "duration_s": 1.0,
+     "text": "A single metal coin dropped onto a hard surface and ringing out briefly: a clean bright clink with a short tail. Dry, single event."},
+    {"id": "bin_fall", "game_id": "sfx.bin.fall", "duration_s": 3.0,
+     "text": "A full metal garbage bin tipped over onto asphalt: a heavy crash, the lid clattering off and rolling, a few small items spilling. Outdoors, one event, no voices."}
+  ]
+}

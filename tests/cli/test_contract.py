@@ -129,6 +129,13 @@ def _clips_to_copy(project: Kiripix) -> None:
         "name": "wave", "source": "rigged", "start": 0, "end": 10, "fps": 10, "loop": False}}))
 
 
+def _sliced_sound(project: Kiripix) -> None:
+    """sound.clicks, a recording of five clicks, sliced into Takes."""
+    from test_sound import sliced  # here, not at the top: it needs no other test module
+
+    sliced(project)
+
+
 def _game_repo(project: Kiripix) -> None:
     """A Godot project that is a git repository, as the target."""
     if shutil.which("git") is None:
@@ -184,6 +191,8 @@ SAMPLES: dict[str, Callable[[Kiripix], list[str]]] = {
     "cost": lambda p: (_spent(p), ["cost", "--month"])[1],
     "import": lambda p: (_character_files(p), ["import", "character.hero", "rigged.fbx", "--role", "clip-source"])[1],
     "thing-remove": lambda p: (_a_thing(p), ["thing-remove", "character.hero", "phone"])[1],
+    "sound-takes": lambda p: (_sliced_sound(p), ["sound-takes", "sound.clicks"])[1],
+    "sound-sheet": lambda p: (_sliced_sound(p), ["sound-sheet", "sound.clicks", "sheet.png", "--takes", "1-3"])[1],
     "clips copy": lambda p: (_clips_to_copy(p), ["clips", "copy", "character.twin", "--from", "character.hero"])[1],
     "mask-import": lambda p: (_room_image(p), ["mask-import", "room.alley", "in.png"])[1],
     "plate-import": lambda p: (_room_image(p), ["plate-import", "room.alley", "in.png"])[1],
@@ -283,6 +292,24 @@ def test_import_and_show_of_a_sprite_sheet_validate(project: Kiripix, schemas: d
     jsonschema.validate(imported, schemas["import"]["output"])
     jsonschema.validate(shown, schemas["show"]["output"])
     assert imported["data"]["sheet"] and shown["data"]["sheets"][0]["name"] == imported["data"]["sheet"]
+
+
+def test_a_sounds_recording_import_keep_and_takes_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The shapes of `import` of a recording (with its Provenance), `decide --takes` and `show` of a sound (ticket 0395)."""
+    from test_sound import ASSET, make_sound, run_slice
+
+    make_sound(project)
+    imported = project.json("import", ASSET, "clicks.wav", "--author", "Me", "--licence", "CC0", "--url", "https://example.org/x")
+    run_slice(project)
+    decided = project.json("decide", ASSET, "keep", "--takes", "2,1")
+    shown = project.json("show", ASSET)
+
+    for result, command in ((imported, "import"), (decided, "decide"), (shown, "show")):
+        jsonschema.validate(result, schemas[command]["output"])
+    assert imported["data"]["sound"]["author"] == "Me"
+    for field in ("url", "author", "licence"):
+        assert field in schemas["import"]["input"]["properties"]  # type: ignore[index]
+    assert "takes" in schemas["decide"]["input"]["properties"]  # type: ignore[index]
 
 
 def test_import_and_show_of_a_held_thing_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:

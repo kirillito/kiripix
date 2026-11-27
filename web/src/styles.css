@@ -1195,3 +1195,28 @@ kbd {
   color: var(--muted);
   opacity: 0.6;
 }
+
+/* The Sound screen (ticket 0398) */
+.sound-screen { padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; max-width: 100%; }
+.sound-transport { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.sound-transport [aria-pressed="true"] { outline: 2px solid var(--accent); }
+.sound-transport input[type="number"] { width: 5em; }
+.sound-sheet-scroll { max-width: 100%; overflow: auto; }
+.sound-sheet-box { position: relative; }
+.sound-sheet { display: block; background: var(--surface); }
+.sound-box { background: transparent; border: 1px solid transparent; cursor: pointer; padding: 0; position: absolute; }
+.sound-box:hover, .sound-box[aria-pressed="true"] { border-color: var(--accent); background: rgba(255, 255, 255, 0.08); }
+.sound-takes, .sound-variations table { border-collapse: collapse; }
+.sound-takes th, .sound-takes td, .sound-variations th, .sound-variations td { padding: 2px 8px; text-align: left; white-space: nowrap; }
+.sound-takes tr[data-selected="true"] { outline: 1px solid var(--accent); }
+.sound-takes tr[data-kept]:not([data-kept=""]) { background: rgba(255, 255, 255, 0.06); }
+.sound-kept-list { margin: 4px 0; padding-left: 24px; }
+.sound-kept-item { align-items: center; border: 1px solid transparent; display: flex; gap: 6px; padding: 2px 4px; }
+.sound-kept-item[draggable="true"] { cursor: grab; }
+.sound-kept-item.dragging { opacity: 0.5; }
+.sound-tune-fields { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.sound-tune-fields input[type="number"], .sound-tune-fields select { width: 6em; }
+.sound-provenance { display: flex; flex-wrap: wrap; gap: 8px; }
+.sound-recordings, .sound-files { margin: 4px 0; }
+.sound-recordings { list-style: none; padding: 0; }
+.sound-log { display: none; }

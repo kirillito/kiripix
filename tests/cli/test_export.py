@@ -143,7 +143,7 @@ def test_the_manifest_records_the_ids_the_files_and_their_hashes(project: Kiripi
     project.json("export", ROOM)
 
     record = manifest(project)
-    assert record["schema_version"] == 4 and record["kiripix_version"]
+    assert record["schema_version"] == 5 and record["kiripix_version"]
     assert record["asset"] == ROOM and record["exported"] is True and record["counter"] == 1
     assert record["ids"] == {"markers": ["spawn.main"], "layers": ["plate"], "masks": ["pit", "solid"],
                            "clips": []}

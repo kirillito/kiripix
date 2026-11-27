@@ -53,7 +53,7 @@ def find_project(start: Path) -> Project:
     return Project(root, load_project_settings(root / PROJECT_FILE))
 
 
-PROJECT_TEMPLATE = """schema_version = 14
+PROJECT_TEMPLATE = """schema_version = 15
 
 [project]
 name = "{name}"
@@ -95,6 +95,35 @@ size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) o
 [portrait]                     # `kiripix new portrait <name>`: the canvas of a character's dialogue portraits
 canvas = [192, 240]            # width and height in px; a portrait's own brief overrides it
 # anchor = [96, 239]           # the pixel the figure stands on; the bottom centre when unset
+
+[sound]                        # `kiripix new sound <name> --use sfx`: the format and the loudness table, from the game's audio skill
+folder = "res://audio"         # export writes <folder>/<use>/<name>[_<n>].ogg, outside the export root; the Manifest stays under the root
+rate = 44100                   # Hz
+quality = 5                    # Vorbis -q:a
+
+[sound.use.sfx]                # one row per use: sfx, ui, ambience, music
+prefix = "sfx"                 # how a sound_id of this use starts
+channels = 1
+peak = -3.0                    # dBFS, peak-normalised; a row has peak, or lufs with true_peak and lra, never both
+
+[sound.use.ui]
+prefix = "ui"
+channels = 1
+peak = -3.0
+
+[sound.use.ambience]
+prefix = "amb"
+channels = 2
+lufs = -40.0                   # integrated, two-pass loudnorm
+true_peak = -2.0               # dBTP
+lra = 11.0
+
+[sound.use.music]
+prefix = "music"
+channels = 2
+lufs = -18.0
+true_peak = -1.0
+lra = 11.0
 
 [inbox]                        # `kiripix inbox`: the images made elsewhere, filed by their file names
 folder = "inbox"               # relative to the Project
@@ -180,6 +209,10 @@ GITATTRIBUTES = [
     "*.glb filter=lfs diff=lfs merge=lfs -text",
     "*.fbx filter=lfs diff=lfs merge=lfs -text",
     "*.blend filter=lfs diff=lfs merge=lfs -text",
+    "*.wav filter=lfs diff=lfs merge=lfs -text",
+    "*.flac filter=lfs diff=lfs merge=lfs -text",
+    "*.mp3 filter=lfs diff=lfs merge=lfs -text",
+    "*.ogg filter=lfs diff=lfs merge=lfs -text",
     "history.jsonl merge=union text eol=lf",
     "time.jsonl merge=union text eol=lf",
     "**/decisions/*.jsonl merge=union text eol=lf",

@@ -7,6 +7,7 @@ from kiripix.recipes.npc import NPC
 from kiripix.recipes.portrait import PORTRAIT
 from kiripix.recipes.prop import PROP
 from kiripix.recipes.room import ROOM
+from kiripix.recipes.sound import SOUND_KIND
 from kiripix.recipes.sprite import SPRITE
 from kiripix.recipes.wearable import WEARABLE
 
@@ -22,5 +23,5 @@ def kinds() -> dict[str, KindSpec]:
     return dict(_KINDS)
 
 
-for _kind in (ROOM, PROP, ICON, CHARACTER, SPRITE, WEARABLE, PORTRAIT, NPC):
+for _kind in (ROOM, PROP, ICON, CHARACTER, SPRITE, WEARABLE, PORTRAIT, NPC, SOUND_KIND):
     register_kind(_kind)

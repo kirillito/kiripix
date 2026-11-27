@@ -25,11 +25,12 @@ plus onset detection.
 | 0394 | [ADR: a `sound` Kind and its Recipe](0394-m6-adr-sound-kind.md) | reviewer |
 | 0395 | [Import a recording and slice it into Takes](0395-m6-sound-import-and-slice.md) | core-engineer |
 | 0396 | [A contact sheet of a sound's Takes](0396-m6-sound-contact-sheet.md) | imaging-engineer |
-| 0397 | [Process and export: trim, speed, loop, loudness, Godot](0397-m6-sound-process-and-export.md) | core-engineer + godot-export |
+| 0397 | [Process: trim, speed, loop, loudness](0397-m6-sound-process-and-export.md) | core-engineer |
+| 0400 | [Export to Godot, provenance in the Manifest](0400-m6-sound-export.md) | godot-export |
 | 0398 | [UI: listen to the Takes and pick](0398-m6-ui-sound-screen.md) | ui-engineer |
 | 0399 | [Trial: generated sound effects](0399-m6-sound-gen-trial.md) | ml-engineer |
 
-**Order:** 0394 → 0395 → 0396 and 0397 → 0398; 0399 any time after 0394 (it needs the Owner's approval rule, 0381).
+**Order:** 0394 → 0395 → 0396 and 0397 → 0400 → 0398; 0399 any time after 0394 (it needs the Owner's approval rule, 0381).
 
 ## Done when
 

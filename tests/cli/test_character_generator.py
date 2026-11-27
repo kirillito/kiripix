@@ -334,8 +334,8 @@ def test_a_generators_paths_stay_inside_the_project_and_one_library_path_may_be_
 def test_a_version_5_settings_file_migrates_in_memory_to_no_generators(project: Kiripix) -> None:
     path = project.cwd / "kiripix.toml"
     text = path.read_text("utf-8")
-    assert "schema_version = 14" in text
-    old = text.replace("schema_version = 14", "schema_version = 5")
+    assert "schema_version = 15" in text
+    old = text.replace("schema_version = 15", "schema_version = 5")
     path.write_text(old, encoding="utf-8")
     elder(project)
 

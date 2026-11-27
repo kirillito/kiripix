@@ -17,7 +17,7 @@ from kiripix.commands.registry import REGISTRY
 
 MODULES = (
     "project", "show", "decisions", "sources", "clips", "checks", "export", "meta", "image_ops", "join_ops", "extend",
-    "palette", "ramps", "clips_add", "area", "probes", "runners", "manifest", "timing", "loops",
+    "palette", "ramps", "clips_add", "area", "probes", "runners", "manifest", "timing", "loops", "sounds",
 )
 INDEX_FILE = Path(__file__).with_name("index.py")
 

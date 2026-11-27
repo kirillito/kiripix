@@ -60,6 +60,7 @@ import { CHARACTER_KIND, CHARACTER_SCREENS, CharacterScreen, type ImportRole } f
 import { SPRITE_FRAMES_STAGE, SPRITE_KIND, SpriteFramesScreen } from "./spriteScreens";
 import { FRAME_STAGES, FrameScreen, frameOf, type FrameFocus } from "./frameScreen";
 import { costText, StackPreview, useWearables } from "./wearableScreens";
+import { SOUND_KIND, SOUND_STAGES, SoundScreen, type Provenance } from "./soundScreen";
 import { NPC_KIND, NPC_STAGE, NpcCrowds, NpcScreen, npcFocusOf, type NpcFocus } from "./npcScreen";
 import { DistrictOpen, DistrictView } from "./districtView";
 import { WaitingRooms } from "./waitingRooms";
@@ -551,6 +552,7 @@ export function App() {
   const isFrames = hasFrames && current !== null && FRAME_STAGES.includes(current) && description !== undefined;
   const isSpriteFrames = show?.kind === SPRITE_KIND && current === SPRITE_FRAMES_STAGE && description !== undefined;
   const isPivot = show?.kind === SPRITE_KIND && current === "fit";
+  const isSound = show?.kind === SOUND_KIND && current !== null && SOUND_STAGES.includes(current);
   const isNpcChoose = show?.kind === NPC_KIND && current === NPC_STAGE && detail !== undefined;
   const isFace = isPortrait && current === FACE_STAGE && (description?.decisions.some((decision) => decision.name === FACE_DECISION) ?? false);
   const styleShown = data.style !== null && data.style.asset === asset && data.style.stage !== null && data.style.stage === current;
@@ -649,6 +651,16 @@ export function App() {
       if (!made.ok) return made;
       const ran = await call("run", { asset: id, stage: NPC_STAGE });
       return { ...ran, findings: [...made.findings, ...ran.findings] };
+    });
+  // The Sound screen's actions: one Command each, through the same queue; a recording is imported with its Provenance and picked.
+  const soundAct = (label: string, command: string, input: object) => work(label, () => call(command, input));
+  const soundImport = (file: File, provenance: Provenance) =>
+    void work("Importing " + file.name, async () => {
+      const given = Object.fromEntries(Object.entries(provenance).filter(([, text]) => text.trim() !== ""));
+      const stored = await callWithFile<{ variant: string }>("import", { asset, ...given }, "file", file);
+      if (!stored.ok || !stored.data) return stored;
+      const picked = await call("pick", { asset, variant: stored.data.variant });
+      return { ...picked, findings: [...stored.findings, ...picked.findings] };
     });
   const decideMarker = useCallback(
     (marker: Record<string, unknown>) => {
@@ -1246,6 +1258,20 @@ export function App() {
             crowds={
               <NpcCrowds status={data.status} refreshes={data.listRefreshes} imageVersion={imageVersion} disabled={busy} onOpen={open} onReroll={rerollNpc} />
             }
+          />
+        ) : isSound && show ? (
+          <SoundScreen
+            key={`${asset}/${current}`}
+            show={show}
+            stage={current ?? ""}
+            stages={kind ? recipes[kind] : undefined}
+            findings={stageChecks}
+            refreshes={data.refreshes}
+            imageVersion={imageVersion}
+            disabled={busy}
+            act={soundAct}
+            onPick={pick}
+            onImport={soundImport}
           />
         ) : isNpcChoose && detail ? (
           <NpcScreen

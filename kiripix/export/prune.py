@@ -64,15 +64,31 @@ def deleted_assets(project: Project, target: GodotTarget) -> list[str]:
     return sorted(asset_id for asset_id in ids if not _exists(project, asset_id))
 
 
+def _inside(res: str, folder: str) -> bool:
+    parts = PurePosixPath(res.removeprefix(f"{folder}/")).parts
+    return res.startswith(f"{folder}/") and bool(parts) and ".." not in parts and "\\" not in res
+
+
+def _in_former_sound_folder(res: str, manifest: Manifest) -> bool:
+    """A sound's file in the folder it was exported to before `[sound] folder` changed: an OGG directly in its use's folder
+    (`<folder>/<use>/<name>.ogg`) inside the Godot project, as export writes them."""
+    assert manifest.sound is not None
+    path = PurePosixPath(res.removeprefix("res://"))
+    return (res.startswith("res://") and "\\" not in res and ".." not in path.parts and len(path.parts) >= 3
+            and path.suffix == ".ogg" and path.parent.name == manifest.sound.use)
+
+
 def _owned(manifest: Manifest, target: GodotTarget, shown: str) -> list[str]:
-    """The listed files, each checked to lie inside the export root: a Manifest is the game's file, and what it lists must
-    never lead outside what Kiripix owns."""
-    inside = f"{target.root}/"
+    """The listed files, each checked to lie inside the export root, or, for a sound's, inside the `[sound] folder` (ADR 0016):
+    a Manifest is the game's file, and what it lists must never lead outside what Kiripix owns."""
     for res in manifest.files:
-        parts = PurePosixPath(res.removeprefix(inside)).parts
-        if not res.startswith(inside) or not parts or ".." in parts or "\\" in res:
-            raise fail("export.manifest_invalid", f"the Manifest {shown} lists {res}, which isn't inside {target.root}",
-                       owner_action=f"Restore {shown} from the game's git history; nothing was removed.")
+        if _inside(res, target.root):
+            continue
+        if manifest.sound is not None and (_in_former_sound_folder(res, manifest) or _inside(res, target.sound_files_folder())):
+            continue
+        outside = target.root if manifest.sound is None else f"{target.root} or {target.sound_folder}"
+        raise fail("export.manifest_invalid", f"the Manifest {shown} lists {res}, which isn't inside {outside}",
+                   owner_action=f"Restore {shown} from the game's git history; nothing was removed.")
     return sorted(manifest.files)
 
 
@@ -135,10 +151,11 @@ def preview(plan: PrunePlan) -> None:
 
 
 def _drop_empty_folders(plan: PrunePlan, target: GodotTarget) -> None:
-    root = target.path(target.root)
+    """Remove the folders a prune left empty, up to but not including the export root or the sound folder."""
+    stops = {target.path(target.root), target.path(target.sound_folder)}
     for res in [plan.manifest_res, *plan.files]:
         folder = target.path(res).parent
-        while folder != root and root in folder.parents:
+        while folder not in stops and any(stop in folder.parents for stop in stops):
             try:
                 folder.rmdir()  # only an empty folder goes
             except OSError:

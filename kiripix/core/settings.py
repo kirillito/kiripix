@@ -167,6 +167,56 @@ class PortraitSettings(_Strict):
         return self
 
 
+class SoundUse(_Strict):
+    """`[sound.use.<use>]` (ticket 0395, ADR 0016): one use's row of the game's audio table. `prefix` is how a `sound_id` of the
+    use starts. The target is `peak` (dBFS, peak-normalised), or `lufs` with `true_peak` and `lra` (two-pass loudnorm): a
+    row with both or neither is `settings.sound_target`, which `load_project_settings` reports."""
+
+    prefix: str = Field(pattern=r"^[a-z][a-z0-9_]*$", description="How a sound_id of this use starts: sfx, ui, amb, music.")
+    channels: Literal[1, 2] = Field(1, description="The channels of the exported files.")
+    peak: float | None = Field(None, le=0, description="Peak-normalise to this many dBFS.")
+    lufs: float | None = Field(None, le=0, description="Integrated loudness in LUFS (with true_peak and lra).")
+    true_peak: float | None = Field(None, le=0, description="The true-peak ceiling in dBTP, with lufs.")
+    lra: float | None = Field(None, gt=0, description="The loudness range in LU, with lufs.")
+
+
+def _default_uses() -> dict[str, SoundUse]:
+    """The game's audio skill's table (spec §4)."""
+    return {
+        "sfx": SoundUse(prefix="sfx", channels=1, peak=-3.0),
+        "ui": SoundUse(prefix="ui", channels=1, peak=-3.0),
+        "ambience": SoundUse(prefix="amb", channels=2, lufs=-40.0, true_peak=-2.0, lra=11.0),
+        "music": SoundUse(prefix="music", channels=2, lufs=-18.0, true_peak=-1.0, lra=11.0),
+    }
+
+
+SOUND_USES = ("sfx", "ui", "ambience", "music")
+
+
+class SoundSettings(_Strict):
+    """`[sound]`: the format of the sounds Kiripix exports and the loudness table (ticket 0395, ADR 0016). A use the file
+    doesn't write has the game's row."""
+
+    folder: str = Field("res://audio", description="Export writes <folder>/<use>/<name>[_<n>].ogg; outside [export.godot] root.")
+    rate: int = Field(44100, gt=0, description="The exported files' sample rate in Hz.")
+    quality: float = Field(5, ge=-1, le=10, description="Vorbis `-q:a`.")
+    use: dict[str, SoundUse] = Field(default_factory=_default_uses, description="One row per use: sfx, ui, ambience, music.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _game_rows_for_the_uses_left_out(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("use"), dict):
+            return {**data, "use": {**{name: row.model_dump() for name, row in _default_uses().items()}, **data["use"]}}
+        return data
+
+    @model_validator(mode="after")
+    def _known_uses(self) -> Self:
+        unknown = sorted(set(self.use) - set(SOUND_USES))
+        if unknown:
+            raise ValueError(f"use {', '.join(unknown)}: the uses are {', '.join(SOUND_USES)}")
+        return self
+
+
 class ProviderChoice(_Strict):
     """`[providers.<id>]`: the Owner's choice of model, quality and size for one Provider (ticket 0379). Empty: the
     Provider's own default."""
@@ -342,14 +392,14 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
     return {"top": top, "side": side}
 
 
-PROJECT_SCHEMA_VERSION = 14
+PROJECT_SCHEMA_VERSION = 15
 ASSET_SCHEMA_VERSION = 2
 
 
 class ProjectSettings(_Strict):
     """`kiripix.toml`."""
 
-    schema_version: Literal[14] = 14
+    schema_version: Literal[15] = 15
     project: ProjectSection
     body: Body = Body()
     masks: dict[Literal["top", "side"], MaskSet] = Field(default_factory=_default_masks)
@@ -361,6 +411,7 @@ class ProjectSettings(_Strict):
     portrait: PortraitSettings = Field(default_factory=PortraitSettings)
     inbox: InboxSection = Field(default_factory=InboxSection)
     style: StyleSection = Field(default_factory=StyleSection)
+    sound: SoundSettings = Field(default_factory=SoundSettings)
 
 
 PixelLabView = Literal["low top-down", "high top-down", "side"]  # PixelLab's camera views: the one list of them
@@ -502,6 +553,12 @@ def _add_provider_choices(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 14}
 
 
+def _add_sound_section(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 14 had no `[sound]`; version 15 adds it and `[sound.use.<use>]` (ticket 0395, ADR 0016), at the game's audio
+    table (written nowhere: the defaults are read)."""
+    return {**document, "schema_version": 15}
+
+
 def _add_sprite_table(document: dict[str, Any]) -> dict[str, Any]:
     """Version 1 had `[sprite.pixellab]` with a character only; version 2 (ticket 0391) also holds `view` and `faces` and
     allows a table with no character. Nothing is added: the defaults are read (`view` high top-down, `faces` true)."""
@@ -512,7 +569,7 @@ PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
     4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section,
     8: _add_portrait_section, 9: _add_inbox_section, 10: _add_style_section, 11: _add_ramp_choices,
-    12: _add_extend_max_residual, 13: _add_provider_choices}
+    12: _add_extend_max_residual, 13: _add_provider_choices, 14: _add_sound_section}
 ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version, 1: _add_sprite_table}
 
 
@@ -732,6 +789,27 @@ def clip_table_findings(clips: list[ClipSpec], file: str = "kiripix.toml") -> li
     return found
 
 
+def sound_target_findings(sound: SoundSettings, file: str = "kiripix.toml") -> list[Finding]:
+    """A `[sound.use.<use>]` row with both a `peak` and a `lufs` target, or neither, or a `lufs` without its `true_peak` and
+    `lra`: `settings.sound_target`."""
+    found: list[Finding] = []
+    for name, row in sound.use.items():
+        where = f"sound.use.{name}"
+        loud = [row.lufs is not None, row.true_peak is not None, row.lra is not None]
+        problem = None
+        if row.peak is not None and any(loud):
+            problem = "has both a peak and a lufs target: give one"
+        elif row.peak is None and not any(loud):
+            problem = "has no target: give a peak, or lufs with true_peak and lra"
+        elif row.peak is None and not all(loud):
+            problem = "gives lufs, true_peak and lra only in part: a loudness target has all three"
+        if problem is not None:
+            found.append(Finding(code="settings.sound_target", message=f"{file}: [{where}] {problem}",
+                                 position=Position(file=file, field=where),
+                                 owner_action=f"Fix [{where}] in {file}: one of peak, or lufs with true_peak and lra."))
+    return found
+
+
 def read_project_palette(root: Path, relative: str) -> list[tuple[int, int, int]] | None:
     """The Project palette's colours, or None when it can't be read (its own Check says so)."""
     from kiripix.ops import parse_gpl, parse_hex
@@ -756,6 +834,8 @@ def load_project_settings(path: Path, file: str = "kiripix.toml") -> ProjectSett
         if findings:
             raise KiripixError(findings)
     if settings.character.clips and (findings := clip_table_findings(settings.character.clips, file)):
+        raise KiripixError(findings)
+    if findings := sound_target_findings(settings.sound, file):
         raise KiripixError(findings)
     return settings
 

@@ -209,7 +209,7 @@ def test_the_manifest_is_schema_3_with_look_markers_and_a_version_2_one_is_rewri
     project.json("run", ROOM)
     export(project)
     record = manifest(project)
-    assert record["schema_version"] == 4 and record["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
+    assert record["schema_version"] == 5 and record["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
     assert "lamp.gate" not in record["ids"]["markers"]
 
     old = json.loads(json.dumps(record))
@@ -219,7 +219,7 @@ def test_the_manifest_is_schema_3_with_look_markers_and_a_version_2_one_is_rewri
 
     export(project)  # reads the schema 2 Manifest and rewrites it once
     after = manifest(project)
-    assert after["schema_version"] == 4 and after["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
+    assert after["schema_version"] == 5 and after["ids"]["look_markers"] == [f"{LOOK}/lamp.gate"]
 
 
 def test_a_room_without_look_markers_has_no_look_markers_key_and_no_look_markers_node(project: Kiripix) -> None:
@@ -228,7 +228,7 @@ def test_a_room_without_look_markers_has_no_look_markers_key_and_no_look_markers
     export(project)
 
     assert "look_markers" not in manifest(project)["ids"] and "LookMarkers" not in scene(project)
-    assert manifest(project)["schema_version"] == 4
+    assert manifest(project)["schema_version"] == 5
 
 
 def test_moving_an_exported_marker_into_a_look_is_refused(project: Kiripix) -> None:

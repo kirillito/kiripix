@@ -7,12 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import editof, emotions, gen_sprite, loopedits, loopkit, sheets, sources, things
+from kiripix.core import editof, emotions, gen_sprite, loopedits, loopkit, sheets, sounds, sources, things
 from kiripix.core.errors import fail
-from kiripix.core.assets import is_asset_id, load_asset
+from kiripix.core.assets import Asset, is_asset_id, load_asset
 from kiripix.core.graph import AssetGraph, ProgressEvent, StageState
 from kiripix.core.hashing import HashCache
-from kiripix.core.project import find_project
+from kiripix.core.project import Project, find_project
 
 
 class _AssetInput(BaseModel):
@@ -75,6 +75,13 @@ class ImportInput(_AssetInput):
                                                   "an `emotion` Decision on `source` (`portrait.emotion_unknown` gives the "
                                                   "command). Not `neutral`: that is the Source. Pick it with `kiripix pick "
                                                   "<asset> <variant> --emotion <emotion>`.")
+    url: str | None = Field(None, description="For a sound's recording: where it came from (a URL or a name). Recorded on the "
+                                              "file's line in imported.jsonl, with --author and --licence; importing the same "
+                                              "file again with them adds a newer line and no Variant. Text, never interpreted.")
+    author: str | None = Field(None, description="For a sound's recording: who made it.")
+    licence: str | None = Field(None, description="For a sound's recording: its licence, as text (CC0, CC-BY 4.0, own recording). "
+                                                  "Export refuses a recording with no author or licence "
+                                                  "(`sound.provenance_missing`).")
     of: str | None = Field(None, description="With --look, or --loop with --frame: the edit was made on a piece or a crop "
                                              "of the room, not on its whole Source. A crop `kiripix extend "
                                              "<room> crop --box ...` wrote (its name, the start of its hash in "
@@ -86,8 +93,21 @@ class ImportInput(_AssetInput):
                                              "size, which blurs the edit).")
 
 
+class SoundFile(BaseModel):
+    """What `import` read of a sound's recording."""
+
+    rate: int = Field(description="Its sample rate in Hz.")
+    channels: int | None = Field(description="Its channels; null for a layout ffmpeg doesn't name.")
+    duration_s: float | None = Field(description="Its length in seconds, as its header says.")
+    codec: str
+    url: str | None = Field(description="Its Provenance: where it came from.")
+    author: str | None
+    licence: str | None
+
+
 class ImportData(BaseModel):
     asset: str
+    sound: SoundFile | None = Field(None, description="For a sound's recording: what ffmpeg read of it and its Provenance.")
     look: str | None = Field(description="With --look: the Look the edit belongs to.")
     role: str
     variant: str | None = Field(description="With role variant: the Variant's name.")
@@ -119,6 +139,10 @@ class ImportData(BaseModel):
 
     def text(self) -> str:
         added = "added" if self.created else "already had"
+        if self.sound is not None:
+            seconds = f", {self.sound.duration_s:g} s" if self.sound.duration_s is not None else ""
+            return (f"{self.asset}: {added} the recording {self.variant} ({self.file}{seconds}, {self.sound.rate} Hz); pick it "
+                    f"with kiripix pick {self.asset} {self.variant}")
         if self.emotion is not None:
             return (f"{self.asset}: {added} the Variant {self.variant} of emotion {self.emotion} ({self.file}); pick it with "
                     f"kiripix pick {self.asset} {self.variant} --emotion {self.emotion}")
@@ -167,6 +191,11 @@ class ImportData(BaseModel):
 def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if asset.kind == sources.SOUND:
+        return _import_recording(project, asset, arguments, context)
+    if (arguments.url, arguments.author, arguments.licence) != (None, None, None):
+        raise fail("import.provenance_needs_sound", "--url, --author and --licence record a sound's Provenance; "
+                   f"{asset.id} is a {asset.kind}", fix=f"kiripix import {asset.id} {arguments.file}")
     if arguments.thing is not None or arguments.role == "thing":
         if arguments.role != "thing" or arguments.thing is None:
             raise fail("import.thing_needs_role", "--role thing and --thing <id> go together",
@@ -291,6 +320,25 @@ def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportDa
         file=project.relative(path), created=created,
         variants=list(sources.variants(asset)), clip_sources=list(sources.clip_sources(asset)),
         sheets=list(sheets.sheets(asset))))
+
+
+def _import_recording(project: Project, asset: Asset, arguments: ImportInput, context: Context) -> Outcome[ImportData]:
+    """A sound's recording, with its Provenance (ticket 0395)."""
+    file = str(arguments.file)
+    if (arguments.role or "variant") != "variant" or any(
+            v is not None for v in (arguments.thing, arguments.look, arguments.loop, arguments.kit, arguments.frame,
+                                    arguments.state, arguments.emotion, arguments.of)) or arguments.frames:
+        raise fail("import.sound_takes_a_recording", f"{asset.id} is a sound: it takes one recording (a WAV, FLAC, MP3 or OGG), "
+                   "with --url, --author and --licence", fix=f"kiripix import {asset.id} {file}")
+    recording = sounds.import_recording(asset, context.cwd / arguments.file, file, url=arguments.url,
+                                        author=arguments.author, licence=arguments.licence)
+    found = recording.provenance or sounds.Provenance()
+    return Outcome(ImportData(
+        asset=asset.id, look=None, role="variant", variant=recording.name, sheet=None, clip_source=None, rigged=None,
+        file=project.relative(recording.path), created=recording.created, variants=list(sources.variants(asset)),
+        clip_sources=[], sheets=[],
+        sound=SoundFile(rate=recording.info.rate, channels=recording.info.channels, duration_s=recording.info.duration_s,
+                        codec=recording.info.codec, url=found.url, author=found.author, licence=found.licence)))
 
 
 # pick

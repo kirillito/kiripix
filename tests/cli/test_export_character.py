@@ -100,7 +100,7 @@ def test_a_character_exports_a_texture_sprite_frames_and_a_scene_and_the_manifes
     assert frames.count('"loop": false') == 8 and frames.count('"speed": 15.0') == 8 and frames.count('"speed": 12.0') == 8
     assert f'path="{RES}/texture.tres"' in frames and frames.count("[sub_resource") == len(regions(folder))
     record = manifest(project)
-    assert record["asset"] == HERO and record["exported"] is True and record["schema_version"] == 4
+    assert record["asset"] == HERO and record["exported"] is True and record["schema_version"] == 5
     assert sorted(record["files"]) == FILES
     assert record["ids"] == {"markers": [], "layers": [], "masks": [],
                              "clips": sorted(f"{c}_{d}" for c in ("hit", "idle") for d in DIRECTIONS)}
@@ -250,7 +250,7 @@ def test_a_version_1_manifest_is_read_and_rewritten_as_version_2(project: Kiripi
     project.json("export", HERO)
 
     record = manifest(project)
-    assert record["schema_version"] == 4 and len(record["ids"]["clips"]) == 16 and record["counter"] == 1
+    assert record["schema_version"] == 5 and len(record["ids"]["clips"]) == 16 and record["counter"] == 1
 
 
 RAMPS = f"{FOLDER}/ramps.png"

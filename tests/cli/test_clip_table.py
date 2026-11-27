@@ -171,7 +171,7 @@ def test_a_version_6_project_migrates_to_an_empty_clip_table_and_keeps_its_comme
     hero(project)
     path = project.cwd / "kiripix.toml"
     text = annotate(path)
-    old = text.replace("schema_version = 14", "schema_version = 6")
+    old = text.replace("schema_version = 15", "schema_version = 6")
     assert old != text
     path.write_text(old, encoding="utf-8")
     assert project.json("describe", "project")["data"]["clips"] == []
@@ -181,7 +181,7 @@ def test_a_version_6_project_migrates_to_an_empty_clip_table_and_keeps_its_comme
 
     after = path.read_text("utf-8")
     assert comments(old) == comments(after)
-    assert "schema_version = 14  # keep this" in after
+    assert "schema_version = 15  # keep this" in after
     migrated = tomllib.loads(after)
     assert [c["name"] for c in migrated["character"]["clips"]] == ["idle"]
     assert {k: v for k, v in migrated.items() if k not in ("schema_version", "character")} == {

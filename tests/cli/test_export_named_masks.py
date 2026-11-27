@@ -48,7 +48,7 @@ def test_a_painted_named_mask_is_exported_listed_and_frozen(project: Kiripix) ->
     assert listed["solid"]["collision"] is True and listed["pit"]["collision"] is True
     record = manifest(project)
     assert f"{RES}/masks/cover.png" in record["files"]
-    assert record["ids"]["masks"] == ["cover", "pit", "solid"] and record["schema_version"] == 4
+    assert record["ids"]["masks"] == ["cover", "pit", "solid"] and record["schema_version"] == 5
     assert re.search(r'\[node name="cover"', (project.cwd / FOLDER / "alley.tscn").read_text("utf-8")) is None
 
 
@@ -77,7 +77,7 @@ def test_a_schema_3_manifest_is_migrated_and_rewritten_once(project: Kiripix) ->
 
     project.json("export", ROOM)
 
-    assert manifest(project)["schema_version"] == 4 and manifest(project)["ids"]["masks"] == ["pit", "solid"]
+    assert manifest(project)["schema_version"] == 5 and manifest(project)["ids"]["masks"] == ["pit", "solid"]
 
 
 PROBE = """extends SceneTree

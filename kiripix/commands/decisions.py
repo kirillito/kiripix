@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import editing, journal, notes
+from kiripix.core import editing, journal, notes, sounds
 from kiripix.core.errors import ExitCode, KiripixError, fail
 from kiripix.checks import Finding
 from kiripix.core.assets import Asset, is_asset_id, load_asset
@@ -124,12 +124,15 @@ class DecideInput(_StageInput):
         None, description='The Decision as JSON: {"decision": name, "data": {...}, "image_hash": optional}.')
     file: Path | None = Field(None, description="A file holding that JSON, instead of --decision. It may hold a JSON "
                               "array of Decisions for this Stage: all are recorded in order, or none.")
+    takes: str | None = Field(None, description="For a sound's `keep`: the Take numbers to keep, in order, such as 3,5,8,11 "
+                              "(`kiripix sound-takes` shows them). Recorded by each Take's span, so a re-slice can find it again. "
+                              "Instead of --decision and --file.")
     brief: bool = Field(False, description="Leave `current` out of the result: give the count of current Decisions.")
 
     @model_validator(mode="after")
     def _one_source(self) -> Self:
-        if (self.decision is None) == (self.file is None):
-            raise ValueError("give the Decision with --decision or --file, one of them")
+        if sum(value is not None for value in (self.decision, self.file, self.takes)) != 1:
+            raise ValueError("give the Decision with --decision, --file or --takes, one of them")
         return self
 
 
@@ -161,17 +164,23 @@ class DecideData(BaseModel):
 def decide(arguments: DecideInput, context: Context) -> Outcome[DecideData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
-    if arguments.file is not None:
-        path = context.cwd / arguments.file
-        try:
-            text, source = path.read_text(encoding="utf-8"), str(arguments.file)
-        except (OSError, UnicodeDecodeError) as error:
-            raise fail("decide.unreadable", f"can't read {arguments.file}: {error}",
-                               fix=f"kiripix decide {asset.id} {arguments.stage} --help") from None
+    if arguments.takes is not None:
+        if arguments.stage != "keep":
+            raise fail("decide.takes_need_keep", f"--takes is for a sound's `keep`; the Stage is {arguments.stage}",
+                       fix=f"kiripix decide {asset.id} keep --takes {arguments.takes}")
+        documents, is_array = [sounds.keep_document(project, asset, arguments.takes)], False
     else:
-        assert arguments.decision is not None
-        text, source = arguments.decision, "--decision"
-    documents, is_array = editing.parse_decisions(text, source, asset, arguments.stage)
+        if arguments.file is not None:
+            path = context.cwd / arguments.file
+            try:
+                text, source = path.read_text(encoding="utf-8"), str(arguments.file)
+            except (OSError, UnicodeDecodeError) as error:
+                raise fail("decide.unreadable", f"can't read {arguments.file}: {error}",
+                                   fix=f"kiripix decide {asset.id} {arguments.stage} --help") from None
+        else:
+            assert arguments.decision is not None
+            text, source = arguments.decision, "--decision"
+        documents, is_array = editing.parse_decisions(text, source, asset, arguments.stage)
     removed = [str(d.data["layer"]) for d in documents
                if arguments.stage == "layers" and d.decision == "remove" and isinstance(d.data.get("layer"), str)]
     if removed and (frozen := frozen_layer_findings(project, asset, removed)):

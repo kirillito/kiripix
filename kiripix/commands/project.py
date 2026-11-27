@@ -84,6 +84,12 @@ class NewInput(_Input):
     body: str | None = Field(None, description="For a wearable: the character or sprite it is worn on, such as "
                                                "character.body_m. Its Model, rig, clips and cell make the wearable stale "
                                                "when they change; its cell and pivot are the wearable's.")
+    use: str | None = Field(None, description="For a sound (required): what it is for, sfx, ui, ambience or music. Picks its "
+                                              "row of `[sound.use.<use>]` (loudness target, channels) and its export folder. "
+                                              "Frozen once exported.")
+    sound_id: str | None = Field(None, description="For a sound: the game's ID, such as sfx.footstep.asphalt. It starts with "
+                                                   "the use's prefix (sfx, ui, amb, music); default <prefix>.<name>. Frozen "
+                                                   "once exported.")
     from_parameters: Path | None = Field(
         None, description="For a character: a parameter file (.toml or .json) that the Project's generator builds its Model "
                           "from ([character.generators] in kiripix.toml). It is stored in the new character's "
@@ -196,7 +202,8 @@ def new(arguments: NewInput, context: Context) -> Outcome[NewData]:
     project = find_project(context.cwd)
     if arguments.bulk:
         return _new_bulk(arguments, project)
-    params = {name: value for name, value in (("view", arguments.view), ("base", arguments.base), ("body", arguments.body)) if value is not None}
+    params = {name: value for name, value in (("view", arguments.view), ("base", arguments.base), ("body", arguments.body),
+                                       ("use", arguments.use), ("sound_id", arguments.sound_id)) if value is not None}
     parameters = _parameters_to_import(arguments, context)
     if parameters is not None:
         sources.check_parameters(parameters, str(arguments.from_parameters))

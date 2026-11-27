@@ -2,7 +2,8 @@
 
 When two game branches export the same Asset, git can't merge its Manifest by text. `kiripix manifest merge` is the git
 merge driver that does: the counter is the higher plus one, the IDs (Markers, Layers, Masks, clips) are the union (an ID frozen on either branch stays
-frozen), `exported` is either's, and `files` keeps ours, with theirs in `replacing` so the next export accepts either.
+frozen), `exported` is either's, and `files` keeps ours, with theirs in `replacing` so the next export accepts either. A
+sound's `sound` block is ours, with its `files` (theirs when only theirs has one; ticket 0400).
 `manifest install` sets the driver up in the game's clone; `manifest repair` applies the same rule to a Manifest that was
 committed with conflict markers in it (GitHub never runs a custom driver).
 """
@@ -27,6 +28,7 @@ DRIVER = "kiripix-manifest"
 OURS_DRIVER = "kiripix-ours"  # keeps our side of an exported image or scene; the next export rewrites it
 # room.json: a room's exported data (ticket 0140); character.json: a character's or sprite's (ticket 0289)
 OURS_PATTERNS = ("*.png", "*.tscn", "*.tres", "room.json", "character.json")
+SOUND_PATTERNS = ("*.ogg",)  # a sound's files: in the `[sound] folder`, outside the export root, so a rule under the root can't match
 INSTALL_FIX = "kiripix manifest install"
 _GIT_TIMEOUT = 20
 
@@ -53,7 +55,8 @@ def merge_manifests(ours: Manifest, theirs: Manifest) -> Manifest:
                       links=_union(ours.ids.links, theirs.ids.links),
                       look_markers=_union(ours.ids.look_markers, theirs.ids.look_markers))
     return Manifest(kiripix_version=ours.kiripix_version, asset=ours.asset, exported=ours.exported or theirs.exported,
-                    counter=max(ours.counter, theirs.counter) + 1, ids=ids, files=files, replacing=replacing or None)
+                    counter=max(ours.counter, theirs.counter) + 1, ids=ids, files=files, replacing=replacing or None,
+                    sound=ours.sound or theirs.sound)
 
 
 def _parse(data: bytes, side: str, shown: str) -> Manifest:
@@ -192,6 +195,9 @@ def driver_installed(target: GodotTarget) -> bool | None:
     base = target.root.removeprefix("res://")
     probes = [(f"{base}/{MANIFEST_DIR}/probe.json", DRIVER)]
     probes += [(f"{base}/probe/{pattern.replace('*', 'probe')}", OURS_DRIVER) for pattern in OURS_PATTERNS]
+    if target.path(target.sound_folder).is_dir():  # a game with sounds (or a place for them) needs the rule there too
+        audio = target.sound_folder.removeprefix("res://")
+        probes += [(f"{audio}/probe/{pattern.replace('*', 'probe')}", OURS_DRIVER) for pattern in SOUND_PATTERNS]
     for probe, driver in probes:
         attr = _git(target.folder, "check-attr", "merge", "--", probe)
         if attr is None or attr.returncode != 0 or not attr.stdout.strip().endswith(f": merge: {driver}"):
@@ -206,7 +212,7 @@ def driver_finding(target: GodotTarget) -> Finding | None:
     return Finding(code="export.merge_driver_missing", severity="warning",
                    message="the game's clone has no Manifest merge driver or no merge rule for the exported images and "
                            "scenes, so two branches that export the same Asset will conflict in its Manifest, "
-                           "`.png`, `.tscn`, `.tres`, `room.json` and `character.json` files (`.gitattributes` alone does "
+                           "`.png`, `.tscn`, `.tres`, `.ogg`, `room.json` and `character.json` files (`.gitattributes` alone does "
                            "nothing; the clone needs "
                            "the drivers configured)",
                    fix=INSTALL_FIX)
@@ -246,6 +252,21 @@ def install_driver(target: GodotTarget) -> list[str]:
         kept = current if not current or current.endswith("\n") else current + "\n"
         atomic.write_text(root_attributes, kept + "".join(rule + "\n" for rule in missing))
         changed.append(f"{target.root}/{GITATTRIBUTES}")
+    # the sound folder's rule only once the game has that folder (a sound was exported into it): a game with no sounds gets
+    # no new file, and a wrong `[sound] folder` stops no other Kind (export and prune report it)
+    try:
+        sound_folder: str | None = target.sound_files_folder()
+    except KiripixError:
+        sound_folder = None
+    if sound_folder is not None and target.path(sound_folder).is_dir():
+        sound_attributes = target.path(f"{sound_folder}/{GITATTRIBUTES}")
+        wanted_sound = [f"{pattern} merge={OURS_DRIVER}" for pattern in SOUND_PATTERNS]
+        current = sound_attributes.read_text("utf-8") if sound_attributes.is_file() else ""
+        missing = [rule for rule in wanted_sound if rule not in current.splitlines()]
+        if missing:
+            kept = current if not current or current.endswith("\n") else current + "\n"
+            atomic.write_text(sound_attributes, kept + "".join(rule + "\n" for rule in missing))
+            changed.append(f"{sound_folder}/{GITATTRIBUTES}")
     command = driver_command()
     have = _git(target.folder, "config", "--get", f"merge.{DRIVER}.driver")
     if have is None or have.stdout.strip() != command:

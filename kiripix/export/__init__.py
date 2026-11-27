@@ -2,7 +2,7 @@
 
 A room's, prop's or character's `export` Stage leaves engine-free outputs in `out/export/`: a room's mapped Plate and
 `room.json` with its shapes and Markers, a prop's sprite and `prop.json` with its origin and collision shapes, a
-character's two atlases and `character.json` with its clips, an icon's `icon.png` and `icon.json`, a portrait's images and `portrait.json`. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
+character's two atlases and `character.json` with its clips, an icon's `icon.png` and `icon.json`, a portrait's images and `portrait.json`, a sound's OGG files and `sound.json`. Only this package knows Godot. It sits above core and below the Commands; recipes know nothing of it.
 
 The game's work is never overwritten (ADR 0003). A file is written only if the Manifest lists it and it still has the
 listed hash. `force` backs up and overwrites an owned file the game changed; `adopt` backs up and takes over a file the
@@ -46,7 +46,7 @@ from kiripix.export.godot import (
     character_frames, character_ids, character_scene, character_texture, prop_ids, prop_scene, prop_state_files,
     canvas_file, normal_pairs, room_canvas_texture, room_ids, room_scene,
 )
-from kiripix.export.manifest import ExportedIds, Manifest, kiripix_version, read_manifest, write_manifest
+from kiripix.export.manifest import ExportedIds, Manifest, SoundEntry, kiripix_version, read_manifest, write_manifest
 from kiripix.export.merge import apply_repairs, driver_finding, install_driver, merge_files, plan_repairs
 from kiripix.export.prune import PrunePlan, PruneResult, apply_prune, plan_prune, preview
 from kiripix.export.icon import ICON_FILE, ICON_RECORD, read_icon
@@ -54,6 +54,7 @@ from kiripix.export.npc import exported_files as npc_file, read_npc
 from kiripix.recipes.npc import NPC_FILE
 from kiripix.export.portrait import PORTRAIT_FILE, emotion_ids, read_portrait
 from kiripix.export.prop import SPRITE_FILE, read_prop
+from kiripix.export.sound import sound_files
 from kiripix.export.room import EXPORT_STAGE, PLATE_FILE, ROOM_FILE, built_dir, read_room
 from kiripix.export.wearable import COLOR_FILE as WEARABLE_COLOR, DEPTH_FILE, NORMAL_FILE as WEARABLE_NORMAL, body_exported, read_wearable
 from kiripix.export.target import GodotTarget, resolve_target
@@ -237,10 +238,26 @@ def _npc_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None)
     return files, ExportedIds(markers=[], layers=[], masks=[])
 
 
+def _sound_files(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds]:
+    """The files of a sound's export, by `res://` path: `<name>[_<n>].ogg` for each variation, under `<[sound] folder>/<use>/`
+    (outside the export root, the one exception, ADR 0016), and no scene and no JSON. The sound's `id` and `use` are frozen by
+    `frozen_findings`, so no ID of `ExportedIds` is exported."""
+    return sound_files(graph, target)[0], ExportedIds(markers=[], layers=[], masks=[])
+
+
+def _built(graph: AssetGraph, target: GodotTarget, planned: _Planned = None) -> tuple[dict[str, bytes], ExportedIds, SoundEntry | None]:
+    """What an Asset's export is: its files, its IDs, and a sound's Manifest block (None for any other Kind)."""
+    if graph.asset.kind == "sound":
+        files, entry = sound_files(graph, target)
+        return files, ExportedIds(markers=[], layers=[], masks=[]), entry
+    files, ids = _FILES_BY_KIND[graph.asset.kind](graph, target, planned)
+    return files, ids, None
+
+
 _FILES_BY_KIND: dict[str, Callable[[AssetGraph, GodotTarget, _Planned], tuple[dict[str, bytes], ExportedIds]]] = {
     "room": _room_files, "prop": _prop_files, "character": _character_files, "sprite": _character_files,
     "icon": _icon_files, "wearable": _wearable_files,
-    "portrait": _portrait_files, "npc": _npc_files}  # a sprite is exported as a character, under sprite/
+    "portrait": _portrait_files, "npc": _npc_files, "sound": _sound_files}  # a sprite is exported as a character, under sprite/
 
 
 # A Kind that is exported after the others of the same call, because it reads what they plan (a Wearable after its body).
@@ -248,7 +265,7 @@ _EXPORT_RANK = {"wearable": 1, "npc": 2}  # an NPC last: it reads its base's and
 
 
 _NOT_YET = frozenset({"wearable.body_not_exported", "npc.base_not_exported", "npc.wearable_not_exported"})
-_NOT_AVAILABLE ="a {} can't be exported yet; only rooms, props, characters, sprites, icons, Wearables, portraits and NPCs can"
+_NOT_AVAILABLE ="a {} can't be exported yet; only rooms, props, characters, sprites, icons, Wearables, portraits, NPCs and sounds can"
 
 
 def _hashes(files: dict[str, bytes]) -> dict[str, str]:
@@ -309,7 +326,7 @@ def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget,
     if frozen:
         raise KiripixError(frozen, ExitCode.CHECK_FAILED)
     graph = _refuse_unless_ready(project, asset, cache)
-    files, ids = _FILES_BY_KIND[asset.kind](graph, target, planned)
+    files, ids, sound = _built(graph, target, planned)
     hashes = _hashes(files)
     manifest_res = target.manifest(asset.id)
     manifest_path = target.path(manifest_res)
@@ -329,10 +346,11 @@ def _plan(project: Project, asset: Asset, cache: HashCache, target: GodotTarget,
             (unmanaged if found.code == "export.file_unmanaged" else changed).append(res)
         elif on_disk[res] != hashes[res]:
             backups.append(res)
-    same_files = manifest is not None and manifest.files == hashes
+    # a correction of a sound's Provenance changes only its block, which is a change the game's credits show: it counts
+    same_files = manifest is not None and manifest.files == hashes and manifest.sound == sound
     counter = (manifest.counter if manifest is not None else 0) + (0 if same_files else 1)
     record = Manifest(kiripix_version=kiripix_version(), asset=asset.id, exported=True, counter=counter, ids=ids,
-                      files=hashes)
+                      files=hashes, sound=sound)
     settled = (manifest is not None and same_files and manifest.ids == ids and not manifest.replacing
                and not manifest.migrated)
     result = ExportResult(asset.id, manifest_res, counter, changed=changed, unmanaged=unmanaged)
@@ -480,12 +498,12 @@ def export_pending(project: Project, asset: Asset, cache: HashCache) -> bool:
     if manifest is None:
         return True
     try:
-        files, _ = _FILES_BY_KIND[asset.kind](AssetGraph(project, asset, cache), target, None)
+        files, _, sound = _built(AssetGraph(project, asset, cache), target, None)
     except KiripixError as error:
         if all(f.code in _NOT_YET for f in error.findings):
             return True  # a Wearable whose body, or an NPC whose base or Wearable, is not in the game yet: `export` says why
         raise  # anything else (a broken built record) is an error, not "pending"
-    return manifest.files != _hashes(files) or bool(manifest.replacing)
+    return manifest.files != _hashes(files) or manifest.sound != sound or bool(manifest.replacing)
 
 
 def export_stamp(project: Project) -> str:
@@ -497,7 +515,7 @@ def export_stamp(project: Project) -> str:
     except KiripixError as error:
         return "target:" + ",".join(f.code for f in error.findings)
     digest = hashlib.blake2b(digest_size=16)
-    pending = [str(target.path(target.root))]
+    pending = [str(target.path(target.root)), str(target.path(target.sound_folder))]  # the sounds' folder is outside the root
     while pending:
         try:
             with os.scandir(pending.pop()) as entries:
