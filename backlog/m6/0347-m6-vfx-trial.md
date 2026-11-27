@@ -8,11 +8,9 @@ parent: 0324-m6-rooms-at-chapter-scale-style-npcs.md
 
 # M6: trial: battle effects as sprite sheets, and where their frames come from
 
-Spec §14 (Later until 2026-11-19: "VFX sheets (the game's battle skills and its M18)"). Part of
-[0324](0324-m6-rooms-at-chapter-scale-style-npcs.md). Prototype code stays in `backlog/m6/0347-trial/` or the scratchpad,
-not in `kiripix/`. The game's side: its M06 (`../urban-mystery-club/docs/backlog/m6/0062-m06-props-phases-boss.md`:
-placeholder sparks, shake and landing), the Jazz Musician's sound attacks and buffs (M06-12), the Beast Master's summon
-(M05-15), and its M18 (the Lady's VFX).
+Spec §14 (Later until 2026-11-19: "VFX sheets (the game's battle skills)"). Part of
+[0324](0324-m6-rooms-at-chapter-scale-style-npcs.md). Prototype code stays out of the Kiripix repo. The game's side: placeholder sparks, shake and landing in its battles, a
+character's sound attacks and buffs, a summon, and a boss's effects later.
 
 ## The question
 
@@ -21,8 +19,8 @@ rooms? Which route makes its frames at $0 and in the Owner's time? And how much 
 
 ## What to do
 
-1. **The list:** with the game's M06 tickets, five effects that span the need: a hit spark (small, 4–6 frames), the Jazz
-   Musician's sound wave (a cone of cells), the summon's puff, a buff's glow on a unit, and a telegraph on a target cell.
+1. **The list:** with the game's battle tickets, five effects that span the need: a hit spark (small, 4–6 frames), a
+   character's sound wave (a cone of cells), the summon's puff, a buff's glow on a unit, and a telegraph on a target cell.
    Record each one's size, frames, and whether it's lit by the room's lights or glows (additive, unshaded).
 2. **The hypothesis first:** an effect is a `sprite` (spec §6.4) with `directions=1`, no outline, `normals=flat`, and the
    Project palette or a few glow colours. Try it through the existing Commands. Note every gap: an outline it can't skip, a
@@ -56,23 +54,23 @@ rooms? Which route makes its frames at $0 and in the Owner's time? And how much 
 
 ## Result (DRAFT, run 2026-11-20 by the imaging agent; the Owner has not seen it)
 
-Everything is in [0347-trial/](0347-trial/) (its `.gitignore` leaves out the Pixelbolt clone, 42 MB, and Godot's cache). Nothing is
-in `kiripix/`. Reading the pictures: each GIF is the Godot scene at 2x nearest neighbour, four quadrants (add and mix blend, unlit
-and lit) beside Sanjay over the annex kitchen plate: `0347-trial/gifs/<effect>.<route>.gif`. Strips (4x nearest, on the room's
+Everything was in `0347-trial/`, removed from this repo on 2026-11-27 (the accepted recipes and renders are in the Owner's
+art Project). Nothing is in `kiripix/`. Reading the pictures: each GIF is the Godot scene at 2x nearest neighbour, four quadrants (add and mix blend, unlit
+and lit) beside a 52 px character over a painted room's Plate: `0347-trial/gifs/<effect>.<route>.gif`. Strips (4x nearest, on the room's
 dark colour): `0347-trial/previews/<effect>.<route>.strip.x4.png`; one still of four of them: `previews/stills_check.png`.
 Godot 4.7.2 was found at `C:\Homespace\[software]\Godot` (not on PATH; the tests need `KIRIPIX_GODOT`), so these are real
 captures (`--write-movie`), not strips. Scene: `godot_project/main.gd`, run by `capture_gifs.py`. Lit versus unlit differ little in
-the kitchen (the plate already bakes its light and my test light is weak): judge add versus mix on the GIFs.
+the room (the plate already bakes its light and my test light is weak): judge add versus mix on the GIFs.
 
-### 1. The five effects (the game's cell is 32 px; the cast is 52 px; Sanjay's cell is 78 px)
+### 1. The five effects (the game's cell is 32 px; the cast is 52 px; the character's cell is 78 px)
 
 | Effect | Size, frames | Blend | Lit or glow | Pivot | Game need |
 |---|---|---|---|---|---|
-| hit spark | 24x24, 5 (+1 blank) | add | glows (unshaded) | cell centre | at the unit's chest; replaces `BattleView`'s `SPARK_*` rects (0062) |
-| sound wave | 96x64 or 96x96, 8 to 10; a cone 3 cells long, 4 facings | add | glows | the caster's end, left middle | the Jazz Musician's `blast` cone (M06-12) |
-| summon puff | 48x48, 8 to 10 | mix | lit (smoke takes the room's light) | the ground point, 34 px down | the Beast Master's summon (M05-15) |
-| buff glow | 48x64, 8 to 12, loops | add | glows | the unit's feet (ground ellipse) | `groove`, a buff on a unit (M06-12) |
-| telegraph | 32x32, 4, loops | mix (add reads as a hot square) | glows, unshaded | centre of a 32 px cell | `skill.boss.charge` and `slam` cells (0061, 0062) |
+| hit spark | 24x24, 5 (+1 blank) | add | glows (unshaded) | cell centre | at the unit's chest; replaces the game's placeholder rects |
+| sound wave | 96x64 or 96x96, 8 to 10; a cone 3 cells long, 4 facings | add | glows | the caster's end, left middle | a character's cone attack |
+| summon puff | 48x48, 8 to 10 | mix | lit (smoke takes the room's light) | the ground point, 34 px down | a summon |
+| buff glow | 48x64, 8 to 12, loops | add | glows | the unit's feet (ground ellipse) | a buff on a unit |
+| telegraph | 32x32, 4, loops | mix (add reads as a hot square) | glows, unshaded | centre of a 32 px cell | a boss's charged cells |
 
 ### 2. The `sprite` hypothesis, through the existing Commands
 
@@ -136,7 +134,7 @@ do not: the puff belongs lit, the spark and glows unlit.
 
 The pipeline already ran end to end, and the gaps are parameters (1 to 6), one Op (alpha dither) and a few export fields. A
 `vfx` Kind would copy `frames, fit, palette, sheet, export` and differ in defaults and in what export says (blend, lit). Keep `vfx`
-in Later; reopen it if M18's Lady needs effects that attach to or layer on a unit, which a sprite does not model.
+in Later; reopen it if a later boss needs effects that attach to or layer on a unit, which a sprite does not model.
 
 ### 6. Proposed build tickets (not filed; the Owner decides)
 
@@ -180,5 +178,7 @@ in Later; reopen it if M18's Lady needs effects that attach to or layer on a uni
 3. **Pixelbolt: import only**, the recipe kept beside the sheet in `src/`. No Source Stage, no Node in Kiripix. P8 is not filed.
 4. **Filed:** P1 as [0362](0362-m6-sprite-effect-parameters.md), P2 as [0363](0363-m6-alpha-dither-op.md) and P4 as
    [0364](0364-m6-export-effect-blend.md) (after 0362). P3, P5, P6 and P7 are not filed; they follow the game's confirmation of
-   the first effects (P5, importing a Pixelbolt atlas, is the one the accepted routes want first).
+   the first effects (P5, importing a Pixelbolt atlas, is the one the accepted routes want first). **2026-11-27:** P5 filed as
+   [0401](0401-m6-import-a-pixelbolt-atlas.md); a trial of Pixelbolt for room Loops is [0402](0402-m6-pixelbolt-room-loops-trial.md).
+   The accepted recipes and renders now live in the Owner's art Project, not in this repo.
 5. Spec §14 and 0324's Order are updated.

@@ -30,7 +30,7 @@ plus onset detection.
 | 0398 | [UI: listen to the Takes and pick](0398-m6-ui-sound-screen.md) | ui-engineer |
 | 0399 | [Trial: generated sound effects](0399-m6-sound-gen-trial.md) | ml-engineer |
 
-**Order:** 0394 → 0395 → 0396 and 0397 → 0400 → 0398; 0399 any time after 0394 (it needs the Owner's approval rule, 0381).
+**Order:** 0394 → 0395 → 0396 and 0397 → 0400 → 0398; 0399 any time after 0394 (it needs the Owner's approval rule, 0381); on hold since 2026-11-27 for budget, and it doesn't block the Kind.
 
 ## Done when
 

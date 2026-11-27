@@ -1,12 +1,16 @@
 # 0399 trial: generated sound effects (findings, DRAFT)
 
-Written 2026-11-27. The Owner has not heard any output. Nothing was generated, and no local model was downloaded or run
-(no GPU on this machine). Every price and licence was read from the vendor's page on 2026-11-27 with `curl -sL`; anything
-unread is marked "not verified, Owner to check".
+Written 2026-11-27. The Owner has not heard any output. Nothing was generated. Every price and licence was read from the
+vendor's page on 2026-11-27 with `curl -sL`; anything unread is marked "not verified, Owner to check".
+
+**Decision (the Owner, 2026-11-27): local models are declined.** Cloud Providers only, when a sound has to be generated.
+The free weights are non-commercial, and Stable Audio Open is free only under $1M revenue (registration, possibly a credit
+line), so a local route would mean running a GPU and still paying later. Stable Audio Open stays in the desk table below
+for the record only.
 
 **Files:** `prompts.json` (the five prompts), `generate.py` (the Owner's generation script, standard library only),
-`slice-and-sheet.sh` (the 0395 and 0396 Commands over a folder of outputs), `gpu_stable_audio_open.py` (to run on the GPU
-machine), `.gitignore` (leaves out `out/` and `scratch-project/`).
+`slice-and-sheet.sh` (the 0395 and 0396 Commands over a folder of outputs), `.gitignore` (leaves out `out/` and
+`scratch-project/`).
 
 ## Steps for the Owner
 
@@ -42,7 +46,7 @@ bash slice-and-sheet.sh out/stability
 
 ## Desk table
 
-| | ElevenLabs Sound Effects | Stability Stable Audio 2.5 / 3.0 (hosted API) | Stable Audio Open 1.0 / small (open weights) |
+| | ElevenLabs Sound Effects | Stability Stable Audio 2.5 / 3.0 (hosted API) | Stable Audio Open 1.0 / small (open weights; declined) |
 |---|---|---|---|
 | Price | "Sound Effects ... are each $0.12 per minute" (https://elevenlabs.io/pricing/api). App: "200 per generation or 40 per second with manual duration" (https://elevenlabs.io/pricing). SFX v3's own price: not verified. | "Flat rate of 8 credits per successful result"; 1 credit is $0.01, so $0.08 (https://docs.stability.ai/llms-full.txt, https://platform.stability.ai/pricing). Stable Audio 2.0 is 20 credits. `platform.stability.ai/llms.txt` says 26 and 20 credits: conflict, Owner to check (8 used). | None; own GPU. |
 | Free tier | Free: 10k credits a month, about 250 s of SFX. API access on Free: not verified, Owner to check. | "25 free credits", which is 3 generations. Whether they're non-commercial: not verified. | n/a |
@@ -77,7 +81,6 @@ for a simple one-shot, 1 in 5 for a layered one. For a 2 s sound:
 - ElevenLabs: $0.004 per generation, so $0.012 to $0.020 per keeper, plus a paid plan (Starter, $6 a month; 30k credits
   is about 375 generations of 2 s).
 - Stability 2.5: $0.08 per generation, so $0.24 to $0.40 per keeper.
-- Stable Audio Open: $0, the Owner's GPU time.
 - CC0 downloads: $0 plus search time. Kenney: "License: Creative Commons CC0". Freesound: "for the 'zero' license you can
   do pretty much what you want". OpenGameArt's CC0 filter comes from the game's audio skill (no page quote).
 
@@ -86,24 +89,13 @@ Stability. Only ElevenLabs fits the $10 monthly cap.
 
 ## Owner's listening table (to fill)
 
-| Prompt | ElevenLabs kept / 3 | Stability kept / 3 | Stable Audio Open kept / 3 | Notes (did `slice` find the cut, clipping, tails) |
-|---|---|---|---|---|
-| screen_door | | | | |
-| dog_far | | | | |
-| bin_lid | | | | |
-| coin | | | | |
-| bin_fall | | | | |
-
-## To run on the GPU machine (Stable Audio Open)
-
-1. Make a throwaway venv: `pip install torch diffusers transformers accelerate soundfile`.
-2. Accept the licence on the Hugging Face page for `stabilityai/stable-audio-open-1.0`, then `huggingface-cli login`.
-3. `python gpu_stable_audio_open.py --takes 3` (`--device cpu` is the slow fallback; `--weights-dir` chooses where the
-   download goes). It prints seconds per generation and peak VRAM.
-4. `bash slice-and-sheet.sh out/stable-audio-open`.
-5. Record the peak VRAM, the seconds per generation and the weights' size here; nothing is measured yet. The `small` model
-   is the fallback if it doesn't fit 8 GB.
-6. If it ever becomes a Runner, the Owner confirms commercial use first, and the weights go in `.kiripix/weights/`.
+| Prompt | ElevenLabs kept / 3 | Stability kept / 3 | Notes (did `slice` find the cut, clipping, tails) |
+|---|---|---|---|
+| screen_door | | | |
+| dog_far | | | |
+| bin_lid | | | |
+| coin | | | |
+| bin_fall | | | |
 
 ## Draft Provider ticket (only if the listening test passes; not filed)
 
@@ -133,8 +125,7 @@ Stability. Only ElevenLabs fits the $10 monthly cap.
 2. **If a generator is worth a try: ElevenLabs Sound Effects**, about $0.012 to $0.02 per kept 2 s sound, but commercial
    use only on a paid plan (Starter, $6 a month). The alternative is Stable Audio 2.5 at $0.24 to $0.40 per keeper; the
    user owns the output, and no credit line was found.
-3. **Not worth it:** layered sounds such as `bin_fall`, and the non-commercial open weights. Stable Audio Open (Community
-   Licence, revenue under $1M, registration) waits for the GPU machine.
+3. **Not worth it:** layered sounds such as `bin_fall`. Local models: declined by the Owner (above).
 4. **Decide after listening.** If at least 1 in 4 takes is kept for three of the five prompts, file the Provider ticket.
    Otherwise close the trial with "record or download instead".
 
@@ -142,6 +133,4 @@ Stability. Only ElevenLabs fits the $10 monthly cap.
 
 - ElevenLabs: do API pay-as-you-go and outputs made on Starter stay commercial after cancelling? Ask support.
 - Stability: does Stable Audio output carry a watermark, and is it 8 credits or 26 (`llms.txt`)?
-- Stable Audio Open: does "Powered by Stability AI" apply when the game ships only outputs? Also bears on the CC-BY
-  training data.
 - Game: is the coin a real need? Do you lift DEC-004's $0 for audio?

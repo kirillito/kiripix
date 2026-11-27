@@ -62,7 +62,11 @@ SHEET = DecisionSpec(
                 "that order, as s sw w nw n ne e se) and `frames` (the count): the cell is the sheet's size divided by those. For "
                 "a ZIP: `file`; to rename clips, `clips` ({\"breathing-idle\": \"idle\"}, their folder's name to ours); to leave "
                 "animations or PixelLab states out, `leave_out` ([\"hop\", \"hop_2\"], their folders' names: a group's "
-                "ZIP holds every state, rejected tries too). A ZIP's names are read by rule, so it needs no Decision. Deciding a sheet again replaces it; `undo` brings the "
+                "ZIP holds every state, rejected tries too). For an atlas (`import` of a Pixelbolt `.atlas.json` writes it; not for typing): `file`, "
+                "`cell` (the untrimmed cell, [w, h]), `cells` (each `name`, `rect` [x, y, w, h] in the PNG and `at` [dx, dy], where a "
+                "trimmed frame sits in the cell), `plays` (clip name to the cell numbers in playback order, a cell played twice "
+                "named twice) and `clips` (clip name to its `loop` and `ticks`, which a `clip` Decision of the same name overrides). "
+                "Only the latest atlas Decision cuts, so a new render replaces the old and one `undo` brings it back. A ZIP's names are read by rule, so it needs no Decision. Deciding a sheet again replaces it; `undo` brings the "
                 "old one back.",
     entry_schema={
         "oneOf": [
@@ -78,6 +82,26 @@ SHEET = DecisionSpec(
                             "clips": {"type": "object", "additionalProperties": _CLIP_NAME},
                             "leave_out": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": True}},
              "required": ["file"], "additionalProperties": False},
+            {"type": "object",
+             "properties": {"file": {"type": "string", "minLength": 1},
+                            "cell": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2},
+                            "cells": {"type": "array", "items": {
+                                "type": "object",
+                                "properties": {"name": {"type": "string", "minLength": 1},
+                                               "rect": {"type": "array", "items": {"type": "integer", "minimum": 0},
+                                                        "minItems": 4, "maxItems": 4},
+                                               "at": {"type": "array", "items": {"type": "integer", "minimum": 0},
+                                                      "minItems": 2, "maxItems": 2}},
+                                "required": ["name", "rect", "at"], "additionalProperties": False}},
+                            "plays": {"type": "object", "additionalProperties": {
+                                "type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 1}},
+                            "clips": {"type": "object", "additionalProperties": {
+                                "type": "object",
+                                "properties": {"loop": {"type": "boolean"},
+                                               "ticks": {"type": "array", "items": {"type": "integer", "minimum": 1},
+                                                         "minItems": 1}},
+                                "additionalProperties": False}}},
+                "required": ["file", "cell", "cells", "plays", "clips"], "additionalProperties": False},
         ]
     },
 )
@@ -108,7 +132,8 @@ def expected_directions(params: dict[str, Any]) -> list[str]:
 
 def sheets_of(run: StageRun) -> dict[str, Path]:
     """The imported sheets by name (the start of their hash)."""
-    return {Path(name).stem: path for name, path in sorted(run.files.items()) if name.startswith(SHEETS_DIR)}
+    return {Path(name).stem: path for name, path in sorted(run.files.items())
+            if name.startswith(SHEETS_DIR) and path.suffix in (".png", ".zip")}  # an atlas's JSON and recipe are notes
 
 
 def resolve(sheets: dict[str, Path], reference: str) -> str | None:
@@ -144,7 +169,8 @@ def frames_needs_input(run: StageRun) -> NeedsInput | None:
     if not sheets:
         return NeedsInput("no sheets imported", command=f"kiripix import {run.asset_id} <file.png|file.zip> --role sheet")
     decided = {resolve(sheets, str(d.data["file"])) for d in run.decisions if d.name == SHEET.name}
-    undecided = [name for name, path in sheets.items() if path.suffix == ".png" and name not in decided]
+    atlases = {name for name in sheets if f"{SHEETS_DIR}{name}.atlas.json" in run.files}  # cut by an atlas's Decisions, or undone
+    undecided = [name for name, path in sheets.items() if path.suffix == ".png" and name not in decided and name not in atlases]
     if not undecided:
         return None
     shown = "; ".join(f"{name} ({_size(sheets[name])})" for name in undecided)
@@ -214,6 +240,30 @@ def _cut_png(run: StageRun, found: _Frames, name: str, path: Path, data: dict[st
                 found.dropped += 1
 
 
+def _cut_atlas(run: StageRun, found: _Frames, name: str, path: Path, data: dict[str, Any], wanted: list[str]) -> None:
+    """An atlas sheet (ticket 0401): each distinct cell is cut once from its rect and set at `at` on a transparent cell of the
+    atlas's untrimmed size; a clip's frames are those cells in playback order, a repeated one again."""
+    if "s" not in wanted:
+        found.dropped += sum(len(play) for play in data["plays"].values())
+        return
+    width, height = (int(v) for v in data["cell"])
+    source = read_rgba(path)
+    cells: list[np.ndarray] = []
+    for cell in data["cells"]:
+        x, y, w, h = (int(v) for v in cell["rect"])
+        dx, dy = (int(v) for v in cell["at"])
+        if x + w > source.shape[1] or y + h > source.shape[0] or dx + w > width or dy + h > height:
+            raise StageFailure(f"sheet {name}: the cell {cell['name']} lies outside its sheet or cell", code="frames.sheet_size",
+                               fix=f"kiripix undo {run.asset_id} frames")
+        canvas = np.zeros((height, width, 4), dtype=np.uint8)
+        canvas[dy:dy + h, dx:dx + w] = source[y:y + h, x:x + w]
+        cells.append(canvas)
+    for clip, play in data["plays"].items():
+        for number, index in enumerate(play):
+            run.check_cancel()
+            found.add(str(clip), str(clip), "s", number, cells[int(index)], name, str(data["cells"][int(index)]["name"]))
+
+
 def _read_zip(run: StageRun, found: _Frames, unplaced: list[dict[str, str]], name: str, path: Path,
               data: dict[str, Any], wanted: list[str]) -> None:
     import zipfile
@@ -258,7 +308,17 @@ def run_frames(run: StageRun) -> None:
             raise StageFailure(f"the sheet Decision names {reference}, which is not an imported sheet "
                                f"(the sheets are {', '.join(sheets) or 'none'})", code="frames.sheet_unknown",
                                fix=f"kiripix undo {run.asset_id} frames")
-        cuts[name] = decision.data
+        if "plays" not in decision.data:
+            cuts[name] = decision.data
+    atlas = [d for d in run.decisions if d.name == SHEET.name and "plays" in d.data]
+    if atlas:  # only the latest atlas Decision cuts: a new render replaces the old
+        latest = atlas[-1].data
+        name = resolve(sheets, str(latest["file"]))
+        if name is None:
+            raise StageFailure(f"the sheet Decision names {latest['file']}, which is not an imported sheet "
+                               f"(the sheets are {', '.join(sheets) or 'none'})", code="frames.sheet_unknown",
+                               fix=f"kiripix undo {run.asset_id} frames")
+        cuts[name] = latest
     found = _Frames()
     unplaced: list[dict[str, str]] = []
     for index, (name, path) in enumerate(sheets.items()):
@@ -267,6 +327,8 @@ def run_frames(run: StageRun) -> None:
         data = cuts.get(name)
         if path.suffix == ".zip":
             _read_zip(run, found, unplaced, name, path, data or {}, wanted)
+        elif data is not None and "plays" in data:
+            _cut_atlas(run, found, name, path, data, wanted)
         elif data is not None:
             _cut_png(run, found, name, path, data, wanted)
     found.join_rotations()
@@ -277,9 +339,10 @@ def run_frames(run: StageRun) -> None:
                            owner_action="Name the ZIP's entries with a direction (south, south-east, ... or s, se, ...) in a "
                                         "folder per animation, or cut a PNG with a `sheet` Decision.")
     clip_decisions = latest_by_name(run.decisions, CLIP.name, "name")
+    atlas_clips: dict[str, Any] = dict(atlas[-1].data["clips"]) if atlas else {}  # the atlas's `loop` and `ticks`, under any `clip`
     clips: list[dict[str, Any]] = []
     for clip in sorted(found.found):
-        said = clip_decisions[clip].data if clip in clip_decisions else {}
+        said = {**(atlas_clips.get(clip) or {}), **(clip_decisions[clip].data if clip in clip_decisions else {})}
         by_direction = found.found[clip]
         one_frame = max(len(slot) for slot in by_direction.values()) == 1
         directions: dict[str, list[dict[str, Any]]] = {}

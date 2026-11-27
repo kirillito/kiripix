@@ -23,18 +23,18 @@ animation endpoints need one; then the Owner decides on a month's subscription.
 
 ## Context
 
-- The cast is rendered from 3D: the mc03 bodies at 52 px, 8 directions (the game's DEC-068), the `top34_8` camera at a
-  30° look-down for every character source (DEC-054), and NPC variants made from a base with no new render
-  ([0336](0336-m6-npc-variants-from-a-base.md)). Battle clips use 4 facings (DEC-048).
-- Actors that aren't humans on a base, such as the raccoons, come in as `sprite`s from 2D frames. PixelLab was the route and
-  was delayed: its sprites were unsatisfactory, and its view control too weak to hold the 30° camera (DEC-044, ISS-021).
+- The cast is rendered from 3D: the 3D bodies at 52 px, 8 directions, the `top34_8` camera at a
+  30° look-down for every character source, and NPC variants made from a base with no new render
+  ([0336](0336-m6-npc-variants-from-a-base.md)). Battle clips use 4 facings.
+- Actors that aren't humans on a base, such as the quadrupeds, come in as `sprite`s from 2D frames. PixelLab was the route and
+  was delayed: its sprites were unsatisfactory, and its view control too weak to hold the 30° camera.
 - **What the game needs now (the Owner, 2026-11-25):**
-  - the **raccoon**, animated;
-  - **black squirrels**;
-  - **animal services workers** (humans);
-  - **birds and other ambient life** that make a scene feel alive (pigeons, sparrows, small environmental loops).
+  - the **quadruped**, animated;
+  - **rodents**;
+  - **uniformed workers** (humans);
+  - **birds and other ambient life** that make a scene feel alive (small birds, small environmental loops).
   **Crowd NPCs** come from the 3D models (a base with layers and ramps, 0336), not from this trial. **Later, not in this
-  trial:** the Waiting Ones (provisional: silhouettes that wake as you pass), bosses, and one-off cutscene poses (an edit of
+  trial:** silhouette enemies that wake as you pass, bosses, and one-off cutscene poses (an edit of
   a character's frame, imported as a one-frame clip).
 - **Prior art (read 2026-11-25).** Others have the same problem; none of them targets 8 directions at a top-down camera,
   and there's no code to take (Kiripix already has the chroma key, `fit`, `palette` and grid detection). What to take is
@@ -98,9 +98,9 @@ Provider hold one actor's identity across its directions and the frames of a cli
    `POST /v2/animate-with-text-v3` at 32 px with 4 frames (about $0.022) and one to `POST /v2/characters/animations` in
    `v3`; a 403 means animation needs a subscription, and the Owner decides. Two routes, each tested:
    - **Text-led motion:** the actor made a PixelLab character from our frames where we have them (`direction_images`),
-     animated in `v3` (or `template`), with the mc03 ramps or the raccoon sprite's colours as `color_image`.
+     animated in `v3` (or `template`), with the 3D bodies' ramps or the quadruped sprite's colours as `color_image`.
    - **Motion from Kiripix:** `animate-with-skeleton-v3` with `keypoints` per frame. For the humans, the keypoints are the
-     mc03 rig's joints in each frame of a clip, projected through the `top34_8` camera by a Blender script in the trial
+     3D body rig's joints in each frame of a clip, projected through the `top34_8` camera by a Blender script in the trial
      folder (the character pipeline's area: if it's more than a small script, the Owner is told, and it may be its own
      ticket). For the animals, a `cat` or `dog` template or a custom `rig`, started from `estimate-skeleton` on the
      actor's frame and moved by the script.
@@ -111,18 +111,18 @@ Provider hold one actor's identity across its directions and the frames of a cli
    only if PixelLab and pose transfer both fail.
    **Not tested: video to frames** (a video model's clip, its frames extracted). At about $0.25 a movement it's too dear
    for this trial (the Owner, 2026-11-25).
-3. **The actor test set,** the same inputs for each candidate, with a frame of an mc03 body at `top34_8` and the raccoon
+3. **The actor test set,** the same inputs for each candidate, with a frame of a 3D body at `top34_8` and the quadruped
    sprite as the references for the angle, the size and the style:
-   - **the raccoon** (from its sprite): a walk in 8 directions; an attack and a hit in 4 facings;
-   - **a black squirrel** (from a text description, the raccoon as the style): an idle and a run in 8 directions, and one
+   - **the quadruped** (from its sprite): a walk in 8 directions; an attack and a hit in 4 facings;
+   - **a rodent** (from a text description, the quadruped as the style): an idle and a run in 8 directions, and one
      action of its own the Owner names (foraging, a climb, an attack);
-   - **an animal services worker** (a human at 52 px): a walk in 8 directions and one action the Owner names (a net or a
-     catch-pole), by the skeleton route on mc03's clips, beside the same worker from a base (step 5);
-   - **ambient life:** a pigeon or sparrow (an idle loop of pecking and hopping, and a take-off) in 2 to 4 facings, and one
+   - **an uniformed worker** (a human at 52 px): a walk in 8 directions and one action the Owner names (a net or a
+     catch-pole), by the skeleton route on the 3D bodies' clips, beside the same worker from a base (step 5);
+   - **ambient life:** a small bird (an idle loop of pecking and hopping, and a take-off) in 2 to 4 facings, and one
      environmental loop the Owner picks (a flag, leaves, steam), as a closed loop from a `first_frame` and `last_frame`.
    Where a candidate can't do a step, it records that and moves on.
 4. **Score with Kiripix,** each result imported as a `sprite` in a scratch Project (`import --role sheet`, then `frames`,
-   `fit` to the actor's height (52 px for the worker; the raccoon sprite's for the animals), `palette` by parts, `finish`,
+   `fit` to the actor's height (52 px for the worker; the quadruped sprite's for the animals), `palette` by parts, `finish`,
    `sheet`). PixelLab's frames are native pixel art: say which `fit` mode takes them without resampling, and whether that
    is a gap.
    - `frames.direction_missing`, `frames.frame_count`, `fit.grid_differs`, `fit.alpha_partial`, `fit.height`,
@@ -130,20 +130,20 @@ Provider hold one actor's identity across its directions and the frames of a cli
    - identity: the frames and directions where the actor changes (fur, clothes, proportions, colours), counted by the Owner;
    - the prior art's failures, counted per sheet: left/right limb swaps, a lost accessory, chroma fringe after the key, a
      mirrored asymmetric detail, and the calls the moderation refused;
-   - the angle: whether the actor reads as the 30° camera beside an mc03 body;
-   - the style measures from [0332](0332-m6-style-match-trial.md) against the mc03 bodies and the laneway, if they're ready;
+   - the angle: whether the actor reads as the 30° camera beside a 3D body;
+   - the style measures from [0332](0332-m6-style-match-trial.md) against the 3D bodies and a painted street room, if they're ready;
    - the Owner's minutes per actor to a usable sheet, including fixes, and the money spent (from each response's `usage`).
    Note every gap in the `sprite` Kind the imports show (a naming rule a service's export needs, a frame layout `frames`
    can't cut), as a candidate follow-up ticket.
-5. **The 3D comparison:** the animal services worker from a base (0336: the Owner's minutes and the render time), beside
+5. **The 3D comparison:** the uniformed worker from a base (0336: the Owner's minutes and the render time), beside
    the skeleton route's worker.
 
 ## What to record, in this ticket
 
 - PixelLab's failure, in the Owner's words.
 - The tier check's answer: credits alone, or a subscription.
-- The scores per candidate and actor, with the GIFs or sheets' paths for the Owner, beside an mc03 body.
-- A recommendation per actor (raccoon, black squirrel, animal services worker, birds and ambient loops): a Provider and
+- The scores per candidate and actor, with the GIFs or sheets' paths for the Owner, beside a 3D body.
+- A recommendation per actor (quadruped, rodent, uniformed worker, birds and ambient loops): a Provider and
   which route, the 3D route, or hand work; with its cost per actor and per year at 0353's volume. Crowd NPCs stay on the 3D
   route unless the worker's comparison says otherwise.
 - If PixelLab is taken: what a Kiripix Provider for it needs that `kiripix/providers/base.py` lacks (keypoints as an input,
@@ -152,14 +152,14 @@ Provider hold one actor's identity across its directions and the frames of a cli
 ## Progress (2026-11-25, Claude; nothing spent)
 
 **The test set is the game's real need (the Owner, 2026-11-25):** to waste nothing, the trial makes the poses of the game's
-ticket 0106 (`urban-mystery-club/docs/backlog/m5/0106-m05-creature-and-worker-poses.md`): the raccoon's hop, swipe, hurt
-and dazed; the black squirrel's idle, leap and bite; the worker's sack_open, bag and walk; and a sack with a raccoon (a
+a game ticket: the quadruped's hop, swipe, hurt
+and dazed; the rodent's idle, leap and bite; the worker's sack_open, bag and walk; and a sack with a quadruped (a
 prop). Each pose is made first as a PixelLab *state* of the existing character (`create-character-state`, 8 directions a
 call, 0106's route), imported into the art Project's real `sprite` assets and exported. The other routes run on the same
-poses: text-led animation (walks and runs, as extras), the skeleton route (mc03's walk and downward attack retargeted onto
-the existing worker sprite: `keypoints.py --retarget`), and GPT Image pose transfer (the worker's bag at mc03's 30°, and a
-squirrel sheet from the raccoon's directions). So step 3's set becomes 0106's list plus the pigeon and an ambient loop;
-the raccoon's attack and hit are 0106's swipe and hurt.
+poses: text-led animation (walks and runs, as extras), the skeleton route (the 3D bodies' walk and downward attack retargeted onto
+the existing worker sprite: `keypoints.py --retarget`), and GPT Image pose transfer (the worker's bag at the 3D bodies' 30°, and a
+rodent sheet from the quadruped's directions). So step 3's set becomes 0106's list plus the bird and an ambient loop;
+the quadruped's attack and hit are 0106's swipe and hurt.
 
 The trial's tools are in [0354-trial/](0354-trial/), with the Owner's run book in its [README](0354-trial/README.md):
 `pixellab.py` (every endpoint above, each call's request, response, job and PNGs kept under `runs/`, a ledger from each
@@ -170,7 +170,7 @@ Tested offline only: dry runs, and a local fake of the API (jobs, images, the le
   named bones through `top34_8` in every frame; `keypoints.py` turns those into PixelLab's 18 joints. Mixamo's rig has no
   nose, eye or ear bones: those 5 come from the render's `eyes` and the head's bones, roughly; a $0.005 `estimate-skeleton`
   on one frame checks the mapping and which side PixelLab calls RIGHT.
-- **The raccoon doesn't fit 32 px** (48x52 on its 64 canvas), so the tier check's first call runs at 64 px, about $0.10.
+- **The quadruped doesn't fit 32 px** (48x52 on its 64 canvas), so the tier check's first call runs at 64 px, about $0.10.
 - **The `sprite` Kind's `fit mode = grid` (the default) already takes PixelLab's native pixel art**; `downscale` is for GPT
   Image's frames. Whether `grid` handles the API's frames as it does the website's ZIP is for step 4.
 - For the animals' skeleton route the first try is PixelLab's own rig (`estimate-custom-skeleton`) with the motion written
@@ -184,44 +184,44 @@ together, and the four actors' import and export.
 Spent: **$2.61 on PixelLab** ($2.39 of the $5 left), plus about 25 trial generations, $0 on GPT Image. Records: [0354-trial/](0354-trial/) (`notes.md`
 has every call, `runs/` the requests and images; the sheets and GIFs are beside them).
 
-- **PixelLab's failure, in the Owner's words:** "It took me a lot of generations to get raccoon or service worker that was
+- **PixelLab's failure, in the Owner's words:** "It took me a lot of generations to get quadruped or service worker that was
   fitting our parameters. No animations at free tier was also very limiting."
 - **The tier check: credits alone are enough.** The animation endpoints answered 200 on trial generations, and again on prepaid
   credits ($0.011 to $0.016 a direction for the skeleton route). No subscription was needed for anything below.
 - **What made it fit:** a character imported from frames we already have keeps their pixels and their size (the worker:
-  pixel-identical; a squirrel scaled to 20 px and imported: its poses stay at that size, where a 27 px source's grew to 55 px).
+  pixel-identical; a rodent scaled to 20 px and imported: its poses stay at that size, where a 27 px source's grew to 55 px).
   A state takes the whole actor into a pose in 8 directions. Canvas up to 84 px costs the same ($0.075), so leave room.
 - **Tries:** 13 state calls gave 8 kept poses (the sack pose is superseded by the crate), about 1 in 1.6, not 0353's 1 in 10.
-- **Routes:** skeleton (mc03's motion retargeted, `keypoints.py`, no Blender script) is the best for the worker, and PixelLab's
+- **Routes:** skeleton (the 3D bodies' motion retargeted, `keypoints.py`, no Blender script) is the best for the worker, and PixelLab's
   own rig (`estimate-custom-skeleton`, motion written by PixelLab) for the animals. Text-driven animation fails (faces melt,
   ears and stripes change) and is dropped.
 - **Kiripix:** `fit` mode `grid` takes the frames at scale 1 with no resampling; 5 poses x 8 directions, only `info` findings.
-  The raccoon and worker read beside mc03 after `palette` and `finish`. Gaps: [0385](0385-m6-sprite-zip-states-are-clips.md).
+  The quadruped and worker read beside the 3D bodies after `palette` and `finish`. Gaps: [0385](0385-m6-sprite-zip-states-are-clips.md).
 - **Crate, not sack:** the Owner's decision; the game's docs and strings were changed (game repo, uncommitted).
 
 | Actor | Recommendation | Cost |
 |---|---|---|
-| Raccoon | PixelLab: text once, states for poses, its own rig for the walk | about $0.4 for 5 poses, $0.08 for a 4-direction walk |
-| Black squirrel | PixelLab, idle scaled to size and imported | about $0.2 |
-| Animal services worker | PixelLab from the Owner's frames; skeleton with mc03's clips for walks | about $0.2 plus $0.065 a clip |
-| Birds | PixelLab, its own rig (one pigeon tried) | about $0.07 an action in 2 directions |
+| Quadruped | PixelLab: text once, states for poses, its own rig for the walk | about $0.4 for 5 poses, $0.08 for a 4-direction walk |
+| Rodent | PixelLab, idle scaled to size and imported | about $0.2 |
+| Uniformed worker | PixelLab from the Owner's frames; skeleton with the 3D bodies' clips for walks | about $0.2 plus $0.065 a clip |
+| Birds | PixelLab, its own rig (one bird tried) | about $0.07 an action in 2 directions |
 | Environmental loops | not tested | |
 
 At 0353's 50 sprite clips a year, about $0.12 a kept pose or $0.02 a direction: roughly $6 to $10 a year. The Owner's minutes
 weren't measured.
 
-**In the art Project and exported to the game:** `sprite.raccoon` (idle, hop, swipe, hurt, dazed, walk 8 frames; the old sheet's
-ZIP removed), `sprite.animal_control_worker` (idle, crate_open, bag, walk 4 frames), `sprite.black_squirrel` (idle, walk, attack and summoned,
+**In the art Project and exported to the game:** the quadruped sprite (idle, hop, swipe, hurt, dazed, walk 8 frames; the old sheet's
+ZIP removed), the worker sprite (idle, crate_open, bag, walk 4 frames), the rodent sprite (idle, walk, attack and summoned,
 8 frames each by its own rig; leap and bite poses),
-`sprite.crate_raccoon` (candidate 13), all 8 directions but the crate; `palette orphan_size=0` on all four (the default removed
-eyes and tail rings). The game's content check passes; the look at 1x on the laneway is the Owner's.
+the crate sprite (candidate 13), all 8 directions but the crate; `palette orphan_size=0` on all four (the default removed
+eyes and tail rings). The game's content check passes; the look at 1x in a painted street room is the Owner's.
 
 **Waived by the Owner (2026-11-25):** step 5 (the 3D worker: the PixelLab worker is in the game), the Owner's minutes per actor
-(Claude did the work), pose transfer, and an environmental loop (the pigeon is the ambient life). The pigeon's take-off goes to
-the game's backlog. **Not done:** 0332's style measures. **Weak:** the squirrel's walk barely moves its legs except in n and w
-(the game hops creatures by tween; a retry is about $0.13). The raccoon's attack and hit are poses, not clips.
+(Claude did the work), pose transfer, and an environmental loop (the bird is the ambient life). The bird's take-off goes to
+the game's backlog. **Not done:** 0332's style measures. **Weak:** the rodent's walk barely moves its legs except in n and w
+(the game hops creatures by tween; a retry is about $0.13). The quadruped's attack and hit are poses, not clips.
 
-The game's DECISION_LOG has the decision as **DEC-079** (DEC-078 is cited by 0384 but isn't in the game's log yet).
+The game records the decision in its own log.
 
 **If PixelLab is taken, what a Kiripix Provider needs beyond `kiripix/providers/base.py`:** inputs that aren't images (a
 character ID, keypoints, a rig); an answer that is a job to poll and cancel (`DELETE`, free while queued); a result that

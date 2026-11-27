@@ -7,7 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import editof, emotions, gen_sprite, loopedits, loopkit, sheets, sounds, sources, things
+from kiripix.core import atlas, editof, emotions, gen_sprite, loopedits, loopkit, sheets, sounds, sources, things
+from kiripix.core.atlas import AtlasRead
 from kiripix.core.errors import fail
 from kiripix.core.assets import Asset, is_asset_id, load_asset
 from kiripix.core.graph import AssetGraph, ProgressEvent, StageState
@@ -39,7 +40,10 @@ class ImportInput(_AssetInput):
                           "kiripix.toml), stored under its own name in src/parameters/ in place of any other; it is the "
                           "Source, so nothing is picked, and it replaces importing a Model. These three are for a "
                           "character. thing: a mesh (.glb or .blend) a clip holds, with --thing <id>. sheet: a sprite's PNG sheet or ZIP of PNGs, stored whole in src/sheets/ (the "
-                          "default for a sprite; a ZIP with an unsafe or non-PNG entry is refused whole).")
+                          "default for a sprite; a ZIP with an unsafe or non-PNG entry is refused whole). A Pixelbolt "
+                          "`<name>.atlas.json` (or a folder holding one) is read too: the PNG it names beside it and the atlas "
+                          "are stored whole, each animation becomes a clip with its frame order, `loop` and `ticks`, and the "
+                          "`import.anchor` finding gives the `fit anchor` to set.")
     thing: str | None = Field(None, description="With --role thing: the held thing's ID (lower-case letters, digits and "
                                                 "underscores). The mesh is stored in src/things/<id>/ as a Variant; importing "
                                                 "again under the same ID adds a Variant, and the newest is the one rendered. "
@@ -82,6 +86,9 @@ class ImportInput(_AssetInput):
     licence: str | None = Field(None, description="For a sound's recording: its licence, as text (CC0, CC-BY 4.0, own recording). "
                                                   "Export refuses a recording with no author or licence "
                                                   "(`sound.provenance_missing`).")
+    animation: str | None = Field(None, description="With --loop and a Pixelbolt atlas: the animation to import (its frames, in "
+                                                    "order, become the Loop's frames 1 to N, its durations the `timing`); "
+                                                    "without it, the atlas's only animation.")
     of: str | None = Field(None, description="With --look, or --loop with --frame: the edit was made on a piece or a crop "
                                              "of the room, not on its whole Source. A crop `kiripix extend "
                                              "<room> crop --box ...` wrote (its name, the start of its hash in "
@@ -136,6 +143,10 @@ class ImportData(BaseModel):
     variants: list[str] = Field(description="The Asset's Variants; with --look, that Look's edits.")
     clip_sources: list[str]
     sheets: list[str]
+    atlas: AtlasRead | None = Field(None, description="With a Pixelbolt atlas: what was read of it (its clips, cell and "
+                                                            "anchor).")
+    animation: str | None = Field(None, description="With --loop and a Pixelbolt atlas: the animation imported.")
+    ticks: list[int] = Field([], description="With --loop and a Pixelbolt atlas: the Loop's `timing` ticks, one per frame.")
 
     def text(self) -> str:
         added = "added" if self.created else "already had"
@@ -152,6 +163,9 @@ class ImportData(BaseModel):
         if self.loop is not None and self.frame is not None:
             return (f"{self.asset}: {added} the edit {self.variant} of frame {self.frame} of Loop {self.loop} ({self.file}); "
                     f"pick it with kiripix pick {self.asset} {self.variant} --loop {self.loop} --frame {self.frame}")
+        if self.loop is not None and self.animation is not None:
+            return (f"{self.asset}: imported the animation {self.animation} of a Pixelbolt atlas as {len(self.loop_frames)} "
+                    f"frames of Loop {self.loop} with their ticks (frame 0 rests)")
         if self.loop is not None:
             skipped = f" (left out {', '.join(self.skipped)}: frame 0 is the room's)" if self.skipped else ""
             return (f"{self.asset}: imported {len(self.loop_frames)} frames of Loop {self.loop} ({self.file} ...){skipped}")
@@ -159,6 +173,9 @@ class ImportData(BaseModel):
             on = f", made on {self.of} and placed on the Source" if self.of else ""
             return (f"{self.asset}: {added} the edit {self.variant} of Look {self.look} ({self.file}{on}); pick it with "
                     f"kiripix pick {self.asset} {self.variant} --look {self.look}")
+        if self.role == "sheet" and self.atlas is not None:
+            clips = ", ".join(f"{c.name} ({c.frames} frames{'' if c.loop else ', once'})" for c in self.atlas.clips)
+            return f"{self.asset}: {added} the Pixelbolt atlas as sheet {self.sheet} ({self.file}); clips {clips}"
         if self.role == "sheet":
             return f"{self.asset}: {added} the sheet {self.sheet} ({self.file})"
         if self.role == "variant":
@@ -178,8 +195,8 @@ class ImportData(BaseModel):
 @command(
     "import",
     summary="Add a file made elsewhere to an Asset: an image as a Variant (a PNG, named by its hash), for a "
-            "character a Model, an animation file, the rigged file or a held thing, or for a sprite a PNG sheet or a ZIP of PNGs "
-            "(--role).",
+            "character a Model, an animation file, the rigged file or a held thing, or for a sprite a PNG sheet, a ZIP of PNGs or a "
+            "Pixelbolt atlas (--role).",
     input=ImportInput,
     output=ImportData,
     kind="writing",
@@ -273,7 +290,19 @@ def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportDa
             placed_scale=placed.scale if placed else None, placed_at=placed.origin if placed else None,
             registration_residual=placed.residual if placed else None),
             edit.findings + (placed.findings if placed else []))
+    if arguments.animation is not None and arguments.loop is None:
+        raise fail("import.animation_needs_loop", "--animation picks the animation of a Pixelbolt atlas imported into a Loop",
+                   fix=f"kiripix import {asset.id} {arguments.file} --loop <loop> --animation {arguments.animation}")
     if arguments.loop is not None:
+        atlas_done = None if asset.kind != "room" else loopkit.import_atlas(
+            project, asset, context.cwd / arguments.file, str(arguments.file), arguments.loop, arguments.animation,
+            bool(arguments.frames) or arguments.kit is not None)
+        if atlas_done is not None:  # a Pixelbolt atlas; any other file goes on to the plain import
+            return Outcome(ImportData(
+                asset=asset.id, look=None, role="variant", variant=None, sheet=None, clip_source=None, rigged=None,
+                file=project.relative(atlas_done.paths[0]), created=atlas_done.created, variants=[], clip_sources=[],
+                sheets=[], loop=arguments.loop, loop_frames=atlas_done.frames, animation=atlas_done.animation,
+                ticks=atlas_done.ticks), atlas_done.findings)
         shown = [arguments.file, *arguments.frames]
         if arguments.look is not None or (arguments.role or "variant") != "variant":
             raise fail("import.loop_takes_images", "--loop takes images only: not with --look or another --role",
@@ -309,6 +338,13 @@ def import_variant(arguments: ImportInput, context: Context) -> Outcome[ImportDa
             registration_residual=look_placed.residual if look_placed else None),
             look_placed.findings if look_placed else [])
     role = arguments.role or ("sheet" if sources.takes_sheets(asset) else "variant")
+    if role == "sheet" and sources.takes_sheets(asset):  # a Pixelbolt atlas; any other file goes on to the plain import
+        imported = atlas.import_atlas(project, asset, context.cwd / arguments.file, str(arguments.file))
+        if imported is not None:
+            return Outcome(ImportData(
+                asset=asset.id, look=None, role="sheet", variant=None, sheet=imported.name, clip_source=None, rigged=None,
+                file=project.relative(imported.path), created=imported.created, variants=list(sources.variants(asset)),
+                clip_sources=[], sheets=list(sheets.sheets(asset)), atlas=imported.read), imported.findings)
     name, path, created = sources.import_file(asset, context.cwd / arguments.file, str(arguments.file), role)
     return Outcome(ImportData(
         asset=asset.id, look=None, role=role,

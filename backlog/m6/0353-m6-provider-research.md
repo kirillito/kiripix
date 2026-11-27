@@ -47,7 +47,7 @@ brief's default canvas)?
 
 ## What to do
 
-1. **The volume,** for the whole game's art, with the Owner and the game's backlog (`../urban-mystery-club/docs/`): a
+1. **The volume,** for the whole game's art, with the Owner and the game's backlog: a
    year's work per task, and the regenerations each takes (from the Owner's experience in the UI so far):
    - painted: room Sources, `extend` pieces per room, Look edits, new Props, Prop states, portrait sets and emotions,
      cutscene stills;
@@ -55,7 +55,7 @@ brief's default canvas)?
    - VFX strips (for [0347](0347-m6-vfx-trial.md)) and image-to-3D concepts (for [0144](0144-m6-image-to-3d-trial.md)).
 
    **Cutscenes, first:** ask the Owner what the game's cutscenes need as art. Its scenes run in the engine (the scene runner,
-   dialogue, room changes, scenes inside battles; DEC-048), so the art is likely stills at the game's resolution (an
+   dialogue, room changes, scenes inside battles), so the art is likely stills at the game's resolution (an
    illustrated moment), the cast's one-off poses (0354) and Looks. Record the answer here; it sets the cutscene task below.
 
    This turns $100 a year into a number of images per task.
@@ -76,17 +76,17 @@ brief's default canvas)?
    and the image-to-3D services 0144 names (Meshy, Tripo). Add any the study finds; drop one with a short reason.
 3. **The painted test set,** the same inputs for every candidate that survives step 2 and makes painted images, from the art
    Project (copied to a scratch Project, so the art Project isn't touched):
-   - a room Source from a ch01 room's brief prompt (the laneway's or a dungeon room's), 4 Variants;
+   - a room Source from a first-chapter room's brief prompt (a street room's or a dungeon room's), 4 Variants;
    - one `extend` piece from that room's canvas (`extend <id> canvas`), 2 Variants;
-   - one Look edit of the laneway ("keep everything the same except": a lamp off), 2 Variants;
-   - one new Prop (a newspaper box on a flat chroma background, with a ch01 room as the style reference), 2 Variants, and one
+   - one Look edit of the street room ("keep everything the same except": a lamp off), 2 Variants;
+   - one new Prop (a newspaper box on a flat chroma background, with a first-chapter room as the style reference), 2 Variants, and one
      Prop state (a bin toppled, from the bins' Source);
    - one portrait emotion from a neutral portrait;
-   - one cutscene still, as step 1's answer defines it (for example the MC and the Keeper in the laneway at night, with their
+   - one cutscene still, as step 1's answer defines it (for example two main characters in the street room at night, with their
      portraits as references for who they are), 2 Variants.
 4. **Score with Kiripix,** importing the results into the scratch Project, not by eye alone:
    - room Source and `extend` piece: whether `extend add` registers (its residual), the palette mapping error after
-     `palette`, and the style measures from [0332](0332-m6-style-match-trial.md) against the ch01 rooms, if they're ready;
+     `palette`, and the style measures from [0332](0332-m6-style-match-trial.md) against the first chapter's rooms, if they're ready;
    - Look edit: `look.misaligned`, `look.drift` (count and boxes), `look.unchanged`;
    - Prop and Prop state: `cutout` (does the chroma key take it whole), the `fit` and `palette` findings, the style measures
      beside the bins;
@@ -165,7 +165,7 @@ Gemini and OpenAI; FLUX direct is dropped because its API terms forbid removing 
 ## Result: closed by the Owner's decision (2026-11-23)
 
 **The painted work goes to OpenAI's GPT Image, through the OpenAI API, on a budget of $10 a month** (`[providers]
-budget_usd_month = 10` in the art repo's `kiripix.toml`, replacing $0 by DEC-004 and this ticket's $100 a year). The Owner
+budget_usd_month = 10` in the art repo's `kiripix.toml`, replacing the earlier $0 rule and this ticket's $100 a year). The Owner
 chose it from use, not from this study: round 2 had closed OpenAI as paid-only (`desk-study-round2.md`), and the Cloudflare
 klein 4B step 3 was never run. **Steps 3 to 5 are waived.** The evidence there is:
 
@@ -174,7 +174,7 @@ klein 4B step 3 was never run. **Steps 3 to 5 are waived.** The evidence there i
   price of 2.5 and 2.6 wasn't readable. At the round-2 pass rates for room Sources (1 in 10 to 20), medium quality may not
   fit $120 a year; the cap ([0378](0378-m6-gen-states-the-cost-and-refuses-past-the-cap.md)) holds it either way, and `gen`'s
   ledger will give the real figures.
-- [0377](0377-m6-extend-joins-a-re-rendered-strip.md): a real GPT Image `extend` piece of the laneway joins at 0.66 px
+- [0377](0377-m6-extend-joins-a-re-rendered-strip.md): a real GPT Image `extend` piece of the street room joins at 0.66 px
   (`--max-residual 1`), seam difference 3.3, no visible seam. GPT Image re-renders the kept strip, so its pieces need the
   raised limit.
 

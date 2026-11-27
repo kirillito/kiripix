@@ -52,7 +52,9 @@ def _kit_decision() -> DecisionSpec:
                     "were painted on) and `palette` (the hash of the palette's colours). A refit puts them in "
                     "needs-input; a palette change keeps them, and they are remapped. `remap` (optional) is true once the "
                     "Owner has accepted that remap (`accept` re-records the kit on the new palette): the frames stay as "
-                    "painted and are remapped on every build, not reported off the palette. Written by `import` and "
+                    "painted and are remapped on every build, not reported off the palette. `timing` (optional: `ticks`, `rest`) is the "
+                    "Loop's timing, as an atlas import (ticket 0406) gives it in the same Decision so one `undo` undoes both; "
+                    "a `timing` Decision after it replaces it, and one before it is replaced. Written by `import` and "
                     "`accept`, not by hand. "
                     "The latest Decision of a Loop counts.",
         entry_schema={
@@ -64,6 +66,9 @@ def _kit_decision() -> DecisionSpec:
                 "fit": {"type": "string", "pattern": HASH},
                 "palette": {"type": "string", "pattern": HASH},
                 "remap": {"type": "boolean"},
+                "timing": {"type": "object", "properties": {
+                    "ticks": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1},
+                    "rest": {"type": "boolean"}}, "additionalProperties": False},
             },
             "required": ["loop", "box", "frames", "fit", "palette"],
             "additionalProperties": False,

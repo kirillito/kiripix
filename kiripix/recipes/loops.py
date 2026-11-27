@@ -516,6 +516,18 @@ def _latest(run: StageRun, name: str) -> dict[str, dict[str, Any]]:
     return found
 
 
+def _timings(run: StageRun) -> dict[str, dict[str, Any]]:
+    """Each Loop's timing, by ID: the latest of its `timing` Decisions and the `timing` a `kit` Decision carries (an atlas
+    import), whichever was decided last."""
+    found: dict[str, dict[str, Any]] = {}
+    for decision in run.decisions:
+        if decision.name == "timing":
+            found[str(decision.data["loop"])] = dict(decision.data)
+        elif decision.name == "kit" and "timing" in decision.data:
+            found[str(decision.data["loop"])] = {"loop": decision.data["loop"], **decision.data["timing"]}
+    return found
+
+
 def declared(run: StageRun) -> dict[str, dict[str, Any]]:
     """Each Loop, by ID, with its latest `loop` Decision's data."""
     return _latest(run, "loop")
@@ -831,7 +843,7 @@ HELD_REASONS: tuple[Callable[[LoopInputs], NeedsInput | None], ...] = (
 def held_loops(run: StageRun) -> dict[str, NeedsInput]:
     """Each Loop that can't be built yet, by ID, with why."""
     loops = declared(run)
-    cycles, timings, frames = _latest(run, "cycle"), _latest(run, "timing"), _latest(run, "frames")
+    cycles, timings, frames = _latest(run, "cycle"), _timings(run), _latest(run, "frames")
     layers, looks = _layer_ids(run), frozenset(look_ids(run.upstream_decisions.get(LOOKS_STAGE, ())))
     held: dict[str, NeedsInput] = {}
     for name, loop in sorted(loops.items()):
@@ -1226,7 +1238,7 @@ def run_loops(run: StageRun) -> None:
         room = EditRoom(run)
         palette = palette_rgb(run)
         held = held_loops(run)
-        cycles, timings, frame_sources = _latest(run, "cycle"), _latest(run, "timing"), _latest(run, "frames")
+        cycles, timings, frame_sources = _latest(run, "cycle"), _timings(run), _latest(run, "frames")
         for index, name in enumerate(sorted(loops)):
             run.check_cancel()
             run.progress(index, len(loops), f"Loop {name}")

@@ -37,7 +37,7 @@ is tried only on its free tier (the Owner, 2026-11-20).
 **Characters may be the wrong target.** Every source agrees these models suit props (benches, machines, signs), not characters
 that rig cleanly. So the trial also runs one **prop** concept image through the same candidates and renders it at the rooms'
 top-down 3/4 camera at the Prop's target size, to ask whether a Prop made from 3D could sit in a painted room. The style match
-measures (0332) judge it beside the laneway, if they are ready; otherwise the Owner does.
+measures (0332) judge it beside a painted room, if they are ready; otherwise the Owner does.
 
 ## What to do
 
@@ -51,7 +51,7 @@ measures (0332) judge it beside the laneway, if they are ready; otherwise the Ow
    Prototype code stays out of `kiripix/`.
 4. From one prop concept image the Owner provides (a bench or a vending machine), the same candidates: render the best mesh in
    headless Blender at the rooms' camera and the Prop's target size, through `palette` and `finish` by hand, and put it beside a
-   painted Prop (the bins) on the laneway.
+   painted Prop in a painted room.
 
 ## What to record, in this ticket
 

@@ -23,7 +23,7 @@ else:
     np = lazy_module("numpy")
 
 from kiripix.checks import Finding, Position
-from kiripix.core import atomic, changes, editing, sources
+from kiripix.core import atlas, atomic, changes, editing, sources
 from kiripix.core.assets import Asset
 from kiripix.core.errors import fail
 from kiripix.core.graph import AssetGraph
@@ -281,4 +281,127 @@ def import_frames(project: Project, asset: Asset, files: list[Path], shown: list
     return FramesImported(stored, list(paths.values()), created, skipped, (x, y, width, height), findings)
 
 
-__all__ = ["KIT_DIR", "KitWritten", "FramesImported", "import_frames", "write_kit"]
+# import --loop of a Pixelbolt atlas (ticket 0406)
+
+
+@dataclass
+class AtlasFramesImported:
+    animation: str
+    frames: list[str]  # the stored frames' names for frames 1 to N, in playback order (a frame played twice is named twice)
+    ticks: list[int]
+    paths: list[Path]  # the distinct stored frames
+    created: bool
+    box: tuple[int, int, int, int]
+    stored: list[str]  # the atlas, its PNG and the recipe note, relative to the Project
+    findings: list[Finding]
+
+
+def import_atlas(project: Project, asset: Asset, file: Path, shown: str, loop: str, animation: str | None,
+                 alone: bool) -> AtlasFramesImported | None:
+    """Read a Pixelbolt atlas (a `.atlas.json`, or a folder holding one) into a frame Loop: the animation's frames, in its
+    expanded order, become frames 1 to N (frame 0 stays the room), and its durations become the Loop's `timing` (`ticks`,
+    `rest`). None when `file` isn't an atlas, so the plain import runs. Everything is checked before the first write.
+
+    A frame an animation plays twice (a pingpong is already unrolled) is one stored file named twice in the `kit` Decision, so
+    it is two Loop frames and each play has its own ticks; this says exactly what the atlas says whatever its order, which
+    `timing`'s `pingpong` cannot. The timing is part of the one `kit` Decision (`timing`), so one `undo` undoes the import."""
+    atlas_file = atlas.find(file)
+    if atlas_file is None:
+        return None
+    position = Position(asset=asset.id, stage=LOOPS_STAGE, file=shown)
+    loaded = atlas.load(atlas_file, position)
+    if loaded is None:
+        return None
+    if alone:
+        raise fail("import.atlas_takes_one_file", "an atlas is the only file of its import: not with more frames or --kit",
+                   fix=f"kiripix import {asset.id} {shown} --loop {loop}", position=position)
+    names = list(loaded.atlas.animations)
+    if animation is None and len(names) > 1:
+        raise fail("import.atlas_ambiguous", f"{atlas_file.name} has {len(names)} animations ({', '.join(names)}) and a Loop "
+                   "takes one", fix=f"kiripix import {asset.id} {shown} --loop {loop} --animation {names[0]}", position=position)
+    if animation is not None and animation not in loaded.atlas.animations:
+        raise fail("import.atlas_animation", f"{atlas_file.name} has no animation {animation}; its animations are "
+                   f"{', '.join(names)}", fix=f"kiripix import {asset.id} {shown} --loop {loop} --animation {names[0]}",
+                   position=position)
+    chosen = animation or names[0]
+    played = atlas.frames_of(loaded.atlas, chosen, position)
+    if len(played) < 2:
+        raise fail("import.atlas_frames", f"the animation {chosen} has {len(played)} frame; a Loop's timing, which rests on "
+                   "the room's frame 0, needs at least 2", owner_action="Render the effect again with at least 2 frames.",
+                   position=position)
+    distinct = list(dict.fromkeys(played))
+    cells, width, height = atlas.cells_of(loaded.atlas, distinct, position)
+    kit = prepare(project, asset, loop, "import.loop")
+    if frames_source(kit.run, loop) == "edits":
+        raise fail("import.loop_source_mixed", f"the Loop {loop} takes its frames from edits of the Source, and a frame "
+                   "Loop's frames come from one source only",
+                   owner_action=f"Undo what chose its edits (kiripix undo {asset.id} {LOOPS_STAGE}).", position=position)
+    x, y, box_width, box_height = kit.box
+    if (width, height) != (box_width, box_height):
+        raise fail("import.atlas_size", f"the cells of {atlas_file.name} are {width}x{height} px; the box of {loop} is "
+                   f"{box_width}x{box_height}",
+                   owner_action=f"Render the effect at {box_width}x{box_height} px (kiripix loop kit {asset.id} {loop} "
+                                "<folder> writes a kit of that size).", position=position)
+    findings: list[Finding] = []
+    version = None if loaded.atlas.meta.version is None else str(loaded.atlas.meta.version)
+    found = atlas.version_finding(version, atlas_file.name, position)
+    if found is not None:
+        findings.append(found)
+    durations = [loaded.atlas.frames[n].duration for n in played]
+    ticks = [atlas.ticks_of(d) for d in durations]
+    found = atlas.drift_finding(f"the Loop {loop}", durations, ticks, position,
+                                "Accept the drift, or render the effect with durations that are multiples of 1000/60 ms; "
+                                f"the exact ticks can be decided: kiripix decide {asset.id} {LOOPS_STAGE}.")
+    if found is not None:
+        findings.append(found)
+    if not loaded.atlas.animations[chosen].loop:
+        findings.append(Finding(
+            code="import.atlas_one_shot", severity="warning", position=position,
+            message=f"the animation {chosen} is a one-shot in the atlas (loop false), and a Loop always loops",
+            owner_action="Render the animation as a loop, or accept that it plays over and over."))
+    images = {name: png_bytes(atlas.compose(loaded.png, cell, width, height))
+              for name, cell in zip(distinct, cells, strict=True)}
+    stems = {name: frame_name(data) for name, data in images.items()}
+    data = {"loop": loop, "box": [x, y, box_width, box_height], "frames": [stems[n] for n in played], "fit": kit.fit,
+            "palette": kit.palette_id, "timing": {"ticks": ticks, "rest": True}}
+    document = editing.DecisionDocument(decision="kit", data=data)
+    editing.check_decision(project, asset, LOOPS_STAGE, document)
+
+    # the writes
+    created = False
+    paths: dict[str, Path] = {}
+    log = sources.imported_names(asset)
+    records: list[dict[str, Any]] = []
+    for name, image in images.items():
+        path = asset.dir / frame_path(loop, stems[name])
+        if not path.exists():
+            atomic.write_bytes(path, image)
+            created = True
+        paths[stems[name]] = path
+        relative = path.relative_to(asset.dir).as_posix()
+        original = f"{atlas_file.name} {name}"
+        if log.get(relative) != original and not any(r["file"] == relative for r in records):
+            records.append({"schema_version": sources.IMPORTED_SCHEMA_VERSION, "file": relative, "imported_as": original})
+    folder = asset.dir / KIT_DIR / loop / "atlas"
+    digest = frame_name(loaded.png)
+    notes = [(folder / f"{digest}.png", loaded.png), (folder / f"{digest}{atlas.ATLAS_SUFFIX}", atlas_file.read_bytes())]
+    stem = atlas_file.name[: -len(atlas.ATLAS_SUFFIX)] if atlas_file.name.endswith(atlas.ATLAS_SUFFIX) else atlas_file.stem
+    for suffix in atlas.NOTE_SUFFIXES:
+        note = atlas_file.parent / f"{stem}{suffix}"
+        if note.is_file():
+            notes.append((folder / f"{digest}{suffix}", note.read_bytes()))
+    for path, content in notes:
+        if not path.is_file() or path.read_bytes() != content:
+            atomic.write_bytes(path, content)
+            created = True
+    if records:
+        atomic.append_jsonl_many(asset.dir / sources.IMPORTED_FILE, records)
+    latest = [d for d in kit.run.decisions if d.name == "kit" and d.data.get("loop") == loop]
+    if not latest or latest[-1].data != data:  # the same atlas again records nothing
+        editing.record_decision(project, asset, LOOPS_STAGE, document)
+        created = True
+    return AtlasFramesImported(chosen, [stems[n] for n in played], ticks, list(paths.values()), created,
+                               (x, y, box_width, box_height), [project.relative(p) for p, _ in notes], findings)
+
+
+__all__ = ["KIT_DIR", "KitWritten", "FramesImported", "AtlasFramesImported", "import_frames", "import_atlas", "write_kit"]

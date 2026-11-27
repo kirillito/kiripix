@@ -312,6 +312,13 @@ def _image_hash(graph: AssetGraph, spec: StageSpec) -> str:
     return current
 
 
+def check_decision(project: Project, asset: Asset, stage: str, document: DecisionDocument) -> None:
+    """Refuse a Decision `record_decision` would refuse, writing nothing (for a Command that writes files first)."""
+    findings = _entry_findings(_graph(project, asset).spec(stage), asset, document)
+    if findings:
+        raise KiripixError(findings)
+
+
 def record_decision(project: Project, asset: Asset, stage: str, document: DecisionDocument) -> tuple[
         journal.JournalEntry, journal.Replay]:
     """Append a Decision. A click (an `on_image` Decision) records the hash of the input image unless one is given."""

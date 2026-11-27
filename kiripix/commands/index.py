@@ -31,7 +31,7 @@ INDEX: dict[str, Entry] = {
     'accept': Entry('kiripix.commands.decisions', 'Accept a needs-review Stage: re-record its Decisions against the current image (owner-only).', None),
     'note': Entry('kiripix.commands.decisions', 'Write a hand-over note on a Stage: why a pass stopped and what is left. Not a Decision; live until the Stage has a newer Decision or an accept.', None),
     'show': Entry('kiripix.commands.show', "Show one Asset: its Variants and Pick, and each Stage's status, parameters, Decisions and images.", None),
-    'import': Entry('kiripix.commands.sources', 'Add a file made elsewhere to an Asset: an image as a Variant (a PNG, named by its hash), for a character a Model, an animation file, the rigged file or a held thing, or for a sprite a PNG sheet or a ZIP of PNGs (--role).', None),
+    'import': Entry('kiripix.commands.sources', 'Add a file made elsewhere to an Asset: an image as a Variant (a PNG, named by its hash), for a character a Model, an animation file, the rigged file or a held thing, or for a sprite a PNG sheet, a ZIP of PNGs or a Pixelbolt atlas (--role).', None),
     'pick': Entry('kiripix.commands.sources', "Pick one of an Asset's Variants as its Source (records the Pick Decision).", None),
     'thing-remove': Entry('kiripix.commands.sources', "Remove a held thing and all its Variants from a character. Refused while a clip's `attach` holds it.", None),
     'clips copy': Entry('kiripix.commands.clips', "Copy another character's clips to this one: each as a `clip` Decision (undo takes them back one by one), with the clip-source files they name. A clip it already has is skipped, or with --replace decided again. Nothing links the two afterwards.", "A character's clips (spec §6.3)."),

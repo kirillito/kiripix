@@ -15,11 +15,11 @@ assets: backgrounds with layers and collision, props, and animated characters. I
 project. Since M6 it also cuts recordings into the game's sound files: sound effects, UI sounds, ambience and music (ADR 0016).
 
 Its first customer is the owner's next game:
-- a 2D RPG about Toronto and its urban legends;
+- a 2D RPG;
 - turn-based combat;
 - built in Godot;
 - top-down exploration, with some side-view scenes;
-- a Sea of Stars-like look: colourful painted backgrounds at a limited resolution, many animations, foreground and
+- colourful painted backgrounds at a limited resolution, many animations, foreground and
   background layers, particles and lighting.
 
 **Name:** "kiri" (切り) is Japanese for "cut", as in kirie (cut-paper pictures) and kirigami. A picture gets cut into
@@ -62,7 +62,7 @@ layers, and the layers get stacked back into a scene.
 5. **Local first.** The core pipeline runs offline. Image APIs are optional Providers. Runners (local ML models) fit
    **8 GB VRAM**, load lazily and one at a time, and unload after use.
 6. **Exact palette, binary Masks.** Every exported pixel is a palette colour, and every Mask is a 1-bit image
-   (ADR 0001). A check fails on anything else. (Lesson from Lost-and-Found: off-palette mask colours cost several
+   (ADR 0001). A check fails on anything else. (Lesson from an earlier project: off-palette mask colours cost several
    rounds.) **One exception, portraits** (the Owner, 2026-11-16, M5): a dialogue portrait is generated with gradients that a
    strict sprite palette can't hold, so a portrait set's pixels are the set's own colours, chosen once over the whole set
    ([0240](../backlog/m5/0240-m5-portrait-kind.md)). Its alpha is still binary, and the check is against the set's colours.
@@ -131,11 +131,11 @@ my-game-assets/
       pinned/                pinned Runner and Provider results, keyed by input hash
       work/                  deterministic stage outputs (cache, safe to delete)
       out/                   final outputs, the exporter's input
-    prop/ttc_bench/ ...
-    character/raccoon_boss/ ...
+    prop/park_bench/ ...
+    character/boss/ ...
       src/clips/, src/rigged/  a character's clip sources and its rigged file
       src/parameters/        a generated character's parameter file, in place of imported Models (§6.3)
-    sprite/raccoon/ ...
+    sprite/critter/ ...
       src/sheets/            a sprite's imported PNG sheets and ZIPs, stored whole (§6.4)
     sound/footstep_asphalt/ ...
       src/                   the imported recordings (WAV, FLAC, MP3, OGG), stored whole; each one's url, author and licence on its line in imported.jsonl (§6.8)
@@ -153,7 +153,7 @@ file's format change always needs its migration.
 
 ```toml
 [project]
-name = "toronto-rpg"
+name = "my-rpg"
 resolution = [640, 360]        # internal resolution
 tile = 16
 palette = "style/palette.gpl"
@@ -179,7 +179,7 @@ ladder     = { colour = "#00FF00" }
 foreground = { derived = true }
 
 [export.godot]
-project = "C:/Workspace/toronto-rpg"
+project = "C:/Workspace/my-rpg"
 root = "res://kiripix"         # everything Kiripix writes goes under here, Manifest included, except sounds ([sound] folder, ADR 0016)
 version = "4.7"                # pinned at M0: Godot 4.7 (4.7.2-stable); see docs/versions.md
 
@@ -191,7 +191,7 @@ max_residual = 0.5             # px `extend add` lets a piece's registration mis
 folder = "inbox"               # relative to the Project; `--folder` overrides it
 
 [style]                        # the Project's look (M6, §6): `check` measures every other Asset against these (`style-add`, owner-only)
-references = ["character.hero", "room.ch01_dungeon_r01"]   # Asset IDs of a Kind with style Checks; an unknown one is `style.reference_unknown`
+references = ["character.hero", "room.dungeon_r01"]   # Asset IDs of a Kind with style Checks; an unknown one is `style.reference_unknown`
 
 [icon]                         # `kiripix new icon <name>` (M5)
 size = 24                      # 16, 24 or 32 px; an icon's own `size` (brief) overrides it
@@ -218,7 +218,7 @@ peak = -3.0
 [sound.use.ambience]
 prefix = "amb"
 channels = 2
-lufs = -40.0                   # integrated, two-pass loudnorm (calibrated by the Owner in the game's bedroom)
+lufs = -40.0                   # integrated, two-pass loudnorm (calibrated by the Owner)
 true_peak = -2.0               # dBTP
 lra = 11.0
 
@@ -428,8 +428,8 @@ pairing `one_way` (or `outside`). An ordinary Exit that points at a `one_way` Ex
 
 **An Exit's trigger box is an area.** An Exit is a point. When the game needs a rectangle the player walks into, the room
 gives it as an `area` Marker (for example `exit.back_door` and the area `exit.back_door.trigger`), and the game's own room data
-names that area on its Exit. Kiripix doesn't pair them and adds nothing to the Exit (decided by the Owner, 2026-11-12, for the
-game's exits ticket 0040), so the box is drawn on the room and moves with it, never typed into the game's data.
+names that area on its Exit. Kiripix doesn't pair them and adds nothing to the Exit (decided by the Owner,
+2026-11-12), so the box is drawn on the room and moves with it, never typed into the game's data.
 
 **Walk test (UI):** the stand-in body walks the room with the arrow keys, on the real collision, at game resolution,
 with the foreground Layers drawn over it by their y-sort lines.
@@ -439,8 +439,8 @@ with the foreground Layers drawn over it by their y-sort lines.
 A painted room is one baked picture, so a door that opens or a lamp that goes out has its other appearance painted too.
 That appearance is a **Look**. The game finds it by its ID and decides when to show it. A Look may carry a **Condition**,
 an opaque string to Kiripix (`door.cell_3:shut`, `circuit.hall:off`): a label for people and for other Exporters, which the
-game never evaluates. Urban Mystery Club binds each Look by ID in its own room data, with its own condition JSON over its
-Facts, as it binds lights and interactables (decided by the Owner, 2026-11-12). A Look belongs to the room's Asset
+game never evaluates. The first game binds each Look by ID in its own room data, with its own conditions,
+as it binds lights and interactables (decided by the Owner, 2026-11-12). A Look belongs to the room's Asset
 because it must share the room's Grid transform, palette mapping and Layers exactly.
 
 **Making one.**
@@ -505,7 +505,7 @@ made on another Source". A refit or a Layer change rebuilds every Look: its `dif
   and decides which draws on top (ADR 0013).
 
 **Keep Looks small.** A large crop of an edit shows the edit's compression noise and redraw as blotches, which
-Lost-and-Found found (§15). Cut a lamp's glass, not the wall around it. Look IDs are frozen once exported, like Layer
+an earlier project found (§15). Cut a lamp's glass, not the wall around it. Look IDs are frozen once exported, like Layer
 IDs. Look and Loop IDs are one set: a Loop that takes a Look's ID is held (ADR 0011).
 
 ### 6.2 Prop
@@ -535,7 +535,7 @@ per state, only the default shown, and the game switches between them.
 ### 6.3 Character (3D to pixel)
 
 Characters, NPCs and enemies are rendered from 3D, so every animation stays on-model. They are rendered at the target
-pixel size (52 px tall in the Toronto RPG), so the recipe has no `fit`.
+pixel size (52 px tall in the first game), so the recipe has no `fit`.
 
 **model → rig → clips → render → palette → finish → sheet → export**
 
@@ -665,8 +665,8 @@ also works in the figure list.
 
 ### 6.4 Sprite (2D frames to pixel; M4)
 
-An actor built from imported 2D frames, such as a PixelLab figure, exported exactly as a character is (the game's sprite route,
-DEC-012). On PixelLab's free plan a figure is one frame per direction, so a clip of one frame in 4 or 8 directions is the common
+An actor built from imported 2D frames, such as a PixelLab figure, exported exactly as a character is (the game's sprite route).
+On PixelLab's free plan a figure is one frame per direction, so a clip of one frame in 4 or 8 directions is the common
 case; whole animations import too. Design: [0174](../backlog/m4/0174-m4-sprite-kind.md).
 
 **`gen` paints a sprite** ([0388](../backlog/m6/0388-m6-gen-paints-a-sprite.md), PixelLab only; `gen.provider_unsupported` for another).
@@ -704,15 +704,15 @@ The PixelLab character is kept in `asset.toml`'s optional `[sprite.pixellab]` (`
 
 | Stage | What it does | Owner input | Checks |
 |---|---|---|---|
-| **frames** | Cuts the imported sheets (`import --role sheet`: a PNG, or a ZIP of PNGs with at most PixelLab's `metadata.json` at its top, which no frame is read from; stored whole in `src/sheets/`) into `<clip>/<dir>/<NNN>` frames at source resolution. Parameter `directions`: `8` (`s sw w nw n ne e se`), `4` (`s w n e`, the default) or `1` (`s`). A ZIP is read by a naming rule (a direction word, PixelLab's `south`, `south-east`... or ours, in a folder or a file's name; a frame number; the clip is the folder above, snake_case; rotations are the clip of their PixelLab state, the folder above `rotations/`, or `idle` with none ([0385](../backlog/m6/0385-m6-sprite-zip-states-are-clips.md))). The rule is provisional until the trial on a real export ([0175](../backlog/m4/0175-m4-sprite-pixellab-export-trial.md)). A clip gets fps 8, loop on, and is stationary when it has one frame. | A `sheet` Decision (a PNG's file, clip, layout, directions and frame count; a ZIP's clip renames and the folders it leaves out, `leave_out`), a `clip` Decision (fps, loop, stationary) | `frames.direction_missing` (error, never mirrored), `frames.frame_count`, `frames.unknown_direction`, `clips.bad_name`, `clips.duplicate_name` |
-| **fit** | Per frame onto the target grid: `grid` (default: `detect_grid`; one scale for every frame) or `downscale` (one Grid for the Asset that brings the reference frame's figure to `height`, line-keeping, for AI images); `chroma` clears a flat background first; the alpha is binary by vote. Measures each frame's feet (`feet_point`), takes a pivot per direction (the median over its stationary frames, else all) at the ground point a body's would be, 0.08 of the figure's height above the feet (the mc03 bodies' shoes below their pivot), the same in every direction, so sprites and bodies share a ground line (M5, [0318](../backlog/m5/0318-m5-sprite-pivot-at-the-ground-point.md); `fit.json`'s `ground`), and places every frame on one cell, the smallest that holds them around the pivot with 1 px to spare for the outline. `align_feet` places each stationary frame by its own feet. Writes `render.json` in the character's schema, with each frame's measured `feet`. | A `pivot` Decision (the pivot itself, no offset), only when the measured one is wrong | `fit.grid_differs`, `fit.alpha_partial`, `fit.height` (info), `fit.cell_grew` (info) |
+| **frames** | Cuts the imported sheets (`import --role sheet`: a PNG, or a ZIP of PNGs with at most PixelLab's `metadata.json` at its top, which no frame is read from; stored whole in `src/sheets/`; or a Pixelbolt atlas, below) into `<clip>/<dir>/<NNN>` frames at source resolution. Parameter `directions`: `8` (`s sw w nw n ne e se`), `4` (`s w n e`, the default) or `1` (`s`). A ZIP is read by a naming rule (a direction word, PixelLab's `south`, `south-east`... or ours, in a folder or a file's name; a frame number; the clip is the folder above, snake_case; rotations are the clip of their PixelLab state, the folder above `rotations/`, or `idle` with none ([0385](../backlog/m6/0385-m6-sprite-zip-states-are-clips.md))). The rule is provisional until the trial on a real export ([0175](../backlog/m4/0175-m4-sprite-pixellab-export-trial.md)). A clip gets fps 8, loop on, and is stationary when it has one frame. | A `sheet` Decision (a PNG's file, clip, layout, directions and frame count; a ZIP's clip renames and the folders it leaves out, `leave_out`; an atlas's `cell`, `cells`, `plays` and `clips`, written by `import`), a `clip` Decision (fps, loop, stationary, `ticks`) | `frames.direction_missing` (error, never mirrored), `frames.frame_count`, `frames.unknown_direction`, `clips.bad_name`, `clips.duplicate_name` |
+| **fit** | Per frame onto the target grid: `grid` (default: `detect_grid`; one scale for every frame) or `downscale` (one Grid for the Asset that brings the reference frame's figure to `height`, line-keeping, for AI images); `chroma` clears a flat background first; the alpha is binary by vote. Measures each frame's feet (`feet_point`), takes a pivot per direction (the median over its stationary frames, else all) at the ground point a body's would be, 0.08 of the figure's height above the feet (a 3D body's shoes below its pivot), the same in every direction, so sprites and bodies share a ground line (M5, [0318](../backlog/m5/0318-m5-sprite-pivot-at-the-ground-point.md); `fit.json`'s `ground`), and places every frame on one cell, the smallest that holds them around the pivot with 1 px to spare for the outline. `align_feet` places each stationary frame by its own feet. Writes `render.json` in the character's schema, with each frame's measured `feet`. | A `pivot` Decision (the pivot itself, no offset), only when the measured one is wrong | `fit.grid_differs`, `fit.alpha_partial`, `fit.height` (info), `fit.cell_grew` (info) |
 | **palette** | The character's. A sprite's parts are its colour regions (M5, [0319](../backlog/m5/0319-m5-sprite-palette-by-parts.md)): its colours over every frame grouped by OKLab hue (`hue_gap` degrees apart), the neutral ones one `grey` region, each named by hue (`orange`, `blue_2`) and listed in `palette.json`'s `regions`. `parts` names and joins them as a body's names materials (`skin=orange,top=grey`); each part gets a ramp of `shades` (default 4; the Project's ramp table's length when it has one, and every part must be a row of it, so `ramps-add` takes a sprite's parts too), mapped as a body's: nearest in its own ramp, a ramp with the table's colours by lightness order. (Lightness order onto a fitted ramp was tried on the worker and dropped: a fitted ramp keeps outlier colours, a button's yellow or a near-black, and lightness order pushes a whole class onto them.) With `parts`, the regions are written as the sprite's material pass. Regions in no part take `colors`. No `parts` builds as before. | `parts` | `palette.off_palette`, `palette.ramp_shared`, `palette.sprite_regions` (info, while there are no `parts`) |
 | **finish** | The character's; `normals` is `height` by default (a rounded height from the alpha, Sobel; `relief` mixes in lightness), or `flat`; `placement` is `edge`: the source's own dark edge is repainted in the Project's outline colour. `inner_lines` draws between the sprite's parts (M5, [0320](../backlog/m5/0320-m5-sprite-inner-lines-by-part.md)): a region in no part is one of its own, `line_skip` names parts, and with no depth the line is the lower pixel of a border (the right one, side by side); a sprite with no `parts` can't have them (`finish.inner_lines_without_parts`). | — | `normal.size_mismatch`, `palette.off_palette` |
 | **sheet** | The character's. `sheet.pivot_drift` compares the frames' measured feet; its fix is `fit align_feet=true`. | — | as the character's, without `sheet.part_vanishes` |
 | **export** | The character's: `color.png`, `normal.png`, `character.json`, and the Exporter's files. | — | `export.no_target` |
 
 Nothing is mirrored: a direction a clip lacks is an error, and the game picks the nearest facing. A grey-on-grey figure (a
-raccoon) falls into one `grey` region; a painted part mask or a click per part is Later (the Owner's call on 0319).
+grey animal) falls into one `grey` region; a painted part mask or a click per part is Later (the Owner's call on 0319).
 
 **Effect parameters (M6, [0362](../backlog/m6/0362-m6-sprite-effect-parameters.md)).** A battle effect is a `sprite` (trial
 [0347](../backlog/m6/0347-m6-vfx-trial.md); a `vfx` Kind stays in Later). `fit anchor` puts the pivot at `feet` (the default, the
@@ -725,6 +725,8 @@ blank), and the export has no `normal.png` (`character.json`'s `files` lists `co
 Decision takes `ticks`, one duration per frame in game ticks (60 a second, as a Loop's), which `render.json`, `sheet.json` and
 `character.json` carry on the clip (`clips.ticks_count` when the count differs from the frames'); `fps` stays what it was. Every
 parameter at its default builds a sprite as before, byte for byte.
+
+**A Pixelbolt atlas (M6, [0401](../backlog/m6/0401-m6-import-a-pixelbolt-atlas.md)).** `import <id> <name>.atlas.json --role sheet` (or the folder holding one `*.atlas.json`) reads what Pixelbolt wrote; Kiripix runs no Node. The atlas is recognised by `meta.app` `Pixelbolt`; the PNG `meta.image` names beside it and the JSON are stored whole in `src/sheets/` (`<hash>.png`, `<hash>.atlas.json`), with a `<name>.pixel.json` or `<name>.fx.json` beside the atlas as a note nothing reads. The import records one `sheet` Decision (`cell`, `cells`, `plays`, `clips`) that cuts the frame rects (a trimmed frame is set by `spriteSourceSize` in its untrimmed `sourceSize` cell; a frame an animation lists twice is cut once and played twice, a pingpong being already unrolled) and gives one clip per animation, named by it as snake_case, with its `loop` and `ticks` (floor(ms x 60 / 1000 + 0.5), rounded half up, at least 1; `import.ticks_rounded`, info, when a clip's total drifts by more than a tick). Each clip is one direction, so the sprite needs `frames directions=1` (`import.directions`, info). When every frame has the same `anchorPx` the data names it and `import.anchor` (info) gives the `fix`, `kiripix set <id> fit anchor=x,y`; import sets no parameter (frames with different anchors: `import.anchor_varies`, warning). `import.atlas_version` (info) names a `meta.version` (the atlas format's, `1` in Pixelbolt 0.19 to 0.21) Kiripix wasn't checked against. Refused, nothing changed: `import.atlas_image_missing`, `import.atlas_rotated`, `import.atlas_rect`, `import.atlas_invalid`, `import.atlas_ambiguous` (a folder with two atlases); a JSON that isn't a Pixelbolt atlas gets the plain import's `import.sheet_invalid`. A clip name that isn't a valid clip name (it ends in a direction) is `import.atlas_invalid` too. Only the latest atlas `sheet` Decision cuts, so a later render replaces the earlier one (and a clip it lacks is gone), and one `undo` brings the old render back. A `clip` Decision of the Owner's overrides the atlas's `loop` and `ticks`, so an `fps` they decided stays.
 
 **Partial alpha (M6, [0363](../backlog/m6/0363-m6-alpha-dither-op.md)).** Alpha stays 0 or 255, so a glow's haze (alpha 102 in the
 trial's buff) must become a pattern on purpose. `fit alpha` is `vote` (the default: a cell is opaque when at least half its pixels
@@ -1038,7 +1040,7 @@ kiripix undo <id> <stage> [--brief]         undo the stage's last Decision
 kiripix redo <id> <stage> [--brief]         redo it
 kiripix accept <id> <stage>                 confirm a needs-review stage (owner-only)
 kiripix extend <id> canvas|add <png>|undo|done|crop [--side east|south|west|north] [--keep N|ACROSS,DOWN] [--box x0,y0,x1,y1] [--size WxH] [--max-residual PX]   the canvas for the next piece of a large room, joining a piece onto it (`--max-residual`, up to 1.0, for a strip the model re-rendered), and the joined image as a Variant (M4); crop writes a crop of the Source at the image model's size for a Look's edit (M5)
-kiripix import <id> <file> [--role variant|clip-source|rigged|parameters|sheet] [--look l | --loop l [--frame n]] [--of piece|crop]   set a source from an outside image or model; --role says what a character's or sprite's file is; --look adds an edit Variant of Look l; --loop imports a frame Loop's kit frames, --frame an edit of the Source as frame n (M4); --of says the edit was made on a piece or a crop of the room (M5)
+kiripix import <id> <file> [--role variant|clip-source|rigged|parameters|sheet] [--look l | --loop l [--frame n]] [--of piece|crop]   set a source from an outside image or model; --role says what a character's or sprite's file is (a sprite's sheet is a PNG, a ZIP, or a Pixelbolt `.atlas.json` read for its clips, `ticks`, `loop` and anchor, 6.4); --look adds an edit Variant of Look l; --loop imports a frame Loop's kit frames, --frame an edit of the Source as frame n (M4); --of says the edit was made on a piece or a crop of the room (M5)
 kiripix loop kit <id> <loop> <folder> [--frames N]   write a frame Loop's kit to paint on (M4)
 kiripix clips copy <id> --from <character> [--clip c,...] [--replace]   copy another character's clip Decisions and their clip sources (M4)
 kiripix gen <id> [-n N] [--provider x] [--prompt "..."] [--look l | --state s | --emotion e | --side east] [--reference png]   paint through a Provider (M6): a room's Source from its brief's prompt, a Prop's or portrait's Source, an edit of the picked Source as Look l, state s or emotion e, or the next `extend` piece from a fresh canvas (kept as candidates, joined by no one: `extend add` joins the one chosen, under 1.0 px for a Provider that re-renders the kept strip); each image a Variant, never picked; the estimate and the month's remaining budget on stderr and in `data` before the call; refused before sending past `max_images_per_call`, `max_calls_per_day` or the budget (`cost.budget_exceeded`, exit 3); with `approve = "each"` writes a pending call and exits 3 (`provider.approval_needed`); the only command that calls Providers
@@ -1166,7 +1168,7 @@ built the same way.
 │ search/filter │ the asset at integer zoom           │ this stage's few   │
 │ ▸ room        │ layer toggles · overlay opacity     │ controls           │
 │   alley   ●   │ before/after split                  │ live checks ✓ ✗    │
-│   ttc_car ◐   │                                     │ [Primary action ▶] │
+│   train_car ◐ │                                     │ [Primary action ▶] │
 │ ▸ prop        │                                     │                    │
 ├───────────────┴─────────────────────────────────────┴────────────────────┤
 │ stages: brief ✓ source ✓ fit ✓ layers ✓ MASKS palette place reach export  │
@@ -1270,7 +1272,7 @@ The import rule: `ops` imports nothing from the rest; `checks` only `ops`; `reci
 - the Manifest with ownership, `--force`, `--adopt` and the ID freeze; light and emitter Markers exported;
 - `serve` with REST, SSE progress, Probes and the SAM 2 embedding cache;
 - in the UI: fit, masks, palette, place and the walk test;
-- done when a real room from the Toronto game walks correctly in Godot, **and** the agent acceptance test passes.
+- done when a real room from the first game walks correctly in Godot, **and** the agent acceptance test passes.
 
 **The agent acceptance test** (run at every milestone gate from M1, not in CI, because each run costs money): an
 agent with no project knowledge takes a room from `import` to `export` using only `--help`, `describe`, `next` and
@@ -1290,8 +1292,8 @@ and the tokens used are recorded at each milestone, as the measure of goal 1 ("c
 - Finish (outline, normal alignment), sheet and `SpriteFrames` export; the pivot drift check.
 - One character with idle, walk and attack in 8 directions in Godot.
 
-**M4: rooms for grid battles.** Re-cut on 2026-11-08, when the game moved to tactical combat on a grid in the room (its
-DEC-048): rooms grow past one screen in both directions, and a battle area in the room becomes a grid of cells built from
+**M4: rooms for grid battles.** Re-cut on 2026-11-08, when the game moved to tactical combat on a grid in the room:
+rooms grow past one screen in both directions, and a battle area in the room becomes a grid of cells built from
 `solid`. The work is [0133](../backlog/m4/0133-m4-rooms-for-grid-battles.md).
 - A trial of a room extended in both directions, taken to export
   ([0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md)): the corner join, SAM 2 at that size, the collision piece count.
@@ -1314,50 +1316,50 @@ DEC-048): rooms grow past one screen in both directions, and a battle area in th
 - The `area` Marker and its `Area2D`; the Masks and `room.json` exported into the game (§9).
 - Room Looks (§6.1, ADR 0009): the `looks` Stage, edits by `import --look`, and their export to Godot. Trial
   [0128](../backlog/m4/0128-m4-room-look-edit-trial.md) comes first; the work is [0127](../backlog/m4/0127-m4-room-looks.md).
-  The game's M05 bins that a boss knocks over are Props the game moves, not a Look (the Owner, 2026-11-12; as the bench,
-  decision 8). So the game's first Look is its M09 (R6: the power comes back and the lights come on); Looks stay in M4 anyway.
+  Objects a fight knocks over are Props the game moves, not a Look (the Owner, 2026-11-12; as the bench, open
+  decision 8). The game needs its first Look later; Looks stay in M4 anyway.
 - An optional SAM 2 crop on a large room, chosen by the Owner or an agent, only if the trial (0134) shows clicks get worse.
 - First in M4: **palette ramps per part** for characters ([0147](../backlog/m4/0147-m4-character-palette-ramps.md); open
-  decision 9, the game's DEC-053). A part is a Blender material; `render` writes a material pass, the character `palette`
+  decision 9). A part is a Blender material; `render` writes a material pass, the character `palette`
   gives each swappable part its own ramp of palette colours that nothing else uses, and the export gives the game each
   part's ramp in `character.json` and as `ramps.png`.
 - **Characters after the M3 gate** ([0161](../backlog/m4/0161-m4-characters-after-the-m3-gate.md)): change a decided clip's
   range, a Check for small parts that vanish from some frames, and trials of transitions between clips and of a flatter,
   more 2D character look.
 - **A faster start** ([0163](../backlog/m4/0163-m4-start-faster.md)): every Command spends 0.65 s importing before it works.
-- **A `sprite` Kind** ([0174](../backlog/m4/0174-m4-sprite-kind.md); the game's DEC-012 and DEC-044, needed by its M04): an
+- **A `sprite` Kind** ([0174](../backlog/m4/0174-m4-sprite-kind.md)): an
   actor from imported 2D frames (a PixelLab sheet or ZIP, or AI images), `frames → fit`, then the character's `palette`,
   `finish`, `sheet` and `export`, so the game loads it as a character. A missing direction is a finding, never mirrored; the
   pivot comes from the feet; normals from height or flat.
-- **Four bodies, one swap shader** (added 2026-11-12, for the game's M03: 2 genders x 2 outfits): ramps that match across
+- **Four bodies, one swap shader** (added 2026-11-12: 2 bodies x 2 outfits): ramps that match across
   characters, from a Project ramp table ([0166](../backlog/m4/0166-m4-ramps-match-across-characters.md)), right after the
   ramps per part; a trial of a class's weapon in its battle clips ([0170](../backlog/m4/0170-m4-weapon-in-a-battle-clip-trial.md));
   a stop-gap that copies clip Decisions between characters until M5's bases
   ([0171](../backlog/m4/0171-m4-copy-clips-from-a-character.md)); and, lower priority, foot contact frames
-  ([0172](../backlog/m4/0172-m4-foot-contact-frames.md)). The game's M03 waits on the clip edit (0156), the flatter-look trial
+  ([0172](../backlog/m4/0172-m4-foot-contact-frames.md)). The game's next step waits on the clip edit (0156), the flatter-look trial
   (0160) and the weapon trial, so they go before the rooms work.
 - **Rooms that move** ([0183](../backlog/m4/0183-m4-ambient-animation.md), added 2026-11-12 by the Owner): ambient animation
   for painted rooms. A shape, a direction and opaque palette colours on emitter Markers, for the game's particles. **Loops**, a
   `loops` Stage after `looks`: colour cycles baked into frames, and frame loops from whole-pixel Ops (`sway`, `shimmer`,
   `scroll`), a hand-painted kit or image-model edits. Frame 0 is always the room, timing is in whole ticks, and the game plays the
-  frames from its frame counter. A trial in the game's kitchen comes first
+  frames from its frame counter. A trial in a real room comes first
   ([0184](../backlog/m4/0184-m4-ambient-animation-trial.md)) and sets the defaults the child tickets (0185 to 0196) mark
   "set by 0184". Animated separable objects are
   `sprite` Assets, and a runtime shader on the Plate is out.
 
 **M5: the game's next needs, then character layers.** Re-planned on 2026-11-16 from the game's list at the M4 gate
 ([0236](../backlog/m5/0236-m5-the-games-next-needs.md), which records each item's result and the Owner's choices). The game
-is at its M03 and needs layers only at its M11, so its nearer needs go first:
-- **Things held in the hand** (the game's M03 phone idle, M05–M06 weapons and the instrument): named points per frame (a hand,
+needs layers only later, so its nearer needs go first:
+- **Things held in the hand** (a phone in an idle, weapons and an instrument): named points per frame (a hand,
   the head, a socket) recorded by `render` and exported in `character.json`
   ([0237](../backlog/m5/0237-m5-render-records-named-points.md)), then a trial of 0170's (a) attach against (c) a layer, with a
   grip that sits in the hand and the cell rule ([0238](../backlog/m5/0238-m5-held-things-trial.md)).
 - **A Project clip table** (`[[character.clips]]`) and `clips.timing_differs`, so every body plays one timing
   ([0239](../backlog/m5/0239-m5-project-clip-table.md)).
-- **A `portrait` Kind** (the game's M04): one Asset per character's set, each emotion an image-model edit of the neutral image,
+- **A `portrait` Kind**: one Asset per character's set, each emotion an image-model edit of the neutral image,
   with one fit and the set's own colours (principle 6's exception), the head's place fixed on the canvas and the body free to
   change between emotions ([0240](../backlog/m5/0240-m5-portrait-kind.md); a trial first; [0321](../backlog/m5/0321-m5-portrait-whole-body-emotions.md)).
-- **A Prop's states**, any number of them: the laneway's bins standing and toppled ([0257](../backlog/m5/0257-m5-prop-states.md)).
+- **A Prop's states**, any number of them: a bin standing and toppled ([0257](../backlog/m5/0257-m5-prop-states.md)).
 - **Speed and upkeep:** the test suite (80–90 minutes at the M4 gate) builds its rooms and characters once per module, and
   Kiripix starts faster ([0275](../backlog/m5/0275-m5-tests-build-a-room-once-per-module.md) to
   [0277](../backlog/m5/0277-m5-start-faster-pydantic-and-typer.md)); a change to a Stage's code makes it stale through a
@@ -1367,16 +1369,16 @@ is at its M03 and needs layers only at its M11, so its nearer needs go first:
   [0247](../backlog/m5/0247-m5-finish-inner-lines-at-a-depth-step.md)); `set` on several Assets and labelled snapshots for
   setting trials across a cast ([0248](../backlog/m5/0248-m5-snapshots-for-trials-across-a-cast.md)); the room first pass as a
   workflow ([0249](../backlog/m5/0249-m5-room-first-pass-workflow.md)); the M4 gate's findings (0232, 0233, 0235, 0250).
-- **Answers the game needs before its M09–M10:** the tileset trial with no code
+- **Answers the game needs soon:** the tileset trial with no code
   ([0251](../backlog/m5/0251-m5-tileset-trial.md)) and normal maps for painted rooms from a depth Runner
-  ([0252](../backlog/m5/0252-m5-environment-normals-trial.md)), both trials; the `icon` Kind (the game's M08,
-  [0253](../backlog/m5/0253-m5-icon-kind.md)); a trial of suggesting a room's foreground Layers
+  ([0252](../backlog/m5/0252-m5-environment-normals-trial.md)), both trials; the `icon` Kind
+  ([0253](../backlog/m5/0253-m5-icon-kind.md)); a trial of suggesting a room's foreground Layers
   ([0286](../backlog/m5/0286-m5-suggest-foreground-layers-trial.md)).
-- **Last, for the game's M10–M11:** Looks with their own Markers, two at once and `reach` per Look (the rest of open decision 8,
+- **Last, for the game's later needs:** Looks with their own Markers, two at once and `reach` per Look (the rest of open decision 8,
   [0254](../backlog/m5/0254-m5-looks-markers-combining-and-reach.md)); traversal Links
   ([0255](../backlog/m5/0255-m5-traversal-links.md)); and character layers, below. They stay in M5 (the Owner, 2026-11-16).
 
-**Character layers** were added on 2026-11-11 for the game's customizable MC (its DEC-052, needed by its M11): hair styles
+**Character layers** were added on 2026-11-11 for the game's customizable player character: hair styles
 and outfits rendered once each as layers over a body, with the body as a holdout, on the body's clips, camera, frames and
 pivots, so the cost adds per layer and no combination is rendered. A trial comes first
 ([0153](../backlog/m5/0153-m5-character-layer-trial.md)); the work is [0152](../backlog/m5/0152-m5-character-layers.md).
@@ -1385,8 +1387,8 @@ The two bodies are base Models built by Claude in headless Blender
 so it needs no Mixamo round trip of its own ([0165](../backlog/m4/0165-m4-characters-share-a-base.md), built in M4; §6.3).
 
 **M6: rooms at chapter scale, style that holds, NPCs from bases.** Re-planned by the Owner on 2026-11-18, before its
-tickets are split. The game's top risk is room throughput: its M15–M16 needs about 30 Chapter 1 rooms at final art, at about
-one room per game milestone today, and its M17 needs the chapter's NPCs. M6 serves those needs. Generation and agents move
+tickets are split. The game's top risk is room throughput: it needs about 30 rooms at final art for its first chapter, at about
+one room per game milestone today, and then that chapter's NPCs. M6 serves those needs. Generation and agents move
 out (below). Split into tickets on 2026-11-19 ([0324](../backlog/m6/0324-m6-rooms-at-chapter-scale-style-npcs.md),
 with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.md)). The Owner's notes:
 - **Rooms at chapter scale.** Three parts:
@@ -1408,7 +1410,7 @@ with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.m
 - ~~Maybe the tileset recipe.~~ **Not in M6:** the tileset trial
   ([0251](../backlog/m5/0251-m5-tileset-trial.md), 2026-11-19) chose painted rooms for chapter 1; the recipe stays under
   "Later" (below).
-- **Added on 2026-11-19 by the Owner, for the game's M06–M10:** room Sources in bulk (the brief renders the prompt without a
+- **Added on 2026-11-19 by the Owner, for the game's coming milestones:** room Sources in bulk (the brief renders the prompt without a
   Provider; `to-paint` and `inbox`; 0348 to 0351); normal maps for painted rooms, approved after the trial 0252 (a `normals`
   Stage between `masks` and `palette`, off by default; ADR 0014; 0339 to 0343); named terrain Masks exported for the game's grid (0344 to 0346); and a
   trial of battle effects as sprite sheets (0347). The last two move here from Later.
@@ -1417,9 +1419,9 @@ with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.m
   frame, per-clip ticks; 0362), an Op that dithers partial alpha with the `fit.alpha_partial` finding on the input (0363) and the
   export of an effect's blend, light mode and anchor (0364). Frames come from a Pixelbolt recipe imported as a sheet (the hit
   spark and the summon puff are accepted this way); the recipe is kept beside it in `src/`, with no Node in Kiripix. The buff glow,
-  the sound-wave cone and the telegraph have no route yet. The rest (effect Ops, a Pixelbolt atlas import, the UI player) waits for
+  the sound-wave cone and the telegraph have no route yet. A Pixelbolt atlas import is built (0401). The rest (effect Ops, the UI player) waits for
   the game to confirm the first effects.
-- **Sound as a Kind** (added 2026-11-26 by the Owner, from the game's laneway work; [0393](../backlog/m6/0393-m6-sound-kind.md),
+- **Sound as a Kind** (added 2026-11-26 by the Owner, from the game's room work; [0393](../backlog/m6/0393-m6-sound-kind.md),
   ADR 0016). An agent cuts a recording into Takes it can see on a contact sheet, instead of guessing cut points from
   numbers. It exports normalised OGG variations with their provenance in the Manifest; the game keeps its `audio.json` and
   `CREDITS.md`. The loudness and format table is the game's audio skill's, as Project settings. ffmpeg, pinned through
@@ -1446,31 +1448,31 @@ with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.m
 
 **Later:** side view (side-view Masks: one-way, ladder; the parallax split with depth; platform reachability; the lowest
 priority, moved here from M7 on 2026-11-11), the tileset recipe (autotile rules; see below; planned for the game's procedural dungeon, [0384](../backlog/m6/0384-tileset-kind-for-a-procedural-dungeon.md)), "promote to Prop" for a room's foreground Layer, renaming exported
-IDs with aliases. (VFX sheets, normal maps for painted backgrounds and custom named Masks moved to M6 on 2026-11-19.) (Battle backgrounds were dropped on 2026-11-08: the game fights in the room, and its DEC-048 rejects
+IDs with aliases. (VFX sheets, normal maps for painted backgrounds and custom named Masks moved to M6 on 2026-11-19.) (Battle backgrounds were dropped on 2026-11-08: the game fights in the room, with no
 separate battle maps.)
 
 **The tileset recipe, estimated on 2026-11-08, not planned.** The game compares painted rooms with a modular kit for its
-dungeons in its M09 (its ISS-017), and grid battles cluster in dungeons. A minimal recipe is a Kind `tileset`: brief → source
+dungeons, and grid battles cluster in dungeons. A minimal recipe is a Kind `tileset`: brief → source
 → fit → palette → tiles (slice to tiles, dedupe, an edge-match check) → terrain (peering bits per tile, a Decision) → export
 (a `TileSet` `.tres` with a terrain set and a physics layer), with props on top from the prop recipe. That's about 8–10
 tickets and 2–3.5M tokens, close to M2's props plus a heavy UI for tagging peering bits. The unknown is the art: whether the
 free image model can paint a tile sheet that tiles and matches the painted districts.
 
 **The trial's answer (0251, 2026-11-19): paint only for chapter 1; tiles are a "maybe" for later.** The model paints floors,
-wall faces and whole rooms in the ch01 style. It won't lay out a kit: corners came back as whole little rooms, and each
+wall faces and whole rooms in the first chapter's style. It won't lay out a kit: corners came back as whole little rooms, and each
 image was a different dungeon. A corridor cut from one painted room matched in style, and the battle grid read better on it.
-But 59 of its 88 joins showed a seam, from the room's baked light, and its walls repeated clipped doors and lights. Chapter 1
-(to the game's milestone 20-30 or so) uses painted rooms. With a good tile sheet, tiles could make procedurally generated
-dungeons in chapters 2-10, so the estimate stays here. A later try needs a sheet painted for tiling: even light, plain wall
+But 59 of its 88 joins showed a seam, from the room's baked light, and its walls repeated clipped doors and lights. The first
+chapter uses painted rooms. With a good tile sheet, tiles could make procedurally generated
+dungeons in later chapters, so the estimate stays here. A later try needs a sheet painted for tiling: even light, plain wall
 strips with doors and lights as props, and every piece from one image.
 
-**Planned, not scheduled (the Owner, 2026-11-25).** The game now has a procedural dungeon on a modular tile kit (its S1, the
-PATH, DEC-078); its regular dungeons wait for its M13 test. The Owner assumes GPT Image can paint the sheet (a trial of that
+**Planned, not scheduled (the Owner, 2026-11-25).** The game now has a procedural dungeon on a modular tile kit;
+its regular dungeons wait for a later test. The Owner assumes GPT Image can paint the sheet (a trial of that
 is separate). The game owns the generator and the builder; Kiripix makes the tile kit. The game's builder draws tiles into
 one Plate, so the export is likely an atlas and a kit file rather than a `TileSet` `.tres`. The spec for it is
 [0384](../backlog/m6/0384-tileset-kind-for-a-procedural-dungeon.md).
 
-## 15. Lessons carried over from Lost-and-Found
+## 15. Lessons carried over from an earlier project
 
 - **Masks:** drawn in an editor, they drift off-palette. Snap them on import, store them binary, and fail a check on
   anything else.
@@ -1479,7 +1481,7 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
   replace it.
 - **Agent sessions should get numbers, not pictures,** unless a picture is needed to decide.
 - **Stable IDs and versioned data with migrations** paid off, so Kiripix keeps both.
-- **Rooms need other looks** (its D10 "states"): shut doors, unlit lamps, unbuilt stations, each an image-model edit of the
+- **Rooms need other looks**: shut doors, unlit lamps, unbuilt stations, each an image-model edit of the
   room's source cut to a rect. They became one of the art pipeline's most-used parts. The edit came back at another size, so it
   was resized to the source first. Where a look met a foreground piece, a second crop drew at that piece's depth. Large crops
   showed the edit's JPEG noise as blotches, so looks were kept small. Kiripix has Looks (§6.1), and reports an edit's drift
@@ -1487,14 +1489,14 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
 
 ## 16. Open decisions
 
-1. ~~The game's internal resolution and tile size~~: decided 2026-11-03, for the Toronto RPG: 640 x 360, 16 px tiles,
+1. ~~The game's internal resolution and tile size~~: decided 2026-11-03, for the first game: 640 x 360, 16 px tiles,
    characters 52 px tall. 360 px is 22.5 tiles, so a room that fills the screen is 640 x 368. Resolution and tile are set
    in `kiripix.toml`; character height has no setting until the character recipe (M3) adds one.
 2. ~~The UI framework~~: decided 2026-11-02, React with TypeScript and Vite (ADR 0008).
 3. ~~The outline method for 3D renders~~: decided 2026-11-07 by the owner: a 1 px silhouette from the render's object mask,
    drawn in `finish`. The mask is exact, so the line has no isolated pixels; Blender's own lines (inverted hull, Freestyle)
    are sized in scene units and break up at 52 px. Trial [0106](../backlog/m3/0106-m3-outline-method-trial.md) confirmed it on a
-   real character (`character.mc02`, 2026-11-11): the silhouette is kept and inner lines are out. On the idle it has no
+   real character (a test body, 2026-11-11): the silhouette is kept and inner lines are out. On the idle it has no
    flicker on still parts; inner lines would add a third more line pixels.
 4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (with Providers; deferred from M3, then from M6).
 5. ~~Which API provider comes first~~: decided 2026-11-23 by the Owner: OpenAI's GPT Image, through the OpenAI API, for
@@ -1507,7 +1509,7 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
    study is [0353](../backlog/m6/0353-m6-provider-research.md).
 6. Licence for Kiripix itself, if it's ever published.
 7. ~~How a multi-screen room is made~~: decided 2026-11-06 by the owner, after the trial
-   [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects
+   [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms, and **expects
    about as many of them as single-screen rooms**, so neither is the exception. Exits still join rooms at natural breaks such as
    doors, stairs and corners. A room's size is only the brief's width and height, so **one room has one Source and one set of
    Masks**: any extending happens before `source`, and walls and Masks go on the whole image after it.
@@ -1532,14 +1534,14 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
    - **In the game:** a scrolling camera is the game's work. The exported scene has no room size or camera limits, but the Plate's
      texture gives the size.
 
-   **Updated 2026-11-08, for the game's grid battles (DEC-048):** rooms now grow past one screen in both directions, often 2 x 2
+   **Updated 2026-11-08, for the game's grid battles:** rooms now grow past one screen in both directions, often 2 x 2
    screens. 0063 extended one direction per room; trial [0134](../backlog/m4/0134-m4-trial-room-extended-both-ways.md) joins a
    corner piece to two neighbours and takes the room to export. The join tool moves to M4 without a Provider, because the
-   budget is $0 and the pieces are made in the image model's own UI anyway. `harbor_front`'s 1,533 collision pieces were an
+   budget is $0 and the pieces are made in the image model's own UI anyway. An early test room's 1,533 collision pieces were an
    anomaly of the brush tool at the time, and the Owner expects normal rooms to have far fewer; 0134 counts them on a full
    room, and a lighter collision export (one `ConcavePolygonShape2D` per Mask) is planned only if the count is high.
 
-   **What trial 0134 found (2026-11-16),** on the tutorial battle's laneway, `room.ch01_002_laneway`: four pieces (NW, then
+   **What trial 0134 found (2026-11-16),** on a test street room: four pieces (NW, then
    east, south and the corner), a Source of 2407 x 1343 px and a room of 1120 x 624, about 3 screens.
    - **The corner works:** registered against two edges, the residual is 0.23 px (0.24 and 0.11 for the east and south
      pieces), and no seam shows after `fit` and `palette`, even next to a blurred piece. At first `extend add` refused it,
@@ -1557,23 +1559,23 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
    - **The Owner's time:** about 25 minutes making the four pieces, most of it drawing canvases in Paint, which
      `extend canvas` already does; then 19 minutes in the UI after Claude's first pass through the CLI, which the Owner judged
      very good, including Mask fixes the walk test found.
-   - **A closed gate** between a yard and the laneway is `solid`; opening it in the game is a Look taking collision away
+   - **A closed gate** between a yard and the street is `solid`; opening it in the game is a Look taking collision away
      (open decision 8), left to the game's ticket for the scene.
 8. **Room Looks beyond one picture and their own collision** (§6.1, M4). Settled: a Look can add collision and take it
    away. Its `solid` starts as the room's, an `erase` clears it, and the game swaps the room's `solid` for the Look's while
-   it shows. Not settled: whether Looks stack or combine (an unbuilt station with the lamps off, Lost-and-Found's
-   `relight`); whether a Look changes walkable, navigation and `reach` (rubble cleared; the laneway's back gate, whose yard
+   it shows. Not settled: whether Looks stack or combine (an unbuilt station with the lamps off, an earlier project's
+   `relight`); whether a Look changes walkable, navigation and `reach` (rubble cleared; a street room's back gate, whose yard
    `reach` reports as an island because it reads the room without its Looks); whether a Look has its own Markers, such as
-   a light that goes off with an unlit Look; and whether a soft edge is allowed with binary alpha. The laneway and the
-   game's R6 now need all but the soft edge: ADR 0013, accepted (tickets 0314 to 0317). (2026-11-08: a boss phase that moves a
+   a light that goes off with an unlit Look; and whether a soft edge is allowed with binary alpha. That street room and a later
+   room now need all but the soft edge: ADR 0013, accepted (tickets 0314 to 0317). (2026-11-08: a boss phase that moves a
    bench doesn't need a Look to take collision away. The bench is a Prop, and the game moves it. 2026-11-12, decided by the
-   Owner: the same for the game's M05 bins that a boss knocks over. A toppled bin frees the cells it stood on, which is a Look
+   Owner: the same for bins that a boss knocks over. A toppled bin frees the cells it stood on, which is a Look
    taking collision away, and bins are cover on single cells, which the game keeps on its grid; so they are Props the game
-   moves, and the laneway is painted without them.)
+   moves, and the room is painted without them.)
 
-9. **Character customization**, narrowed on 2026-11-11 (the game's DEC-013, DEC-027 and DEC-051 to DEC-054). The player
+9. **Character customization**, narrowed on 2026-11-11. The player
    picks gender, skin colour, hair, clothes and a class. Rendering every combination is out: a full body with about 15 clips is
-   about 10 minutes of rendering (mc02: 70 ms a frame at 52 px, plus `palette` and `finish`). Decided:
+   about 10 minutes of rendering (a test body: 70 ms a frame at 52 px, plus `palette` and `finish`). Decided:
    - **Colours by palette swap in the game,** with no extra render. Each swappable part (a Blender material, or several) owns a
      ramp of palette colours that no other part, fixed colour or the outline uses (M4,
      [0147](../backlog/m4/0147-m4-character-palette-ramps.md)). **Ramps match across characters** (2026-11-12): a Project
@@ -1588,7 +1590,7 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
      not a layer, whose stack the trial found barely different but which loses the inner lines where the thing crosses the body and
      costs a render and an Asset per thing and body. A clip that outgrows the body's cell gets its own; a class weapon has a ramp
      row, so a skin or hair swap never reaches it.
-   - **Four character Assets at the game's M03** (2 bodies x 2 outfits) each decide their clips. A character can be made
+   - **Four character Assets at first** (2 bodies x 2 outfits) each decide their clips. A character can be made
      from a base since 2026-11-14 (M4, [0165](../backlog/m4/0165-m4-characters-share-a-base.md), ADR 0012); before that, and
      still for characters that share clips but not a skeleton, `kiripix clips copy` copies clip Decisions between them
      ([0171](../backlog/m4/0171-m4-copy-clips-from-a-character.md); chosen 2026-11-12), and each body's second outfit is
@@ -1603,7 +1605,7 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
 
 - M6 split into tickets, 2026-11-19: 0324 (spec, with questions for the Owner) to 0338 (gate). A review
   queue, hand-over notes, a `--match` scope and districts; a style trial before the style Check; NPCs from a base wait on
-  the Owner's answers in 0336. Added the same day for the game's M06–M10: room Sources in bulk (0348 to 0351), room normal
+  the Owner's answers in 0336. Added the same day for the game's coming milestones: room Sources in bulk (0348 to 0351), room normal
   maps (0339 to 0343), named terrain Masks (0344 to 0346), and a battle-effects trial (0347).
 - The tileset trial (0251), 2026-11-19, by the Owner: painted rooms for the game's chapter 1; the tileset recipe leaves M6
   and stays a "maybe" for later chapters (§14).
@@ -1614,17 +1616,17 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
   file by a generator of the Project's own (0224); both in §6.3. `kiripix.toml` is at schema version 6
   (`[character.generators]`), `rig.json` at 2 (each bone's parent, and the rig's height).
 - M4, 2026-11-12: rooms that move (0183), decided by the Owner. Loops are a `loops` Stage of their own, not animated Looks.
-  A `pulse` may brighten a light source's own pixels, never the surfaces around it (the game's Option A). Particles draw opaque
+  A `pulse` may brighten a light source's own pixels, never the surfaces around it (the game's choice). Particles draw opaque
   palette colours. Cycles are baked into frames. `loop.flash` is an error. When a Look over a Loop shows, the game hides the
   Loop by its ID. A Loop may name a light Marker to flicker in step. §6.1 and §9 have the details, and ADR 0011 records the Stage (0212).
-- M4 rooms, 2026-11-12, after the game's M04 and M05 plans: the walkable Checks apply only to an area marked `walkable`; an
+- M4 rooms, 2026-11-12, after the game's plans: the walkable Checks apply only to an area marked `walkable`; an
   Exit's trigger box is an area the game pairs by ID; a Look's Condition is an optional label, since the game binds Looks by
-  ID; the M05 bins are Props, not a Look, and Looks stay in M4; custom named Masks under Later. All decided by the Owner.
+  ID; knocked-over bins are Props, not a Look, and Looks stay in M4; custom named Masks under Later. All decided by the Owner.
 - Open decision 9: character customization (2026-11-11), narrowed the same day. Palette ramps per part come first in M4.
-  On 2026-11-12, for the game's four M03 bodies: ramps that match across characters (a Project ramp table), a trial of a
+  On 2026-11-12, for the game's four bodies: ramps that match across characters (a Project ramp table), a trial of a
   class's weapon in its battle clips, `clips copy`, and foot contact frames in `character.json`.
 - A new M5, character layers (2026-11-11). Generation and agents move to M6; side view moves to Later, as the lowest priority.
-- M4 is re-cut as "rooms for grid battles" (2026-11-08, after the game's DEC-048). Generation and agents move to M5, side view
+- M4 is re-cut as "rooms for grid battles" (2026-11-08, after the game chose grid battles in the room). Generation and agents move to M5, side view
   to M6.
 - A new `area` Marker: a box with a stable ID, optionally on a cell grid, exported as an `Area2D`.
 - The `solid` and `pit` Masks and `room.json` are exported into the game. `room.json` is now part of the game's contract.
