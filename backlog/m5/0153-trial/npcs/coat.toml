@@ -1,8 +1,0 @@
-base = "adult_male"
-[parts]
-top = "coat"
-collar = "high_collar"
-under = "tee"
-[colours]
-top = "burgundy"
-under = "white"

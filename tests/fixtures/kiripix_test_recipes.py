@@ -1147,7 +1147,8 @@ class FakeProvider(Provider):
     def fit_size(self, model: str, wanted: tuple[int, int]) -> tuple[int, int]:
         return max(1, wanted[0]), max(1, wanted[1])
 
-    def call(self, request: ProviderRequest, key: str | None, check_cancel: CheckCancel) -> ProviderResult:
+    def call(self, request: ProviderRequest, key: str | None, check_cancel: CheckCancel,
+             wait: Any = None) -> ProviderResult:
         check_cancel()
         if self.key_name is not None and not key:
             raise ProviderError("no key")
@@ -1194,5 +1195,200 @@ def _fake_openai(request: Any, check_cancel: CheckCancel) -> dict[str, Any]:
 
 
 openai_provider.set_transport(_fake_openai)
+
+
+# The PixelLab Provider over a fake transport (ticket 0387): every request, polls and DELETEs included, is kept as JSON in the
+# working folder's `pixellab-requests/` (the key only as `bearer`). Jobs queue for one poll, then run for one, then end. The
+# polls come fast (0.05 s). A description, action or state name holding a marker changes the answer: FAIL (the job fails),
+# FAIL-BILLED (fails with a charge of $0.01), 402 (the POST is refused), GENERATIONS (charged in generations, 1.0), HOLD (the job
+# stays queued while the file `pixellab-hold` exists; `pixellab-holding` appears when it is first polled, so a test can cancel
+# it). STOP-<direction word> and STOP-animate fail (free) only the jobs of that direction, or the animation's; STOPBILLED-... the same
+# with a $0.01 charge (0388's tests stop a clip's jobs part way). A character from our frames is charged 0.25 generations; the rest in USD at the price list's figures. The first GET of
+# a character's ZIP answers 423, and every GET of it answers 500 while the file `pixellab-zip-fails` exists. The ZIP holds
+# three states (idle, hop, swipe) in PixelLab's layout.
+import kiripix.providers.pixellab as pixellab_provider
+
+pixellab_provider.POLL_S = 0.05
+pixellab_provider.POLL_LATE_S = 0.05
+_PIXELLAB_JOBS: dict[str, dict[str, Any]] = {}
+_PIXELLAB_CHARACTERS: dict[str, dict[str, Any]] = {}
+_PIXELLAB_ZIP_ASKED: set[str] = set()
+_PIXELLAB_USD = {"generate-image-v2": 0.082, "create-character-v3": 0.03, "create-character-state": 0.075,
+                 "estimate-custom-skeleton": 0.005, "estimate-skeleton": 0.005, "animate-with-skeleton-v3": 0.016,
+                 "generate-8-rotations-v3": 0.0203, "animate-with-text-v3": 0.022}
+
+
+def _png_b64(size: tuple[int, int], colour: tuple[int, int, int]) -> str:
+    import base64
+    import io
+
+    out = io.BytesIO()
+    Image.new("RGBA", size, (*colour, 255)).save(out, format="PNG")
+    return base64.b64encode(out.getvalue()).decode("ascii")
+
+
+def _png_size_of(image: dict[str, Any]) -> tuple[int, int]:
+    import base64
+    import io
+
+    with Image.open(io.BytesIO(base64.b64decode(image["base64"]))) as opened:
+        return opened.size
+
+
+def _pixellab_zip(character: dict[str, Any]) -> bytes:
+    import io
+    import zipfile
+
+    size = character["size"]
+    names = FOUR if character["directions"] == 4 else DIRECTIONS8
+    states = ["idle", "hop", "swipe"]
+    if character.get("state") and character["state"] not in states:  # the state the call made (`hop_2`) joins the group
+        states.append(character["state"])
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        archive.writestr("metadata.json", json.dumps({"character": character["id"], "states": states}))
+        for state_number, state in enumerate(states):
+            for direction_number, direction in enumerate(names):
+                colour = (40 + 60 * state_number, 30 + 25 * direction_number, 120)
+                png = io.BytesIO()
+                Image.new("RGBA", (size, size), (*colour, 255)).save(png, format="PNG")
+                archive.writestr(f"{state}/rotations/{direction}.png", png.getvalue())
+    return out.getvalue()
+
+
+FOUR = ("south", "west", "north", "east")
+DIRECTIONS8 = ("south", "south-west", "west", "north-west", "north", "north-east", "east", "south-east")
+
+
+def _fake_pixellab(method: str, path: str, body: Any, key: str, check_cancel: CheckCancel) -> tuple[int, Any]:
+    check_cancel()
+    folder = Path.cwd() / "pixellab-requests"
+    folder.mkdir(exist_ok=True)
+    number = len(list(folder.glob("*.json"))) + 1
+    (folder / f"{number:03}.json").write_text(json.dumps({"method": method, "path": path, "bearer": bool(key), "body": body}),
+                                              encoding="utf-8")
+    if not key:
+        return 401, {"detail": "no key"}
+    text = json.dumps(body) if body else ""
+    if method == "DELETE":
+        job = _PIXELLAB_JOBS.get(path.rsplit("/", 1)[-1])
+        if job is None:
+            return 404, {"detail": "no such job"}
+        job["cancelled"] = True
+        return 200, {"status": "cancelled"}
+    if method == "GET" and path.startswith("/characters/"):
+        character = _PIXELLAB_CHARACTERS.get(path.split("/")[2])
+        if character is None:
+            return 404, {"detail": "no such character"}
+        if (Path.cwd() / "pixellab-zip-fails").exists():  # the character is made and charged, its ZIP never comes
+            return 500, {"detail": "the ZIP failed"}
+        if character["id"] not in _PIXELLAB_ZIP_ASKED:
+            _PIXELLAB_ZIP_ASKED.add(character["id"])
+            return 423, {"detail": "the character is still being made"}
+        return 200, _pixellab_zip(character)
+    if method == "GET" and path.startswith("/background-jobs/"):
+        job = _PIXELLAB_JOBS.get(path.rsplit("/", 1)[-1])
+        if job is None:
+            return 404, {"detail": "no such job"}
+        job["polls"] += 1
+        if "HOLD" in job["text"] and (Path.cwd() / "pixellab-hold").exists():
+            (Path.cwd() / "pixellab-holding").write_text("", encoding="utf-8")
+            return 200, {"id": job["id"], "status": "queued"}
+        if job["polls"] == 1:
+            return 200, {"id": job["id"], "status": "queued"}
+        if job["polls"] == 2:
+            return 200, {"id": job["id"], "status": "processing"}
+        return 200, _pixellab_job_end(job)
+    if method == "POST":
+        endpoint = path.lstrip("/")
+        if endpoint not in _PIXELLAB_USD:
+            return 404, {"detail": f"no endpoint {endpoint}"}
+        if "402" in text:
+            return 402, {"detail": "out of credits"}
+        if endpoint == "animate-with-text-v3" and not (  # the OpenAPI: first_frame and action; frame_count an even 4 to 16
+                "first_frame" in body and "action" in body and body.get("frame_count", 8) % 2 == 0
+                and 4 <= body.get("frame_count", 8) <= 16):
+            return 422, {"detail": "animate-with-text-v3: bad first_frame, action or frame_count"}
+        if endpoint == "generate-8-rotations-v3" and "view" in body and not body.get("direction_images"):  # 0390's trial
+            return 422, {"detail": "view is only used with direction_images: a single sprite is rotated as drawn. "
+                                   "Drop view or add direction_images."}
+        if "south" in (body or {}).get("direction_images", {}):  # the OpenAPI's enum for create-character-v3 has no south
+            return 422, {"detail": "direction_images: south is not allowed (it is the reference_image)"}
+        job_id = f"job-{number:03}"
+        job = {"id": job_id, "endpoint": endpoint, "body": body, "text": text, "polls": 0, "cancelled": False}
+        answer: dict[str, Any] = {"background_job_id": job_id}
+        if endpoint in ("create-character-v3", "create-character-state"):
+            character_id = f"char-{number:03}"
+            size = (body.get("override_frame_size") or body.get("image_size") or {"width": 32})["width"]
+            if "reference_image" in body:
+                size = _png_size_of(body["reference_image"])[0]
+            elif endpoint == "create-character-state" and "override_frame_size" not in body:
+                size = _PIXELLAB_CHARACTERS.get(body["character_id"], {}).get("size", 32)
+            _PIXELLAB_CHARACTERS[character_id] = {"id": character_id, "size": size, "directions": body.get("n_directions", 8),
+                                                  "state": body.get("state_name")}
+            job["character_id"] = answer["character_id"] = character_id
+        _PIXELLAB_JOBS[job_id] = job
+        return 202, answer
+    return 405, {"detail": "no such route"}
+
+
+def _pixellab_job_end(job: dict[str, Any]) -> dict[str, Any]:
+    text, endpoint, body = job["text"], job["endpoint"], job["body"]
+    scopes = [str((body or {}).get("direction"))] + (["animate"] if endpoint == "animate-with-skeleton-v3" else [])
+    if any(f"STOPBILLED-{scope}" in text for scope in scopes):  # fails, charged, for the jobs of one direction or the animation
+        return {"id": job["id"], "status": "failed", "error": "the fake job failed on purpose",
+                "usage": {"type": "usd", "usd": 0.01}}
+    if any(f"STOP-{scope}" in text for scope in scopes):
+        return {"id": job["id"], "status": "failed", "error": "the fake job failed on purpose"}
+    if "FAIL-BILLED" in text:
+        return {"id": job["id"], "status": "failed", "error": "the fake job failed on purpose",
+                "usage": {"type": "usd", "usd": 0.01}}
+    if "FAIL" in text:
+        return {"id": job["id"], "status": "failed", "error": "the fake job failed on purpose"}
+    if "GENERATIONS" in text:
+        usage: dict[str, Any] = {"type": "generations", "generations": 1.0}
+    elif "reference_image" in (body or {}):  # everything drawn by us: imported for 0.25; else ceil(w*h*n/65536), as the OpenAPI says
+        width, height = _png_size_of(body["reference_image"])
+        every = len(body.get("direction_images") or {}) >= body.get("n_directions", 8) - 1
+        usage = {"type": "generations", "generations": 0.25 if every else float(max(1, -(-width * height * body.get("n_directions", 8) // 65536)))}
+    else:
+        usage = {"type": "usd", "usd": _PIXELLAB_USD[endpoint]}
+    last: dict[str, Any] = {}
+    if endpoint == "generate-image-v2":
+        width, height = body["image_size"]["width"], body["image_size"]["height"]
+        last = {"images": [{"type": "base64", "format": "png", "base64": _png_b64((width, height), (30 * n, 90, 150))}
+                           for n in range(1, 5)]}
+    elif endpoint == "generate-8-rotations-v3":  # the first frame comes back unchanged, the rest are new
+        width, height = _png_size_of(body["first_frame"])
+        frames = [body["first_frame"]["base64"]] + [_png_b64((width, height), (25 * n, 200, 40)) for n in range(1, 8)]
+        last = {"images": [{"type": "base64", "format": "png", "base64": f} for f in frames]}
+    elif endpoint == "animate-with-skeleton-v3":
+        width, height = _png_size_of(body["first_frame"])
+        count = len(body.get("keypoints") or []) or int(body.get("write_motion_frames") or 3)
+        frames = [_png_b64((width, height), (20 * n, 60, 60)) for n in range(count)]
+        if body.get("keep_first_frame"):
+            frames[0] = body["first_frame"]["base64"]
+        last = {"images": [{"type": "base64", "format": "png", "base64": f} for f in frames]}
+    elif endpoint == "animate-with-text-v3":  # frame_count frames the size of the first, the colours between the two keyframes
+        width, height = _png_size_of(body["first_frame"])
+        count = int(body.get("frame_count", 8))
+        last = {"images": [{"type": "base64", "format": "png", "base64": _png_b64((width, height), (10 * n, 80, 200 - 10 * n))}
+                           for n in range(count)]}
+    elif endpoint == "estimate-custom-skeleton":
+        last = {"rig": {"joints": ["head", "tail"]}, "frames": [[{"name": "head", "x": 0.5, "y": 0.2}] for _ in body["images"]]}
+    elif endpoint == "estimate-skeleton":
+        # a standing sprite, 18 joints as PixelLab names them (fractions of the image; the character's right is the image's left)
+        stand = {"NOSE": (0.5, 0.2), "NECK": (0.5, 0.3), "RIGHT SHOULDER": (0.4, 0.3), "RIGHT ELBOW": (0.35, 0.45),
+                 "RIGHT ARM": (0.35, 0.6), "LEFT SHOULDER": (0.6, 0.3), "LEFT ELBOW": (0.65, 0.45), "LEFT ARM": (0.65, 0.6),
+                 "RIGHT HIP": (0.45, 0.6), "RIGHT KNEE": (0.45, 0.75), "RIGHT LEG": (0.45, 0.9), "LEFT HIP": (0.55, 0.6),
+                 "LEFT KNEE": (0.55, 0.75), "LEFT LEG": (0.55, 0.9), "RIGHT EYE": (0.45, 0.17), "LEFT EYE": (0.55, 0.17),
+                 "RIGHT EAR": (0.4, 0.18), "LEFT EAR": (0.6, 0.18)}
+        last = {"keypoints": [{"label": label, "x": x, "y": y, "z_index": n} for n, (label, (x, y)) in enumerate(stand.items())]}
+    if "character_id" in job:
+        last["character_id"] = job["character_id"]
+    return {"id": job["id"], "status": "completed", "usage": usage, "last_response": last}
+
+
+pixellab_provider.set_transport(_fake_pixellab)
 register_provider(FakeProvider("fake"))
 register_provider(FakeProvider("fake_keyed", key_name="FAKE_PROVIDER_KEY"))

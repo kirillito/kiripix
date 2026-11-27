@@ -8,7 +8,9 @@ trial finds changes only here:
 - the frame number is the last number of the file's name (`frame_003.png` is 3); a file with none is frame 0;
 - the clip is the folder above the direction (or above the file, for a direction in the file's name), made snake_case; a
   folder that only holds clips (`animations`) or rotations (`rotations`) is not a clip, and a direction with no clip is a
-  rotation, which is the clip `idle` of one frame.
+  rotation, a clip of one frame;
+- a rotation's clip is its PixelLab *state*, the folder above `rotations` (`hop/rotations/south.png` is the clip `hop`, ticket
+  0385), and `idle` when there is none (a lone `rotations/`); PixelLab names a character's first state `Idle`.
 """
 
 import re
@@ -21,7 +23,8 @@ PIXELLAB_WORDS = {"south": "s", "south-west": "sw", "west": "w", "north-west": "
                   "east": "e", "south-east": "se"}
 WORDS = {**PIXELLAB_WORDS, **{d: d for d in DIRECTIONS}}
 CONTAINERS = frozenset({"animations", "animation", "rotations", "rotation", "frames", "images", "sprites", "sprite"})
-ROTATION_CLIP = "idle"  # the clip a direction with no animation joins
+ROTATION_CLIP = "idle"  # the clip a rotation with no state joins
+ROTATION_FOLDERS = frozenset({"rotations", "rotation"})
 # PixelLab's ZIP export carries this file beside the PNGs (ticket 0175). One is allowed, at the ZIP's top, and no frame is
 # read from it: the naming rule places the PNGs.
 METADATA = "metadata.json"
@@ -34,11 +37,18 @@ _LAST_NUMBER = re.compile(r"(\d+)(?!.*\d)")
 
 @dataclass(frozen=True)
 class Placed:
-    """Where a ZIP entry goes: `animation` is the folder's own name (None for a rotation), `frame` the number it carries."""
+    """Where a ZIP entry goes: `animation` is the folder's own name (None for a rotation), `frame` the number it carries, and
+    `state` a rotation's state folder (None when it has none, or for an animation)."""
 
     direction: str
     animation: str | None
     frame: int
+    state: str | None = None
+
+    @property
+    def raw(self) -> str:
+        """The folder's own name the clip is named from: the animation's, else the state's, else `idle`."""
+        return self.animation or self.state or ROTATION_CLIP
 
 
 def snake_case(name: str) -> str:
@@ -58,6 +68,18 @@ def _animation(folders: list[str]) -> str | None:
     return None
 
 
+def _state(folders: list[str]) -> str | None:
+    """A rotation's state: the folder above `rotations`, unless that is a container too."""
+    if len(folders) >= 2 and folders[-1].strip().lower() in ROTATION_FOLDERS             and folders[-2].strip().lower() not in CONTAINERS:
+        return folders[-2]
+    return None
+
+
+def _placed(direction: str, folders: list[str], frame: int) -> Placed:
+    animation = _animation(folders)
+    return Placed(direction, animation, frame, None if animation is not None else _state(folders))
+
+
 def place(path: str) -> Placed | None:
     """Where the PNG at `path` in a ZIP goes, or None when the rule can't tell its direction."""
     parts = [p for p in path.replace("\\", "/").split("/") if p]
@@ -69,9 +91,9 @@ def place(path: str) -> Placed | None:
         direction = direction_word(folders[depth])
         if direction is not None:
             number = _LAST_NUMBER.search(stem)
-            return Placed(direction, _animation(folders[:depth]), int(number.group(1)) if number else 0)
+            return _placed(direction, folders[:depth], int(number.group(1)) if number else 0)
     found = _WORD_THEN_NUMBER.match(stem.lower())  # else the file's own name: `south`, `south-east_003`, `se3`
     if found is not None and (direction := direction_word(found.group("word"))) is not None:
         number_text = found.group("number")
-        return Placed(direction, _animation(folders), int(number_text) if number_text else 0)
+        return _placed(direction, folders, int(number_text) if number_text else 0)
     return None

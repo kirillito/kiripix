@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: ml-engineer
 type: trial
@@ -176,13 +176,64 @@ Tested offline only: dry runs, and a local fake of the API (jobs, images, the le
 - For the animals' skeleton route the first try is PixelLab's own rig (`estimate-custom-skeleton`) with the motion written
   by PixelLab (`write_motion_frames`), not one moved by a script; a scripted quadruped rig only if that fails.
 
+## Result (2026-11-25)
+
+**The Owner approved PixelLab as a Provider** ([0386](0386-m6-pixellab-provider.md)), within $15 a month for OpenAI and PixelLab
+together, and the four actors' import and export.
+
+Spent: **$2.61 on PixelLab** ($2.39 of the $5 left), plus about 25 trial generations, $0 on GPT Image. Records: [0354-trial/](0354-trial/) (`notes.md`
+has every call, `runs/` the requests and images; the sheets and GIFs are beside them).
+
+- **PixelLab's failure, in the Owner's words:** "It took me a lot of generations to get raccoon or service worker that was
+  fitting our parameters. No animations at free tier was also very limiting."
+- **The tier check: credits alone are enough.** The animation endpoints answered 200 on trial generations, and again on prepaid
+  credits ($0.011 to $0.016 a direction for the skeleton route). No subscription was needed for anything below.
+- **What made it fit:** a character imported from frames we already have keeps their pixels and their size (the worker:
+  pixel-identical; a squirrel scaled to 20 px and imported: its poses stay at that size, where a 27 px source's grew to 55 px).
+  A state takes the whole actor into a pose in 8 directions. Canvas up to 84 px costs the same ($0.075), so leave room.
+- **Tries:** 13 state calls gave 8 kept poses (the sack pose is superseded by the crate), about 1 in 1.6, not 0353's 1 in 10.
+- **Routes:** skeleton (mc03's motion retargeted, `keypoints.py`, no Blender script) is the best for the worker, and PixelLab's
+  own rig (`estimate-custom-skeleton`, motion written by PixelLab) for the animals. Text-driven animation fails (faces melt,
+  ears and stripes change) and is dropped.
+- **Kiripix:** `fit` mode `grid` takes the frames at scale 1 with no resampling; 5 poses x 8 directions, only `info` findings.
+  The raccoon and worker read beside mc03 after `palette` and `finish`. Gaps: [0385](0385-m6-sprite-zip-states-are-clips.md).
+- **Crate, not sack:** the Owner's decision; the game's docs and strings were changed (game repo, uncommitted).
+
+| Actor | Recommendation | Cost |
+|---|---|---|
+| Raccoon | PixelLab: text once, states for poses, its own rig for the walk | about $0.4 for 5 poses, $0.08 for a 4-direction walk |
+| Black squirrel | PixelLab, idle scaled to size and imported | about $0.2 |
+| Animal services worker | PixelLab from the Owner's frames; skeleton with mc03's clips for walks | about $0.2 plus $0.065 a clip |
+| Birds | PixelLab, its own rig (one pigeon tried) | about $0.07 an action in 2 directions |
+| Environmental loops | not tested | |
+
+At 0353's 50 sprite clips a year, about $0.12 a kept pose or $0.02 a direction: roughly $6 to $10 a year. The Owner's minutes
+weren't measured.
+
+**In the art Project and exported to the game:** `sprite.raccoon` (idle, hop, swipe, hurt, dazed, walk 8 frames; the old sheet's
+ZIP removed), `sprite.animal_control_worker` (idle, crate_open, bag, walk 4 frames), `sprite.black_squirrel` (idle, walk, attack and summoned,
+8 frames each by its own rig; leap and bite poses),
+`sprite.crate_raccoon` (candidate 13), all 8 directions but the crate; `palette orphan_size=0` on all four (the default removed
+eyes and tail rings). The game's content check passes; the look at 1x on the laneway is the Owner's.
+
+**Waived by the Owner (2026-11-25):** step 5 (the 3D worker: the PixelLab worker is in the game), the Owner's minutes per actor
+(Claude did the work), pose transfer, and an environmental loop (the pigeon is the ambient life). The pigeon's take-off goes to
+the game's backlog. **Not done:** 0332's style measures. **Weak:** the squirrel's walk barely moves its legs except in n and w
+(the game hops creatures by tween; a retry is about $0.13). The raccoon's attack and hit are poses, not clips.
+
+The game's DECISION_LOG has the decision as **DEC-079** (DEC-078 is cited by 0384 but isn't in the game's log yet).
+
+**If PixelLab is taken, what a Kiripix Provider needs beyond `kiripix/providers/base.py`:** inputs that aren't images (a
+character ID, keypoints, a rig); an answer that is a job to poll and cancel (`DELETE`, free while queued); a result that
+isn't a list of images (a character's ZIP); and charges in generations as well as USD. That is [0386](0386-m6-pixellab-provider.md).
+
 ## Acceptance criteria
 
-- [ ] PixelLab's failure recorded, and every candidate tested for it.
-- [ ] The tier check done before more than $5 of credits was bought.
-- [ ] PixelLab's two routes tested, then pose transfer, or the reason one couldn't be.
-- [ ] The scores and sheets for each actor in step 3, per candidate.
-- [ ] The recommendation per actor, with its cost, handed to 0353's joint plan.
-- [ ] The `sprite` Kind's gaps the imports found, filed as follow-up tickets with `agent:` and `depends_on` if the Owner
+- [x] PixelLab's failure recorded, and every candidate tested for it.
+- [x] The tier check done before more than $5 of credits was bought.
+- [x] PixelLab's two routes tested, then pose transfer, or the reason one couldn't be (skipped by the Owner).
+- [x] The scores and sheets for each actor in step 3, per candidate (`0354-trial/notes.md`; the waived ones above).
+- [x] The recommendation per actor, with its cost, handed to 0353's joint plan (closed there; the budget is now shared).
+- [x] The `sprite` Kind's gaps the imports found, filed as follow-up tickets with `agent:` and `depends_on` if the Owner
       takes the route.
-- [ ] At most $15 spent in all, from each response's `usage`; any subscription was the Owner's yes first.
+- [x] At most $15 spent in all, from each response's `usage`; any subscription was the Owner's yes first.

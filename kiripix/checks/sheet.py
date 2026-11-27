@@ -40,9 +40,11 @@ def _name(f: SheetFrame) -> str:
     return f"clip {f.clip}, direction {f.direction}, frame {f.index}"
 
 
-def check_pivot_drift(frames: list[SheetFrame], stationary: set[str], fix: str, tolerance: int = 0) -> list[Finding]:
+def check_pivot_drift(frames: list[SheetFrame], stationary: set[str], fix: str, tolerance: int = 0,
+                      moving_tolerance: int = 1) -> list[Finding]:
     """In each stationary clip and direction, a frame whose feet (its `feet` when it has them, else its pivot) are further than `tolerance` px (on either axis)
-    from the first frame's. Clips not in `stationary` are not checked."""
+    from the first frame's. A moving clip with measured feet is compared as a whole, by its median feet, with the stationary
+    clips' in its direction (`moving_tolerance`)."""
     findings: list[Finding] = []
     first: dict[tuple[str, str], SheetFrame] = {}
     for f in sorted(frames, key=lambda f: (f.clip, f.direction, f.index)):
@@ -58,6 +60,42 @@ def check_pivot_drift(frames: list[SheetFrame], stationary: set[str], fix: str, 
                 code="sheet.pivot_drift", position=_where(f, *here), fix=fix,
                 message=f"{_name(f)}: the feet moved ({dx:+d}, {dy:+d}) px from frame {ref.index} in a stationary "
                         f"clip (tolerance {tolerance} px)"))
+    return findings + _moving_drift(frames, stationary, fix, moving_tolerance)
+
+
+def _median(values: list[int]) -> int:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle] + 1) // 2  # halves round up
+
+
+def _moving_drift(frames: list[SheetFrame], stationary: set[str], fix: str, tolerance: int) -> list[Finding]:
+    """A moving clip stands on its direction's ground point when the median of its frames' measured feet is within `tolerance`
+    px (on either axis) of the median of the stationary clips' feet there (ticket 0392). Only frames with measured `feet` count,
+    so a character (which has none) is never checked here."""
+    ground: dict[str, list[tuple[int, int]]] = {}
+    moving: dict[tuple[str, str], list[SheetFrame]] = {}
+    for f in sorted(frames, key=lambda f: (f.clip, f.direction, f.index)):
+        if f.feet is None:
+            continue
+        if f.clip in stationary:
+            ground.setdefault(f.direction, []).append(f.feet)
+        else:
+            moving.setdefault((f.clip, f.direction), []).append(f)
+    findings: list[Finding] = []
+    for (clip, direction), clip_frames in sorted(moving.items()):
+        if direction not in ground:
+            continue
+        reference = (_median([p[0] for p in ground[direction]]), _median([p[1] for p in ground[direction]]))
+        feet = [f.feet for f in clip_frames if f.feet is not None]
+        here = (_median([p[0] for p in feet]), _median([p[1] for p in feet]))
+        dx, dy = here[0] - reference[0], here[1] - reference[1]
+        if max(abs(dx), abs(dy)) > tolerance:
+            first = clip_frames[0]
+            findings.append(Finding(
+                code="sheet.pivot_drift", position=_where(first, *here), fix=fix,
+                message=f"clip {clip}, direction {direction}: the median of its feet is ({dx:+d}, {dy:+d}) px from the stationary "
+                        f"clips' (tolerance {tolerance} px), so the figure jumps when the clip starts and stops"))
     return findings
 
 

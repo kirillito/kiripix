@@ -108,6 +108,25 @@ def test_pivot_drift() -> None:
     assert check_pivot_drift(drifting, {"walk"}, FIX) == []
 
 
+def test_pivot_drift_compares_a_moving_clips_median_feet_with_the_stationary_ones() -> None:
+    def at(clip: str, index: int, feet: tuple[int, int]) -> SheetFrame:
+        return SheetFrame(clip, "s", index, block(5, 4, (1, 2, 3)), (2, 3), None, feet)
+
+    idle = [at("idle", 0, (7, 14))]
+    stride = [at("walk", i, (7 + i - 1, 14)) for i in range(3)]  # the stride moves the feet; the median is (7, 14)
+    assert check_pivot_drift(idle + stride, {"idle"}, FIX) == []
+
+    shifted = [at("walk", i, (3 + i, 12)) for i in range(3)]  # the median is (4, 12): (-3, -2) from the idle's
+    [found] = check_pivot_drift(idle + shifted, {"idle"}, FIX)
+    assert found.code == "sheet.pivot_drift" and found.position is not None and found.position.field == "walk/s/0"
+    assert "(-3, -2)" in found.message and found.fix == FIX
+
+    near = [at("walk", i, (6 + i, 15)) for i in range(3)]  # the median is (7, 15): within 1 px
+    assert check_pivot_drift(idle + near, {"idle"}, FIX) == []
+    assert check_pivot_drift(idle + shifted, {"idle"}, FIX, moving_tolerance=3) == []
+    assert check_pivot_drift(shifted, {"idle"}, FIX) == []  # no stationary clip to stand beside
+
+
 def test_frame_overflow() -> None:
     fits = [sf("idle", "e", 0, (2, 3))]
     assert check_frame_overflow(fits, (6, 6), FIX, cell_pivot=(2, 4)) == []

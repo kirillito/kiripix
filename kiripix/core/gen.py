@@ -8,6 +8,10 @@ the Owner's `kiripix approve <id>`; with `"none"` it is sent at once. Sending (`
 changed, calls the Provider, appends the cost ledger line, stores each image as a Variant the way `import` does (an
 `extend` piece as a candidate, joined by no one), and logs the call in `history.jsonl`. `gen` never picks.
 
+A sprite is painted through an operation, not an image call (ticket 0388, `kiripix.core.gen_sprite`): a character, a state,
+or motion. Its plan is a list of jobs (PixelLab's endpoints) under one pending call, one approval and one estimate (the
+jobs' sum); `send` sends them in order, one ledger line each, and stores what came back as a sheet.
+
 The key is read from the Project's `.env` only (`OPENAI_API_KEY=...`), never from the environment, and it is written
 nowhere. The caller holds the Asset lock (`approve`: the Project lock).
 """
@@ -15,6 +19,7 @@ nowhere. The caller holds the Asset lock (`approve`: the Project lock).
 from __future__ import annotations
 
 import io
+import json
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -37,15 +42,15 @@ from kiripix.recipes.room_prompt import BIBLE, PROMPT_FILE, PROMPTS
 
 PROVIDER_LOCK = "providers"  # held around a call's last limit check and its send, so two calls can't both pass the cap
 CALLS_DIR = "calls"
-CALL_SCHEMA_VERSION = 1
+CALL_SCHEMA_VERSION = 2  # 2 (ticket 0388): the operation, its non-image inputs and its jobs; a version-1 call is a plain image call
 ENV_FILE = ".env"
 IMPORT_PROVIDER = "import"
-GEN_KINDS = ("room", "prop", "portrait")
+GEN_KINDS = ("room", "prop", "portrait", "sprite")
 DEFAULT_SQUARE = (1024, 1024)  # what a Prop or a portrait is painted at when `[providers.<id>] size` is empty
 DEFAULT_EDIT = "Edit this image. Keep everything exactly the same except: {edit}"  # Lost-and-Found's wording (ticket 0143)
 STRIP_EDGE = {"east": "left", "west": "right", "south": "top", "north": "bottom"}
 
-Target = Literal["source", "look", "state", "emotion", "extend"]
+Target = Literal["source", "look", "state", "emotion", "extend", "character", "sprite_state", "motion"]
 Notice = Callable[[str], None]
 
 
@@ -56,7 +61,25 @@ class CallInput(BaseModel):
 
     path: str
     sha256: str
-    role: Literal["edited", "canvas", "reference"]
+    role: Literal["edited", "canvas", "reference", "frame"]
+
+
+class PlannedJob(BaseModel):
+    """One job of an operation's plan (ticket 0388): a Provider operation, its endpoint, the direction it is for, its estimate,
+    its inputs that aren't images (`params`), the images it sends (role -> index into the call's `inputs`) and, when it
+    needs what an earlier job gave (a rig, keypoints), that job's index. Everything is fixed at planning; `send` only feeds
+    a job its earlier job's answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: str = Field(description="The Provider's operation: create_character, create_state, estimate_rig, ...")
+    endpoint: str = Field(description="The Provider's own endpoint, which the ledger line names.")
+    direction: str | None = Field(None, description="The direction it is for (s, e, ...), when it is for one.")
+    estimate_usd: float
+    params: dict[str, Any] = Field({}, description="Its inputs that aren't images: a character ID, a description, a frame "
+                                                   "count, keypoints.")
+    images: dict[str, int] = Field({}, description="The images it sends: their role -> an index into the call's `inputs`.")
+    needs: int | None = Field(None, description="The index of an earlier job whose answer it is fed (a rig, keypoints).")
 
 
 class PendingCall(BaseModel):
@@ -69,7 +92,8 @@ class PendingCall(BaseModel):
     id: str
     time: str
     asset: str
-    target: Target = Field(description="What the images are for: source, look, state, emotion or extend.")
+    target: Target = Field(description="What the images are for: source, look, state, emotion or extend; for a sprite: "
+                                       "character, sprite_state or motion.")
     look: str | None = None
     state: str | None = None
     emotion: str | None = None
@@ -89,6 +113,11 @@ class PendingCall(BaseModel):
     mask_sha256: str | None = Field(None, description="With extend: the SHA-256 of the mask, at the size sent.")
     input_fidelity: str | None = Field(None, description="The input_fidelity sent with the edit; None: left out.")
     again: str = Field(description="The `gen` command that plans this call again.")
+    operation: str | None = Field(None, description="For a sprite: character, state or motion; None: a plain image call.")
+    params: dict[str, Any] = Field({}, description="For an operation: its inputs that aren't images (the character's ID, "
+                                                   "the canvas, the directions, the frame count, the state name), as planned.")
+    jobs: list[PlannedJob] = Field([], description="For an operation: its jobs in the order they are sent. `estimated_usd` "
+                                                   "is their sum.")
 
 
 class Candidate(BaseModel):
@@ -110,6 +139,14 @@ class Sent(BaseModel):
     variants: list[str] = Field(description="The new Variants' names (an extend call: none).")
     files: list[str] = Field(description="Every image stored, relative to the Project.")
     candidates: list[Candidate] = Field([], description="With extend: the pieces kept, joined by no one.")
+    generations: float | None = Field(None, description="What a Provider that charges in generations charged, summed over "
+                                                        "the jobs sent; None when it charged in USD.")
+    jobs_sent: int = Field(0, description="For an operation: the jobs sent (a failed one included).")
+    sheet: str | None = Field(None, description="For a sprite: the sheet stored in `src/sheets/` (its name), if the call made one.")
+    clips: list[str] = Field([], description="For a sprite: the clips the sheet holds.")
+    character_id: str | None = Field(None, description="For a sprite's character: its PixelLab ID, kept in `[sprite.pixellab]`.")
+    replaced_character_id: str | None = Field(None, description="The character this call's replaced in `[sprite.pixellab]`.")
+    next: str | None = Field(None, description="For a sprite: the command that goes on (`frames` reads the sheet).")
 
 
 # planning
@@ -258,7 +295,7 @@ def _resolve(project: Project, shown: str) -> Path:
     return path if path.is_absolute() else project.root / path
 
 
-def _input(project: Project, path: Path, role: Literal["edited", "canvas", "reference"]) -> CallInput:
+def _input(project: Project, path: Path, role: Literal["edited", "canvas", "reference", "frame"]) -> CallInput:
     try:
         data = path.read_bytes()
     except (FileNotFoundError, IsADirectoryError, PermissionError):
@@ -374,6 +411,10 @@ def _parse_size(text: str) -> tuple[int, int]:
 
 def notice_line(call: PendingCall) -> str:
     """The line `gen` shows before sending (ticket 0378)."""
+    if call.operation is not None:
+        jobs = "job" if len(call.jobs) == 1 else "jobs"
+        return (f"gen: {call.asset}, {call.operation} ({len(call.jobs)} {jobs}), est. ${call.estimated_usd:.2f}; "
+                f"${call.remaining_usd:.2f} of ${call.budget_usd_month:.2f} left this month")
     images = "image" if call.count == 1 else "images"
     return (f"gen: {call.asset}, {call.count} {images}, est. ${call.estimated_usd:.2f}; "
             f"${call.remaining_usd:.2f} of ${call.budget_usd_month:.2f} left this month")
@@ -416,12 +457,17 @@ def plan(project: Project, asset: Asset, *, count: int, provider_name: str | Non
          again: str) -> PendingCall:
     """The call `gen` would send, checked against every limit. Writes nothing, except the `extend` canvas it sends."""
     if asset.kind not in GEN_KINDS:
-        raise fail("gen.kind_unsupported", f"gen paints a room, a Prop or a portrait; {asset.id} is a {asset.kind}",
+        raise fail("gen.kind_unsupported", f"gen paints a room, a Prop, a portrait or a sprite; {asset.id} is a {asset.kind}",
                    owner_action=f"Make the {asset.kind}'s image elsewhere and bring it in with kiripix import.")
     chosen = [n for n, v in (("--look", look), ("--state", state), ("--emotion", emotion), ("--side", side)) if v]
     if len(chosen) > 1:
         raise fail("gen.one_target", f"{' and '.join(chosen)} are two things to paint: use one", fix=f"kiripix gen {asset.id}")
     provider = provider_for(project, provider_name, again)
+    if chosen and not provider.edits:  # it would paint a new, unrelated image and bill it
+        others = [p for p, v in all_providers().items() if v.edits]
+        raise fail("gen.provider_cannot_edit", f"{provider.id} can't edit an image or extend a canvas ({chosen[0]})",
+                   fix=f"{re.sub(r' --provider \S+', '', again)} --provider {others[0]}" if others else None,
+                   owner_action=None if others else "No Provider here edits images.")
     model, quality, size_choice = _choice(project, provider)
     key_for(project, provider)
     graph = AssetGraph(project, asset, HashCache(project.state_dir))
@@ -520,13 +566,21 @@ def _existing(project: Project, call_id: str) -> Path:
 
 def read_pending(project: Project, call_id: str) -> PendingCall:
     path = _existing(project, call_id)
+    invalid = f".kiripix/{CALLS_DIR}/{call_id}.json"
     try:
-        call = PendingCall.model_validate_json(path.read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError("it is not an object")
+        if document.get("schema_version") == 1:  # a version-1 call is a plain image call: no operation, no jobs
+            document = {**document, "schema_version": CALL_SCHEMA_VERSION}
+        call = PendingCall.model_validate(document)
     except ValidationError as error:
-        raise fail("provider.call_invalid", f".kiripix/{CALLS_DIR}/{call_id}.json is not valid: {error.errors()[0]['msg']}",
+        raise fail("provider.call_invalid", f"{invalid} is not valid: {error.errors()[0]['msg']}",
                    fix=f"kiripix reject {call_id}") from None
+    except ValueError as error:
+        raise fail("provider.call_invalid", f"{invalid} is not valid: {error}", fix=f"kiripix reject {call_id}") from None
     if call.schema_version != CALL_SCHEMA_VERSION:
-        raise fail("provider.call_invalid", f".kiripix/{CALLS_DIR}/{call_id}.json has schema_version {call.schema_version}; "
+        raise fail("provider.call_invalid", f"{invalid} has schema_version {call.schema_version}; "
                    f"this Kiripix reads {CALL_SCHEMA_VERSION}", fix=f"kiripix reject {call_id}")
     return call
 
@@ -546,7 +600,10 @@ def recheck(project: Project, call: PendingCall) -> PendingCall:
     """A pending call's limits again, with the ledger as it is now (the month may have moved, other calls sent)."""
     provider = provider_for(project, call.provider, call.again)
     key_for(project, provider)
-    remaining = check_limits(project, provider, call.count, len(call.inputs), call.estimated_usd, call.again)
+    if call.operation is not None:  # an operation's images are its jobs', not a call's reference images
+        remaining = check_limits(project, provider, 1, 0, call.estimated_usd, call.again)
+    else:
+        remaining = check_limits(project, provider, call.count, len(call.inputs), call.estimated_usd, call.again)
     return call.model_copy(update={"remaining_usd": remaining,
                                    "budget_usd_month": project.settings.providers.budget_usd_month})
 
@@ -572,7 +629,8 @@ def _read_inputs(project: Project, call: PendingCall) -> list[InputImage]:
 
 
 def _history(asset: Asset, call: PendingCall, outcome: str, **extra: Any) -> None:
-    stage = {"look": "looks", "extend": "extend"}.get(call.target, "source")
+    stage = {"look": "looks", "extend": "extend", "character": "frames", "sprite_state": "frames",
+             "motion": "frames"}.get(call.target, "source")
     entry: dict[str, Any] = {
         "time": ledger.now().isoformat(timespec="seconds"), "stage": stage, "provider": call.provider,
         "provider_model": call.model, "size": call.size, "quality": call.quality, "count": call.count, "call": call.id,
@@ -581,18 +639,25 @@ def _history(asset: Asset, call: PendingCall, outcome: str, **extra: Any) -> Non
     for name in ("look", "state", "emotion", "sides"):
         if getattr(call, name) is not None:
             entry[name] = getattr(call, name)
+    if call.operation is not None:
+        entry["operation"] = call.operation
+        entry["params"] = call.params
+        entry["jobs"] = [job.endpoint for job in call.jobs]
+        if "character_id" in call.params:
+            entry["character_id"] = call.params["character_id"]
     atomic.append_jsonl(asset.dir / HISTORY_FILE, {**entry, **extra})
 
 
 def _ledger(project: Project, call: PendingCall, provider: Provider, usd: float | None, images: int,
-            outcome: Literal["done", "failed", "cancelled"], usage: dict[str, int] | None = None) -> tuple[float, bool]:
+            outcome: Literal["done", "failed", "cancelled"], usage: dict[str, int] | None = None,
+            generations: float | None = None) -> tuple[float, bool]:
     estimated = usd is None
     cost = round(call.estimated_usd if usd is None else usd, ledger.CENTS)
     ledger.append(project, ledger.LedgerLine(
         time=ledger.now().isoformat(timespec="seconds"), call=call.id, asset=call.asset, provider=call.provider,
         model=call.model, size=call.size, quality=call.quality, count=call.count, images=images, usd=cost,
         estimated=estimated, prices_date=provider.prices_date, mask=call.mask_sha256,
-        input_fidelity=call.input_fidelity, usage=usage or {}, outcome=outcome))
+        input_fidelity=call.input_fidelity, usage=usage or {}, generations=generations, outcome=outcome))
     return cost, estimated
 
 
@@ -619,6 +684,8 @@ def _store(project: Project, asset: Asset, call: PendingCall, provider: Provider
             _, name, path, _ = sources.import_state(project, asset, temporary, shown, "variant", str(call.state))
         elif call.target == "emotion":
             _, name, path, _ = emotions.import_emotion(project, asset, temporary, shown, "variant", str(call.emotion))
+        elif sources.takes_sheets(asset):  # a sprite's image candidate (0390): `pick` makes it a sheet
+            name, path, _ = sources.import_generated_variant(asset, temporary, shown, provider.id, call.id)
         else:
             name, path, _ = sources.import_file(asset, temporary, shown, "variant")
         return name, path
@@ -634,6 +701,10 @@ def send(project: Project, call: PendingCall) -> Sent:
     asset = load_asset(project, call.asset)
     provider = provider_for(project, call.provider, call.again)
     key = key_for(project, provider)
+    if call.operation is not None:
+        from kiripix.core import gen_sprite
+
+        return gen_sprite.send(project, asset, call, provider, key)
     images = _read_inputs(project, call)
     sent = _parse_size(call.size)
     edited: tuple[int, int] | None = None
@@ -650,7 +721,7 @@ def send(project: Project, call: PendingCall) -> Sent:
                               images=tuple(images), mask=mask, input_fidelity=call.input_fidelity)
     cancel.check()
     try:
-        result = provider.call(request, key, cancel.check)
+        result = provider.call(request, key, cancel.check, cancel.sleep)
     except (KeyboardInterrupt, cancel.Cancelled):
         cost, _ = _ledger(project, call, provider, None, 0, "cancelled")
         _history(asset, call, "cancelled", usd=cost, estimated=True)
@@ -660,14 +731,16 @@ def send(project: Project, call: PendingCall) -> Sent:
         if key:
             message = message.replace(key, "<key>")
         if error.billed_usd is not None:
-            cost, _ = _ledger(project, call, provider, error.billed_usd, 0, "failed")
+            cost, _ = _ledger(project, call, provider, error.billed_usd, 0, "failed",
+                              generations=error.billed_generations)
             _history(asset, call, "failed", usd=cost, estimated=False, message=message)
         else:
             _history(asset, call, "failed", message=message)
         raise fail("provider.call_failed", f"the {provider.id} call for {call.asset} failed: {message}",
                    owner_action=f"Read the message; when it is fixed, plan the call again: {call.again}",
                    exit_code=ExitCode.NEEDS_OWNER) from None
-    cost, estimated = _ledger(project, call, provider, result.usd, len(result.images), "done", result.usage)
+    cost, estimated = _ledger(project, call, provider, result.usd, len(result.images), "done", result.usage,
+                              result.generations)
     month = ledger.spent_in_month(project, ledger.now().strftime("%Y-%m"))
     names: list[str] = []
     files: list[str] = []
@@ -677,28 +750,36 @@ def send(project: Project, call: PendingCall) -> Sent:
         name, path = _store(project, asset, call, provider, png, number)
         names.append(name)
         files.append(project.relative(path))
-    _history(asset, call, "done", usd=cost, estimated=estimated, usage=result.usage, variants=names)
+    _history(asset, call, "done", usd=cost, estimated=estimated, usage=result.usage, variants=names,
+             generations=result.generations)
     if call.target == "extend":
         candidates = [Candidate(piece=n, file=f, add=f"kiripix extend {asset.id} add {f}") for n, f in zip(names, files)]
         return Sent(call=call.id, usd=cost, estimated=estimated, usage=result.usage, month_spent_usd=month, variants=[],
-                    files=files, candidates=candidates)
+                    files=files, candidates=candidates, generations=result.generations)
     return Sent(call=call.id, usd=cost, estimated=estimated, usage=result.usage, month_spent_usd=month, variants=names,
-                files=files)
+                files=files, generations=result.generations)
 
 
 def sent_line(call: PendingCall, sent: Sent) -> str:
     """The line `gen` and `approve` show after the call: what it actually cost, its tokens, and the month so far."""
+    if sent.jobs_sent:
+        charged = f", {sent.generations:g} generations" if sent.generations is not None else ""
+        return (f"gen: {call.asset}, call {call.id} cost ${sent.usd:.4f} ({sent.jobs_sent} job(s){charged}); "
+                f"${sent.month_spent_usd:.2f} of ${call.budget_usd_month:.2f} spent this month")
     how = "estimated: no usage reported" if sent.estimated else "from the reported usage"
     shown = [f"{sent.usage[k]:,} {k.split('_')[0]}" for k in ("input_tokens", "output_tokens") if k in sent.usage]
     tokens = f"; tokens {', '.join(shown)}" if shown else ""
+    if sent.generations is not None:
+        tokens += f"; {sent.generations:g} generations"
     return (f"gen: {call.asset}, call {call.id} cost ${sent.usd:.4f} ({how}{tokens}); "
             f"${sent.month_spent_usd:.2f} of ${call.budget_usd_month:.2f} spent this month")
 
 
 def approval_finding(call: PendingCall) -> Finding:
+    what = (f"{call.operation} ({len(call.jobs)} job(s)) from {call.provider} at {call.size}" if call.operation is not None
+            else f"{call.count} image(s) from {call.provider} {call.model} at {call.size}, {call.quality}")
     return Finding(code="provider.approval_needed",
-                   message=f"call {call.id} for {call.asset} waits for the Owner: {call.count} image(s) from "
-                           f"{call.provider} {call.model} at {call.size}, {call.quality}, est. ${call.estimated_usd:.2f}",
+                   message=f"call {call.id} for {call.asset} waits for the Owner: {what}, est. ${call.estimated_usd:.2f}",
                    owner_action=f"kiripix approve {call.id}  (or kiripix reject {call.id})",
                    position=Position(asset=call.asset), data={"call": call.id})
 

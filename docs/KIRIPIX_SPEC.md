@@ -632,11 +632,42 @@ An actor built from imported 2D frames, such as a PixelLab figure, exported exac
 DEC-012). On PixelLab's free plan a figure is one frame per direction, so a clip of one frame in 4 or 8 directions is the common
 case; whole animations import too. Design: [0174](../backlog/m4/0174-m4-sprite-kind.md).
 
+**`gen` paints a sprite** ([0388](../backlog/m6/0388-m6-gen-paints-a-sprite.md), PixelLab only; `gen.provider_unsupported` for another).
+Each target is one pending call and stores one sheet in `src/sheets/` (a ZIP in PixelLab's layout, recorded in `imported.jsonl`
+with the Provider and the call; the whole answer is kept in `.kiripix/calls/sent/<call>/`, never read by a Stage), which the
+`frames` Stage reads with no Decision:
+`gen <id> --prompt "<who>" [--canvas N] [--view V]` a character from text, its rotations the clip `idle`;
+`gen <id> --from-frames [--from <clip>] [--view V]` a character from the sprite's own first
+frames, the directions it has (south at least, else `gen.direction_missing`) sent as drawn; the facings it lacks are made (`generate-8-rotations-v3` on the south frame, then `create-character-v3` from all the frames)
+and stored as a sheet under the next free name of the clip (`idle_2`, the sent frames as drawn), none when it lacks none
+(`gen.frames_needed` when `frames` hasn't run; [0390](../backlog/m6/0390-m6-pixellab-one-image-to-a-sprite.md));
+`gen <id> --image --prompt "<what>" [--style <asset>[:<clip>]|<png>] [--canvas N] [-n N]` the plain image call, candidates kept
+in `src/` and shown by `show`; `pick <id> <candidate>` stores one as a one-direction sheet (clip `idle`, `idle_2`...);
+`--view` (`low top-down`, `high top-down` by default, `side`) is kept in `[sprite.pixellab]` when the character is made (`--prompt`, `--from-frames`) and sent by the calls whose endpoint takes a view: the rotations and a rig or skeleton motion. PixelLab's state call, `animate-with-text-v3` and `generate-image-v2` have none, so `--state`, `--motion keyframes` and `--image` refuse `--view`; `gen <id> --state <name> --prompt "<the pose>"` a state, stored as clip `<name>` (`<name>_2`... when
+the sheets already hold it: a retry is a new name, kept or left out by the `sheet` Decision's `leave_out`);
+`gen <id> --clip <name> --motion rig --prompt "<the action>" [--frames N] [--directions s,e] [--from <clip>]` per direction
+PixelLab's rig estimate on that direction's first frame, then its motion (1 to 15 frames), stored as `animations/<name>/<dir>/`.
+`gen <id> --clip <name> --motion skeleton --render <character> [--render-clip <clip>] [--frames N] [--directions s,e] [--from <clip>]`
+([0389](../backlog/m6/0389-m6-pixellab-skeleton-motion-from-a-render.md)) the motion of a character's current `render` (else
+`gen.render_stale`), which must record the points of `kiripix.providers.keypoints.POINTS` (else `gen.render_points_missing`, its
+`fix` the `render points=` to set) in every direction the sprite asks for (`gen.render_direction_missing`): per direction
+`estimate-skeleton` on the sprite's first frame, then `animate-with-skeleton-v3` with the render's 18 joints moved onto that
+skeleton (3 to 15 frames, picked evenly), stored as a rig's clip is. `--preview` writes the keypoints (`<clip>_<dir>.json`) and
+an overlay PNG under `.kiripix/calls/preview/<sprite>/` and plans and sends nothing.
+`gen <id> --clip <name> --motion keyframes --from <clip> --to <clip> --prompt "<the action>" [--frames N] [--directions s,e]`
+([0391](../backlog/m6/0391-m6-pixellab-keyframe-motion-for-objects.md)) a clip between two of the sprite's own frames: per direction
+one `animate-with-text-v3` job with the first frame of `--from` as its start and the first frame of `--to` as its end (an even
+4 to 16 frames, default 8), stored as a rig's clip is. Never from one frame and text (without `--to`: `gen.keyframes_need_end`),
+and only for a sprite marked faceless, since text-driven motion melts faces: `[sprite.pixellab] faces` (true when absent),
+set with `set <id> pixellab faces=false` (without it: `gen.keyframes_faces`). No PixelLab character is needed.
+The PixelLab character is kept in `asset.toml`'s optional `[sprite.pixellab]` (`character_id`, `canvas`, `made_from`: `frames` or
+`text`, all three or none, as a sprite marked only `faces = false` has none; `view`; `faces`, true when absent; `asset.toml` `schema_version` 2, a version 1 file reads unchanged); a state or rig motion without a character is `gen.character_needed`, and a second character call replaces it.
+
 **frames → fit → palette → finish → sheet → export**
 
 | Stage | What it does | Owner input | Checks |
 |---|---|---|---|
-| **frames** | Cuts the imported sheets (`import --role sheet`: a PNG, or a ZIP of PNGs with at most PixelLab's `metadata.json` at its top, which no frame is read from; stored whole in `src/sheets/`) into `<clip>/<dir>/<NNN>` frames at source resolution. Parameter `directions`: `8` (`s sw w nw n ne e se`), `4` (`s w n e`, the default) or `1` (`s`). A ZIP is read by a naming rule (a direction word, PixelLab's `south`, `south-east`... or ours, in a folder or a file's name; a frame number; the clip is the folder above, snake_case; `idle` for rotations alone). The rule is provisional until the trial on a real export ([0175](../backlog/m4/0175-m4-sprite-pixellab-export-trial.md)). A clip gets fps 8, loop on, and is stationary when it has one frame. | A `sheet` Decision (a PNG's file, clip, layout, directions and frame count; a ZIP's clip renames), a `clip` Decision (fps, loop, stationary) | `frames.direction_missing` (error, never mirrored), `frames.frame_count`, `frames.unknown_direction`, `clips.bad_name`, `clips.duplicate_name` |
+| **frames** | Cuts the imported sheets (`import --role sheet`: a PNG, or a ZIP of PNGs with at most PixelLab's `metadata.json` at its top, which no frame is read from; stored whole in `src/sheets/`) into `<clip>/<dir>/<NNN>` frames at source resolution. Parameter `directions`: `8` (`s sw w nw n ne e se`), `4` (`s w n e`, the default) or `1` (`s`). A ZIP is read by a naming rule (a direction word, PixelLab's `south`, `south-east`... or ours, in a folder or a file's name; a frame number; the clip is the folder above, snake_case; rotations are the clip of their PixelLab state, the folder above `rotations/`, or `idle` with none ([0385](../backlog/m6/0385-m6-sprite-zip-states-are-clips.md))). The rule is provisional until the trial on a real export ([0175](../backlog/m4/0175-m4-sprite-pixellab-export-trial.md)). A clip gets fps 8, loop on, and is stationary when it has one frame. | A `sheet` Decision (a PNG's file, clip, layout, directions and frame count; a ZIP's clip renames and the folders it leaves out, `leave_out`), a `clip` Decision (fps, loop, stationary) | `frames.direction_missing` (error, never mirrored), `frames.frame_count`, `frames.unknown_direction`, `clips.bad_name`, `clips.duplicate_name` |
 | **fit** | Per frame onto the target grid: `grid` (default: `detect_grid`; one scale for every frame) or `downscale` (one Grid for the Asset that brings the reference frame's figure to `height`, line-keeping, for AI images); `chroma` clears a flat background first; the alpha is binary by vote. Measures each frame's feet (`feet_point`), takes a pivot per direction (the median over its stationary frames, else all) at the ground point a body's would be, 0.08 of the figure's height above the feet (the mc03 bodies' shoes below their pivot), the same in every direction, so sprites and bodies share a ground line (M5, [0318](../backlog/m5/0318-m5-sprite-pivot-at-the-ground-point.md); `fit.json`'s `ground`), and places every frame on one cell, the smallest that holds them around the pivot with 1 px to spare for the outline. `align_feet` places each stationary frame by its own feet. Writes `render.json` in the character's schema, with each frame's measured `feet`. | A `pivot` Decision (the pivot itself, no offset), only when the measured one is wrong | `fit.grid_differs`, `fit.alpha_partial`, `fit.height` (info), `fit.cell_grew` (info) |
 | **palette** | The character's. A sprite's parts are its colour regions (M5, [0319](../backlog/m5/0319-m5-sprite-palette-by-parts.md)): its colours over every frame grouped by OKLab hue (`hue_gap` degrees apart), the neutral ones one `grey` region, each named by hue (`orange`, `blue_2`) and listed in `palette.json`'s `regions`. `parts` names and joins them as a body's names materials (`skin=orange,top=grey`); each part gets a ramp of `shades` (default 4; the Project's ramp table's length when it has one, and every part must be a row of it, so `ramps-add` takes a sprite's parts too), mapped as a body's: nearest in its own ramp, a ramp with the table's colours by lightness order. (Lightness order onto a fitted ramp was tried on the worker and dropped: a fitted ramp keeps outlier colours, a button's yellow or a near-black, and lightness order pushes a whole class onto them.) With `parts`, the regions are written as the sprite's material pass. Regions in no part take `colors`. No `parts` builds as before. | `parts` | `palette.off_palette`, `palette.ramp_shared`, `palette.sprite_regions` (info, while there are no `parts`) |
 | **finish** | The character's; `normals` is `height` by default (a rounded height from the alpha, Sobel; `relief` mixes in lightness), or `flat`; `placement` is `edge`: the source's own dark edge is repainted in the Project's outline colour. `inner_lines` draws between the sprite's parts (M5, [0320](../backlog/m5/0320-m5-sprite-inner-lines-by-part.md)): a region in no part is one of its own, `line_skip` names parts, and with no depth the line is the lower pixel of a border (the right one, side by side); a sprite with no `parts` can't have them (`finish.inner_lines_without_parts`). | — | `normal.size_mismatch`, `palette.off_palette` |
@@ -1051,6 +1082,13 @@ finding), so the UI can ask for the rows in view first and the rest in chunks.
   `month_spent_usd` in `data`); a refused call the Provider still bills is recorded too. With `[providers] approve =
   "each"` (the default) `gen` only writes a pending call (`.kiripix/calls/<id>.json`: the prompt, the input images and
   their hashes, the estimate) and the Owner sends it with `approve` (tickets 0378, 0379, 0381).
+  An **operation** (a sprite's character, state or motion, ticket 0388) is one call of several **jobs**: the pending call (schema
+  version 2) holds its inputs that aren't images and its jobs in order, each with its endpoint, direction and estimate; the
+  estimate is their sum, the limits check that sum, `max_calls_per_day` counts the operation once, and one `approve` sends the
+  jobs in order. A failed or cancelled job stops the rest; each job sent is its own ledger line (schema version 2: `generations`,
+  as charged by a Provider that charges in them, and `operation`, the endpoint; `usd` prices generations at the Provider's
+  dated rate), and the directions that came back are stored. `cost` shows generations beside USD per Provider, and each
+  Provider's terms.
 
 ## 11. UI
 
@@ -1321,7 +1359,8 @@ with the Owner's open questions; the gate is [0338](../backlog/m6/0338-m6-gate.m
 - **The MCP adapter** (§10.6), with its tool selection tuned on the agent acceptance test and on M2's first-pass trial
   ([0062](../backlog/m2/0062-m2-claude-first-pass-trial.md)). Its value next to the CLI is unproven: agents already drive
   Kiripix through the CLI and `describe`.
-- **PixelLab:** delayed, because its sprite generation has been unsatisfactory so far.
+- **PixelLab:** it was delayed, because its sprite generation had been unsatisfactory. Since 2026-11-25 the Owner's choice for
+  sprites (0354, 0386): `gen` paints a sprite through it (0388, §6.4); its sheets still come in through `import` too.
 - **An image API Provider** (OpenAI's GPT Image, the Owner's choice of 2026-11-23, §16) with prompt templates, the style bible, the cost ledger and the
   budget: nice to have, not urgent. It brings `gen --look` ([0143](../backlog/m6/0143-m6-gen-a-look-edit.md)), `gen` for a
   portrait's emotions and a Prop's states, and `gen` driving `extend`. The Owner's aim for `extend` (2026-11-16, after
@@ -1388,10 +1427,12 @@ one Plate, so the export is likely an atlas and a kit file rather than a `TileSe
 4. Image-to-3D: which local Runner fits 8 GB well enough, a Provider, or none (with Providers; deferred from M3, then from M6).
 5. ~~Which API provider comes first~~: decided 2026-11-23 by the Owner: OpenAI's GPT Image, through the OpenAI API, for
    the painted work (room Sources, `extend` pieces, Looks, Props and their states, portraits and their emotions), within
-   `[providers] budget_usd_month` ($10 in the art Project). Its pieces re-render the kept strip, so `extend add` joins them
+   `[providers] budget_usd_month` ($15 in the art Project, since 2026-11-25 for OpenAI and PixelLab together). Its pieces re-render the kept strip, so `extend add` joins them
    under `--max-residual 1` ([0377](../backlog/m6/0377-m6-extend-joins-a-re-rendered-strip.md)). Sprites and their
-   animations are still open ([0354](../backlog/m6/0354-m6-provider-research-actors.md)); the study is
-   [0353](../backlog/m6/0353-m6-provider-research.md).
+   animations: decided 2026-11-25 by the Owner, PixelLab, through its API on prepaid credits
+   ([0354](../backlog/m6/0354-m6-provider-research-actors.md), built by [0386](../backlog/m6/0386-m6-pixellab-provider.md): the Provider
+   0387, `gen` for a sprite 0388, motion from a render 0389); the
+   study is [0353](../backlog/m6/0353-m6-provider-research.md).
 6. Licence for Kiripix itself, if it's ever published.
 7. ~~How a multi-screen room is made~~: decided 2026-11-06 by the owner, after the trial
    [0063](../backlog/m2/0063-m2-multi-screen-source-trial.md). The game allows multi-screen rooms (its DEC-024), and **expects

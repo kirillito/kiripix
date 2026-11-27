@@ -4,13 +4,18 @@ call sent, with what it cost. The month's spend, the day's calls and `kiripix co
 A line's `usd` is the Provider's reported usage priced from its table, or, when it reported none (or the call was cancelled
 after it was sent), the estimate, with `estimated` true. A call the Provider refused is recorded only when it says it
 billed it. Months and days are UTC.
+
+Version 2 (ticket 0388) adds `generations` (what a Provider that charges in generations charged, as charged) and `operation`
+(the endpoint of a job of an operation: a sprite's character, state or motion; one line per job sent). A version-1 line reads
+with both null, in memory; nothing rewrites the file.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -19,7 +24,7 @@ from kiripix.core.errors import fail
 from kiripix.core.project import Project
 
 LEDGER_FILE = "cost.jsonl"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 CENTS = 6  # decimal places a sum is rounded to before it is compared with the cap: a call that fits exactly is sent
 
 
@@ -45,6 +50,10 @@ class LedgerLine(BaseModel):
     input_fidelity: str | None = Field(None, description="The input_fidelity sent; None: left out.")
     usage: dict[str, int] = Field(default_factory=dict, description="The token counts the Provider reported, such as "
                                   "input_tokens and output_tokens; empty when it reported none.")
+    generations: float | None = Field(None, description="What a Provider that charges in generations (PixelLab) charged, "
+                                                        "as charged; null when it charged in USD.")
+    operation: str | None = Field(None, description="The endpoint of the job this line is, for an operation (a sprite's "
+                                                    "character, state or motion); null for a plain image call.")
     outcome: Literal["done", "failed", "cancelled"] = Field(
         description="done, failed (billed all the same) or cancelled (during the Provider's call).")
 
@@ -57,6 +66,13 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
+def _migrate_line(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 1 had no `generations` and no `operation`: both are null."""
+    if document.get("schema_version") == 1:
+        return {**document, "schema_version": 2, "generations": None, "operation": None}
+    return document
+
+
 def read(project: Project) -> list[LedgerLine]:
     found = path(project)
     if not found.is_file():
@@ -66,10 +82,12 @@ def read(project: Project) -> list[LedgerLine]:
         if not text.strip():
             continue
         try:
-            line = LedgerLine.model_validate_json(text)
-        except ValidationError as error:
+            document = json.loads(text)
+            line = LedgerLine.model_validate(_migrate_line(document) if isinstance(document, dict) else document)
+        except (ValidationError, ValueError) as error:
+            message = error.errors()[0]["msg"] if isinstance(error, ValidationError) else str(error)
             raise fail("cost.ledger_invalid", f".kiripix/{LEDGER_FILE} line {number} is not valid: "
-                       f"{error.errors()[0]['msg']}",
+                       f"{message}",
                        owner_action=f"Fix or remove line {number} of .kiripix/{LEDGER_FILE}.") from None
         if line.schema_version != SCHEMA_VERSION:
             raise fail("cost.ledger_invalid", f".kiripix/{LEDGER_FILE} line {number} has schema_version "
@@ -96,6 +114,8 @@ class MonthSpend(BaseModel):
     calls: int
     images: int
     providers: dict[str, float] = Field(description="Spend by Provider.")
+    generations: dict[str, float] = Field({}, description="The generations charged, by Provider (those that charge in "
+                                                          "them); the USD above prices them at the Provider's dated rate.")
 
 
 class Spend(BaseModel):
@@ -115,21 +135,27 @@ def since(lines: list[LedgerLine], start: datetime) -> Spend:
         for name, value in line.usage.items():
             tokens[name] = tokens.get(name, 0) + value
     return Spend(since=start.isoformat(timespec="seconds"), usd=round(sum(line.usd for line in chosen), CENTS),
-                 calls=len(chosen), images=sum(line.images for line in chosen), tokens=dict(sorted(tokens.items())))
+                 calls=len({line.call for line in chosen}), images=sum(line.images for line in chosen), tokens=dict(sorted(tokens.items())))
 
 
 def by_month(lines: list[LedgerLine]) -> list[MonthSpend]:
     """The ledger summed by month (oldest first) and, within a month, by Provider."""
     months: dict[str, MonthSpend] = {}
+    counted: set[tuple[str, str]] = set()  # an operation's jobs are lines of one call
     for line in lines:
         key = month_of(line.time)
-        spend = months.setdefault(key, MonthSpend(month=key, usd=0.0, calls=0, images=0, providers={}))
+        spend = months.setdefault(key, MonthSpend(month=key, usd=0.0, calls=0, images=0, providers={}, generations={}))
         spend.usd = round(spend.usd + line.usd, CENTS)
-        spend.calls += 1
+        if (key, line.call) not in counted:
+            counted.add((key, line.call))
+            spend.calls += 1
         spend.images += line.images
         spend.providers[line.provider] = round(spend.providers.get(line.provider, 0.0) + line.usd, CENTS)
+        if line.generations is not None:
+            spend.generations[line.provider] = round(spend.generations.get(line.provider, 0.0) + line.generations, CENTS)
     return [months[m] for m in sorted(months)]
 
 
 def calls_on_day(project: Project, day: str) -> int:
-    return sum(1 for line in read(project) if line.time[:10] == day)
+    """The calls sent on a UTC day: an operation's jobs, one ledger line each, are one call (they share the call's ID)."""
+    return len({line.call for line in read(project) if line.time[:10] == day})

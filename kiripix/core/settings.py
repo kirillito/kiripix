@@ -9,7 +9,7 @@ import re
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, get_args
 
 import tomli_w
 import tomlkit
@@ -343,7 +343,7 @@ def _default_masks() -> dict[Literal["top", "side"], MaskSet]:
 
 
 PROJECT_SCHEMA_VERSION = 14
-ASSET_SCHEMA_VERSION = 1
+ASSET_SCHEMA_VERSION = 2
 
 
 class ProjectSettings(_Strict):
@@ -363,13 +363,59 @@ class ProjectSettings(_Strict):
     style: StyleSection = Field(default_factory=StyleSection)
 
 
-class AssetSettings(_Strict):
-    """`asset.toml`: the Kind and parameters only. Never status (ADR 0005)."""
+PixelLabView = Literal["low top-down", "high top-down", "side"]  # PixelLab's camera views: the one list of them
+VIEWS: tuple[str, ...] = get_args(PixelLabView)
+DEFAULT_VIEW: PixelLabView = "high top-down"
 
-    schema_version: Literal[1] = 1
+
+class PixelLabCharacter(_Strict):
+    """`[sprite.pixellab]`: what Kiripix keeps of a sprite's PixelLab side (ticket 0388). "Character" is PixelLab's word and
+    stays here and inside the Provider. The table holds a character (`character_id`, `canvas`, `made_from`: all three or none,
+    for a sprite no call has made one of), the camera `view` the character was made with (ticket 0390) and the sprite's mark
+    `faces`, which `set <sprite> pixellab faces=false` writes (ticket 0391). `asset.toml` version 2 (ticket 0391) holds them."""
+
+    character_id: str | None = Field(None, min_length=1, description="PixelLab's ID of the character; none before one is made.")
+    canvas: str | None = Field(None, pattern=r"^[1-9][0-9]*x[1-9][0-9]*$",
+                               description="WIDTHxHEIGHT of the character's frames.")
+    made_from: Literal["frames", "text"] | None = Field(
+        None, description="How it was made: from the sprite's own frames, or from text.")
+    view: PixelLabView = Field(
+        DEFAULT_VIEW, description="The camera view of the character (ticket 0390), PixelLab's own words: set when the character "
+                                  "is made, and sent by the calls whose endpoint takes one (a rig or skeleton motion, "
+                                  "rotations). Read as the default when absent.")
+    faces: bool = Field(
+        True, description="Whether the sprite has a face (ticket 0391). `gen --motion keyframes` melts faces, so it needs "
+                          "`faces = false`: the Owner's choice, made with `set <sprite> pixellab faces=false`. True when "
+                          "absent, and not written when true.")
+
+    @model_validator(mode="after")
+    def _character_whole(self) -> Self:
+        held = [self.character_id, self.canvas, self.made_from]
+        if any(v is not None for v in held) and any(v is None for v in held):
+            raise ValueError("a character needs character_id, canvas and made_from together (or none of them)")
+        return self
+
+
+class SpriteSettings(_Strict):
+    """`[sprite]` in `asset.toml`: what Kiripix keeps with a sprite besides its Stage parameters."""
+
+    pixellab: PixelLabCharacter | None = None
+
+
+class AssetSettings(_Strict):
+    """`asset.toml`: the Kind and parameters only. Never status (ADR 0005). `[sprite.pixellab]` is the one table `gen`
+    writes (tickets 0388, 0390, 0391); version 2 holds it whole, and a version 1 file reads as it did."""
+
+    schema_version: Literal[2] = 2
     kind: str
     params: dict[str, Scalar] = {}
     stages: dict[str, dict[str, Scalar]] = {}
+    sprite: SpriteSettings | None = None
+
+    @property
+    def pixellab(self) -> PixelLabCharacter | None:
+        """`[sprite.pixellab]`, whether or not it holds a character."""
+        return self.sprite.pixellab if self.sprite is not None else None
 
 
 Migration = Callable[[dict[str, Any]], dict[str, Any]]
@@ -456,12 +502,18 @@ def _add_provider_choices(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "schema_version": 14}
 
 
+def _add_sprite_table(document: dict[str, Any]) -> dict[str, Any]:
+    """Version 1 had `[sprite.pixellab]` with a character only; version 2 (ticket 0391) also holds `view` and `faces` and
+    allows a table with no character. Nothing is added: the defaults are read (`view` high top-down, `faces` true)."""
+    return {**document, "schema_version": 2}
+
+
 PROJECT_MIGRATIONS: dict[int, Migration] = {
     0: _add_schema_version, 1: _add_character_section, 2: _add_camera_light, 3: _add_ramp_table,
     4: _add_extend_section, 5: _add_generators, 6: _add_clip_table, 7: _add_icon_section,
     8: _add_portrait_section, 9: _add_inbox_section, 10: _add_style_section, 11: _add_ramp_choices,
     12: _add_extend_max_residual, 13: _add_provider_choices}
-ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version}
+ASSET_MIGRATIONS: dict[int, Migration] = {0: _add_schema_version, 1: _add_sprite_table}
 
 
 def _add_crop_number(document: dict[str, Any]) -> dict[str, Any]:
@@ -719,6 +771,12 @@ def load_asset_settings(path: Path, file: str) -> AssetSettings:
 def settings_document(settings: BaseModel) -> dict[str, Any]:
     """The settings as plain TOML-ready data, by alias, without unset optional values."""
     document: dict[str, Any] = settings.model_dump(mode="json", by_alias=True, exclude_none=True)
+    table = document.get("sprite", {}).get("pixellab") if isinstance(settings, AssetSettings) else None
+    if table is not None:  # the defaults of `[sprite.pixellab]` are read, not written (`show` still reports them)
+        if table.get("faces") is True:
+            del table["faces"]
+        if "character_id" not in table and table.get("view") == DEFAULT_VIEW:
+            del table["view"]
     return document
 
 

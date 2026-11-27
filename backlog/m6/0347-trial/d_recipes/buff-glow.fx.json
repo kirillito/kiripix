@@ -1,9 +1,0 @@
-{"format":"pixelforge-fx","version":1,"name":"buff_glow","width":48,"height":64,"anchor":[24,56],
- "palette":{"W":"#FAFEEB","y":"#FEDA43","o":"#E1A441","h":"#7D5C22","g":"#FEDA4366"},
- "symbols":{"mote":["y"],"hot":["W"],"glint":[".W.","WyW",".W."]},
- "effects":{"buff_glow":{"frames":12,"duration":80,"loop":true,"seed":4,
-  "looks":{"ring":{"colors":["h","o","y","W"],"thresholds":[0.2,0.45,0.7,0.92],"dither":0.35},
-           "haze":{"colors":["g"],"thresholds":[0.2]}},
-  "layers":[
-   {"kind":"ring","look":"ring","at":[24,54],"radius":[8,22],"width":[3,2],"squash":[1,0.34],"noise":0.3,"scale":4,"boil":8,"power":[1.2,1.0,0.5],"frames":[0,11]}],
-  "emitters":[{"at":[24,54],"ring":{"radius":[4,16],"fill":true},"angle":90,"rate":1.3,"speed":[0.8,1.4],"life":[10,16],"shapes":["mote","hot","glint"]}]}}}

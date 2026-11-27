@@ -20,7 +20,7 @@ from kiripix.core.hashing import HashCache, hash_bytes
 from kiripix.core.images import load_rgba, read_as_png, read_png
 from kiripix.core.kinds import get_kind
 from kiripix.core.project import Project
-from kiripix.core.settings import save_settings
+from kiripix.core.settings import PixelLabCharacter, SpriteSettings, save_settings
 from kiripix.ops.colour import U8
 from kiripix.recipes.base import ParamSpec, Scalar, StageSpec
 from kiripix.recipes.common import IMPORT_DIR
@@ -72,6 +72,8 @@ def set_params_many(project: Project, assets: Sequence[Asset], stage: str,
                     assignments: Sequence[str]) -> dict[str, dict[str, Scalar]]:
     """`set_params` on several Assets, all or none: every Asset's assignments are checked before any file is written, and
     the findings of every Asset that refuses are given together. Returns each Asset's parameters as set, by ID."""
+    if stage == PIXELLAB_TABLE:
+        return _set_pixellab_many(project, assets, assignments)
     findings: list[Finding] = []
     checked: list[tuple[Asset, dict[str, Scalar]]] = []
     for asset in assets:
@@ -87,6 +89,56 @@ def set_params_many(project: Project, assets: Sequence[Asset], stage: str,
         stages.setdefault(stage, {}).update(values)
         save_settings(asset.dir / ASSET_FILE, asset.settings.model_copy(update={"stages": stages}))
         result[asset.id] = stages[stage]
+    return result
+
+
+PIXELLAB_TABLE = "pixellab"  # `set <sprite> pixellab faces=false` writes `[sprite.pixellab]`, which is no Stage (ticket 0391)
+PIXELLAB_MARKS = ("faces",)  # the table's key the Owner sets; the character and its view are `gen`'s (--prompt, --from-frames)
+
+
+def _set_pixellab_many(project: Project, assets: Sequence[Asset], assignments: Sequence[str]) -> dict[str, dict[str, Scalar]]:
+    """`set <sprite> pixellab faces=false`: the sprite's mark in `[sprite.pixellab]`, all Assets or none."""
+    findings: list[Finding] = []
+    changes: list[tuple[Asset, PixelLabCharacter]] = []
+    result: dict[str, dict[str, Scalar]] = {}
+    for asset in assets:
+        file = project.relative(asset.dir / ASSET_FILE)
+        if asset.kind != "sprite":
+            findings.append(Finding(code="stage.unknown", message=f"a {asset.kind} has no Stage '{PIXELLAB_TABLE}': "
+                                    "`[sprite.pixellab]` is a sprite's", position=Position(asset=asset.id, file=file),
+                                    fix=f"kiripix describe {asset.kind}"))
+            continue
+        table = (asset.settings.pixellab or PixelLabCharacter()).model_dump(mode="python")
+        show = f"kiripix show {asset.id}"  # the sprite's table as it stands: the cure for a wrong key or value is to read it
+        failed = False
+        for assignment in assignments:
+            name, equals, text = assignment.partition("=")
+            position = Position(asset=asset.id, stage=PIXELLAB_TABLE, file=file, field=f"sprite.pixellab.{name}")
+            if not equals or not name:
+                findings.append(Finding(code="set.invalid_assignment", message=f"'{assignment}' is not key=value",
+                                        position=position, fix=show))
+            elif name not in PIXELLAB_MARKS:
+                findings.append(Finding(code="set.unknown_parameter", position=position, fix=show,
+                                        message=f"[sprite.pixellab] has no setting '{name}' to set; its setting is "
+                                        f"{', '.join(PIXELLAB_MARKS)} (the view is set when the character is made: gen --prompt "
+                                        "or --from-frames with --view)"))
+            elif text.lower() not in ("true", "false"):
+                findings.append(Finding(code="set.invalid_value", position=position, fix=show,
+                                        message=f"faces expects true or false, got {text!r}"))
+            else:
+                table[name] = text.lower() == "true"
+                continue
+            failed = True
+        if failed:
+            continue
+        changed = PixelLabCharacter.model_validate(table)
+        changes.append((asset, changed))
+        result[asset.id] = {"faces": changed.faces}
+    if findings:
+        raise KiripixError(findings)
+    for asset, changed in changes:
+        sprite = asset.settings.sprite or SpriteSettings()
+        save_settings(asset.dir / ASSET_FILE, asset.settings.model_copy(update={"sprite": sprite.model_copy(update={"pixellab": changed})}))
     return result
 
 

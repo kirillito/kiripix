@@ -55,6 +55,8 @@ def _stages() -> tuple[StageSpec, ...]:
     return chain(
         StageSpec(
             name="frames",
+            # 2: a PixelLab state's rotations are the state's clip, not `idle`; `leave_out` (ticket 0385).
+            version=2,
             description="Cuts the imported sheets into clip, direction and frame at source resolution.",
             inputs=StageInputs(files=["src/sheets/*"]),
             params=(DIRECTIONS_PARAM,),
@@ -81,7 +83,8 @@ def _stages() -> tuple[StageSpec, ...]:
             name="fit",
             # 2: the pivot at the ground point, 0.08 of the figure above the feet; fit.json's `ground` (ticket 0318).
             # 3: fit.json records the source's partial alpha (`alpha`, `alpha_partial`), read by fit.alpha_partial (ticket 0363)
-            version=3,
+            # 4: with align_feet, a moving clip is placed whole by the median of its feet; fit.json's `unmeasured` (ticket 0392)
+            version=4,
             description="Every frame onto the target pixel grid, its feet found, all placed on one cell around one pivot.",
             inputs=StageInputs(upstream=["frames"], settings=["character.height"]),
             params=FIT_PARAMS,
@@ -93,6 +96,7 @@ def _stages() -> tuple[StageSpec, ...]:
                 CheckSpec(code="fit.height", description="The tallest figure's height against the target and the game's "
                                                           "band (info)."),
                 CheckSpec(code="fit.cell_grew", description="A frame far from the others that widened the cell (info)."),
+                CheckSpec(code="fit.clip_unmeasured", description="A moving clip with no measurable feet keeps its place (info)."),
             ),
             run=run_sprite_fit,
             check=check_sprite_fit,

@@ -53,7 +53,8 @@ def current_decisions(decisions: tuple[CurrentDecision, ...], from_base: bool = 
 class SetInput(_StageInput):
     asset: str = Field(description="The Asset ID, such as room.queen_west_alley; or several, comma-separated "
                                    "(character.a,character.b): all are set, or none is.")
-    assignments: list[str] = Field(description="key=value pairs: the Stage's parameters and their new values.")
+    assignments: list[str] = Field(description="key=value pairs: the Stage's parameters and their new values. For a sprite with the Stage "
+                                           "`pixellab`: `faces=true` or `faces=false`, its `[sprite.pixellab]` mark.")
 
 
 class SetAssetData(BaseModel):
@@ -65,7 +66,8 @@ class SetAssetData(BaseModel):
 class SetData(BaseModel):
     asset: str = Field(description="The Asset ID as given; with several Assets, the IDs joined by commas.")
     stage: str
-    params: dict[str, Scalar] = Field(description="The Stage's parameters as set; empty with several Assets: see `assets`.")
+    params: dict[str, Scalar] = Field(description="The Stage's parameters as set (for a sprite's `pixellab`: `faces`); empty "
+                                                  "with several Assets: see `assets`.")
     stages: list[StageState] = Field(description="The Asset's Stage states; empty with several Assets: see `assets`.")
     assets: list[SetAssetData] = Field(default_factory=list, description="With several Assets: each one's new "
                                                                           "parameters and Stage states, in order.")
@@ -89,7 +91,8 @@ def _listed_assets(arguments: SetInput) -> list[str]:
 @command(
     "set",
     summary="Set a Stage's parameters (key=value ...), checked against the Stage's declared parameters. Several "
-            "Assets, comma-separated, are set all or none.",
+            "Assets, comma-separated, are set all or none. For a sprite, the Stage name `pixellab` sets its `[sprite.pixellab]` "
+            "table instead: `faces=false` marks it faceless, which `gen --motion keyframes` needs (the Owner's choice).",
     input=SetInput,
     output=SetData,
     kind="writing",

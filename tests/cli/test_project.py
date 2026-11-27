@@ -144,7 +144,7 @@ def test_new_creates_the_asset(project: Kiripix) -> None:
     assert (folder / "history.jsonl").read_bytes() == b""
     assert (folder / "decisions").is_dir()
     settings = tomllib.loads((folder / "asset.toml").read_text(encoding="utf-8"))
-    assert settings == {"schema_version": 1, "kind": "room", "params": {"view": "top"}, "stages": {}}
+    assert settings == {"schema_version": 2, "kind": "room", "params": {"view": "top"}, "stages": {}}
 
 
 def test_new_accepts_the_full_id(project: Kiripix) -> None:

@@ -2,19 +2,25 @@
 `checks` and `ops`. Core reads the key, checks the budget and keeps the ledger (tickets 0379, 0378, 0381)."""
 
 from kiripix.providers.base import (
-    CheckCancel, InputImage, Provider, ProviderError, ProviderRequest, ProviderResult, providers, register_provider,
+    CheckCancel, InputImage, OperationRequest, OperationResult, Provider, ProviderError, ProviderRequest, ProviderResult,
+    Wait, providers, register_provider,
 )
 from kiripix.providers.openai import OpenAI
+from kiripix.providers.pixellab import PixelLab
 
 register_provider(OpenAI())
+register_provider(PixelLab())
 
 __all__ = [
     "CheckCancel",
     "InputImage",
+    "OperationRequest",
+    "OperationResult",
     "Provider",
     "ProviderError",
     "ProviderRequest",
     "ProviderResult",
+    "Wait",
     "providers",
     "register_provider",
 ]

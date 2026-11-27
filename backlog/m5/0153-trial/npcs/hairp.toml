@@ -1,5 +1,0 @@
-base = "adult_male"
-[parts]
-hair = "parted"
-[colours]
-hair = "hair_blond"

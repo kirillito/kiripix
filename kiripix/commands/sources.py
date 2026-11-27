@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kiripix.commands.contract import Context, Outcome
 from kiripix.commands.registry import CliMeta, LockNeeds, command
-from kiripix.core import editof, emotions, loopedits, loopkit, sheets, sources, things
+from kiripix.core import editof, emotions, gen_sprite, loopedits, loopkit, sheets, sources, things
 from kiripix.core.errors import fail
 from kiripix.core.assets import is_asset_id, load_asset
 from kiripix.core.graph import AssetGraph, ProgressEvent, StageState
@@ -313,6 +313,8 @@ class PickInput(_AssetInput):
 
 class PickData(BaseModel):
     asset: str
+    sheet: str | None = Field(None, description="For a sprite: the one-direction sheet the picked image was stored as.")
+    clip: str | None = Field(None, description="For a sprite: the clip that sheet holds (`idle`, `idle_2`...).")
     state: str | None = Field(None, description="With --state: the state whose Variant was picked.")
     emotion: str | None = Field(None, description="With --emotion: the emotion whose Variant was picked.")
     look: str | None = Field(description="With --look: the Look whose edit was picked.")
@@ -324,6 +326,9 @@ class PickData(BaseModel):
     stages: list[StageState]
 
     def text(self) -> str:
+        if self.sheet is not None:
+            return (f"{self.asset}: picked {self.variant}, stored as sheet {self.sheet} (clip {self.clip}, south only); "
+                    f"next: kiripix run {self.asset} frames")
         if self.emotion is not None:
             return f"{self.asset}: picked {self.variant} as the image of emotion {self.emotion} ({self.stage} Decision {self.id})"
         if self.state is not None:
@@ -349,6 +354,13 @@ class PickData(BaseModel):
 def pick(arguments: PickInput, context: Context) -> Outcome[PickData]:
     project = find_project(context.cwd)
     asset = load_asset(project, arguments.asset)
+    if sources.takes_sheets(asset):  # a sprite's image candidate becomes a one-direction sheet (ticket 0390)
+        if (arguments.state, arguments.emotion, arguments.look, arguments.loop, arguments.frame) != (None,) * 5:
+            raise fail("pick.sprite_alone", "a sprite's pick takes only the candidate: --state, --emotion, --look, --loop and "
+                       "--frame are for other Assets", fix=f"kiripix pick {asset.id} {arguments.variant}")
+        sheet, clip = gen_sprite.pick(project, asset, arguments.variant)
+        return Outcome(PickData(asset=asset.id, sheet=sheet, clip=clip, look=None, stage="frames", variant=arguments.variant,
+                                id=sheet, stages=AssetGraph(project, asset, HashCache(project.state_dir)).states()))
     if arguments.emotion is not None:
         if (arguments.state is not None or arguments.look is not None or arguments.loop is not None
                 or arguments.frame is not None):

@@ -39,7 +39,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from kiripix.providers.base import CheckCancel, Provider, ProviderError, ProviderRequest, ProviderResult
+from kiripix.providers.base import CheckCancel, Provider, ProviderError, ProviderRequest, ProviderResult, Wait
 
 API = "https://api.openai.com/v1/images"
 TIMEOUT_S = 300  # OpenAI: complex prompts may take up to 2 minutes
@@ -107,7 +107,8 @@ class OpenAI(Provider):
             w, h = (w - EDGE_STEP, h) if w >= h else (w, h - EDGE_STEP)
         return w, h
 
-    def call(self, request: ProviderRequest, key: str | None, check_cancel: CheckCancel) -> ProviderResult:
+    def call(self, request: ProviderRequest, key: str | None, check_cancel: CheckCancel,
+             wait: Wait | None = None) -> ProviderResult:
         if not key:
             raise ProviderError("no OpenAI key was given")
         size = f"{request.size[0]}x{request.size[1]}"

@@ -3,7 +3,7 @@ resolution.
 
 A sheet is a Source file in `src/sheets/` (ticket 0178), named by the start of its hash. A PNG needs a `sheet` Decision that says
 how its cells map to a clip's directions and frames (`slice_grid`); a ZIP is read by the naming rule in `sprite_names` (PixelLab's
-layout, provisional pending ticket 0175), and a `sheet` Decision may rename its clips. A `clip` Decision sets a clip's frame rate,
+layout, provisional pending ticket 0175), and a `sheet` Decision may rename its clips or leave some out (ticket 0385). A `clip` Decision sets a clip's frame rate,
 loop and stationary flags; without one a clip gets 8 fps, loops, and is stationary when it has a single frame.
 
 Output in `work/frames/`: `color/<clip>/<dir>/<NNN>.png` (RGBA, as the sheet has them) and `frames.json`:
@@ -39,7 +39,7 @@ from kiripix.ops import slice_grid
 from kiripix.recipes.base import CurrentDecision, DecisionSpec, NeedsInput, ParamSpec, StageFailure, StageRun
 from kiripix.recipes.clips import DIRECTIONS, NAME_PATTERN
 from kiripix.recipes.common import read_rgba, write_rgba
-from kiripix.recipes.sprite_names import METADATA, ROTATION_CLIP, place, snake_case
+from kiripix.recipes.sprite_names import METADATA, place, snake_case
 
 SCHEMA_VERSION = 1
 FRAMES_FILE = "frames.json"
@@ -60,8 +60,9 @@ SHEET = DecisionSpec(
     description="How a sheet is cut. For a PNG: `file` (the sheet's name, the start of its hash), `clip`, `layout` (`rows`: one "
                 "direction per row, its frames across; `columns`: one direction per column, its frames down), `directions` (in "
                 "that order, as s sw w nw n ne e se) and `frames` (the count): the cell is the sheet's size divided by those. For "
-                "a ZIP: `file` and, to rename clips, `clips` ({\"breathing-idle\": \"idle\"}, their folder's name to ours). A "
-                "ZIP's names are read by rule, so it needs no Decision. Deciding a sheet again replaces it; `undo` brings the "
+                "a ZIP: `file`; to rename clips, `clips` ({\"breathing-idle\": \"idle\"}, their folder's name to ours); to leave "
+                "animations or PixelLab states out, `leave_out` ([\"hop\", \"hop_2\"], their folders' names: a group's "
+                "ZIP holds every state, rejected tries too). A ZIP's names are read by rule, so it needs no Decision. Deciding a sheet again replaces it; `undo` brings the "
                 "old one back.",
     entry_schema={
         "oneOf": [
@@ -74,7 +75,8 @@ SHEET = DecisionSpec(
              "required": ["file", "clip", "layout", "directions", "frames"], "additionalProperties": False},
             {"type": "object",
              "properties": {"file": {"type": "string", "minLength": 1},
-                            "clips": {"type": "object", "additionalProperties": _CLIP_NAME}},
+                            "clips": {"type": "object", "additionalProperties": _CLIP_NAME},
+                            "leave_out": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": True}},
              "required": ["file"], "additionalProperties": False},
         ]
     },
@@ -157,7 +159,8 @@ def frames_needs_input(run: StageRun) -> NeedsInput | None:
 
 class _Frames:
     """The frames found, by clip and direction and then by the number the source gave them. A rotation (a direction with no
-    animation, the clip `idle`) is kept apart and joins only where no animation gave that clip the direction."""
+    animation, the clip of its state or `idle`) is kept apart and joins only where no animation gave that clip the direction;
+    two rotations for one clip and direction are a duplicate."""
 
     def __init__(self) -> None:
         self.found: dict[str, dict[str, dict[int, tuple[np.ndarray, str, str]]]] = {}
@@ -165,6 +168,7 @@ class _Frames:
         self.raw: dict[str, list[str]] = {}
         self.duplicates: list[dict[str, Any]] = []
         self.dropped = 0
+        self.left_out: set[str] = set()
 
     def add(self, clip: str, raw: str, direction: str, number: int, image: np.ndarray, sheet: str, source: str,
             rotation: bool = False) -> None:
@@ -184,8 +188,9 @@ class _Frames:
         slot[number] = (image, sheet, source)
 
     def join_rotations(self) -> None:
+        animated = {(clip, direction) for clip, by_direction in self.found.items() for direction in by_direction}
         for clip, raw, direction, number, image, sheet, source in self.rotations:
-            if direction not in self.found.get(clip, {}):
+            if (clip, direction) not in animated:
                 self._put(clip, raw, direction, number, image, sheet, source)
             else:
                 self.dropped += 1  # an animation gave the direction
@@ -210,8 +215,11 @@ def _cut_png(run: StageRun, found: _Frames, name: str, path: Path, data: dict[st
 
 
 def _read_zip(run: StageRun, found: _Frames, unplaced: list[dict[str, str]], name: str, path: Path,
-              renames: dict[str, str], wanted: list[str]) -> None:
+              data: dict[str, Any], wanted: list[str]) -> None:
     import zipfile
+
+    renames: dict[str, str] = dict(data.get("clips", {}))
+    leave_out = {snake_case(str(folder)) for folder in data.get("leave_out", [])}
 
     with zipfile.ZipFile(path) as archive:
         for info in sorted(archive.infolist(), key=lambda i: i.filename):
@@ -223,6 +231,9 @@ def _read_zip(run: StageRun, found: _Frames, unplaced: list[dict[str, str]], nam
                 unplaced.append({"sheet": name, "path": info.filename,
                                  "why": "no direction word in its path (south, south-east, ... or s, se, ...)"})
                 continue
+            if snake_case(where.raw) in leave_out:
+                found.left_out.add(where.raw)
+                continue
             if where.direction not in wanted:
                 found.dropped += 1
                 continue
@@ -230,7 +241,7 @@ def _read_zip(run: StageRun, found: _Frames, unplaced: list[dict[str, str]], nam
                 image = Image.open(entry)
                 image.load()
                 pixels = np.asarray(image.convert("RGBA"), dtype=np.uint8).copy()
-            raw = where.animation if where.animation is not None else ROTATION_CLIP
+            raw = where.raw
             clip = renames.get(raw) or renames.get(snake_case(raw)) or snake_case(raw)
             found.add(clip, raw, where.direction, where.frame, pixels, name, info.filename,
                       rotation=where.animation is None)
@@ -255,7 +266,7 @@ def run_frames(run: StageRun) -> None:
         run.check_cancel()
         data = cuts.get(name)
         if path.suffix == ".zip":
-            _read_zip(run, found, unplaced, name, path, dict(data.get("clips", {})) if data else {}, wanted)
+            _read_zip(run, found, unplaced, name, path, data or {}, wanted)
         elif data is not None:
             _cut_png(run, found, name, path, data, wanted)
     found.join_rotations()
@@ -294,6 +305,8 @@ def run_frames(run: StageRun) -> None:
     (run.output_dir / FRAMES_FILE).write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
     if found.dropped:
         run.notes.append(f"left out {found.dropped} frames: directions the sprite doesn't ask for, or rotations an animation replaces")
+    if found.left_out:
+        run.notes.append(f"left out as the sheet Decision says: {', '.join(sorted(found.left_out))}")
 
 
 def check_frames(run: StageRun) -> list[Finding]:
@@ -349,8 +362,8 @@ def check_frames(run: StageRun) -> list[Finding]:
             code="clips.duplicate_name", position=at(f"{item['clip']}/{item['direction']}"),
             message=f"the clip {item['clip']} gets frame {item['frame']} of direction {item['direction']} twice: "
                     f"{item['sheet']}:{item['source']} and {item['other']}, so the first is kept",
-            owner_action="Rename one of the two clips with a `sheet` Decision's `clips`, or remove the extra sheet: "
-                         "the same clip name must not come from two sources."))
+            owner_action="Rename one of the two clips with a `sheet` Decision's `clips`, leave one out with its "
+                         "`leave_out`, or remove the extra sheet: the same clip name must not come from two sources."))
     for item in document["unplaced"]:
         findings.append(Finding(
             code="frames.unknown_direction", severity="warning",

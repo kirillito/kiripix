@@ -13,6 +13,7 @@ from kiripix.core.assets import Asset, load_asset, wearables_of
 from kiripix.core.graph import STAMP_FILE, AssetGraph, Status
 from kiripix.core.hashing import HashCache
 from kiripix.core.project import Project, find_project
+from kiripix.core.settings import PixelLabCharacter
 from kiripix.export import export_command
 from kiripix.recipes.base import Scalar, SortPosition, StageSpec
 from kiripix.recipes.portrait_set import EMOTIONS_OUT
@@ -171,6 +172,8 @@ class ShowData(BaseModel):
     parameters: VariantOut | None = Field(None, description="A generated character's parameter file, which the Project's "
                                                             "generator builds its Model from.")
     sheets: list[SheetOut] = Field(description="A sprite's imported sheets (PNGs and ZIPs), named by hash.")
+    pixellab: PixelLabCharacter | None = Field(None, description="A sprite's PixelLab character (`[sprite.pixellab]`): its ID, "
+                                                                 "canvas, how it was made and the camera view every call sends.")
     stages: list[StageDetail]
     export_command: str | None = Field(
         None, description="While every Stage is done and the game doesn't have what is built: the Command that exports it.")
@@ -196,6 +199,12 @@ class ShowData(BaseModel):
         lines += [f"  rigged {self.rigged.file}"] if self.rigged is not None else []
         lines += [f"  sheet {s.name} ({s.imported_as or s.file}, {s.size} bytes"
                   + (f", {s.png_count} PNGs" if s.png_count is not None else "") + ")" for s in self.sheets]
+        if self.pixellab is not None:
+            if self.pixellab.character_id is not None:
+                lines.append(f"  PixelLab character {self.pixellab.character_id} ({self.pixellab.canvas}, made from "
+                             f"{self.pixellab.made_from}, view {self.pixellab.view})")
+            if not self.pixellab.faces:
+                lines.append("  faceless: text-driven motion between two frames is allowed (gen --motion keyframes)")
         for stage in self.stages:
             marks = {"generated": " (generated)", "base": " (base)"}  # who set a value, when it wasn't the Asset or nobody
             params = ", ".join(f"{k}={v}{marks.get(stage.param_sources.get(k, ''), '')}" for k, v in stage.params.items())
@@ -348,7 +357,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
             sort=spec.sort(graph.replay(state.stage).current) if spec.sort is not None else [],
         ))
     takes_variants = sources.takes_pick(graph)
-    variants = sources.variants(asset) if takes_variants else {}
+    variants = sources.variants(asset) if takes_variants or sources.takes_sheets(asset) else {}  # a sprite's: `gen --image`
     names = sources.imported_names(asset)
     look_picks = sources.picked_look_edits(graph)
     state_picks = sources.picked_states(graph)
@@ -390,6 +399,7 @@ def show(arguments: ShowInput, context: Context) -> Outcome[ShowData]:
         if (parameters_path := sources.parameters(asset)) is not None else None,
         sheets=[SheetOut(**_variant(project, asset, names, name, path).model_dump(), png_count=sheets.png_count(path))
                 for name, path in sheets.sheets(asset).items()],
+        pixellab=asset.settings.pixellab,
         stages=stages,
         export_command=export_command(project, asset, cache, states),
     )

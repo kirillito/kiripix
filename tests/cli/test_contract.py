@@ -578,3 +578,59 @@ def test_text_mode_prints_findings_on_stderr(kpx: Kiripix) -> None:
 def test_kpx_is_an_alias(tmp_path: Path) -> None:
     scripts = Path(__import__("sys").executable).parent
     assert any((scripts / name).exists() for name in ("kpx", "kpx.exe"))
+
+
+def test_a_sprites_gen_approve_and_cost_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The shapes of `gen` for a sprite (ticket 0388): waiting for the Owner, then approved, and `cost` with generations."""
+    from test_gen import providers
+    from test_gen_sprite import SPRITE, sprite
+
+    sprite(project, approve="each")
+
+    waiting = project.json("gen", SPRITE, "--prompt", "a raccoon", expect=3)
+    approved = project.json("approve", waiting["data"]["call"], owner=True)
+    providers(project, approve="none")
+    sent = project.json("gen", SPRITE, "--state", "hop", "--prompt", "a hop")
+    spent = project.json("cost", "--month")
+
+    jsonschema.validate(waiting, schemas["gen"]["output"])
+    jsonschema.validate(approved, schemas["approve"]["output"])
+    jsonschema.validate(sent, schemas["gen"]["output"])
+    jsonschema.validate(spent, schemas["cost"]["output"])
+    assert waiting["data"]["operation"] == "character" and approved["data"]["sent"]["sheet"]
+    assert sent["data"]["clips"] == ["hop"] and spent["data"]["terms"]["pixellab"]
+
+
+def test_a_sprites_image_pick_and_show_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The shapes of `gen --image`, `pick` on a sprite and `show` with its character (ticket 0390)."""
+    from test_gen_sprite import SPRITE, sprite
+
+    sprite(project)
+
+    made = project.json("gen", SPRITE, "--image", "--prompt", "a raccoon", "-n", "2")
+    picked = project.json("pick", SPRITE, made["data"]["variants"][0])
+    project.json("gen", SPRITE, "--prompt", "a raccoon", "--view", "side")
+    shown = project.json("show", SPRITE)
+
+    jsonschema.validate(made, schemas["gen"]["output"])
+    jsonschema.validate(picked, schemas["pick"]["output"])
+    jsonschema.validate(shown, schemas["show"]["output"])
+    assert picked["data"]["clip"] == "idle" and shown["data"]["pixellab"]["view"] == "side"
+
+
+def test_a_keyframes_clip_and_the_pixellab_mark_validate(project: Kiripix, schemas: dict[str, dict[str, object]]) -> None:
+    """The shapes of `gen --motion keyframes`, `set <sprite> pixellab` and `show` of a sprite marked faceless (ticket 0391)."""
+    from test_gen_sprite import SPRITE, TOPPLE, a_bin
+
+    a_bin(project)
+
+    refused = project("gen", SPRITE, "--clip", "topple", "--motion", "keyframes", "--from", "standing", "--prompt", "x", "--json")
+    marked = project.json("set", SPRITE, "pixellab", "faces=false")
+    sent = project.json("gen", SPRITE, *TOPPLE)
+    shown = project.json("show", SPRITE)
+
+    jsonschema.validate(sent, schemas["gen"]["output"])
+    jsonschema.validate(marked, schemas["set"]["output"])
+    jsonschema.validate(shown, schemas["show"]["output"])
+    assert refused.codes == ["gen.keyframes_need_end"] and sent["data"]["clips"] == ["topple"]
+    assert shown["data"]["pixellab"]["faces"] is False and shown["data"]["pixellab"]["character_id"] is None

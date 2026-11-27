@@ -46,7 +46,7 @@ def sheet_of(directions: list[str], frames: int, scale: int = 1, hops: dict[int,
     """One row per direction, `frames` across; each direction has its own colour."""
     rows = []
     for number, _ in enumerate(directions):
-        colour = (60 + 50 * number, 90, 200 - 40 * number)
+        colour = (60 + 50 * (number % 4), 90 + 40 * (number // 4), 200 - 40 * (number % 4))  # 8 directions stay in a byte
         rows.append(np.concatenate([figure(colour, (hops or {}).get(f, 0)) for f in range(frames)], axis=1))
     sheet = np.concatenate(rows, axis=0)
     return np.repeat(np.repeat(sheet, scale, axis=0), scale, axis=1)
@@ -124,7 +124,7 @@ def test_describe_lists_the_stages_decisions_and_checks(project: Kiripix) -> Non
     assert [d["name"] for d in stages["fit"]["decisions"]] == ["pivot"]
     assert [c["code"] for c in stages["frames"]["checks"]] == [
         "frames.direction_missing", "frames.frame_count", "frames.unknown_direction", "clips.bad_name", "clips.duplicate_name", "clips.ticks_count"]
-    assert [c["code"] for c in stages["fit"]["checks"]] == ["fit.grid_differs", "fit.alpha_partial", "fit.height", "fit.cell_grew"]
+    assert [c["code"] for c in stages["fit"]["checks"]] == ["fit.grid_differs", "fit.alpha_partial", "fit.height", "fit.cell_grew", "fit.clip_unmeasured"]
     finish = {p["name"]: p for p in stages["finish"]["params"]}
     assert finish["normals"]["default"] == "height" and finish["placement"]["default"] == "edge"
     assert {p["name"] for p in stages["fit"]["params"]} == {"mode", "height", "chroma", "align_feet", "anchor", "effect", "alpha", "alpha_pattern"}
@@ -335,6 +335,74 @@ def test_a_stationary_idle_with_a_one_pixel_hop_drifts_until_the_feet_are_aligne
     assert [f for f in project.json("check", SPRITE)["findings"] if f["code"] == "sheet.pivot_drift"] == []
     assert errors(project) == []
     assert load(folder / "work" / "fit" / "fit.json")["align_feet"] is True
+
+
+def shifted(image: np.ndarray, dx: int, dy: int) -> np.ndarray:
+    return np.roll(np.roll(image, dy, axis=0), dx, axis=1)
+
+
+def walk_on_another_canvas(project: Kiripix, dx: int = -4, dy: int = -2, frames: int = 3) -> Path:
+    """A PixelLab group: `idle` is the rotations, and `walk` was made on a canvas of its own, so the whole clip is drawn
+    (dx, dy) px from where idle stands; frame f strides f px to the right."""
+    folder = new_sprite(project)
+    entries = {f"Idle/rotations/{w}.png": figure((60 + 50 * n, 90, 120)) for n, w in enumerate(WORDS)}
+    for n, w in enumerate(WORDS):
+        for f in range(frames):
+            entries[f"Idle/animations/walk/{w}/frame_{f:03d}.png"] = shifted(figure((60 + 50 * n, 90, 120)), dx + f, dy)
+    import_sheet(project, make_zip(project, "group.zip", entries))
+    return folder
+
+
+def clip_feet(fit: Path, clip: str, direction: str) -> list[tuple[float, float]]:
+    frames = {c["name"]: c for c in load(fit / "render.json")["clips"]}[clip]["directions"][direction]
+    return [(f["feet"][0], f["feet"][1]) for f in frames if "feet" in f]
+
+
+def drift_of(project: Kiripix, expect: int = 0) -> list[dict[str, Any]]:
+    return [f for f in project.json("check", SPRITE, expect=expect)["findings"] if f["code"] == "sheet.pivot_drift"]
+
+
+def test_a_walk_on_a_shifted_canvas_stands_on_the_idles_feet_and_keeps_its_stride(project: Kiripix) -> None:
+    folder = walk_on_another_canvas(project)
+    project.json("set", SPRITE, "fit", "align_feet=true")
+    project.json("run", SPRITE)
+    fit = folder / "work" / "fit"
+
+    for direction in FOUR:
+        [idle] = clip_feet(fit, "idle", direction)
+        walk = clip_feet(fit, "walk", direction)
+        assert [(x - walk[0][0], y - walk[0][1]) for x, y in walk] == [(0, 0), (1, 0), (2, 0)]  # the stride is kept
+        assert abs(walk[1][0] - idle[0]) <= 1 and abs(walk[1][1] - idle[1]) <= 1  # the median frame, on the idle's feet
+
+
+def test_pivot_drift_flags_a_walk_on_a_shifted_canvas_until_fit_places_the_clip_whole(project: Kiripix) -> None:
+    walk_on_another_canvas(project)
+    project.json("run", SPRITE, expect=2)  # align_feet is off: the walk stays where its canvas put it
+
+    drift = drift_of(project, expect=2)
+    assert {f["position"]["field"].split("/")[0] for f in drift} == {"walk"}
+    assert len(drift) == len(FOUR)  # one a direction
+    assert all(f["fix"] == f"kiripix set {SPRITE} fit align_feet=true" for f in drift)
+
+    project.json("set", SPRITE, "fit", "align_feet=true")
+    project.json("run", SPRITE)
+
+    assert drift_of(project) == []
+
+
+def test_a_walk_with_no_measurable_feet_keeps_its_place_and_says_so(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    entries = {f"Idle/rotations/{w}.png": figure() for w in WORDS}
+    entries.update({f"Idle/animations/walk/{w}/frame_{f:03d}.png": np.zeros_like(figure()) for w in WORDS for f in range(2)})
+    import_sheet(project, make_zip(project, "group.zip", entries))
+    project.json("set", SPRITE, "fit", "align_feet=true")
+
+    result = project.json("run", SPRITE, expect=2)
+
+    found = [f for f in result["findings"] if f["code"] == "fit.clip_unmeasured"]
+    assert {f["position"]["field"] for f in found} == {f"walk/{d}" for d in FOUR}
+    assert all(f["severity"] == "info" and f["owner_action"] for f in found)
+    assert clip_feet(folder / "work" / "fit", "walk", "s") == []
 
 
 def test_a_pivot_decision_moves_the_pivot_and_undo_restores_it(project: Kiripix) -> None:
@@ -879,3 +947,52 @@ def test_a_bad_alpha_pattern_fails_fit_with_a_fix(project: Kiripix) -> None:
     result = project.json("run", SPRITE, "fit", expect=1)
 
     assert any(f["code"] == "fit.alpha_pattern_invalid" for f in result["findings"]), folder
+
+
+def states_zip(states: list[str]) -> dict[str, np.ndarray]:
+    """PixelLab's ZIP of a character group: each state's rotations in `<state>/rotations/<direction word>.png`."""
+    return {f"{state}/rotations/{word}.png": figure((60 + 50 * number, 90, 120), hop=number)
+            for number, state in enumerate(states) for word in WORDS}
+
+
+def test_each_state_of_a_pixellab_zip_is_a_clip(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    entries = states_zip(["Idle", "dazed", "Hop Up"])
+    entries.update({f"Idle/animations/walk/{word}/frame_{f:03d}.png": figure(hop=f) for word in WORDS for f in range(2)})
+    import_sheet(project, make_zip(project, "group.zip", entries))
+
+    result = project.json("run", SPRITE, "frames")
+
+    clips = {c["name"]: c for c in load(folder / "work" / "frames" / "frames.json")["clips"]}
+    assert sorted(clips) == ["dazed", "hop_up", "idle", "walk"]
+    for name in ("dazed", "hop_up", "idle"):
+        assert {d: len(f) for d, f in clips[name]["directions"].items()} == {"s": 1, "w": 1, "n": 1, "e": 1}
+    assert clips["dazed"]["directions"]["s"][0]["source"] == "dazed/rotations/south.png"
+    assert clips["hop_up"]["raw"] == ["Hop Up"]
+    assert [f["code"] for f in result["findings"] if f["code"].startswith(("frames.", "clips."))] == []
+
+
+def test_two_states_that_map_to_one_clip_are_a_duplicate_name(project: Kiripix) -> None:
+    new_sprite(project)
+    name = import_sheet(project, make_zip(project, "group.zip", states_zip(["Idle", "hop", "hop_2"])))
+    decide(project, "frames", "sheet", {"file": name, "clips": {"hop_2": "hop"}})
+
+    result = project.json("run", SPRITE, "frames", expect=2)
+
+    found = [f for f in result["findings"] if f["code"] == "clips.duplicate_name"]
+    assert sorted(f["position"]["field"] for f in found) == ["hop/e", "hop/n", "hop/s", "hop/w"]  # one a direction
+    assert all("hop/rotations" in f["message"] and "hop_2/rotations" in f["message"] for f in found)
+
+
+def test_a_sheet_decision_leaves_states_out(project: Kiripix) -> None:
+    folder = new_sprite(project)
+    name = import_sheet(project, make_zip(project, "group.zip", states_zip(["Idle", "hop", "hop_2", "dazed"])))
+    decide(project, "frames", "sheet", {"file": name, "clips": {"hop_2": "hop"}, "leave_out": ["hop", "Dazed"]})
+
+    result = project.json("run", SPRITE, "frames")
+
+    frames = load(folder / "work" / "frames" / "frames.json")
+    assert [c["name"] for c in frames["clips"]] == ["hop", "idle"]
+    assert frames["clips"][0]["directions"]["s"][0]["source"] == "hop_2/rotations/south.png"
+    assert frames["duplicates"] == []
+    assert [f["code"] for f in result["findings"] if f["code"].startswith(("frames.", "clips."))] == []

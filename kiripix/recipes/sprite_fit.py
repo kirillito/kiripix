@@ -318,10 +318,23 @@ def run_sprite_fit(run: StageRun) -> None:
     align = bool(run.params.get("align_feet", False))
     effect = bool(run.params.get("effect", False))
 
+    # A moving clip is placed whole (ticket 0392): one offset for all its frames in a direction, the median of their feet on the
+    # ground point, so a clip drawn on a canvas of its own stands where the stationary ones do and its stride is kept.
+    clip_pivots: dict[tuple[str, str], tuple[int, int]] = {}
+    unmeasured: list[dict[str, str]] = []
+    if align and not effect and anchor == ANCHOR_FEET:
+        for name, direction in sorted({(f.clip, f.direction) for f in fitted if f.clip not in stationary}):
+            measured_feet = [f.feet for f in fitted if f.clip == name and f.direction == direction and f.feet is not None]
+            if measured_feet:
+                clip_pivots[(name, direction)] = (_median([p[0] for p in measured_feet]),
+                                                  _median([p[1] for p in measured_feet]) - ground)
+            else:
+                unmeasured.append({"clip": name, "direction": direction})
+
     def used(frame: _Frame) -> tuple[int, int]:
         if align and frame.clip in stationary and frame.feet is not None:
             return frame.feet[0], frame.feet[1] - ground
-        return pivots[frame.direction]
+        return clip_pivots.get((frame.clip, frame.direction)) or pivots[frame.direction]
 
     needs: dict[str, list[tuple[int, int]]] = {"left": [], "right": [], "top": [], "bottom": []}  # px each frame needs, by index
     for number, current in enumerate(fitted):
@@ -402,6 +415,7 @@ def run_sprite_fit(run: StageRun) -> None:
               "align_feet": align, "target_height": target, "tallest": tallest, "grid_differs": differs, "grew": grew,
               "pivots": {d: list(p) for d, p in pivots.items()},
               "ground": {"ratio": GROUND_RATIO, "figure": standing_height, "offset": ground}, "cell": [cell_width, cell_height],
+              **({"unmeasured": unmeasured} if unmeasured else {}),
               **({"anchor": anchor if isinstance(anchor, str) else list(anchor)} if anchor != ANCHOR_FEET else {}),
               **({"effect": True} if effect else {}),
               # only when there is some, so a sprite without partial alpha writes the same bytes as before
@@ -474,6 +488,14 @@ def check_sprite_fit(run: StageRun) -> list[Finding]:
             position=Position(asset=asset, stage="fit", field=f"{tallest['clip']}/{tallest['direction']}/{tallest['index']}"),
             owner_action="Nothing is needed if this is the size you want. To scale an AI image to a height: "
                          f"kiripix set {asset} fit mode=downscale height=<px>."))
+    for item in record.get("unmeasured", []):
+        findings.append(Finding(
+            code="fit.clip_unmeasured", severity="info",
+            message=f"{item['clip']}/{item['direction']} has no measurable feet (every frame is empty or cut off), so it keeps the "
+                    "place its canvas gave it instead of standing on the ground point",
+            position=Position(asset=asset, stage="fit", field=f"{item['clip']}/{item['direction']}"),
+            owner_action="Nothing is needed if the clip is meant to be blank. Otherwise check the source frames, or put the "
+                         f"clip's place right with a `pivot` Decision on {asset} fit."))
     for item in record["grew"]:
         findings.append(Finding(
             code="fit.cell_grew", severity="info",

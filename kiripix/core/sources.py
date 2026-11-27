@@ -134,8 +134,7 @@ def _model_suffix(asset: Asset, file: Path, shown: str) -> str:
 
 
 IMPORTED_FILE = "imported.jsonl"  # in the Asset folder, not `src/`: a Stage hashes `src/*`, and a name isn't an input
-IMPORTED_SCHEMA_VERSION = 1
-
+IMPORTED_SCHEMA_VERSION = 2  # 2 (ticket 0388) adds `provider` and `call`; a version-1 line reads with both null, in memory
 
 class ImportedName(BaseModel):
     """One line of `imported.jsonl`: the file name a stored file was imported with. The newest line for a file wins."""
@@ -144,6 +143,8 @@ class ImportedName(BaseModel):
     schema_version: int
     file: str  # the stored file, relative to the Asset folder, with forward slashes
     imported_as: str
+    provider: str | None = None  # a sheet `gen` made: the Provider and the call that made it
+    call: str | None = None
 
 
 def _relative(asset: Asset, path: Path) -> str:
@@ -165,7 +166,7 @@ def imported_names(asset: Asset) -> dict[str, str]:
         except ValidationError as error:
             raise fail("import.record_invalid", f"{asset.id}/{IMPORTED_FILE} line {number} is not valid: {error.errors()[0]['msg']}",
                        owner_action=f"Fix or remove line {number} of {IMPORTED_FILE} in {asset.id}.") from None
-        if entry.schema_version != IMPORTED_SCHEMA_VERSION:
+        if entry.schema_version not in (1, IMPORTED_SCHEMA_VERSION):
             raise fail("import.record_invalid", f"{asset.id}/{IMPORTED_FILE} line {number} has schema_version "
                        f"{entry.schema_version}; this Kiripix reads {IMPORTED_SCHEMA_VERSION}",
                        owner_action="Update Kiripix.")
@@ -184,6 +185,44 @@ def import_file(asset: Asset, file: Path, shown: str, role: str) -> tuple[str, P
     if imported_as(asset, path) != file.name:
         atomic.append_jsonl_many(asset.dir / IMPORTED_FILE, [
             {"schema_version": IMPORTED_SCHEMA_VERSION, "file": _relative(asset, path), "imported_as": file.name}])
+    return name, path, created
+
+
+def imported_record(asset: Asset, path: Path) -> ImportedName | None:
+    """The newest `imported.jsonl` line of a stored file (who made it and with which call, for a generated one); None when
+    it has none."""
+    record = asset.dir / IMPORTED_FILE
+    if not record.is_file():
+        return None
+    found: ImportedName | None = None
+    for line in record.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = ImportedName.model_validate_json(line) if line.strip() else None
+        except ValidationError:
+            continue
+        if entry is not None and entry.file == _relative(asset, path):
+            found = entry
+    return found
+
+
+def import_generated_variant(asset: Asset, file: Path, shown: str, provider: str, call: str) -> tuple[str, Path, bool]:
+    """An image a Provider's call made (ticket 0390), stored in `src/` as a Variant is, and recorded in `imported.jsonl` with
+    the Provider and the call. A sprite keeps these as candidates: `pick` turns the one chosen into a sheet."""
+    name, path, created = import_variant(asset, file, shown)
+    atomic.append_jsonl_many(asset.dir / IMPORTED_FILE, [
+        {"schema_version": IMPORTED_SCHEMA_VERSION, "file": _relative(asset, path), "imported_as": shown,
+         "provider": provider, "call": call}])
+    return name, path, created
+
+
+def import_generated_sheet(asset: Asset, data: bytes, shown: str, provider: str | None, call: str | None) -> tuple[str, Path, bool]:
+    """A sheet a Provider's call made (ticket 0388), stored as `import --role sheet` stores one, with the same ZIP checks,
+    and recorded in `imported.jsonl` with the Provider and the call. Returns its name, its path and whether it is new."""
+    suffix = sheets.check(data, shown, Position(asset=asset.id, file=shown))
+    name, path, created = _store(asset.dir / "src" / sheets.SHEETS_DIR, hash_bytes(data)[:VARIANT_NAME_LENGTH], suffix, data)
+    atomic.append_jsonl_many(asset.dir / IMPORTED_FILE, [
+        {"schema_version": IMPORTED_SCHEMA_VERSION, "file": _relative(asset, path), "imported_as": shown,
+         "provider": provider, "call": call}])
     return name, path, created
 
 
