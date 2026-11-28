@@ -1,11 +1,11 @@
 ---
 status: todo
-milestone: M6
+milestone: M7
 agent: character-pipeline
 type: ticket
 ---
 
-# M6: characters rendered the way the GPT Image rooms are painted
+# M7: characters rendered the way the GPT Image rooms are painted
 
 Spec §2 (principle 3: one look across Kinds), §6.3 (`render`, `palette`, `finish`). The Owner, 2026-11-24: the GPT Image rooms
 (`annex_bedroom`, `annex_living_kitchen`) are the target and are not to be changed. The characters must come up to them. The
@@ -100,4 +100,21 @@ marked real-Blender test, and at the CLI seam (no new key reaches Blender or `re
   control); row 2 and "all" also give those rows length 7. Idle is the `still` pose and the walk clip was cut to 3 frames (frame 0 is the same pose); the
   walk is the clip's root-motion-in-place. In row 1 the outline colour is a free one (7 female, 10 male) because the fitted hair ramp took 195.
   Settings used: hue `#5a6fa8` / `#ffd9a0`, strength 0.35; bands 6 with highlight 0.9; contact distance 0.06, threshold 0.35.
-  **The Owner's chosen settings: not yet picked.**
+  **The Owner's chosen settings: none; see below.**
+
+### Not accepted (the Owner, 2026-11-27): grey pixels on the figures
+
+Every option except contact shading (4) puts grey or washed-out pixels on the figures, which the Owner rules out entirely. Seen
+on the sheet (`0382_compare_annex_bedroom.png`, mc03_female idle s):
+
+- **1, hue shift:** the outline turns blue-grey, and the skin and clothes wash toward grey. The shadow hue reaches the outline
+  pixels, and at a strength of 0.35 the shift greys the colour instead of cooling it.
+- **2, longer ramps:** the highlight (0.9) gives a flat grey or white patch on top of the hair and on one foot, not a lighter
+  step of the part's own colour.
+- **3, sel-out:** the white clothes' darkest step is a light grey, so the outline turns grey and the figure loses its edge
+  against the floor.
+- **All four together:** all of the above.
+
+**For the rework:** no pixel on a figure may be a grey or neutral colour that isn't a step of its part's own ramp. A highlight
+is a lighter step of the part's colour. A hue shift keeps the colour's chroma. A sel-out outline stays at least as dark as
+today's fixed outline colour against the background. Each option gets a new sheet before the Owner picks.

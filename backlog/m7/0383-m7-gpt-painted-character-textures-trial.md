@@ -1,11 +1,11 @@
 ---
 status: todo
-milestone: M6
+milestone: M7
 agent: character-pipeline
 type: trial
 ---
 
-# M6: trial: GPT Image paints a character's texture, and 3D keeps the animation
+# M7: trial: GPT Image paints a character's texture, and 3D keeps the animation
 
 Spec §2 (principle 3), §6.3 (`model`, `render`), §10 (`gen`, "Spend"). The Owner, 2026-11-24: the GPT Image rooms are the
 target and are not to be changed; the characters must reach their level of detail and their palette. Prototype code stays in
@@ -100,8 +100,8 @@ of frames and 8 directions, so it doesn't paint frames. It paints **the Model's 
 
 ## Notes
 
-- This is the first use of GPT Image on characters. [0353](0353-m6-provider-research.md) left character sprites to
-  [0354](0354-m6-provider-research-actors.md); this trial uses GPT Image for a texture, not a sprite, and its result goes
+- This is the first use of GPT Image on characters. [0353](../m6/0353-m6-provider-research.md) left character sprites to
+  [0354](../m6/0354-m6-provider-research-actors.md); this trial uses GPT Image for a texture, not a sprite, and its result goes
   back to 0354 as evidence either way.
 - Only `gen` reaches OpenAI. No test calls it (the Owner, 2026-11-23: tests cost $0).
 

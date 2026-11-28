@@ -1,16 +1,16 @@
 ---
 status: todo
-milestone: M6
+milestone: M7
 agent: ui-engineer
 type: ticket
-parent: 0324-m6-rooms-at-chapter-scale-style-npcs.md
-depends_on: [0334-m6-style-references-and-wiring.md]
+parent: ../m6/0324-m6-rooms-at-chapter-scale-style-npcs.md
+depends_on: [../m6/0334-m6-style-references-and-wiring.md]
 ---
 
-# M6: UI: an Asset's style beside its references
+# M7: UI: an Asset's style beside its references
 
-Spec §11 and §14 (M6). Part of [0324](0324-m6-rooms-at-chapter-scale-style-npcs.md). Reads
-[0334](0334-m6-style-references-and-wiring.md)'s `probe style`; no logic in the UI.
+Spec §11 and §14 (M6). Part of [0324](../m6/0324-m6-rooms-at-chapter-scale-style-npcs.md). Reads
+[0334](../m6/0334-m6-style-references-and-wiring.md)'s `probe style`; no logic in the UI.
 
 ## What to build
 
@@ -40,3 +40,7 @@ Built on `probe style`, `style-add` and `style-remove` only; the Python side is 
 - Gaps for the backend, not worked around: the Probe has no `closest` reference, so the UI shows every built reference and names only the furthest; the figure picture is the first frame of `idle` facing `s` read from `finish`'s `render.json` (the Probe doesn't give the path of the frame it measures). A figure and a prop were not exercised in Playwright (only a room); the figure/prop path is the same code with `outline_density` and the `render.json` frame.
 
 Eye check (the Owner, still open): on a character, a sprite and a room, open the Asset on `finish` (room: `palette`), make two others references, and look at the bars and the pictures. Screenshots of the room case: `web/shots/0335-style-scores.png`, `web/shots/0335-style-board.png`.
+
+### Moved to M7 (the Owner, 2026-11-27)
+
+The Owner couldn't find the reference buttons; the eye check waits on [0407](0407-m7-ui-style-reference-from-any-screen.md).

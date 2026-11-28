@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 type: spec
 ---
@@ -42,7 +42,7 @@ every room's stops in one sitting:
 use, the range of value and saturation, outline density, pixel scale and light direction, using deterministic Ops. A trial
 on the Project's real Assets ([0332](0332-m6-style-match-trial.md)) picks the measures that tell matched from mismatched,
 and their thresholds. Values marked "set by 0332" in the work tickets ([0333](0333-m6-style-measures-and-check.md),
-[0334](0334-m6-style-references-and-wiring.md), [0335](0335-m6-ui-style-scores.md)) come from it.
+[0334](0334-m6-style-references-and-wiring.md), [0335](../m7/0335-m7-ui-style-scores.md)) come from it.
 
 **NPC variants from a base.** A background NPC is a base body, some Wearables and a colour per Part, with no new render. The
 design has open questions, chiefly whether Kiripix or the game holds an NPC's appearance, so it has its own spec ticket
@@ -93,7 +93,7 @@ The NPC questions are in [0336](0336-m6-npc-variants-from-a-base.md).
 | 1 | Foundations, and what the game needs first | [0327](0327-m6-match-scope.md) the `--match` scope, [0326](0326-m6-hand-over-note.md) the hand-over note, [0332](0332-m6-style-match-trial.md) the style trial, [0337](0337-m6-cast-sheet-stacks-and-swaps.md) the stacked cast sheet; [0347](0347-m6-vfx-trial.md) the VFX trial (game M06); [0344](0344-m6-mask-add.md) named Masks; [0339](0339-m6-adr-room-normals-stage.md) the normals ADR; [0348](0348-m6-brief-renders-the-prompt.md) the prompt |
 | 2 | The queue, the district, Sources | [0325](0325-m6-review-queue-command.md), then [0329](0329-m6-ui-review-queue.md); [0328](0328-m6-district-probe.md), then [0330](0330-m6-ui-district-view.md); [0349](0349-m6-to-paint-pack.md), then [0350](0350-m6-source-inbox.md), then [0351](0351-m6-ui-rooms-waiting-for-a-source.md); [0345](0345-m6-export-named-masks.md) and [0346](0346-m6-ui-named-masks.md) (game M09) |
 | 3 | Rooms without the Owner; room normals | [0331](0331-m6-first-passes-over-a-list-of-rooms.md): the skill's batch mode, then the run on the ch01 rooms that have Sources; [0340](0340-m6-depth-runner.md), [0341](0341-m6-room-normals-stage.md), [0342](0342-m6-export-room-normals.md), [0343](0343-m6-ui-room-normals.md) (game M10) |
-| 4 | Style; effects | [0333](0333-m6-style-measures-and-check.md), then [0334](0334-m6-style-references-and-wiring.md), then [0335](0335-m6-ui-style-scores.md); the build tickets [0347](0347-m6-vfx-trial.md) files: [0362](0362-m6-sprite-effect-parameters.md), [0363](0363-m6-alpha-dither-op.md), then [0364](0364-m6-export-effect-blend.md) |
+| 4 | Style; effects | [0333](0333-m6-style-measures-and-check.md), then [0334](0334-m6-style-references-and-wiring.md), then [0335](../m7/0335-m7-ui-style-scores.md); the build tickets [0347](0347-m6-vfx-trial.md) files: [0362](0362-m6-sprite-effect-parameters.md), [0363](0363-m6-alpha-dither-op.md), then [0364](0364-m6-export-effect-blend.md) |
 | 5 | NPCs | The work tickets [0336](0336-m6-npc-variants-from-a-base.md) files, after the Owner's answers |
 | Gate | | [0338](0338-m6-gate.md) |
 
@@ -154,3 +154,12 @@ on the normals (0341, 0343).
   is a later step if the Owner wants it.
 - The game's compositor and its appearance data (as in [0152](../m5/0152-m5-character-layers.md)), unless 0336's Q1 moves an
   NPC's appearance into Kiripix.
+
+## Closed (2026-11-27)
+
+Closed with the gate, [0338](0338-m6-gate.md). Moved to M7: the NPC screen ([0360](../m7/0360-m7-ui-npc-screen.md)), the
+style screen ([0335](../m7/0335-m7-ui-style-scores.md), [0407](../m7/0407-m7-ui-style-reference-from-any-screen.md)), the first
+passes over the district and the sitting ([0408](../m7/0408-m7-district-first-passes-run.md)), the agent acceptance test
+([0409](../m7/0409-m7-agent-acceptance-test-run.md)), and `choose` hashing only its ramp rows
+([0371](../m7/0371-m7-npc-choose-hashes-only-its-ramp-rows.md)). Q5: the style codes stay warnings.
+

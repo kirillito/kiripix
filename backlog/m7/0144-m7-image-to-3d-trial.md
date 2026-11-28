@@ -1,11 +1,11 @@
 ---
 status: todo
-milestone: later
+milestone: M7
 agent: ml-engineer
 type: trial
 ---
 
-# M6: trial: image-to-3D, a local Runner in 8 GB or a Provider?
+# M7: trial: image-to-3D, a local Runner in 8 GB or a Provider?
 
 Spec §16, open decision 4 ("Image-to-3D: which local Runner fits 8 GB well enough, or none (M3)"), §6.3 (model: "optional
 image-to-3D") and §8.
@@ -32,7 +32,7 @@ is tried only on its free tier (the Owner, 2026-11-20).
 | Pixal3D | unclear on 8 GB | Repo and plugins disagree | Mesh with PBR | Drop unless settled |
 | Hunyuan3D 2.1 | ~10 GB shape, ~29 GB with texture | Tencent Community (territory limits) | — | Drop: too big |
 | UltraTex (texturing, not 3D) | 6–8 GB, community GGUF route | Runs FLUX.2 Klein Base 9B: non-commercial | Textures an untextured mesh | Only with the Owner's yes (runner-licences policy) |
-| Meshy, Tripo (Providers) | — | Free-tier terms conflict or limit ownership | — | Their terms and prices come from [0353](0353-m6-provider-research.md)'s desk table; free tier only |
+| Meshy, Tripo (Providers) | — | Free-tier terms conflict or limit ownership | — | Their terms and prices come from [0353](../m6/0353-m6-provider-research.md)'s desk table; free tier only |
 
 **Characters may be the wrong target.** Every source agrees these models suit props (benches, machines, signs), not characters
 that rig cleanly. So the trial also runs one **prop** concept image through the same candidates and renders it at the rooms'

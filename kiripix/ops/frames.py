@@ -136,6 +136,18 @@ def scroll(image: U8, region: BoolMask, dx: int, dy: int, frames: int | None = N
     return out
 
 
+def clear_unchanged(frames: U8) -> U8:
+    """Frames of a Loop as a strip keeps them (ticket 0403): every pixel of every frame that equals frame 0, RGBA exactly,
+    becomes (0, 0, 0, 0); a pixel that differs is kept as it is. A pixel that leaves frame 0's value and returns is kept
+    on the frames where it differs and clear on the others. Frame 0 is therefore all clear. Clear is one value: a kept pixel
+    with alpha 0 (it draws nothing either way) is (0, 0, 0, 0) too. (frames, H, W, 4) in and out."""
+    if frames.ndim != 4 or frames.shape[3] != 4:
+        raise ValueError("frames must be (frames, H, W, 4) RGBA")
+    out = frames.copy()
+    out[(frames == frames[0]).all(axis=3) | (frames[..., 3] == 0)] = 0
+    return out
+
+
 def _box_size(region: BoolMask) -> tuple[int, int]:
     ys, xs = np.nonzero(region)
     return int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)

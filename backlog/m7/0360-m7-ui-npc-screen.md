@@ -1,23 +1,23 @@
 ---
 status: todo
-milestone: M6
+milestone: M7
 agent: ui-engineer
 type: ticket
-parent: 0324-m6-rooms-at-chapter-scale-style-npcs.md
-depends_on: [0356-m6-npc-kind-and-choose-stage.md, 0357-m6-npc-checks.md]
+parent: ../m6/0324-m6-rooms-at-chapter-scale-style-npcs.md
+depends_on: [../m6/0356-m6-npc-kind-and-choose-stage.md, ../m6/0357-m6-npc-checks.md]
 ---
 
-# M6: UI: the NPC screen, a stacked preview the Owner dresses
+# M7: UI: the NPC screen, a stacked preview the Owner dresses
 
-Spec §11 and §14 (M6). Part of [0324](0324-m6-rooms-at-chapter-scale-style-npcs.md). Over
-[0356](0356-m6-npc-kind-and-choose-stage.md)'s `choose`; no logic in the UI beyond drawing.
+Spec §11 and §14 (M6). Part of [0324](../m6/0324-m6-rooms-at-chapter-scale-style-npcs.md). Over
+[0356](../m6/0356-m6-npc-kind-and-choose-stage.md)'s `choose`; no logic in the UI beyond drawing.
 
 ## What to build
 
 - **The NPC screen:** the base's idle in every direction, stacked and swapped as `preview --stage choose` draws it, at a
   whole-number zoom; beside it, the Wearables made on the base (toggle each, drag to reorder) and a picker per Part showing its
   named choices as swatches. Each change is one `set` of `choose`'s parameters (ADR 0015), and the preview reloads.
-- **A crowd:** with [0359](0359-m6-npc-crowd.md) built, the status board's NPCs under one prefix as one strip, with "re-roll"
+- **A crowd:** with [0359](../m6/0359-m6-npc-crowd.md) built, the status board's NPCs under one prefix as one strip, with "re-roll"
   on each.
 - `npc.*` findings jump to the Wearable or Part they name.
 
@@ -59,3 +59,8 @@ Built over `choose` and the `npc` Commands; no Python changed, no backend gap fo
 - **Eye check (open):** the Owner looks at three NPCs and notes it here. Screenshots of a run: `web/shots/0360-npc-screen.png`,
   `0360-npc-crowd.png`, `0360-npc-finding.png` (the fake Blender's flat frames; the eye check needs real NPCs).
 
+### Moved to M7 (the Owner, 2026-11-27)
+
+The Owner's eye check can't run yet: the art Project has no Asset of Kind `npc` and no Wearables, so no Asset has a `choose`
+Stage. It needs a base character with Wearables made on it first. The M6 gate's "a dozen NPCs from one base" item has the same
+blocker.

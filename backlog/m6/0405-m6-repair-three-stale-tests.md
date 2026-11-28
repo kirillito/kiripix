@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: qa-engineer
 type: ticket
@@ -24,4 +24,22 @@ fails because of 0401; each tests something another change moved.
 ## Acceptance criteria
 
 - [ ] The three tests pass, and no test reads a file under `backlog/`.
-- [ ] Nothing outside `tests/` changes, unless a failure turns out to be a real defect: then say so here and stop.
+- [x] Nothing outside `tests/` changes, unless a failure turns out to be a real defect: then say so here and stop.
+
+## Result
+
+Done 2026-11-27, in `tests/` only; none of the three was a real defect.
+
+1. `test_a_sprite_takes_no_pick` is now `tests/cli/test_import_sheet.py::test_a_sheets_name_is_no_image_candidate_to_pick`. Since
+   0390, `pick` on a sprite picks one of its generated image candidates (`gen_sprite.pick`), and an imported sheet's name is none of
+   them, so `pick.unknown_variant` is the right answer. The test checks the code, its `fix` (with no candidates yet:
+   `kiripix gen <id> --image --prompt "<what to paint>"`) and that the sprite's files don't change.
+2. and 3. The two buff glow tests in `tests/cli/test_sprite.py` build their sheet with `glow()`, made in the test: four 24 px frames,
+   a solid core growing a pixel a frame inside a round haze whose alpha falls from 220 to about 30 at its rim (a graded haze,
+   not `haze()`'s flat 102). The checks are unchanged: `dither` keeps the haze as opaque pixels, the
+   vote drops it and raises one `fit.alpha_partial` warning. `GLOW` and its path into `backlog/` are gone.
+
+Left for the Owner (why the first criterion stays unticked): `tests/cli/test_sound.py::test_the_asphalt_recording_slices_into_single_steps` still reads the Owner's own
+recording, `backlog/m6/0398-trial/shoes-walk-road-asphalt-hard.flac` (skipped when it's absent). It's outside these three and tests a
+real recording on purpose, so it wasn't replaced; moving the recording out of `backlog/` (with the test's path) or accepting the
+exception is the Owner's call.

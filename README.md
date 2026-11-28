@@ -5,12 +5,12 @@ consistent, game-ready pixel art: rooms with Layers, Masks, Looks and Loops; pro
 animated characters, sprites, Wearables and background NPCs. It enforces one palette and one resolution per game. You can
 drive it from the terminal, and an AI coding agent can drive it just as well.
 
-> **Status: Milestone 6 (rooms at chapter scale, style that holds, NPCs from bases) is mostly built.** M0 to M5 are
-> done. M6 added the review queue, districts, `to-paint` and `inbox`, style references, room normal maps, named Masks,
-> sprite effects, the `npc` Kind, and generation through Providers (OpenAI's GPT Image for rooms, Props and portraits;
-> PixelLab for sprites), with approval, a budget and a cost ledger. The UI's style and NPC screens are still open, and
-> the Owner's gate ([backlog/m6/0338](backlog/m6/0338-m6-gate.md)) comes after them. See
-> [What's not built yet](#whats-not-built-yet). Everything else here describes what Kiripix does now.
+> **Status: Milestone 6 (rooms at chapter scale, style that holds, NPCs from bases) is done** (its gate,
+> [backlog/m6/0338](backlog/m6/0338-m6-gate.md), closed on 2026-11-27). M0 to M6 are done. M6 added the review queue,
+> districts, `to-paint` and `inbox`, style references, room normal maps, named Masks, sprite effects, Loops from a
+> Pixelbolt atlas, the `npc` and `sound` Kinds, and generation through Providers (OpenAI's GPT Image for rooms, Props
+> and portraits; PixelLab for sprites), with approval, a budget and a cost ledger. What M6 left open is in M7
+> ([backlog/m7/](backlog/m7/)). See [What's not built yet](#whats-not-built-yet). Everything else here describes what Kiripix does now.
 
 - [Install](#install)
 - [Quick start: a room](#quick-start-a-room)
@@ -619,12 +619,14 @@ Commit `kiripix.toml`, `style/` and everything in each Asset's folder except `wo
 
 These are designed in [the spec](docs/KIRIPIX_SPEC.md) but don't exist yet:
 
-- **The rest of M6:** the UI's style scores beside an Asset's references (0335) and its NPC screen (0360), characters
-  rendered to match the GPT Image rooms (0382, after the trial 0383), PixelLab's one image to a sprite (0390) and
-  keyframe motion for objects (0391). Then the M6 gate (0338).
+- **M7** ([backlog/m7/](backlog/m7/)), moved out of M6 on 2026-11-27: the UI's style scores beside an Asset's references
+  (0335) and "Make this a style reference" from any screen (0407); the UI's NPC screen (0360) and `choose` hashing only
+  its ramp rows (0371); characters rendered to match the GPT Image rooms (0382, after the trial 0383); a trial of
+  generated sound effects (0399); and two real runs on the M6 code: first passes over a district then one sitting (0408),
+  and the agent acceptance test (0409).
 - **The `tileset` Kind:** a tile kit for the game's procedural dungeon, exported as an atlas and a kit file. Planned, not
-  scheduled ([0384](backlog/m6/0384-tileset-kind-for-a-procedural-dungeon.md)).
-- **Generation and agents, deferred:** the MCP adapter, the image-to-3D trial (0144) and a trial of local generation as
+  scheduled ([0384](backlog/m7/0384-m7-tileset-kind-for-a-procedural-dungeon.md)).
+- **Generation and agents, deferred:** the MCP adapter, the image-to-3D trial ([0144](backlog/m7/0144-m7-image-to-3d-trial.md)) and a trial of local generation as
   a Runner.
 - **Later:** side view (side-view Masks `oneway` and `ladder`, the parallax split, platform reachability), "promote to
   Prop" for a room's foreground Layer, renaming exported IDs with aliases, and a `vfx` Kind.

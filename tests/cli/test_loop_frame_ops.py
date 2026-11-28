@@ -77,11 +77,13 @@ def test_a_shimmer_keeps_to_its_region_and_the_wrap_is_quiet(project: Kiripix) -
     seen: list[np.ndarray] = []
     for file in [loop["plate"]] + [e["file"] for e in loop["layers"]]:
         pieces = tiles(out(folder) / file, loop["box"], 6, loop["columns"])
-        shown = pieces[0][..., 3] > 0
-        for piece in pieces:
-            assert ((piece[..., 3] > 0) == shown).all()
+        assert (pieces[0] == 0).all(), "frame 0 is the room: clear"
+        shown = np.zeros(room.shape[:2], dtype=bool)
+        for piece in pieces[1:]:
+            here = piece[..., 3] > 0
+            assert (piece[here] != room[here]).any(axis=1).all(), "only what differs from the room"
+            shown |= here
         seen.append(shown)
-        assert (pieces[0][shown] == room[shown]).all()
     assert [f for f in findings(project) if f["severity"] == "error"] == []
     assert "loop.seam" not in codes(project)
 

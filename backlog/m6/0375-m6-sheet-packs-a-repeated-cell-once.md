@@ -8,7 +8,7 @@ type: ticket
 # M6: the sheet packs a repeated cell once
 
 Spec §6 (character `sheet`). Found by the Owner on 2026-11-21 while looking at `npc_tall_woman` (a `character`) for
-[0360](0360-m6-ui-npc-screen.md)'s eye check.
+[0360](../m7/0360-m7-ui-npc-screen.md)'s eye check.
 
 ## The problem
 

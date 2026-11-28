@@ -66,8 +66,8 @@ def test_edit_frames_are_built_and_frame_zero_is_the_room(project: Kiripix) -> N
     assert [e["frame"] for e in loop["edits"]] == [1, 2]
     room = rgba(folder / "work" / "palette" / "palette.png")
     x, y, width, height = loop["box"]
-    inside = tile_of(folder, loop, 0)[..., 3] > 0
-    assert (tile_of(folder, loop, 0)[inside] == room[y:y + height, x:x + width][inside]).all()
+    inside = room[y:y + height, x:x + width, 3] > 0
+    assert (tile_of(folder, loop, 0) == 0).all(), "frame 0 is the room, which a strip leaves clear"
     one, two = tile_of(folder, loop, 1), tile_of(folder, loop, 2)
     assert (one[inside, :3] != two[inside, :3]).any(axis=1).mean() > 0.9, "the stripes swap in every row of the region"
     assert "loop.held" not in [f["code"] for f in findings(project)]

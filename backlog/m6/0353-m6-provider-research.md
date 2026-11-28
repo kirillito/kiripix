@@ -17,7 +17,7 @@ setup and upkeep cost the Owner's time). Prototype code stays in `backlog/m6/035
 **painted images**: rooms and their `extend` pieces, Looks, Props and their states, portrait emotions and cutscene stills.
 [0354](0354-m6-provider-research-actors.md) tests the **actors**, NPCs and enemies as sprites with their animations, from
 this ticket's desk table. VFX strips are a route of [0347](0347-m6-vfx-trial.md), and image-to-3D Providers are
-[0144](0144-m6-image-to-3d-trial.md)'s; both read this ticket's desk table for those candidates. The $100 a year is one
+[0144](../m7/0144-m7-image-to-3d-trial.md)'s; both read this ticket's desk table for those candidates. The $100 a year is one
 budget for all of them.
 
 ## Why
@@ -52,7 +52,7 @@ brief's default canvas)?
    - painted: room Sources, `extend` pieces per room, Look edits, new Props, Prop states, portrait sets and emotions,
      cutscene stills;
    - actors (for [0354](0354-m6-provider-research-actors.md)): new NPCs and enemies, their directions and clips, one-off poses;
-   - VFX strips (for [0347](0347-m6-vfx-trial.md)) and image-to-3D concepts (for [0144](0144-m6-image-to-3d-trial.md)).
+   - VFX strips (for [0347](0347-m6-vfx-trial.md)) and image-to-3D concepts (for [0144](../m7/0144-m7-image-to-3d-trial.md)).
 
    **Cutscenes, first:** ask the Owner what the game's cutscenes need as art. Its scenes run in the engine (the scene runner,
    dialogue, room changes, scenes inside battles), so the art is likely stills at the game's resolution (an
@@ -181,7 +181,7 @@ klein 4B step 3 was never run. **Steps 3 to 5 are waived.** The evidence there i
 **Tasks:** room Sources, `extend` pieces, Look edits, Props and their states, and portraits with their emotions (the Owner:
 "generating character portraits seems OK for now"). **Not decided:** character and enemy sprites and their animations, which
 stay with [0354](0354-m6-provider-research-actors.md); VFX strips ([0347](0347-m6-vfx-trial.md)) and image-to-3D
-([0144](0144-m6-image-to-3d-trial.md)) are unchanged. No FLUX model enters Kiripix (round 2's licence answer stands).
+([0144](../m7/0144-m7-image-to-3d-trial.md)) are unchanged. No FLUX model enters Kiripix (round 2's licence answer stands).
 
 **Spec:** §16 decision 5 and the §14 line on the image API Provider name OpenAI's GPT Image.
 

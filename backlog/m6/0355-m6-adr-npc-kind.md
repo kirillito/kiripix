@@ -13,7 +13,7 @@ Spec §3 (Kinds), §6.3 (a character made from a base, Wearables), §9 and §14 
 [0324](0324-m6-rooms-at-chapter-scale-style-npcs.md), from the Owner's answers to [0336](0336-m6-npc-variants-from-a-base.md)
 (2026-11-20: Q1 (a), Q2 Wearables and colours only, Q3 bulk after one works, Q4 named colour sets, Q5 background only).
 Draft the ADR and the spec change; the work tickets are [0356](0356-m6-npc-kind-and-choose-stage.md) to
-[0360](0360-m6-ui-npc-screen.md).
+[0360](../m7/0360-m7-ui-npc-screen.md).
 
 ## What the ADR settles
 

@@ -45,6 +45,11 @@ that Kiripix expands at build time. Each Loop gets a fixed `sequence` of (frame,
   `phase`, through `sequence`. With `timing.rest`, frame 0 is a rest frame that `sequence` never plays (a screen that is
   off in the room doesn't go dark on every loop). It is still frame 0 of every strip, and the scene still sets
   `frame = 0`, so the Plate test is unchanged. `loop.seam`, `loop.still` and `loop.flash` measure the played sequence.
+  Since ticket 0403, a frame Loop on the Plate stores frame 0 as clear pixels: its strips keep only what differs from frame
+  0 (in every piece, a Layer it crosses too), and the room under the sprite is frame 0. An unshaded sprite then never
+  covers a lit Plate with the room's unlit pixels (trial 0402: a dull box under a light). A Loop on a Layer keeps whole
+  frames, because its frame 0 is the region its Layer's remainder clears (below), so moved-away pixels show the Plate's
+  fill. The checks still read whole frames.
 - **Cycles are baked into frames** (Decision 6). Kiripix writes every distinct frame, so cycles and frames share one
   player and no shader. `room.json` keeps a cycle's index image, colours and mode, so a runtime palette shader stays
   possible if a Loop is ever too large to bake.

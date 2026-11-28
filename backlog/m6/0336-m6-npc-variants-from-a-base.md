@@ -74,7 +74,7 @@ characters.
 | [0357](0357-m6-npc-checks.md) the NPC Checks | imaging-engineer | 0356 |
 | [0358](0358-m6-export-npc.md) export | godot-export | 0356, 0357 |
 | [0359](0359-m6-npc-crowd.md) NPCs in bulk from a seed | core-engineer | 0356, 0357 |
-| [0360](0360-m6-ui-npc-screen.md) UI: the NPC screen | ui-engineer | 0356, 0357 |
+| [0360](../m7/0360-m7-ui-npc-screen.md) UI: the NPC screen | ui-engineer | 0356, 0357 |
 
 0356 bumps `kiripix.toml`'s `schema_version`, so it takes turns with 0334. Spec §6.3 (an NPC paragraph, "proposed" until the
 ADR is accepted) and §14's M6 bullet say this.

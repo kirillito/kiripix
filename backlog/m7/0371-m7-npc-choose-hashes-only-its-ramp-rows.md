@@ -1,15 +1,15 @@
 ---
 status: todo
-milestone: later
+milestone: M7
 agent: core-engineer
 type: ticket
-parent: 0324-m6-rooms-at-chapter-scale-style-npcs.md
-depends_on: [0356-m6-npc-kind-and-choose-stage.md]
+parent: ../m6/0324-m6-rooms-at-chapter-scale-style-npcs.md
+depends_on: [../m6/0356-m6-npc-kind-and-choose-stage.md]
 ---
 
-# Later: an NPC's `choose` hashes only the ramp rows it uses
+# M7: an NPC's `choose` hashes only the ramp rows it uses
 
-Spec §5 (input hash) and §6.3. Found in [0356](0356-m6-npc-kind-and-choose-stage.md): `choose` declares the whole
+Spec §5 (input hash) and §6.3. Found in [0356](../m6/0356-m6-npc-kind-and-choose-stage.md): `choose` declares the whole
 `character.ramps` setting as an input, so any edit of the ramp table (a new row, a choice added to another Part) makes every NPC's
 `choose` and `export` stale.
 

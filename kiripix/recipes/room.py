@@ -2283,6 +2283,7 @@ ROOM = KindSpec(
         ),
         StageSpec(
             name="loops",
+            version=2,  # 2: a frame Loop on the Plate keeps in its strips only what differs from frame 0 (ticket 0403)
             description="A room's Loops: parts that play by themselves, over and over, cut to a region. " + LOOP_TEXT
                         + " Here a Loop is a colour cycle: chosen palette colours step through a list (`rotate`) or "
                         "along their ramps and back (`pulse`) inside the region, on the room's own mapped pixels, so "

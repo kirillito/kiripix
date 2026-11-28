@@ -100,14 +100,18 @@ def test_a_sprite_takes_no_variant_role(project: Kiripix) -> None:
     assert src_files(folder) == []
 
 
-def test_a_sprite_takes_no_pick(project: Kiripix) -> None:
-    sprite(project)
+def test_a_sheets_name_is_no_image_candidate_to_pick(project: Kiripix) -> None:
+    """`pick` on a sprite picks one of its generated image candidates (ticket 0390); an imported sheet is none of them."""
+    folder = sprite(project)
     (project.cwd / "walk.png").write_bytes(png_bytes())
     sheet = project.json("import", SPRITE, "walk.png")["data"]["sheet"]
+    before = {p.relative_to(folder).as_posix(): p.read_bytes() for p in folder.rglob("*") if p.is_file()}
 
-    result = project.json("pick", SPRITE, sheet, expect=1)
+    finding = project.json("pick", SPRITE, sheet, expect=1)["findings"][0]
 
-    assert result["findings"][0]["code"] == "pick.no_stage"
+    assert finding["code"] == "pick.unknown_variant"
+    assert finding["fix"] == f'kiripix gen {SPRITE} --image --prompt "<what to paint>"'
+    assert {p.relative_to(folder).as_posix(): p.read_bytes() for p in folder.rglob("*") if p.is_file()} == before
 
 
 def test_the_original_name_is_recorded(project: Kiripix) -> None:

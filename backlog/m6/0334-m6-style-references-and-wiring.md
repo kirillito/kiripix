@@ -27,7 +27,7 @@ Spec §4 (`kiripix.toml`), §10.3 (owner-only Commands) and §14 (M6). Part of
 - **A cache:** each Asset's measures in `.kiripix/`, keyed by the measured Stage's input hash and the measures' version, so
   `check --all` over 30 rooms measures only what changed. Skip it if 0332's times say it's not needed, and record that here.
 - **`kiripix probe style <id>`:** the Asset's measures, each reference's, and the range, as numbers. The UI
-  ([0335](0335-m6-ui-style-scores.md)) reads it.
+  ([0335](../m7/0335-m7-ui-style-scores.md)) reads it.
 - `describe` and `schema` cover the new settings and Commands.
 
 ## Acceptance criteria

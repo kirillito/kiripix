@@ -874,6 +874,15 @@ class AssetGraph:
                                 position=Position(asset=self.asset.id, stage=spec.name),
                                 **({"owner_action": failure.owner_action} if failure.owner_action is not None
                                    else {"fix": command}))]
+            except FileNotFoundError as error:  # a stamped output, or one it reads, without its files (`work/` isn't in git)
+                missing = Path(error.filename) if error.filename else None
+                shown = missing.relative_to(self.asset.dir).as_posix() if missing and missing.is_relative_to(self.asset.dir) \
+                    else str(missing or error)
+                return [Finding(code="check.input_missing",
+                                message=f"the {spec.name} Check reads {shown}, which is missing: the output it was "
+                                        "built from is gone, so the Stage is rebuilt with what it reads",
+                                position=Position(asset=self.asset.id, stage=spec.name),
+                                fix=f"kiripix run {self.asset.id} {spec.name} --force")]
             if key is not None:
                 checkcache.keep(self, spec, key, found)
         for advise in _ADVISERS:

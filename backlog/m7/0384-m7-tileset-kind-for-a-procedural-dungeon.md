@@ -1,10 +1,10 @@
 ---
 status: todo
-milestone: later
+milestone: M7
 type: spec
 ---
 
-# The `tileset` Kind: a tile kit for the game's procedural dungeon
+# M7: The `tileset` Kind: a tile kit for the game's procedural dungeon
 
 Background: [the spec](../../docs/KIRIPIX_SPEC.md) §6 (Kinds), §14 ("The tileset recipe, estimated on 2026-11-08", and
 trial [0251](../m5/0251-m5-tileset-trial.md)). The game's side: DEC-078 and its S1 track (`../urban-mystery-club/docs/backlog/s1/`,

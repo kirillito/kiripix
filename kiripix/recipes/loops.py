@@ -69,6 +69,7 @@ from kiripix.ops import (
     sway,
 )
 from kiripix.ops.frames import (
+    clear_unchanged,
     SHIMMER_AMPLITUDE,
     SHIMMER_FRAMES,
     SHIMMER_WAVELENGTH,
@@ -518,13 +519,20 @@ def _latest(run: StageRun, name: str) -> dict[str, dict[str, Any]]:
 
 def _timings(run: StageRun) -> dict[str, dict[str, Any]]:
     """Each Loop's timing, by ID: the latest of its `timing` Decisions and the `timing` a `kit` Decision carries (an atlas
-    import), whichever was decided last."""
+    import), whichever was decided last. A later `kit` Decision without one (a plain kit import) replaces the atlas's frames
+    and so its timing too: the Loop goes back to its latest `timing` Decision, or to none."""
+    decided: dict[str, dict[str, Any]] = {}  # the latest `timing` Decision of each Loop
     found: dict[str, dict[str, Any]] = {}
     for decision in run.decisions:
+        loop = str(decision.data.get("loop"))
         if decision.name == "timing":
-            found[str(decision.data["loop"])] = dict(decision.data)
+            decided[loop] = found[loop] = dict(decision.data)
         elif decision.name == "kit" and "timing" in decision.data:
-            found[str(decision.data["loop"])] = {"loop": decision.data["loop"], **decision.data["timing"]}
+            found[loop] = {"loop": decision.data["loop"], **decision.data["timing"]}
+        elif decision.name == "kit":
+            found.pop(loop, None)
+            if loop in decided:
+                found[loop] = decided[loop]
     return found
 
 
@@ -1187,6 +1195,12 @@ def _build_loop(run: StageRun, room: EditRoom, palette: Any, name: str, loop: di
         run.check_cancel()
         cut = part[crop]
         tiles = list(frames) if op == "sway" else [cut_by_alpha(each, cut) for each in frames]  # a sway carries its alpha
+        # a frame Loop on the Plate holds only what differs from frame 0 (ticket 0403), in every piece it cuts, so the room's
+        # own pixels, unshaded, never cover a lit Plate. A Loop on a Layer keeps whole frames: its pieces are cut to the
+        # Layer's pixels already, and frame 0 is the region export clears from the Layer's remainder, so the pixels a frame
+        # moves away from show the Plate's fill (ADR 0011). A colour cycle isn't a frame Loop.
+        if framed and layer == PLATE:
+            tiles = list(clear_unchanged(np.stack(tiles)))
         strip, record["columns"], record["rows"] = _strip(tiles)
         file = "plate.png" if piece is None else layer_file(piece)
         write_rgba(folder / file, strip)

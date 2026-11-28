@@ -848,9 +848,6 @@ def test_ticks_must_have_one_duration_per_frame(project: Kiripix) -> None:
 
 # --- partial alpha: the vote, the dither and the finding on the input (ticket 0363) ----------------------------------------
 
-GLOW = Path(__file__).parent.parent.parent / "backlog" / "m6" / "0347-trial" / "sheets" / "buff_glow.png"
-
-
 def haze(size: int = 16, frames: int = 2) -> np.ndarray:
     """A solid 4 px core in the middle of an alpha 102 square haze (a glow's body), `frames` frames in one row."""
     one = np.zeros((size, size, 4), dtype=np.uint8)
@@ -859,6 +856,25 @@ def haze(size: int = 16, frames: int = 2) -> np.ndarray:
     one[2:size - 2, 2:size - 2, 0] = 60 + (xs * 7 + ys * 13) % 40  # every pixel its own colour, so the pixel grid is 1:1
     one[size // 2 - 2:size // 2 + 2, size // 2 - 2:size // 2 + 2] = (255, 255, 255, 255)
     return np.concatenate([one] * frames, axis=1)
+
+
+def glow(size: int = 24, frames: int = 4) -> np.ndarray:
+    """A buff glow, made here: a solid core inside a soft round haze whose alpha falls off from 220 to about 30 at its rim,
+    the core growing a pixel each frame; `frames` frames in one row. Every haze pixel has its own colour, so the grid is 1:1."""
+    ys, xs = np.mgrid[0:size, 0:size]
+    distance = np.hypot(ys - (size - 1) / 2, xs - (size - 1) / 2)
+    rim = size / 2 - 1
+    cells = []
+    for n in range(frames):
+        one = np.zeros((size, size, 4), dtype=np.uint8)
+        hazy = distance < rim
+        one[hazy, 0] = 120 + (xs[hazy] * 7 + ys[hazy] * 13) % 40
+        one[hazy, 1] = 220
+        one[hazy, 2] = 90
+        one[hazy, 3] = np.clip(220 - (distance[hazy] / rim) * 190, 30, 220).astype(np.uint8)
+        one[distance < 2 + n] = (255, 255, 230, 255)
+        cells.append(one)
+    return np.concatenate(cells, axis=1)
 
 
 def haze_sprite(project: Kiripix, *settings: str, sheet: np.ndarray | None = None, frames: int = 2) -> Path:
@@ -918,7 +934,7 @@ def test_a_sprite_with_binary_alpha_has_no_finding_and_writes_the_same_fit_json(
 
 
 def test_the_buff_glow_builds_with_dither_and_keeps_its_haze(project: Kiripix) -> None:
-    sheet = np.asarray(Image.open(GLOW).convert("RGBA"), dtype=np.uint8)
+    sheet = glow()
     folder = haze_sprite(project, "alpha=dither", sheet=sheet, frames=sheet.shape[1] // sheet.shape[0])
 
     first = read(folder / "work" / "fit" / "color" / "idle" / "s" / "000.png")[..., 3]
@@ -930,7 +946,7 @@ def test_the_buff_glow_builds_with_dither_and_keeps_its_haze(project: Kiripix) -
 
 
 def test_the_buff_glow_builds_with_vote_and_carries_the_finding(project: Kiripix) -> None:
-    sheet = np.asarray(Image.open(GLOW).convert("RGBA"), dtype=np.uint8)
+    sheet = glow()
     haze_sprite(project, sheet=sheet, frames=sheet.shape[1] // sheet.shape[0])
 
     findings = [f for f in project.json("check", SPRITE)["findings"] if f["code"] == "fit.alpha_partial"]

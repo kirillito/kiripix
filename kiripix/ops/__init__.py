@@ -25,7 +25,7 @@ from kiripix.ops.character import (
     quantize_by_part,
     remove_orphans_by_part,
 )
-from kiripix.ops.frames import scroll, scroll_period, shimmer, sway
+from kiripix.ops.frames import clear_unchanged, scroll, scroll_period, shimmer, sway
 from kiripix.ops.cycle import (
     cycle_index,
     cycle_pulse,
@@ -152,6 +152,7 @@ __all__ = [
     "map_set",
     "set_colours",
     "set_report",
+    "clear_unchanged",
     "scroll",
     "scroll_period",
     "shimmer",

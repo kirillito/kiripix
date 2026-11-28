@@ -57,7 +57,7 @@ animation endpoints need one; then the Owner decides on a month's subscription.
     wrong for the 30° camera and asymmetric actors; a magenta key and a strip of N poses on one ground line.
   - Kiripix already renders any base in 8 directions at `top34_8` for every clip, so a mannequin for pose transfer is free:
     the angle and the pose, PixelLab's two failures, come from 3D, and the Provider only paints the look. A frame painted
-    per call still drifts across frames, which is why [0383](0383-m6-gpt-painted-character-textures-trial.md) paints the
+    per call still drifts across frames, which is why [0383](../m7/0383-m7-gpt-painted-character-textures-trial.md) paints the
     texture once instead; pose transfer suits actors with few frames or no base mesh to texture.
 - **PixelLab's API (read 2026-11-25, `https://api.pixellab.ai/v2/openapi.json` and its price list).** Bearer token; long
   calls return a `background_job_id`, polled at `GET /v2/background-jobs/{id}` every 5 to 10 s, cancelled with `DELETE`

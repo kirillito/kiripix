@@ -275,3 +275,18 @@ def test_preview_works_on_the_sketch_kind(project: Kiripix) -> None:
     data = project.json("preview", "sketch.a", "--stage", "draw", "--zoom", "1")["data"]
 
     assert (data["width"], data["height"]) == (4, 4)
+
+
+def test_a_check_that_finds_a_file_missing_is_a_finding_with_the_rebuild_not_a_crash(project: Kiripix) -> None:
+    # A Project cloned without `work/` (it isn't in git) has stamped outputs whose files a Check reads but can't find.
+    folder = make_demo(project, "gone")
+    project.json("run", "demo.gone", "copy")
+    (folder / "work" / "copy" / "out.txt").unlink()
+
+    result = project.json("check", "demo.gone", expect=2)
+
+    [finding] = [f for f in result["findings"] if f["code"] == "check.input_missing"]
+    assert "out.txt" in finding["message"]
+    assert finding["fix"] == "kiripix run demo.gone copy --force" and finding["owner_action"] is None
+    assert finding["position"]["asset"] == "demo.gone" and finding["position"]["stage"] == "copy"
+    assert not any(f["code"] == "internal.error" for f in result["findings"])

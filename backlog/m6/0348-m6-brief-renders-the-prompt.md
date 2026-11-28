@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 milestone: M6
 agent: core-engineer
 type: ticket
@@ -34,9 +34,9 @@ prompt, but `kiripix/recipes/room.py` says that waits for `gen`. Today the promp
 
 ## Acceptance criteria
 
-- [ ] CLI seam: a test Project with a template renders `prompt.txt`; changing `bible.md` makes `brief` stale; a missing
+- [x] CLI seam: a test Project with a template renders `prompt.txt`; changing `bible.md` makes `brief` stale; a missing
       field is `brief.prompt_field`.
-- [ ] A ch01 room's rendered prompt, side by side with the skill's, recorded here, and the Owner's view.
+- [x] A ch01 room's rendered prompt, side by side with the skill's, recorded here, and the Owner's view.
 
 ## Result
 
@@ -63,16 +63,16 @@ Built (the code and the CLI-seam tests; the two acceptance items about the art P
 
 ### The art Project's template: drafted, waiting for the Owner (2026-11-23)
 
-Drafted in [0348-trial/](0348-trial/), not yet copied into `urban-mystery-club-art`: adding `style/prompts/room.j2` makes every
+Drafted in `0348-trial/` (removed from this repo since; it is in git at `94077b5`), not yet copied into `urban-mystery-club-art`: adding `style/prompts/room.j2` makes every
 room's `brief` stale there, and with it each room's whole chain, so the Owner copies it when they accept it.
 
-- [room.j2](0348-trial/room.j2) carries the skill's (v1) per-room rules: the projection reference line, the camera and
+- `room.j2` carries the skill's (v1) per-room rules: the projection reference line, the camera and
   "not isometric" lines, the cutaway box for a room narrower than the screen (640), scale said twice (adult 52k px and its share
   of the image height, the door 32k x 64k, the back wall 80k), an exit per `exits` entry on the back wall or as a gap in the
-  bottom edge, the room's `notes`, and the grid line. [bible.md](0348-trial/bible.md) carries the rules that don't depend on the
+  bottom edge, the room's `notes`, and the grid line. `bible.md` carries the rules that don't depend on the
   room: the sun from the upper left (0070), lights with causes, no figures, signage only, blank surfaces, the style line.
 - Rendered on a copy of `room.annex_bedroom` (ch01-001) with `exits = "living_room:top"` and `notes` holding the skill's room
-  and gameplay-spot paragraphs: [annex_bedroom.prompt.txt](0348-trial/annex_bedroom.prompt.txt), beside the skill's prompt in
+  and gameplay-spot paragraphs: `annex_bedroom.prompt.txt`, beside the skill's prompt in
   `urban-mystery-club/.claude/skills/room-brief/rooms/annex_bedroom.md`.
 
 **How it compares with the skill's prompt for the same room:**
@@ -90,8 +90,22 @@ The k gap is real: the skill picks P before painting (the room's size at ~30 px 
 was fitted to. For a room not yet painted they're the same number if the brief's `width` is set to P; for a room already fitted
 at a whole k (the bedroom's k = 4), the rendered prompt asks for a slightly larger adult than the fitted pick has.
 
-### Still open, needs the Owner
+### Accepted: the art Project's template is a merge (the Owner, 2026-11-27)
 
-- The Owner's view of the draft, and copying it into the art Project's `style/`.
-- Whether the brief needs a furniture-size field (the size table as a list), or the notes keep carrying sizes as the skill's
-  room files do. The template can't print the size table's furniture without one.
+By the time of the Owner's review, the art Project already had its own `style/prompts/room.j2`: a short template for GPT Image
+exteriors (the laneway), with the scale given as "a seventh of the image height" and `style/bible.md` a placeholder. The draft
+above and that template were merged, and the Owner accepted the merge. It is now `style/prompts/room.j2` and `style/bible.md` in
+the art Project.
+
+- **Scale in px from the room's scale**, as in the draft: adult 52, door 32 x 64 game px, times `canvas_width / width`. "A
+  seventh of the image height" is right only for an image one screen tall at the room's scale (the laneway's 937 px extension
+  calls), and the brief's canvas is the whole room: it asked for 228 px on the laneway (an 87 px adult in the game) and 112 px on
+  the bedroom (27 px). The merge asks for 136 and 215.
+- **From the art template:** the exterior words ("ground", "The place:"), the light rule (sun high, upper left, slightly in front).
+- **From the draft:** the door, the Exits, the grid line, and the bible (lights with a cause; no people, animals or graffiti;
+  signage only; blank surfaces). The draft's back-wall line is kept for rooms narrower than the screen.
+- **Changed from the draft:** "a cutaway box in the middle of the frame, surrounded by black, 52% of the width" is gone. It
+  contradicted `fit`, which scales the whole Source to the Plate (the bedroom's Source is 1392 x 768 for a 336 x 192 Plate). A
+  room narrower than the screen is now a cutaway that fills the image edge to edge.
+- Every room's `brief` in the art Project goes stale with it, and so does what follows it, as expected.
+- Left open, not blocking: a furniture-size field on the brief. `notes` carries sizes for now.

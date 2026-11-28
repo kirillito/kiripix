@@ -1,12 +1,12 @@
 ---
 status: on-hold
-milestone: M6
+milestone: M7
 agent: ml-engineer
 type: ticket
-parent: 0393-m6-sound-kind.md
+parent: ../m6/0393-m6-sound-kind.md
 ---
 
-# M6: trial: generated sound effects
+# M7: trial: generated sound effects
 
 **On hold (the Owner, 2026-11-27): no budget for paid generation right now.** The trial's tools are ready in
 [0399-trial/](0399-trial/). To pick it up, run `generate.py` (about $1.27 for 30 calls), then fill the listening table in

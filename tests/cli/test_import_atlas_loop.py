@@ -15,6 +15,8 @@ from test_import_atlas import atlas_of, frame_entry, snapshot
 from test_layers_stage import ROOM, rgba
 from test_loop_kit import KIT, a_frame_loop, write_kit
 from test_loops import LOOP, build, findings, out, record, tiles
+from test_masks import decide as decide_mask
+from test_place import place
 
 BOX = 30  # the triangle region's box of the test room
 
@@ -98,16 +100,24 @@ def test_an_atlas_becomes_frames_1_to_n_with_the_rounded_ticks_and_rest_and_buil
     pieces = tiles(out(folder) / built["plate"], built["box"], built["frames"], built["columns"])
     room = room_cell(project)
     inside = room[..., 3] > 0
-    assert (pieces[0][inside] == rgba(folder / "work" / "palette" / "palette.png")[1:31, 1:31][inside]).all(), "frame 0 is the room"
-    assert not (pieces[1] == pieces[0]).all() and not (pieces[1] == pieces[2]).all()
+    assert (pieces[0] == 0).all(), "frame 0 is the room: a strip leaves it clear"
+    room_pixels = rgba(folder / "work" / "palette" / "palette.png")[1:31, 1:31]
+    for piece in pieces[1:]:
+        shown = piece[..., 3] > 0
+        assert (piece[shown] != room_pixels[shown]).any(axis=1).all(), "a strip keeps only what differs"
+    assert any((piece[..., 3] > 0).any() for piece in pieces[1:]), "a patch of another colour is kept"
+    assert not (pieces[2] == pieces[1]).all(), "the frames differ (frame 1's patch is the room's own colour: clear)"
     assert [f for f in findings(project) if f["severity"] == "error"] == []
     assert project("check", ROOM, "--json").code == 0
 
 
 def test_the_loop_exports_with_the_sequence_and_rest(project: Kiripix) -> None:
     folder = loop_room(project)
+    decide_mask(project, "flood", {"x": 0, "y": 0, "mask": "solid"})
+    place(project, "spawn.main", "spawn")  # `reach` needs a Spawn before `export` runs
     godot_project(project)
     set_target(project)
+    project.json("run", ROOM, "masks")  # the solid flood re-staled it, and the atlas is cut by it
     project.json("import", ROOM, render(project, drip()), "--loop", LOOP)
     project.json("run", ROOM)
 
@@ -279,3 +289,21 @@ def test_a_plain_kit_import_is_unchanged_and_has_no_timing(project: Kiripix) -> 
     assert data["animation"] is None and data["ticks"] == [] and len(data["loop_frames"]) == 1
     [kit] = [e for e in kit_entries(folder) if e.get("decision") == "kit"]
     assert "timing" not in kit["data"]
+
+
+def test_a_plain_kit_import_after_an_atlas_drops_the_atlas_timing_for_the_timing_decided_before(project: Kiripix) -> None:
+    folder = loop_room(project)
+    project.json("decide", ROOM, "loops", "--decision", json.dumps(
+        {"decision": "timing", "data": {"loop": LOOP, "ticks": 5}}))
+    project.json("import", ROOM, render(project, drip()), "--loop", LOOP)
+    build(project)
+    assert record(folder)["timing"]["ticks"] == [3, 4, 3]
+
+    painted = project.cwd / KIT / "frame_001.png"
+    frame = room_cell(project)
+    frame[8, 8] = frame[11, 11]
+    Image.fromarray(frame, "RGBA").save(painted)
+    project.json("import", ROOM, painted, "--loop", LOOP)
+    build(project)
+
+    assert record(folder)["frames"] == 2 and record(folder)["timing"]["ticks"] == 5 and "rest" not in record(folder)["timing"]

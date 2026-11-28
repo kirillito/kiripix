@@ -42,7 +42,8 @@ def test_kit_frames_build_with_an_off_palette_pixel_and_a_stray_stroke(project: 
     first, second = base(project), base(project)
     first[10, 10] = (1, 2, 3, 255)  # a near-miss from the editor
     wall = first[5, 0].copy()
-    second[5, 5] = base(project)[8, 8]  # a plain change inside the region
+    changed = next(p for p in base(project).reshape(-1, 4) if p[3] and (p != base(project)[5, 5]).any())
+    second[5, 5] = changed  # a plain change inside the region
     for y, x in ((29, 29), (29, 28), (28, 29)):  # outside the triangle
         first[y, x] = wall
     save_frame(project, 1, first)
@@ -57,13 +58,14 @@ def test_kit_frames_build_with_an_off_palette_pixel_and_a_stray_stroke(project: 
     assert loop["source"] == "kit" and loop["op"] is None and loop["frames"] == 3 and loop["mode"] is None
     room = rgba(folder / "work" / "palette" / "palette.png")[1:31, 1:31]
     inside = base(project)[..., 3] > 0
-    assert (pieces[0][inside] == room[inside]).all(), "frame 0 is the room"
+    assert (pieces[0] == 0).all(), "frame 0 is the room: a strip leaves it clear"
+    assert (pieces[1][(pieces[1][..., 3] > 0)] != room[pieces[1][..., 3] > 0]).any(axis=1).all(), "only what differs"
     gpl = (project.cwd / "style" / "palette.gpl").read_text("utf-8")
     assert " 0   0   0" in gpl or "0 0 0" in gpl.replace("  ", " ")
     assert tuple(int(v) for v in pieces[1][10, 10][:3]) == (0, 0, 0), "(1, 2, 3) takes the nearest palette colour, black"
     assert pieces[1][10, 10, 3] == 255
     assert pieces[1][29, 29, 3] == 0, "the stroke outside the region is cut away"
-    assert (pieces[2][5, 5] == base(project)[8, 8]).all()
+    assert (pieces[2][5, 5] == changed).all()
     found = {f["code"]: f for f in findings(project)}
     assert found["loop.off_palette"]["severity"] == "warning"
     assert "1 pixels" in found["loop.off_palette"]["message"]
